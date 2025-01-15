@@ -11,7 +11,7 @@ duckdb_tools.create_table_from_path(
 )
 
 agent = Agent(
-    model=LangDB(id="gpt-4o"),
+    model=LangDB(id="grok-2"),
     tools=[duckdb_tools],
     markdown=True,
     show_tool_calls=True,
