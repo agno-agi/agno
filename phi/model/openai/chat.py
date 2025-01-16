@@ -222,7 +222,9 @@ class OpenAIChat(Model):
         if self.presence_penalty is not None:
             request_params["presence_penalty"] = self.presence_penalty
         if self.response_format is not None:
-            request_params["response_format"] = self.response_format
+            request_params["response_format"] = (
+                self.response_format if isinstance(self.response_format, dict) else str(self.response_format)
+            )
         if self.seed is not None:
             request_params["seed"] = self.seed
         if self.stop is not None:
@@ -1003,23 +1005,16 @@ class OpenAIChat(Model):
                 yield post_tool_call_response
         logger.debug("---------- OpenAI Async Response End ----------")
 
-    def build_tool_calls(self, tool_calls_data: List[ChoiceDeltaToolCall]) -> List[Dict[str, Any]]:
-        """
-        Build tool calls from tool call data.
+    def build_tool_calls(self, tool_calls_data: Optional[List[ChoiceDeltaToolCall]]) -> List[Dict[str, Any]]:
+        if not tool_calls_data:
+            return []
 
-        Args:
-            tool_calls_data (List[ChoiceDeltaToolCall]): The tool call data to build from.
-
-        Returns:
-            List[Dict[str, Any]]: The built tool calls.
-        """
         tool_calls: List[Dict[str, Any]] = []
-        for _tool_call in tool_calls_data:
-            _index = _tool_call.index
-            _tool_call_id = _tool_call.id
-            _tool_call_type = _tool_call.type
-            _function_name = _tool_call.function.name if _tool_call.function else None
-            _function_arguments = _tool_call.function.arguments if _tool_call.function else None
+        for _index, _tool_call in enumerate(tool_calls_data):
+            _tool_call_id = _tool_call.id if _tool_call else None
+            _tool_call_type = _tool_call.type if _tool_call else None
+            _function_name = _tool_call.function.name if _tool_call and _tool_call.function else None
+            _function_arguments = _tool_call.function.arguments if _tool_call and _tool_call.function else None
 
             if len(tool_calls) <= _index:
                 tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
@@ -1038,6 +1033,5 @@ class OpenAIChat(Model):
                     tool_call_entry["function"]["arguments"] += _function_arguments
                 if _tool_call_id:
                     tool_call_entry["id"] = _tool_call_id
-                if _tool_call_type:
-                    tool_call_entry["type"] = _tool_call_type
+
         return tool_calls
