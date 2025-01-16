@@ -1,7 +1,8 @@
 from os import getenv
-from typing import Optional, Any
+from typing import Optional
 
 from phi.llm.openai.like import OpenAILike
+
 
 class LangDB(OpenAILike):
     name: str = "LangDB"
