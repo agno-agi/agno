@@ -1,6 +1,7 @@
 from typing import Iterator  # noqa
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.perplexity import Perplexity
+
 agent = Agent(model=Perplexity(id="sonar"), markdown=True)
 
 # Get the response in a variable

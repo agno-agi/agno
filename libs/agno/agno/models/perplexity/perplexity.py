@@ -19,7 +19,6 @@ class Perplexity(OpenAILike):
         max_tokens (int): The maximum number of tokens. Defaults to 1024.
     """
 
-
     id: str = "sonar"
     name: str = "Perplexity"
     provider: str = "Perplexity: " + id
