@@ -18,28 +18,22 @@ class ModelResponseEvent(str, Enum):
 class ModelResponse:
     """Response returned by Model.response()"""
 
+    role: Optional[str] = None
+
     content: Optional[str] = None
     parsed: Optional[Any] = None
     audio: Optional[AudioOutput] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     event: str = ModelResponseEvent.assistant_response.value
+
+    reasoning_content: Optional[str] = None
+
+    response_usage: Optional[Any] = None
+
     created_at: int = int(time())
 
     extra: Optional[Dict[str, Any]] = field(default_factory=dict)
-    
-@dataclass
-class ProviderResponse:
-    """Response parsed from the response that the model provider returns"""
 
-    role: Optional[str] = None
-    content: Optional[str] = None
-    parsed: Optional[Any] = None
-    audio: Optional[AudioOutput] = None
-    reasoning_content: Optional[str] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = field(default_factory=list)
-    response_usage: Optional[Any] = None
-
-    extra: Optional[Dict[str, Any]] = field(default_factory=dict)
 
 class FileType(str, Enum):
     MP4 = "mp4"

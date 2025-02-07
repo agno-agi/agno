@@ -119,30 +119,30 @@ class Model(ABC):
     @abstractmethod
     def parse_provider_response(
         self, response: Any
-    ) -> ProviderResponse:
+    ) -> ModelResponse:
         """
-        Parse the raw response from the model provider into a ModelProviderResponse.
+        Parse the raw response from the model provider into a ModelResponse.
 
         Args:
             response: Raw response from the model provider
 
         Returns:
-            ProviderResponse: Parsed response data
+            ModelResponse: Parsed response data
         """
         pass
 
     @abstractmethod
     def parse_provider_response_delta(
         self, response: Any
-    ) -> ProviderResponse:
+    ) -> ModelResponse:
         """
-        Parse the streaming response from the model provider into ModelProviderResponse objects.
+        Parse the streaming response from the model provider into ModelResponse objects.
 
         Args:
             response: Raw response chunk from the model provider
 
         Returns:
-            ProviderResponse: Parsed response delta
+            ModelResponse: Parsed response delta
         """
         pass
 
@@ -873,38 +873,38 @@ class Model(ABC):
         Process a streaming response from the model.
         """
         for response_delta in self.invoke_stream(messages=messages):
-            provider_response_delta = self.parse_provider_response_delta(response_delta)
-            if provider_response_delta:
+            model_response_delta = self.parse_provider_response_delta(response_delta)
+            if model_response_delta:
                 # Update metrics
                 assistant_message.metrics.completion_tokens += 1
                 if not assistant_message.metrics.time_to_first_token:
                     assistant_message.metrics.set_time_to_first_token()
 
-                if provider_response_delta.content is not None:
+                if model_response_delta.content is not None:
                     # Update stream data and yield content
-                    stream_data.response_content += provider_response_delta.content
-                    yield ModelResponse(content=provider_response_delta.content)
+                    stream_data.response_content += model_response_delta.content
+                    yield model_response_delta
 
-                if provider_response_delta.tool_calls is not None:
+                if model_response_delta.tool_calls is not None:
                     # Update stream data
                     if stream_data.response_tool_calls is None:
                         stream_data.response_tool_calls = []
                     stream_data.response_tool_calls.extend(provider_response_delta.tool_calls)
 
-                if provider_response_delta.audio is not None:
+                if model_response_delta.audio is not None:
                     # Update stream data and yield audio
-                    stream_data.response_audio = provider_response_delta.audio
-                    yield ModelResponse(audio=provider_response_delta.audio)
+                    stream_data.response_audio = model_response_delta.audio
+                    yield model_response_delta
 
-                if provider_response_delta.extra is not None:
+                if model_response_delta.extra is not None:
                     # Update stream data
-                    stream_data.extra.update(provider_response_delta.extra)
+                    stream_data.extra.update(model_response_delta.extra)
 
-                if provider_response_delta.response_usage is not None:
+                if model_response_delta.response_usage is not None:
                     # Update metrics
                     self.add_usage_metrics_to_assistant_message(
                         assistant_message=assistant_message,
-                        response_usage=provider_response_delta.response_usage
+                        response_usage=model_response_delta.response_usage
                     )
 
     def response_stream(self, messages: List[Message]) -> Iterator[ModelResponse]:
@@ -991,38 +991,38 @@ class Model(ABC):
         Process a streaming response from the model.
         """
         async for response_delta in await self.ainvoke_stream(messages=messages):
-            provider_response_delta = self.parse_provider_response_delta(response_delta)
-            if provider_response_delta:
+            model_response_delta = self.parse_provider_response_delta(response_delta)
+            if model_response_delta:
                 # Update metrics
                 assistant_message.metrics.completion_tokens += 1
                 if not assistant_message.metrics.time_to_first_token:
                     assistant_message.metrics.set_time_to_first_token()
 
-                if provider_response_delta.content is not None:
+                if model_response_delta.content is not None:
                     # Update stream data and yield content
-                    stream_data.response_content += provider_response_delta.content
-                    yield ModelResponse(content=provider_response_delta.content)
+                    stream_data.response_content += model_response_delta.content
+                    yield model_response_delta
 
-                if provider_response_delta.tool_calls is not None:
+                if model_response_delta.tool_calls is not None:
                     # Update stream data
                     if stream_data.response_tool_calls is None:
                         stream_data.response_tool_calls = []
-                    stream_data.response_tool_calls.extend(provider_response_delta.tool_calls)
+                    stream_data.response_tool_calls.extend(model_response_delta.tool_calls)
 
-                if provider_response_delta.audio is not None:
+                if model_response_delta.audio is not None:
                     # Update stream data and yield audio
-                    stream_data.response_audio = provider_response_delta.audio
-                    yield ModelResponse(audio=provider_response_delta.audio)
+                    stream_data.response_audio = model_response_delta.audio
+                    yield model_response_delta
 
-                if provider_response_delta.extra is not None:
+                if model_response_delta.extra is not None:
                     # Update stream data
-                    stream_data.extra.update(provider_response_delta.extra)
+                    stream_data.extra.update(model_response_delta.extra)
 
-                if provider_response_delta.response_usage is not None:
+                if model_response_delta.response_usage is not None:
                     # Update metrics
                     self.add_usage_metrics_to_assistant_message(
                         assistant_message=assistant_message,
-                        response_usage=provider_response_delta.response_usage
+                        response_usage=model_response_delta.response_usage
                     )
 
     async def aresponse_stream(self, messages: List[Message]) -> AsyncIterator[ModelResponse]:

@@ -10,7 +10,7 @@ from agno.exceptions import ModelProviderError
 from agno.media import AudioOutput
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.response import ProviderResponse
+from agno.models.response import ModelResponse
 from agno.utils.log import logger
 from agno.utils.openai import add_images_to_message, add_audio_to_message
 
@@ -442,17 +442,17 @@ class OpenAIChat(Model):
 
     def parse_provider_response(
         self, response: Union[ChatCompletion, ParsedChatCompletion]
-    ) -> ProviderResponse:
+    ) -> ModelResponse:
         """
-        Parse the OpenAI response into a ModelProviderResponse.
+        Parse the OpenAI response into a ModelResponse.
 
         Args:
             response: Raw response from OpenAI
 
         Returns:
-            ProviderResponse: Parsed response data
+            ModelResponse: Parsed response data
         """
-        provider_response = ProviderResponse()
+        model_response = ModelResponse()
 
         # Get response message
         response_message = response.choices[0].message
@@ -466,34 +466,34 @@ class OpenAIChat(Model):
             ):
                 parsed_object = response_message.parsed  # type: ignore
                 if parsed_object is not None:
-                    provider_response.parsed = parsed_object
+                    model_response.parsed = parsed_object
         except Exception as e:
             logger.warning(f"Error retrieving structured outputs: {e}")
 
         # Add role
         if response_message.role is not None:
-            provider_response.role = response_message.role
+            model_response.role = response_message.role
 
         # Add content
         if response_message.content is not None:
-            provider_response.content = response_message.content
+            model_response.content = response_message.content
 
         # Add tool calls
         if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
             try:
-                provider_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
+                model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
             except Exception as e:
                 logger.warning(f"Error processing tool calls: {e}")
 
         # -*- Add audio transcript to content if available
         response_audio: Optional[ChatCompletionAudio] = response_message.audio
-        if response_audio and response_audio.transcript and not provider_response.content:
-            provider_response.content = response_audio.transcript
+        if response_audio and response_audio.transcript and not model_response.content:
+            model_response.content = response_audio.transcript
 
         # Add audio if present
         if hasattr(response_message, "audio") and response_message.audio is not None:
             try:
-                provider_response.audio = AudioOutput(
+                model_response.audio = AudioOutput(
                     id=response_message.audio.id,
                     content=response_message.audio.data,
                     expires_at=response_message.audio.expires_at,
@@ -503,16 +503,16 @@ class OpenAIChat(Model):
                 logger.warning(f"Error processing audio: {e}")
 
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
-            provider_response.reasoning_content = response_message.reasoning_content
+            model_response.reasoning_content = response_message.reasoning_content
 
         if response.usage is not None:
-            provider_response.response_usage = response.usage
+            model_response.response_usage = response.usage
 
-        return provider_response
+        return model_response
 
     def parse_provider_response_delta(
         self, response_delta: ChatCompletionChunk
-    ) -> Optional[ProviderResponse]:
+    ) -> Optional[ModelResponse]:
         """
         Parse the OpenAI streaming response into ModelProviderResponse objects.
 
@@ -522,22 +522,22 @@ class OpenAIChat(Model):
         Returns:
             ProviderResponse: Iterator of parsed response data
         """
-        provider_response = ProviderResponse()
+        model_response = ModelResponse()
         if response_delta.choices and len(response_delta.choices) > 0:
             delta: ChoiceDelta = response_delta.choices[0].delta
 
             # Add content
             if delta.content is not None:
-                provider_response.content = delta.content
+                model_response.content = delta.content
 
             # Add tool calls
             if delta.tool_calls is not None:
-                provider_response.tool_calls = delta.tool_calls
+                model_response.tool_calls = delta.tool_calls
 
             # Add audio if present
             if hasattr(delta, "audio") and delta.audio is not None:
                 try:
-                    provider_response.audio = AudioOutput(
+                    model_response.audio = AudioOutput(
                         id=delta.audio.id,
                         content=delta.audio.data,
                         expires_at=delta.audio.expires_at,
@@ -548,6 +548,6 @@ class OpenAIChat(Model):
 
         # Add usage metrics if present
         if response_delta.usage is not None:
-            provider_response.response_usage = response_delta.usage
+            model_response.response_usage = response_delta.usage
 
-        return provider_response
+        return model_response

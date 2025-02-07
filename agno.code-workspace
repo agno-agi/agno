@@ -2,7 +2,11 @@
 	"folders": [
 		{
 			"path": "."
-		}
+		},
+    {
+      "path": "../agno-docs"
+    },
+    
 	],
 	"settings": {
     "python.analysis.extraPaths": [
