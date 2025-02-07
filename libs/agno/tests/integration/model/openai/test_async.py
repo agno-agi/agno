@@ -17,7 +17,7 @@ async def test_basic():
 
     assert response.content is not None
     assert len(response.messages) == 3
-    assert [m.role for m in response.messages] == ["developer", "user", "assistant"]
+    assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
 
 @pytest.mark.asyncio

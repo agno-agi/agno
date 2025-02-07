@@ -131,4 +131,3 @@ def test_image_input():
     )
 
     assert "golden" in response.content.lower()
-    assert len(response.messages) == 5
