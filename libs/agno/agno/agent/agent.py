@@ -1344,10 +1344,8 @@ class Agent:
         return agent_tools
 
     def add_tools_to_model(self, model: Model) -> None:
-
         # Skip if functions_for_model is not None
         if self._functions_for_model is None or self._tools_for_model is None:
-
             # Get Agent tools
             agent_tools = self.get_tools()
             if agent_tools is not None:

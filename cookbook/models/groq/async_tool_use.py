@@ -1,6 +1,7 @@
 """Please install dependencies using:
 pip install openai duckduckgo-search newspaper4k lxml_html_clean agno
 """
+
 import asyncio
 
 from agno.agent import Agent
@@ -23,6 +24,4 @@ agent = Agent(
 )
 
 # -*- Print a response to the cli
-asyncio.run(
-    agent.aprint_response("Simulation theory", stream=True)
-)
+asyncio.run(agent.aprint_response("Simulation theory", stream=True))

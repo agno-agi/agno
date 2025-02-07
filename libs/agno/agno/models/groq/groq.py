@@ -277,7 +277,6 @@ class Groq(Model):
             **self.request_kwargs,
         )
 
-
     # Override base method
     @staticmethod
     def parse_tool_calls(tool_calls_data: List[ChoiceDeltaToolCall]) -> List[Dict[str, Any]]:
@@ -319,9 +318,7 @@ class Groq(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_model_provider_response(
-        self, response: ChatCompletion
-    ) -> ProviderResponse:
+    def parse_model_provider_response(self, response: ChatCompletion) -> ProviderResponse:
         """
         Parse the Groq response into a ModelProviderResponse.
 
@@ -357,9 +354,7 @@ class Groq(Model):
 
         return provider_response
 
-    def parse_model_provider_response_stream(
-        self, response: ChatCompletionChunk
-    ) -> Iterator[ProviderResponse]:
+    def parse_model_provider_response_stream(self, response: ChatCompletionChunk) -> Iterator[ProviderResponse]:
         """
         Parse the Groq streaming response into ModelProviderResponse objects.
 

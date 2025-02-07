@@ -26,5 +26,5 @@ agent = Agent(
     """),
 )
 asyncio.run(
-    agent.aprint_response("What is the average rating of movies?", stream=False)
+    agent.aprint_response("What is the average rating of movies?")
 )

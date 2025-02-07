@@ -1,6 +1,6 @@
+from time import sleep
 from typing import List
 from urllib.parse import urlparse
-from time import sleep
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
@@ -29,7 +29,7 @@ class URLReader(Reader):
                 if attempt == 2:  # Last attempt
                     logger.error(f"Failed to fetch PDF after 3 attempts: {e}")
                     raise
-                wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4 seconds
+                wait_time = 2**attempt  # Exponential backoff: 1, 2, 4 seconds
                 logger.warning(f"Request failed, retrying in {wait_time} seconds...")
                 sleep(wait_time)
 

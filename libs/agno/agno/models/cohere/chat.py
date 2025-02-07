@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple
 
-
 from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ProviderResponse
@@ -11,16 +10,18 @@ from agno.utils.log import logger
 try:
     from cohere import AsyncClientV2 as CohereAsyncClient
     from cohere import ClientV2 as CohereClient
-    from cohere.types.streamed_chat_response_v2 import StreamedChatResponseV2
     from cohere.types.chat_response import ChatResponse
+    from cohere.types.streamed_chat_response_v2 import StreamedChatResponseV2
 except (ModuleNotFoundError, ImportError):
     raise ImportError("`cohere` not installed. Please install using `pip install cohere`")
+
 
 @dataclass
 class CohereResponseUsage:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+
 
 @dataclass
 class Cohere(Model):
@@ -107,7 +108,6 @@ class Cohere(Model):
             _request_params.update(self.request_params)
         return _request_params
 
-
     def _format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
         """
         Format messages for the Cohere API.
@@ -126,9 +126,7 @@ class Cohere(Model):
             formatted_messages.append(m_dict)
         return formatted_messages
 
-    def invoke(
-        self, messages: List[Message]
-    ) -> ChatResponse:
+    def invoke(self, messages: List[Message]) -> ChatResponse:
         """
         Invoke a non-streamed chat response from the Cohere API.
 
@@ -143,9 +141,7 @@ class Cohere(Model):
 
         return self.get_client().chat(model=self.id, messages=self._format_messages(messages), **request_kwargs)
 
-    def invoke_stream(
-        self, messages: List[Message]
-    ) -> Iterator[StreamedChatResponseV2]:
+    def invoke_stream(self, messages: List[Message]) -> Iterator[StreamedChatResponseV2]:
         """
         Invoke a streamed chat response from the Cohere API.
 
@@ -158,9 +154,7 @@ class Cohere(Model):
         request_kwargs = self.request_kwargs
         return self.get_client().chat_stream(model=self.id, messages=self._format_messages(messages), **request_kwargs)
 
-    async def ainvoke(
-        self, messages: List[Message]
-    ) -> ChatResponse:
+    async def ainvoke(self, messages: List[Message]) -> ChatResponse:
         """
         Asynchronously invoke a non-streamed chat response from the Cohere API.
 
@@ -172,11 +166,11 @@ class Cohere(Model):
         """
         request_kwargs = self.request_kwargs
 
-        return await self.get_async_client().chat(model=self.id, messages=self._format_messages(messages), **request_kwargs)
+        return await self.get_async_client().chat(
+            model=self.id, messages=self._format_messages(messages), **request_kwargs
+        )
 
-    async def ainvoke_stream(
-        self, messages: List[Message]
-    ) -> AsyncIterator[StreamedChatResponseV2]:
+    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[StreamedChatResponseV2]:
         """
         Asynchronously invoke a streamed chat response from the Cohere API.
 
@@ -188,7 +182,9 @@ class Cohere(Model):
         """
         request_kwargs = self.request_kwargs
 
-        async for response in self.get_async_client().chat_stream(model=self.id, messages=self._format_messages(messages), **request_kwargs):
+        async for response in self.get_async_client().chat_stream(
+            model=self.id, messages=self._format_messages(messages), **request_kwargs
+        ):
             yield response
 
     def parse_model_provider_response(self, response: ChatResponse) -> ProviderResponse:
@@ -226,7 +222,7 @@ class Cohere(Model):
         response: StreamedChatResponseV2,
         assistant_message: Message,
         stream_data: MessageData,
-        tool_use: Dict[str, Any]
+        tool_use: Dict[str, Any],
     ) -> Tuple[ModelResponse, Dict[str, Any]]:
         """
         Common handler for processing stream responses from Cohere.
@@ -242,10 +238,11 @@ class Cohere(Model):
         """
         model_response = None
 
-        if (response.type == "content-delta" and
-            response.delta.message is not None and
-            response.delta.message.content is not None):
-
+        if (
+            response.type == "content-delta"
+            and response.delta.message is not None
+            and response.delta.message.content is not None
+        ):
             # Update metrics
             assistant_message.metrics.completion_tokens += 1
             if not assistant_message.metrics.time_to_first_token:
@@ -270,57 +267,48 @@ class Cohere(Model):
             tool_use = {}
 
         elif response.type == "message-end":
-            if response.delta is not None and response.delta.usage is not None and response.delta.usage.tokens is not None:
+            if (
+                response.delta is not None
+                and response.delta.usage is not None
+                and response.delta.usage.tokens is not None
+            ):
                 self.add_usage_metrics_to_assistant_message(
                     assistant_message=assistant_message,
                     response_usage=CohereResponseUsage(
                         input_tokens=response.delta.usage.tokens.input_tokens,
                         output_tokens=response.delta.usage.tokens.output_tokens,
-                        total_tokens=response.delta.usage.tokens.input_tokens + response.delta.usage.tokens.output_tokens,
-                    )
+                        total_tokens=response.delta.usage.tokens.input_tokens
+                        + response.delta.usage.tokens.output_tokens,
+                    ),
                 )
 
         return model_response, tool_use
 
     def process_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData
+        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
     ) -> Iterator[ModelResponse]:
         """Process the synchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
         for response in self.invoke_stream(messages=messages):
             model_response, tool_use = self._handle_stream_response(
-                response=response,
-                assistant_message=assistant_message,
-                stream_data=stream_data,
-                tool_use=tool_use
+                response=response, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
             )
             if model_response is not None:
                 yield model_response
 
     async def aprocess_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData
+        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
     ) -> AsyncIterator[ModelResponse]:
         """Process the asynchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
         async for response in self.ainvoke_stream(messages=messages):
             model_response, tool_use = self._handle_stream_response(
-                response=response,
-                assistant_message=assistant_message,
-                stream_data=stream_data,
-                tool_use=tool_use
+                response=response, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
             )
             if model_response is not None:
                 yield model_response
 
-    def parse_model_provider_response_stream(
-        self, response: Any
-    ) -> Iterator[ProviderResponse]:
+    def parse_model_provider_response_stream(self, response: Any) -> Iterator[ProviderResponse]:
         pass

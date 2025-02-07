@@ -1,18 +1,20 @@
-from dataclasses import dataclass
 import json
-from typing import Any, Dict, List, Optional, Iterator
+from dataclasses import dataclass
+from typing import Any, Dict, Iterator, List, Optional
 
 from agno.models.aws.bedrock import AwsBedrock
 from agno.models.base import MessageData
 from agno.models.message import Message
-from agno.models.response import ProviderResponse, ModelResponse
+from agno.models.response import ModelResponse, ProviderResponse
 from agno.utils.log import logger
+
 
 @dataclass
 class BedrockResponseUsage:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+
 
 @dataclass
 class Claude(AwsBedrock):
@@ -230,7 +232,9 @@ class Claude(AwsBedrock):
         return provider_response
 
     # Override the base class method
-    def format_function_call_results(self, messages: List[Message], function_call_results: List[Message], tool_ids: List[str]) -> None:
+    def format_function_call_results(
+        self, messages: List[Message], function_call_results: List[Message], tool_ids: List[str]
+    ) -> None:
         """
         Format function call results.
         """
@@ -248,9 +252,10 @@ class Claude(AwsBedrock):
             logger.debug(f"Tool call responses: {fc_responses}")
             messages.append(Message(role="user", content=json.dumps(fc_responses)))
 
-
     # Override the base class method
-    def process_response_stream(self, messages: List[Message], assistant_message: Message, stream_data: MessageData) -> Iterator[ModelResponse]:
+    def process_response_stream(
+        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
+    ) -> Iterator[ModelResponse]:
         """
         Process the streaming response from the Bedrock API.
         """
@@ -321,8 +326,7 @@ class Claude(AwsBedrock):
 
                     # Update metrics
                     self.add_usage_metrics_to_assistant_message(
-                        assistant_message=assistant_message,
-                        response_usage=response_usage
+                        assistant_message=assistant_message, response_usage=response_usage
                     )
 
         if tool_ids:

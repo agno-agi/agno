@@ -125,7 +125,5 @@ class AwsBedrock(Model, ABC):
     async def ainvoke_stream(self, *args, **kwargs) -> Any:
         raise NotImplementedError(f"Async not supported on {self.name}.")
 
-    def parse_model_provider_response_stream(
-        self, response: Any
-    ) -> Iterator[ProviderResponse]:
+    def parse_model_provider_response_stream(self, response: Any) -> Iterator[ProviderResponse]:
         pass
