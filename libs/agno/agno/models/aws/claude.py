@@ -157,7 +157,7 @@ class Claude(AwsBedrock):
 
         return request_body
 
-    def parse_model_provider_response(self, response: Dict[str, Any]) -> ProviderResponse:
+    def parse_provider_response(self, response: Dict[str, Any]) -> ProviderResponse:
         """
         Parse the response from the Bedrock API.
 

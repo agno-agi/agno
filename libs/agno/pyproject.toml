@@ -39,7 +39,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
+dev = ["mypy", "pytest", "pytest-asyncio", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
 
 # Dependencies for Models
 anthropic = ["anthropic"]

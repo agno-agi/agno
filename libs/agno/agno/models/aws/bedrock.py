@@ -116,7 +116,7 @@ class AwsBedrock(Model, ABC):
         raise NotImplementedError("Please use a subclass of AwsBedrock")
 
     @abstractmethod
-    def parse_model_provider_response(self, response: Dict[str, Any]) -> ProviderResponse:
+    def parse_provider_response(self, response: Dict[str, Any]) -> ProviderResponse:
         raise NotImplementedError("Please use a subclass of AwsBedrock")
 
     async def ainvoke(self, *args, **kwargs) -> Any:
@@ -125,7 +125,7 @@ class AwsBedrock(Model, ABC):
     async def ainvoke_stream(self, *args, **kwargs) -> Any:
         raise NotImplementedError(f"Async not supported on {self.name}.")
 
-    def parse_model_provider_response_stream(
+    def parse_provider_response_delta(
         self, response: Any
     ) -> Iterator[ProviderResponse]:
         pass

@@ -452,7 +452,7 @@ class Claude(Model):
             return tool_call_prompt
         return None
 
-    def parse_model_provider_response(self, response: AnthropicMessage) -> ProviderResponse:
+    def parse_provider_response(self, response: AnthropicMessage) -> ProviderResponse:
         """
         Parse the Claude response into a ModelProviderResponse.
 
@@ -504,9 +504,9 @@ class Claude(Model):
 
         return provider_response
 
-    def parse_model_provider_response_stream(
+    def parse_provider_response_delta(
         self, response: Union[ContentBlockDeltaEvent, ContentBlockStopEvent, MessageDeltaEvent]
-    ) -> Iterator[ProviderResponse]:
+    ) -> ProviderResponse:
         """
         Parse the Claude streaming response into ModelProviderResponse objects.
 
@@ -514,16 +514,14 @@ class Claude(Model):
             response: Raw response chunk from Anthropic
 
         Returns:
-            Iterator[ProviderResponse]: Iterator of parsed response data
+            ProviderResponse: Iterator of parsed response data
         """
         provider_response = ProviderResponse()
-        has_content = False
 
         if isinstance(response, ContentBlockDeltaEvent):
             # Handle text content
             if isinstance(response.delta, TextDelta):
                 provider_response.content = response.delta.text
-                has_content = True
 
         elif isinstance(response, ContentBlockStopEvent):
             # Handle tool calls
@@ -545,13 +543,10 @@ class Claude(Model):
                         "function": function_def,
                     }
                 ]
-                has_content = True
 
         # Handle message completion and usage metrics
         elif isinstance(response, MessageStopEvent):
             if response.message.usage is not None:
                 provider_response.response_usage = response.message.usage
-                has_content = True
 
-        if has_content:
-            yield provider_response
+        return provider_response

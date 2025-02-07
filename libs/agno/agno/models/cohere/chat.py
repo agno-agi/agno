@@ -191,7 +191,7 @@ class Cohere(Model):
         async for response in self.get_async_client().chat_stream(model=self.id, messages=self._format_messages(messages), **request_kwargs):
             yield response
 
-    def parse_model_provider_response(self, response: ChatResponse) -> ProviderResponse:
+    def parse_provider_response(self, response: ChatResponse) -> ProviderResponse:
         """
         Parse the model provider response.
 
@@ -221,7 +221,7 @@ class Cohere(Model):
 
         return provider_response
 
-    def _handle_stream_response(
+    def _process_stream_response(
         self,
         response: StreamedChatResponseV2,
         assistant_message: Message,
@@ -292,7 +292,7 @@ class Cohere(Model):
         tool_use: Dict[str, Any] = {}
 
         for response in self.invoke_stream(messages=messages):
-            model_response, tool_use = self._handle_stream_response(
+            model_response, tool_use = self._process_stream_response(
                 response=response,
                 assistant_message=assistant_message,
                 stream_data=stream_data,
@@ -311,7 +311,7 @@ class Cohere(Model):
         tool_use: Dict[str, Any] = {}
 
         async for response in self.ainvoke_stream(messages=messages):
-            model_response, tool_use = self._handle_stream_response(
+            model_response, tool_use = self._process_stream_response(
                 response=response,
                 assistant_message=assistant_message,
                 stream_data=stream_data,
@@ -320,7 +320,7 @@ class Cohere(Model):
             if model_response is not None:
                 yield model_response
 
-    def parse_model_provider_response_stream(
+    def parse_provider_response_delta(
         self, response: Any
     ) -> Iterator[ProviderResponse]:
         pass

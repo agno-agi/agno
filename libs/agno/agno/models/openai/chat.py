@@ -393,7 +393,7 @@ class OpenAIChat(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_model_provider_response(
+    def parse_provider_response(
         self, response: Union[ChatCompletion, ParsedChatCompletion]
     ) -> ProviderResponse:
         """
@@ -460,32 +460,29 @@ class OpenAIChat(Model):
 
         return provider_response
 
-    def parse_model_provider_response_stream(
-        self, response: ChatCompletionChunk
-    ) -> Iterator[ProviderResponse]:
+    def parse_provider_response_delta(
+        self, response_delta: ChatCompletionChunk
+    ) -> Optional[ProviderResponse]:
         """
         Parse the OpenAI streaming response into ModelProviderResponse objects.
 
         Args:
-            response: Raw response chunk from OpenAI
+            response_delta: Raw response chunk from OpenAI
 
         Returns:
-            Iterator[ProviderResponse]: Iterator of parsed response data
+            ProviderResponse: Iterator of parsed response data
         """
-        if response.choices and len(response.choices) > 0:
-            provider_response = ProviderResponse()
-            delta: ChoiceDelta = response.choices[0].delta
-            has_content = False
+        provider_response = ProviderResponse()
+        if response_delta.choices and len(response_delta.choices) > 0:
+            delta: ChoiceDelta = response_delta.choices[0].delta
 
             # Add content
             if delta.content is not None:
                 provider_response.content = delta.content
-                has_content = True
 
             # Add tool calls
             if delta.tool_calls is not None:
                 provider_response.tool_calls = delta.tool_calls
-                has_content = True
 
             # Add audio if present
             if hasattr(delta, "audio") and delta.audio is not None:
@@ -496,14 +493,11 @@ class OpenAIChat(Model):
                         expires_at=delta.audio.expires_at,
                         transcript=delta.audio.transcript,
                     )
-                    has_content = True
                 except Exception as e:
                     logger.warning(f"Error processing audio: {e}")
 
-            # Add usage metrics if present
-            if response.usage is not None:
-                provider_response.response_usage = response.usage
-                has_content = True
+        # Add usage metrics if present
+        if response_delta.usage is not None:
+            provider_response.response_usage = response_delta.usage
 
-            if has_content:
-                yield provider_response
+        return provider_response

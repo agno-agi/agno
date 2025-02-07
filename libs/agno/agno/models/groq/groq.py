@@ -319,7 +319,7 @@ class Groq(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_model_provider_response(
+    def parse_provider_response(
         self, response: ChatCompletion
     ) -> ProviderResponse:
         """
@@ -357,9 +357,9 @@ class Groq(Model):
 
         return provider_response
 
-    def parse_model_provider_response_stream(
+    def parse_provider_response_delta(
         self, response: ChatCompletionChunk
-    ) -> Iterator[ProviderResponse]:
+    ) -> ProviderResponse:
         """
         Parse the Groq streaming response into ModelProviderResponse objects.
 
@@ -367,27 +367,22 @@ class Groq(Model):
             response: Raw response chunk from Groq
 
         Returns:
-            Iterator[ProviderResponse]: Iterator of parsed response data
+            ProviderResponse: Iterator of parsed response data
         """
+        provider_response = ProviderResponse()
         if len(response.choices) > 0:
-            provider_response = ProviderResponse()
             delta: ChoiceDelta = response.choices[0].delta
-            has_content = False
 
             # Add content
             if delta.content is not None:
                 provider_response.content = delta.content
-                has_content = True
 
             # Add tool calls
             if delta.tool_calls is not None:
                 provider_response.tool_calls = delta.tool_calls
-                has_content = True
 
-            # Add usage metrics if present
-            if response.usage is not None:
-                provider_response.response_usage = response.usage
-                has_content = True
+        # Add usage metrics if present
+        if response.usage is not None:
+            provider_response.response_usage = response.usage
 
-            if has_content:
-                yield provider_response
+        return provider_response
