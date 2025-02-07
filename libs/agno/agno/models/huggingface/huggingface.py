@@ -192,8 +192,8 @@ class HuggingFace(Model):
             _request_params["top_logprobs"] = self.top_logprobs
         if self.top_p is not None:
             _request_params["top_p"] = self.top_p
-        if self.tools is not None:
-            _request_params["tools"] = self.tools
+        if self._tools is not None:
+            _request_params["tools"] = self._tools
             if self.tool_choice is None:
                 _request_params["tool_choice"] = "auto"
             else:
@@ -224,9 +224,9 @@ class HuggingFace(Model):
                 "temperature": self.temperature,
                 "top_logprobs": self.top_logprobs,
                 "top_p": self.top_p,
-                "tools": self.tools,
+                "tools": self._tools,
                 "tool_choice": self.tool_choice
-                if (self.tools is not None and self.tool_choice is not None)
+                if (self._tools is not None and self.tool_choice is not None)
                 else "auto",
             }
         )
