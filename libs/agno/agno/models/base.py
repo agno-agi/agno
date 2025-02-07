@@ -1,13 +1,13 @@
 import asyncio
 import collections.abc
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from dataclasses import dataclass, field
-from pathlib import Path
 from types import GeneratorType
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 from agno.exceptions import AgentRunException
-from agno.media import Audio, AudioOutput, Image
+from agno.media import AudioOutput
 from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ProviderResponse
 from agno.tools.function import Function, FunctionCall
@@ -515,14 +515,10 @@ class Model(ABC):
                 model_response=model_response,
             )
 
-            for function_call_response in self.run_function_calls(
+            for _ in self.run_function_calls(
                 function_calls=function_calls_to_run, function_call_results=function_call_results
             ):
-                if (
-                    function_call_response.event == ModelResponseEvent.tool_call_completed.value
-                    and function_call_response.tool_calls is not None
-                ):
-                    model_response.tool_calls.extend(function_call_response.tool_calls)  # type: ignore  # model_response.tool_calls are initialized before calling this method
+                pass
 
             self.format_function_call_results(messages=messages, function_call_results=function_call_results, **kwargs)
 
@@ -554,14 +550,10 @@ class Model(ABC):
                 model_response=model_response,
             )
 
-            async for function_call_response in self.arun_function_calls(
+            async for _ in self.arun_function_calls(
                 function_calls=function_calls_to_run, function_call_results=function_call_results
             ):
-                if (
-                    function_call_response.event == ModelResponseEvent.tool_call_completed.value
-                    and function_call_response.tool_calls is not None
-                ):
-                    model_response.tool_calls.extend(function_call_response.tool_calls)  # type: ignore  # model_response.tool_calls are initialized before calling this method
+                pass
 
             self.format_function_call_results(messages=messages, function_call_results=function_call_results, **kwargs)
 
@@ -849,14 +841,11 @@ class Model(ABC):
 
         # Add tool calls to assistant message
         if model_response.tool_calls is not None and len(model_response.tool_calls) > 0:
-            try:
-                assistant_message.tool_calls = [t.model_dump() for t in model_response.tool_calls]
-            except Exception as e:
-                logger.warning(f"Error processing tool calls: {e}")
+            assistant_message.tool_calls = deepcopy(model_response.tool_calls)
 
         # Add audio to assistant message
         if model_response.audio is not None:
-            assistant_message.audio_output = model_response.audio
+            assistant_message.audio_output = model_response.audio.model_copy()
 
         # Add usage metrics if provided
         if model_response.response_usage is not None:

@@ -22,7 +22,7 @@ class ModelResponse:
     content: Optional[str] = None
     parsed: Optional[Any] = None
     audio: Optional[AudioOutput] = None
-    tool_calls: Optional[List[Any]] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
     response_usage: Optional[Any] = None
     extra: Optional[Dict[str, Any]] = field(default_factory=dict)
     event: str = ModelResponseEvent.assistant_response.value
