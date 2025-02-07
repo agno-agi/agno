@@ -851,7 +851,7 @@ class Model(ABC):
 
     def update_stream_data_and_assistant_message(
         self, stream_data: MessageData, assistant_message: Message, model_response: ModelResponse
-    ) -> ModelResponse:
+    ) -> Iterator[ModelResponse]:
         """Update the stream data and assistant message with the model response."""
 
         # Update metrics
@@ -859,18 +859,22 @@ class Model(ABC):
         if not assistant_message.metrics.time_to_first_token:
             assistant_message.metrics.set_time_to_first_token()
 
+        should_yield = False
         # Update stream_data content
         if model_response.content is not None:
             stream_data.response_content += model_response.content
+            should_yield = True
 
         # Update stream_data tool calls
         if model_response.tool_calls is not None:
             if stream_data.response_tool_calls is None:
                 stream_data.response_tool_calls = []
             stream_data.response_tool_calls.extend(model_response.tool_calls)
+            should_yield = True
 
         if model_response.audio is not None:
             stream_data.response_audio = model_response.audio
+            should_yield = True
 
         if model_response.extra is not None:
             stream_data.extra.update(model_response.extra)
@@ -879,6 +883,9 @@ class Model(ABC):
             self.add_usage_metrics_to_assistant_message(
                 assistant_message=assistant_message, response_usage=model_response.response_usage
             )
+
+        if should_yield:
+            yield model_response
 
     def process_response_stream(
         self, messages: List[Message], assistant_message: Message, stream_data: MessageData
@@ -889,8 +896,7 @@ class Model(ABC):
         for response_delta in self.invoke_stream(messages=messages):
             model_response_delta = self.parse_provider_response_delta(response_delta)
             if model_response_delta:
-                yield model_response_delta
-                self.update_stream_data_and_assistant_message(
+                yield from self.update_stream_data_and_assistant_message(
                     stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
                 )
 
@@ -975,10 +981,10 @@ class Model(ABC):
         async for response_delta in await self.ainvoke_stream(messages=messages):
             model_response_delta = self.parse_provider_response_delta(response_delta)
             if model_response_delta:
-                yield model_response_delta
-                self.update_stream_data_and_assistant_message(
+                for model_response in self.update_stream_data_and_assistant_message(
                     stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
-                )
+                ):
+                    yield model_response
 
     async def aresponse_stream(self, messages: List[Message]) -> AsyncIterator[ModelResponse]:
         """

@@ -507,7 +507,7 @@ class OpenAIChat(Model):
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> Optional[ModelResponse]:
+    def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
         """
         Parse the OpenAI streaming response into ModelProviderResponse objects.
 

@@ -6,7 +6,7 @@ from agno.aws.api_client import AwsApiClient  # type: ignore
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.response import ProviderResponse
+from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
 try:
@@ -121,7 +121,7 @@ class AwsBedrock(Model, ABC):
         raise NotImplementedError("Please use a subclass of AwsBedrock")
 
     @abstractmethod
-    def parse_provider_response(self, response: Dict[str, Any]) -> ProviderResponse:
+    def parse_provider_response(self, response: Dict[str, Any]) -> ModelResponse:
         raise NotImplementedError("Please use a subclass of AwsBedrock")
 
     async def ainvoke(self, *args, **kwargs) -> Any:
@@ -130,5 +130,5 @@ class AwsBedrock(Model, ABC):
     async def ainvoke_stream(self, *args, **kwargs) -> Any:
         raise NotImplementedError(f"Async not supported on {self.name}.")
 
-    def parse_provider_response_delta(self, response: Any) -> Iterator[ProviderResponse]:
+    def parse_provider_response_delta(self, response: Any) -> ModelResponse:
         pass
