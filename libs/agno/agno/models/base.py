@@ -349,7 +349,10 @@ class Model(ABC):
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
-            model_response.content += assistant_message.get_content_string()
+            if model_response.content is None:
+                model_response.content = assistant_message.get_content_string()
+            else:
+                model_response.content += assistant_message.get_content_string()
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if provider_response.extra is not None:
@@ -394,7 +397,7 @@ class Model(ABC):
 
         # Add usage metrics if provided
         if provider_response.response_usage is not None:
-            self.add_usage_metrics_to_assistant_message(
+            self._add_usage_metrics_to_assistant_message(
                 assistant_message=assistant_message, response_usage=provider_response.response_usage
             )
 
@@ -491,7 +494,7 @@ class Model(ABC):
         """
         Process a streaming response from the model.
         """
-        async for response_delta in await self.ainvoke_stream(messages=messages):
+        async for response_delta in self.ainvoke_stream(messages=messages):
             model_response_delta = self.parse_provider_response_delta(response_delta)
             if model_response_delta:
                 for model_response in self._populate_stream_data_and_assistant_message(
@@ -604,7 +607,7 @@ class Model(ABC):
             stream_data.extra.update(model_response.extra)
 
         if model_response.response_usage is not None:
-            self.add_usage_metrics_to_assistant_message(
+            self._add_usage_metrics_to_assistant_message(
                 assistant_message=assistant_message, response_usage=model_response.response_usage
             )
 
@@ -956,7 +959,7 @@ class Model(ABC):
         if len(function_call_results) > 0:
             messages.extend(function_call_results)
 
-    def add_usage_metrics_to_assistant_message(self, assistant_message: Message, response_usage: Any) -> None:
+    def _add_usage_metrics_to_assistant_message(self, assistant_message: Message, response_usage: Any) -> None:
         """
         Add usage metrics from the model provider to the assistant message.
 

@@ -284,12 +284,14 @@ class Groq(Model):
             Any: An asynchronous iterator of chat completion chunks.
         """
         try:
-            return await self.get_async_client().chat.completions.create(
+            stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )
+            async for chunk in stream:
+                yield chunk
         except Exception as e:
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e

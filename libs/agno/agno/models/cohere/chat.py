@@ -292,7 +292,7 @@ class Cohere(Model):
                 and response.delta.usage is not None
                 and response.delta.usage.tokens is not None
             ):
-                self.add_usage_metrics_to_assistant_message(
+                self._add_usage_metrics_to_assistant_message(
                     assistant_message=assistant_message,
                     response_usage=CohereResponseUsage(
                         input_tokens=response.delta.usage.tokens.input_tokens,

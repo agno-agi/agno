@@ -325,7 +325,7 @@ class Claude(AwsBedrock):
                     )
 
                     # Update metrics
-                    self.add_usage_metrics_to_assistant_message(
+                    self._add_usage_metrics_to_assistant_message(
                         assistant_message=assistant_message, response_usage=response_usage
                     )
 

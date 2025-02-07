@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 import json
 from dataclasses import dataclass
 from os import getenv
@@ -393,7 +394,7 @@ class Claude(Model):
             logger.error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> Any:
+    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """
         Stream an asynchronous response from the Anthropic API.
 
@@ -406,16 +407,13 @@ class Claude(Model):
         try:
             chat_messages, system_message = _format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message)
-
-            return (
-                await self.get_async_client()
-                .messages.stream(
-                    model=self.id,
-                    messages=chat_messages,  # type: ignore
-                    **request_kwargs,
-                )
-                .__aenter__()
-            )
+            async with self.get_async_client().messages.stream(
+                model=self.id,
+                messages=chat_messages,  # type: ignore
+                **request_kwargs,
+            ) as stream:
+                async for chunk in stream:
+                    yield chunk
         except APIConnectionError as e:
             logger.error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e

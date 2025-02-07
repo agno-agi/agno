@@ -333,7 +333,8 @@ class MistralChat(Model):
             )
             if stream is None:
                 raise ValueError("Chat stream returned None")
-            return stream
+            async for chunk in stream:
+                yield chunk
         except HTTPValidationError as e:
             logger.error(f"HTTPValidationError from Mistral: {e}")
             raise ModelProviderError(e, self.name, self.id) from e

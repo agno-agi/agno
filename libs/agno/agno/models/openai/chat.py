@@ -384,7 +384,8 @@ class OpenAIChat(Model):
                 stream_options={"include_usage": True},
                 **self.request_kwargs,
             )
-            return async_stream
+            async for chunk in async_stream:
+                yield chunk
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
             raise ModelProviderError(e, self.name, self.id) from e
