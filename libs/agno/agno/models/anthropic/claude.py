@@ -28,6 +28,12 @@ try:
 except (ModuleNotFoundError, ImportError):
     raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
 
+ROLE_MAP = {
+    "system": "system",
+    "user": "user",
+    "assistant": "assistant",
+    "tool": "user",
+}
 
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     """
@@ -117,24 +123,24 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
                         content.append(image_content)
 
         # Handle tool calls from history
-        elif message.role == "assistant" and isinstance(message.content, str) and message.tool_calls:
-            if message.content:
-                content = [TextBlock(text=message.content, type="text")]
-            else:
-                content = []
-            for tool_call in message.tool_calls:
-                content.append(
-                    ToolUseBlock(
-                        id=tool_call["id"],
-                        input=json.loads(tool_call["function"]["arguments"])
-                        if "arguments" in tool_call["function"]
-                        else {},
-                        name=tool_call["function"]["name"],
-                        type="tool_use",
-                    )
-                )
+        elif message.role == "assistant":
+            content = []
+            if isinstance(message.content, str) and message.content:
+                content.append(TextBlock(text=message.content, type="text"))
+            if message.tool_calls:
+                for tool_call in message.tool_calls:
+                    content.append(
+                        ToolUseBlock(
+                            id=tool_call["id"],
+                            input=json.loads(tool_call["function"]["arguments"])
+                            if "arguments" in tool_call["function"]
+                            else {},
+                            name=tool_call["function"]["name"],
+                            type="tool_use",
+                            )
+                        )
 
-        chat_messages.append({"role": message.role, "content": content})  # type: ignore
+        chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
     return chat_messages, " ".join(system_messages)
 
 
@@ -165,6 +171,7 @@ class Claude(Model):
     # Anthropic clients
     client: Optional[AnthropicClient] = None
     async_client: Optional[AsyncAnthropicClient] = None
+
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}

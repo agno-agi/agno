@@ -3,7 +3,7 @@ import collections.abc
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import GeneratorType
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Union, Literal
 
 from agno.exceptions import AgentRunException
 from agno.media import AudioOutput
@@ -17,7 +17,7 @@ from agno.utils.tools import get_function_call_for_tool_call
 
 @dataclass
 class MessageData:
-    response_role: Optional[str] = None
+    response_role: Optional[Literal["system", "user", "assistant", "tool"]] = None
     response_content: Any = ""
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     response_audio: Optional[AudioOutput] = None
@@ -78,11 +78,6 @@ class Model(ABC):
     tool_message_role: str = "tool"
     # The role of the assistant message.
     assistant_message_role: str = "assistant"
-    # Whether to override the system message role to the the system_message_role.
-    # This is used for OpenAI models to map the "system" role to "developer"
-    override_system_role: bool = False
-    # The role to map the system message to.
-    system_message_role: str = "system"
 
     def __post_init__(self):
         if self.provider is None and self.name is not None:

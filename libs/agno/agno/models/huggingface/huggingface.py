@@ -6,12 +6,14 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 import httpx
 from pydantic import BaseModel
 
+from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
 try:
+    from huggingface_hub.errors import InferenceTimeoutError
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionOutput,
@@ -231,11 +233,16 @@ class HuggingFace(Model):
         Returns:
             ChatCompletionOutput: The chat completion response from the Inference Client.
         """
-        return self.get_client().chat.completions.create(
-            model=self.id,
-            messages=[m.to_dict() for m in messages],
-            **self.request_kwargs,
-        )
+        try:
+            return self.get_client().chat.completions.create(
+                model=self.id,
+                messages=[m.to_dict() for m in messages],
+                **self.request_kwargs,
+            )
+        except InferenceTimeoutError as e:
+            logger.error(f"Error invoking HuggingFace model: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+
 
     async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletionOutput]:
         """
@@ -247,12 +254,17 @@ class HuggingFace(Model):
         Returns:
             ChatCompletionOutput: The chat completion response from the Inference Client.
         """
-        async with self.get_async_client() as client:
-            return await client.chat.completions.create(
-                model=self.id,
-                messages=[m.to_dict() for m in messages],
-                **self.request_kwargs,
-            )
+        try:
+            async with self.get_async_client() as client:
+                return await client.chat.completions.create(
+                    model=self.id,
+                    messages=[m.to_dict() for m in messages],
+                    **self.request_kwargs,
+                )
+        except InferenceTimeoutError as e:
+            logger.error(f"Error invoking HuggingFace model: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionStreamOutput]:
         """
@@ -264,13 +276,17 @@ class HuggingFace(Model):
         Returns:
             Iterator[ChatCompletionStreamOutput]: An iterator of chat completion delta.
         """
-        yield from self.get_client().chat.completions.create(
-            model=self.id,
-            messages=[m.to_dict() for m in messages],  # type: ignore
-            stream=True,
-            stream_options={"include_usage": True},
-            **self.request_kwargs,
-        )  # type: ignore
+        try:
+            yield from self.get_client().chat.completions.create(
+                model=self.id,
+                messages=[m.to_dict() for m in messages],  # type: ignore
+                stream=True,
+                stream_options={"include_usage": True},
+                **self.request_kwargs,
+            )  # type: ignore
+        except InferenceTimeoutError as e:
+            logger.error(f"Error invoking HuggingFace model: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """
@@ -282,16 +298,20 @@ class HuggingFace(Model):
         Returns:
             AsyncIterator[Any]: An asynchronous iterator of chat completion chunks.
         """
-        async with self.get_async_client() as client:
-            stream = await client.chat.completions.create(
-                model=self.id,
-                messages=[m.to_dict() for m in messages],
-                stream=True,
-                stream_options={"include_usage": True},
-                **self.request_kwargs,
-                )
-            async for chunk in stream:
-                yield chunk
+        try:
+            async with self.get_async_client() as client:
+                stream = await client.chat.completions.create(
+                    model=self.id,
+                    messages=[m.to_dict() for m in messages],
+                    stream=True,
+                    stream_options={"include_usage": True},
+                    **self.request_kwargs,
+                    )
+                async for chunk in stream:
+                    yield chunk
+        except InferenceTimeoutError as e:
+            logger.error(f"Error invoking HuggingFace model: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
     
     # Override base method
     @staticmethod

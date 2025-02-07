@@ -12,7 +12,7 @@ def test_basic():
     response: RunResponse = agent.run("Share a 2 sentence horror story")
 
     assert len(response.messages) == 3
-    assert [m.role for m in response.messages] == ["developer", "user", "assistant"]
+    assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
 
 def test_basic_stream():
@@ -34,12 +34,18 @@ def test_basic_metrics():
     response = agent.run("Share a 2 sentence horror story")
 
     # Test metrics structure and types
-    assert isinstance(response.metrics["completion_tokens"], int)
-    assert isinstance(response.metrics["input_tokens"], int)
-    assert isinstance(response.metrics["total_tokens"], int)
-    assert response.metrics["total_tokens"] == response.metrics["completion_tokens"] + response.metrics["input_tokens"]
-    assert isinstance(response.metrics["additional_metrics"], list)
+    input_tokens = response.metrics["input_tokens"]
+    output_tokens = response.metrics["output_tokens"]
+    total_tokens = response.metrics["total_tokens"]
 
+    assert isinstance(input_tokens[0], int)
+    assert input_tokens[0] > 0
+    assert isinstance(output_tokens[0], int)
+    assert output_tokens[0] > 0
+    assert isinstance(total_tokens[0], int)
+    assert total_tokens[0] > 0
+    assert total_tokens[0] == input_tokens[0] + output_tokens[0]
+    assert False
 
 def test_tool_use():
     agent = Agent(
@@ -76,7 +82,7 @@ def test_with_memory():
 
     # Verify memories were created
     assert len(agent.memory.messages) == 5
-    assert [m.role for m in agent.memory.messages] == ["developer", "user", "assistant", "user", "assistant"]
+    assert [m.role for m in agent.memory.messages] == ["system", "user", "assistant", "user", "assistant"]
 
     # TODO: Assert metrics
 

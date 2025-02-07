@@ -631,7 +631,7 @@ class Agent:
         # Add the system message to the memory
         if run_messages.system_message is not None:
             self.memory.add_system_message(
-                run_messages.system_message, system_message_role=self.get_system_message_role()
+                run_messages.system_message, system_message_role=self.system_message_role
             )
 
         # Build a list of messages that should be added to the AgentMemory
@@ -1063,7 +1063,7 @@ class Agent:
         # Add the system message to the memory
         if run_messages.system_message is not None:
             self.memory.add_system_message(
-                run_messages.system_message, system_message_role=self.get_system_message_role()
+                run_messages.system_message, system_message_role=self.system_message_role
             )
 
         # Build a list of messages that should be added to the AgentMemory
@@ -1799,15 +1799,6 @@ class Agent:
         )
         return self._formatter.format(msg, **format_variables)  # type: ignore
 
-    def get_system_message_role(self) -> str:
-        """Return the role for the system message
-        The role may be updated by the model if override_system_role is True.
-        """
-        self.model = cast(Model, self.model)
-        if self.model.override_system_role and self.system_message_role == "system":
-            return self.model.system_message_role
-        return self.system_message_role
-
     def get_system_message(self) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -1838,7 +1829,7 @@ class Agent:
             if self.response_model is not None and not self.structured_outputs:
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
-            return Message(role=self.get_system_message_role(), content=sys_message_content)
+            return Message(role=self.system_message_role, content=sys_message_content)
 
         # 2. If create_default_system_message is False, return None.
         if not self.create_default_system_message:
@@ -1980,7 +1971,7 @@ class Agent:
 
         # Return the system message
         return (
-            Message(role=self.get_system_message_role(), content=system_message_content.strip())
+            Message(role=self.system_message_role, content=system_message_content.strip())
             if system_message_content
             else None
         )
@@ -2173,7 +2164,7 @@ class Agent:
             from copy import deepcopy
 
             history: List[Message] = self.memory.get_messages_from_last_n_runs(
-                last_n=self.num_history_responses, skip_role=self.get_system_message_role()
+                last_n=self.num_history_responses, skip_role=self.system_message_role
             )
             if len(history) > 0:
                 # Create a deep copy of the history messages to avoid modifying the original messages
@@ -2623,7 +2614,7 @@ class Agent:
         gen_session_name_prompt += "\n\nConversation Name: "
 
         system_message = Message(
-            role=self.get_system_message_role(),
+            role=self.system_message_role,
             content="Please provide a suitable name for this conversation in maximum 5 words. "
             "Remember, do not exceed 5 words.",
         )

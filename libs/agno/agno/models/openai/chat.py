@@ -30,6 +30,7 @@ except ModuleNotFoundError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
 
+
 @dataclass
 class OpenAIChat(Model):
     """
@@ -84,10 +85,14 @@ class OpenAIChat(Model):
     # Internal parameters. Not used for API requests
     # Whether to use the structured outputs with this Model.
     structured_outputs: bool = False
-    # Whether to override the system role.
-    override_system_role: bool = True
-    # The role to map the system message to.
-    system_message_role: str = "developer"
+
+    # The role to map the message role to.
+    role_map = {
+        "system": "developer",
+        "user": "user",
+        "assistant": "assistant",
+        "tool": "tool",
+    }
 
     def _get_client_params(self) -> Dict[str, Any]:
         # Fetch API key from env if not already set
@@ -256,7 +261,9 @@ class OpenAIChat(Model):
         if message.tool_calls is not None and len(message.tool_calls) == 0:
             message.tool_calls = None
 
-        return message.to_dict()
+        message_dict = message.to_dict()
+        message_dict["role"] = self.role_map[message_dict["role"]]
+        return message_dict
 
     def invoke(self, messages: List[Message]) -> Union[ChatCompletion, ParsedChatCompletion]:
         """
