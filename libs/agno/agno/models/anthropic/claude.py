@@ -12,17 +12,16 @@ from agno.utils.log import logger
 
 try:
     from anthropic import Anthropic as AnthropicClient
+    from anthropic import APIConnectionError, APIStatusError, RateLimitError
     from anthropic import AsyncAnthropic as AsyncAnthropicClient
-    from anthropic import APIConnectionError, RateLimitError, APIStatusError
-
     from anthropic.types import (
         ContentBlockDeltaEvent,
-        MessageStopEvent,
+        ContentBlockStopEvent,
         MessageDeltaEvent,
+        MessageStopEvent,
         TextBlock,
         TextDelta,
         ToolUseBlock,
-        ContentBlockStopEvent,
     )
     from anthropic.types import Message as AnthropicMessage
 except (ModuleNotFoundError, ImportError):
@@ -335,11 +334,15 @@ class Claude(Model):
         request_kwargs = self._prepare_request_kwargs(system_message)
 
         try:
-            return self.get_client().messages.stream(
-                model=self.id,
-                messages=chat_messages,  # type: ignore
-                **request_kwargs,
-            ).__enter__()
+            return (
+                self.get_client()
+                .messages.stream(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
+                )
+                .__enter__()
+            )
         except APIConnectionError as e:
             logger.error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
@@ -404,11 +407,15 @@ class Claude(Model):
             chat_messages, system_message = _format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message)
 
-            return await self.get_async_client().messages.stream(
-                model=self.id,
-                messages=chat_messages,  # type: ignore
-                **request_kwargs,
-            ).__aenter__()
+            return (
+                await self.get_async_client()
+                .messages.stream(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
+                )
+                .__aenter__()
+            )
         except APIConnectionError as e:
             logger.error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e

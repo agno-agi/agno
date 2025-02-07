@@ -1,6 +1,7 @@
 """Run `pip install duckduckgo-search` to install dependencies."""
 
 import asyncio
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools

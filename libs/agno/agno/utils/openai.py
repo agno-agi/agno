@@ -1,7 +1,7 @@
 from pathlib import Path
-from typing import Sequence, Any, Dict, Optional, List, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
-from agno.media import Image, Audio
+from agno.media import Audio, Image
 from agno.models.message import Message
 from agno.utils.log import logger
 

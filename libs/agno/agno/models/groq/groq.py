@@ -232,7 +232,6 @@ class Groq(Model):
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
 
-
     async def ainvoke(self, messages: List[Message]) -> ChatCompletion:
         """
         Sends an asynchronous chat completion request to the Groq API.
@@ -252,7 +251,6 @@ class Groq(Model):
         except Exception as e:
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
-
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
         """
@@ -275,7 +273,6 @@ class Groq(Model):
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
 
-
     async def ainvoke_stream(self, messages: List[Message]) -> Any:
         """
         Sends an asynchronous streaming chat completion request to the Groq API.
@@ -285,7 +282,7 @@ class Groq(Model):
 
         Returns:
             Any: An asynchronous iterator of chat completion chunks.
-        """ 
+        """
         try:
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
@@ -296,7 +293,6 @@ class Groq(Model):
         except Exception as e:
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
-
 
     # Override base method
     @staticmethod

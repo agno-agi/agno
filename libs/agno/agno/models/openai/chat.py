@@ -12,12 +12,12 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
-from agno.utils.openai import add_images_to_message, add_audio_to_message
+from agno.utils.openai import add_audio_to_message, add_images_to_message
 
 try:
+    from openai import APIConnectionError, APIStatusError, RateLimitError
     from openai import AsyncOpenAI as AsyncOpenAIClient
     from openai import OpenAI as OpenAIClient
-    from openai import RateLimitError, APIConnectionError, APIStatusError
     from openai.types.chat import ChatCompletionAudio
     from openai.types.chat.chat_completion import ChatCompletion
     from openai.types.chat.chat_completion_chunk import (
@@ -232,7 +232,6 @@ class OpenAIChat(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
-
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """
         Format a message into the format expected by OpenAI.
@@ -440,9 +439,7 @@ class OpenAIChat(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(
-        self, response: Union[ChatCompletion, ParsedChatCompletion]
-    ) -> ModelResponse:
+    def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion]) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
 
@@ -510,9 +507,7 @@ class OpenAIChat(Model):
 
         return model_response
 
-    def parse_provider_response_delta(
-        self, response_delta: ChatCompletionChunk
-    ) -> Optional[ModelResponse]:
+    def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> Optional[ModelResponse]:
         """
         Parse the OpenAI streaming response into ModelProviderResponse objects.
 

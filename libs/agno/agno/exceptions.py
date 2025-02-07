@@ -37,6 +37,7 @@ class StopAgentRun(AgentRunException):
             exc, user_message=user_message, agent_message=agent_message, messages=messages, stop_execution=True
         )
 
+
 class ModelProviderError(Exception):
     """Exception raised when a model provider returns an error."""
 
