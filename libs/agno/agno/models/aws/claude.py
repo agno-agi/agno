@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Iterator
 from agno.models.aws.bedrock import AwsBedrock
 from agno.models.base import MessageData
 from agno.models.message import Message
-from agno.models.response import ProviderResponse, ModelResponse
+from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
 @dataclass
@@ -157,7 +157,7 @@ class Claude(AwsBedrock):
 
         return request_body
 
-    def parse_provider_response(self, response: Dict[str, Any]) -> ProviderResponse:
+    def parse_provider_response(self, response: Dict[str, Any]) -> ModelResponse:
         """
         Parse the response from the Bedrock API.
 
@@ -165,9 +165,9 @@ class Claude(AwsBedrock):
             response (Dict[str, Any]): The response from the Bedrock API.
 
         Returns:
-            ProviderResponse: The parsed response.
+            ModelResponse: The parsed response.
         """
-        provider_response = ProviderResponse()
+        model_response = ModelResponse()
 
         # Extract message from output
         if "output" in response and "message" in response["output"]:
@@ -175,19 +175,19 @@ class Claude(AwsBedrock):
 
             # Add role
             if "role" in message:
-                provider_response.role = message["role"]
+                model_response.role = message["role"]
 
             # Extract and join text content from content list
             if "content" in message:
                 content = message["content"]
                 if isinstance(content, list) and content:
                     text_content = [item.get("text", "") for item in content if "text" in item]
-                    provider_response.content = "\n".join(text_content)
+                    model_response.content = "\n".join(text_content)
 
         # Add usage metrics
         if "usage" in response:
             # This ensures that the usage can be parsed upstream
-            provider_response.response_usage = BedrockResponseUsage(
+            model_response.response_usage = BedrockResponseUsage(
                 input_tokens=response.get("usage", {}).get("inputTokens", 0),
                 output_tokens=response.get("usage", {}).get("outputTokens", 0),
                 total_tokens=response.get("usage", {}).get("totalTokens", 0),
@@ -222,12 +222,12 @@ class Claude(AwsBedrock):
                             }
                         )
             if tool_calls:
-                provider_response.tool_calls = tool_calls
+                model_response.tool_calls = tool_calls
             if tool_requests:
-                provider_response.content = tool_requests[0]["text"]
-                provider_response.extra["tool_ids"] = tool_ids
+                model_response.content = tool_requests[0]["text"]
+                model_response.extra["tool_ids"] = tool_ids
 
-        return provider_response
+        return model_response
 
     # Override the base class method
     def format_function_call_results(self, messages: List[Message], function_call_results: List[Message], tool_ids: List[str]) -> None:

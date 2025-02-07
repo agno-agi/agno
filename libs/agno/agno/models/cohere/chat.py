@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple
 from agno.exceptions import ModelProviderError
 from agno.models.base import MessageData, Model
 from agno.models.message import Message
-from agno.models.response import ModelResponse, ProviderResponse
+from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
 try:
@@ -201,7 +201,7 @@ class Cohere(Model):
             AsyncIterator[StreamedChatResponseV2]: An async iterator of streamed chat responses.
         """
         request_kwargs = self.request_kwargs
-    
+
         try:
             async for response in self.get_async_client().chat_stream(model=self.id, messages=self._format_messages(messages), **request_kwargs):
                 yield response
@@ -209,35 +209,35 @@ class Cohere(Model):
             logger.error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
 
-    def parse_provider_response(self, response: ChatResponse) -> ProviderResponse:
+    def parse_provider_response(self, response: ChatResponse) -> ModelResponse:
         """
         Parse the model provider response.
 
         Args:
             response (ChatResponse): The response from the Cohere API.
         """
-        provider_response = ProviderResponse()
+        model_response = ModelResponse()
 
-        provider_response.role = response.message.role
+        model_response.role = response.message.role
 
         response_message = response.message
         if response_message.content is not None:
             full_content = ""
             for item in response_message.content:
                 full_content += item.text
-            provider_response.content = full_content
+            model_response.content = full_content
 
         if response_message.tool_calls is not None:
-            provider_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
+            model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
 
         if response.usage is not None and response.usage.tokens is not None:
-            provider_response.response_usage = CohereResponseUsage(
+            model_response.response_usage = CohereResponseUsage(
                 input_tokens=int(response.usage.tokens.input_tokens) or 0,
                 output_tokens=int(response.usage.tokens.output_tokens) or 0,
                 total_tokens=int(response.usage.tokens.input_tokens + response.usage.tokens.output_tokens) or 0,
             )
 
-        return provider_response
+        return model_response
 
     def _process_stream_response(
         self,
@@ -340,5 +340,5 @@ class Cohere(Model):
 
     def parse_provider_response_delta(
         self, response: Any
-    ) -> Iterator[ProviderResponse]:
+    ) -> Iterator[ModelResponse]:
         pass

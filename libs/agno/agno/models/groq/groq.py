@@ -7,7 +7,7 @@ import httpx
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.response import ProviderResponse
+from agno.models.response import ModelResponse
 from agno.utils.log import logger
 from agno.utils.openai import add_images_to_message
 
@@ -341,68 +341,68 @@ class Groq(Model):
 
     def parse_provider_response(
         self, response: ChatCompletion
-    ) -> ProviderResponse:
+    ) -> ModelResponse:
         """
-        Parse the Groq response into a ModelProviderResponse.
+        Parse the Groq response into a ModelResponse.
 
         Args:
             response: Raw response from Groq
 
         Returns:
-            ProviderResponse: Parsed response data
+            ModelResponse: Parsed response data
         """
-        provider_response = ProviderResponse()
+        model_response = ModelResponse()
 
         # Get response message
         response_message = response.choices[0].message
 
         # Add role
         if response_message.role is not None:
-            provider_response.role = response_message.role
+            model_response.role = response_message.role
 
         # Add content
         if response_message.content is not None:
-            provider_response.content = response_message.content
+            model_response.content = response_message.content
 
         # Add tool calls
         if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
             try:
-                provider_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
+                model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
             except Exception as e:
                 logger.warning(f"Error processing tool calls: {e}")
 
         # Add usage metrics if present
         if response.usage is not None:
-            provider_response.response_usage = response.usage
+            model_response.response_usage = response.usage
 
-        return provider_response
+        return model_response
 
     def parse_provider_response_delta(
         self, response: ChatCompletionChunk
-    ) -> ProviderResponse:
+    ) -> ModelResponse:
         """
-        Parse the Groq streaming response into ModelProviderResponse objects.
+        Parse the Groq streaming response into ModelResponse objects.
 
         Args:
             response: Raw response chunk from Groq
 
         Returns:
-            ProviderResponse: Iterator of parsed response data
+            ModelResponse: Iterator of parsed response data
         """
-        provider_response = ProviderResponse()
+        model_response = ModelResponse()
         if len(response.choices) > 0:
             delta: ChoiceDelta = response.choices[0].delta
 
             # Add content
             if delta.content is not None:
-                provider_response.content = delta.content
+                model_response.content = delta.content
 
             # Add tool calls
             if delta.tool_calls is not None:
-                provider_response.tool_calls = delta.tool_calls
+                model_response.tool_calls = delta.tool_calls
 
         # Add usage metrics if present
         if response.usage is not None:
-            provider_response.response_usage = response.usage
+            model_response.response_usage = response.usage
 
-        return provider_response
+        return model_response

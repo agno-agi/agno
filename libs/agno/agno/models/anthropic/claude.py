@@ -7,7 +7,7 @@ from agno.exceptions import ModelProviderError
 from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.response import ProviderResponse
+from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
 try:
@@ -453,31 +453,31 @@ class Claude(Model):
             return tool_call_prompt
         return None
 
-    def parse_provider_response(self, response: AnthropicMessage) -> ProviderResponse:
+    def parse_provider_response(self, response: AnthropicMessage) -> ModelResponse:
         """
-        Parse the Claude response into a ModelProviderResponse.
+        Parse the Claude response into a ModelResponse.
 
         Args:
             response: Raw response from Anthropic
 
         Returns:
-            ProviderResponse: Parsed response data
+            ModelResponse: Parsed response data
         """
-        provider_response = ProviderResponse()
+        model_response = ModelResponse()
 
         # Add role (Claude always uses 'assistant')
-        provider_response.role = response.role or "assistant"
+        model_response.role = response.role or "assistant"
 
         if response.content:
             first_block = response.content[0]
             if isinstance(first_block, TextBlock):
-                provider_response.content = first_block.text
+                model_response.content = first_block.text
             elif isinstance(first_block, ToolUseBlock):
                 tool_name = first_block.name
                 tool_input = first_block.input
 
                 if tool_input and isinstance(tool_input, dict):
-                    provider_response.content = tool_input.get("query", "")
+                    model_response.content = tool_input.get("query", "")
 
         # -*- Extract tool calls from the response
         if response.stop_reason == "tool_use":
@@ -490,8 +490,8 @@ class Claude(Model):
                     if tool_input:
                         function_def["arguments"] = json.dumps(tool_input)
 
-                    provider_response.extra.setdefault("tool_ids", []).append(block.id)
-                    provider_response.tool_calls.append(
+                    model_response.extra.setdefault("tool_ids", []).append(block.id)
+                    model_response.tool_calls.append(
                         {
                             "id": block.id,
                             "type": "function",
@@ -501,13 +501,13 @@ class Claude(Model):
 
         # Add usage metrics
         if response.usage is not None:
-            provider_response.response_usage = response.usage
+            model_response.response_usage = response.usage
 
-        return provider_response
+        return model_response
 
     def parse_provider_response_delta(
         self, response: Union[ContentBlockDeltaEvent, ContentBlockStopEvent, MessageDeltaEvent]
-    ) -> ProviderResponse:
+    ) -> ModelResponse:
         """
         Parse the Claude streaming response into ModelProviderResponse objects.
 
@@ -515,14 +515,14 @@ class Claude(Model):
             response: Raw response chunk from Anthropic
 
         Returns:
-            ProviderResponse: Iterator of parsed response data
+            ModelResponse: Iterator of parsed response data
         """
-        provider_response = ProviderResponse()
+        model_response = ModelResponse()
 
         if isinstance(response, ContentBlockDeltaEvent):
             # Handle text content
             if isinstance(response.delta, TextDelta):
-                provider_response.content = response.delta.text
+                model_response.content = response.delta.text
 
         elif isinstance(response, ContentBlockStopEvent):
             # Handle tool calls
@@ -535,9 +535,9 @@ class Claude(Model):
                 if tool_input:
                     function_def["arguments"] = json.dumps(tool_input)
 
-                provider_response.extra.setdefault("tool_ids", []).append(tool_use.id)
+                model_response.extra.setdefault("tool_ids", []).append(tool_use.id)
 
-                provider_response.tool_calls = [
+                model_response.tool_calls = [
                     {
                         "id": tool_use.id,
                         "type": "function",
@@ -548,6 +548,6 @@ class Claude(Model):
         # Handle message completion and usage metrics
         elif isinstance(response, MessageStopEvent):
             if response.message.usage is not None:
-                provider_response.response_usage = response.message.usage
+                model_response.response_usage = response.message.usage
 
-        return provider_response
+        return model_response
