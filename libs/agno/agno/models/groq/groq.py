@@ -4,6 +4,7 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 
 import httpx
 
+from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ProviderResponse
@@ -221,11 +222,16 @@ class Groq(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
-        return self.get_client().chat.completions.create(
-            model=self.id,
-            messages=[format_message(m) for m in messages],  # type: ignore
-            **self.request_kwargs,
-        )
+        try:
+            return self.get_client().chat.completions.create(
+                model=self.id,
+                messages=[format_message(m) for m in messages],  # type: ignore
+                **self.request_kwargs,
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error calling Groq API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
+
 
     async def ainvoke(self, messages: List[Message]) -> ChatCompletion:
         """
@@ -237,11 +243,16 @@ class Groq(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
-        return await self.get_async_client().chat.completions.create(
-            model=self.id,
-            messages=[format_message(m) for m in messages],  # type: ignore
-            **self.request_kwargs,
-        )
+        try:
+            return await self.get_async_client().chat.completions.create(
+                model=self.id,
+                messages=[format_message(m) for m in messages],  # type: ignore
+                **self.request_kwargs,
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error calling Groq API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
+
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
         """
@@ -253,12 +264,17 @@ class Groq(Model):
         Returns:
             Iterator[ChatCompletionChunk]: An iterator of chat completion chunks.
         """
-        return self.get_client().chat.completions.create(
-            model=self.id,
-            messages=[format_message(m) for m in messages],  # type: ignore
-            stream=True,
-            **self.request_kwargs,
-        )
+        try:
+            return self.get_client().chat.completions.create(
+                model=self.id,
+                messages=[format_message(m) for m in messages],  # type: ignore
+                stream=True,
+                **self.request_kwargs,
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error calling Groq API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
+
 
     async def ainvoke_stream(self, messages: List[Message]) -> Any:
         """
@@ -269,13 +285,17 @@ class Groq(Model):
 
         Returns:
             Any: An asynchronous iterator of chat completion chunks.
-        """
-        return await self.get_async_client().chat.completions.create(
-            model=self.id,
-            messages=[format_message(m) for m in messages],  # type: ignore
-            stream=True,
-            **self.request_kwargs,
-        )
+        """ 
+        try:
+            return await self.get_async_client().chat.completions.create(
+                model=self.id,
+                messages=[format_message(m) for m in messages],  # type: ignore
+                stream=True,
+                **self.request_kwargs,
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error calling Groq API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
 
     # Override base method

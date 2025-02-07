@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Union
@@ -5,6 +6,7 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 import httpx
 from pydantic import BaseModel
 
+from agno.exceptions import ModelProviderError
 from agno.media import AudioOutput
 from agno.models.base import Model
 from agno.models.message import Message
@@ -15,6 +17,7 @@ from agno.utils.openai import add_images_to_message, add_audio_to_message
 try:
     from openai import AsyncOpenAI as AsyncOpenAIClient
     from openai import OpenAI as OpenAIClient
+    from openai import RateLimitError, APIConnectionError, APIStatusError
     from openai.types.chat import ChatCompletionAudio
     from openai.types.chat.chat_completion import ChatCompletion
     from openai.types.chat.chat_completion_chunk import (
@@ -266,8 +269,8 @@ class OpenAIChat(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
-        if self.response_format is not None and self.structured_outputs:
-            try:
+        try:
+            if self.response_format is not None and self.structured_outputs:
                 if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
                     return self.get_client().beta.chat.completions.parse(
                         model=self.id,
@@ -276,14 +279,24 @@ class OpenAIChat(Model):
                     )
                 else:
                     raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
-            except Exception as e:
-                logger.error(f"Error from OpenAI API: {e}")
 
-        return self.get_client().chat.completions.create(
-            model=self.id,
-            messages=[self._format_message(m) for m in messages],  # type: ignore
-            **self.request_kwargs,
-        )
+            return self.get_client().chat.completions.create(
+                model=self.id,
+                messages=[self._format_message(m) for m in messages],  # type: ignore
+                **self.request_kwargs,
+            )
+        except RateLimitError as e:
+            logger.error(f"Rate limit error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except APIConnectionError as e:
+            logger.error(f"API connection error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except APIStatusError as e:
+            logger.error(f"API status error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except Exception as e:
+            logger.error(f"Error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletion, ParsedChatCompletion]:
         """
@@ -295,8 +308,8 @@ class OpenAIChat(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
-        if self.response_format is not None and self.structured_outputs:
-            try:
+        try:
+            if self.response_format is not None and self.structured_outputs:
                 if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
                     return await self.get_async_client().beta.chat.completions.parse(
                         model=self.id,
@@ -305,14 +318,23 @@ class OpenAIChat(Model):
                     )
                 else:
                     raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
-            except Exception as e:
-                logger.error(f"Error from OpenAI API: {e}")
-
-        return await self.get_async_client().chat.completions.create(
-            model=self.id,
-            messages=[self._format_message(m) for m in messages],  # type: ignore
-            **self.request_kwargs,
-        )
+            return await self.get_async_client().chat.completions.create(
+                model=self.id,
+                messages=[self._format_message(m) for m in messages],  # type: ignore
+                **self.request_kwargs,
+            )
+        except RateLimitError as e:
+            logger.error(f"Rate limit error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except APIConnectionError as e:
+            logger.error(f"API connection error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except APIStatusError as e:
+            logger.error(f"API status error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except Exception as e:
+            logger.error(f"Error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
         """
@@ -324,15 +346,28 @@ class OpenAIChat(Model):
         Returns:
             Iterator[ChatCompletionChunk]: An iterator of chat completion chunks.
         """
-        yield from self.get_client().chat.completions.create(
-            model=self.id,
-            messages=[self._format_message(m) for m in messages],  # type: ignore
-            stream=True,
-            stream_options={"include_usage": True},
-            **self.request_kwargs,
-        )  # type: ignore
+        try:
+            yield from self.get_client().chat.completions.create(
+                model=self.id,
+                messages=[self._format_message(m) for m in messages],  # type: ignore
+                stream=True,
+                stream_options={"include_usage": True},
+                **self.request_kwargs,
+            )  # type: ignore
+        except RateLimitError as e:
+            logger.error(f"Rate limit error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except APIConnectionError as e:
+            logger.error(f"API connection error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except APIStatusError as e:
+            logger.error(f"API status error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except Exception as e:
+            logger.error(f"Error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> Any:
+    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[ChatCompletionChunk]:
         """
         Sends an asynchronous streaming chat completion request to the OpenAI API.
 
@@ -342,15 +377,27 @@ class OpenAIChat(Model):
         Returns:
             Any: An asynchronous iterator of chat completion chunks.
         """
-        async_stream = await self.get_async_client().chat.completions.create(
-            model=self.id,
-            messages=[self._format_message(m) for m in messages],  # type: ignore
-            stream=True,
-            stream_options={"include_usage": True},
-            **self.request_kwargs,
-        )
-        async for chunk in async_stream:  # type: ignore
-            yield chunk
+        try:
+            async_stream = await self.get_async_client().chat.completions.create(
+                model=self.id,
+                messages=[self._format_message(m) for m in messages],  # type: ignore
+                stream=True,
+                stream_options={"include_usage": True},
+                **self.request_kwargs,
+            )
+            return async_stream
+        except RateLimitError as e:
+            logger.error(f"Rate limit error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except APIConnectionError as e:
+            logger.error(f"API connection error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except APIStatusError as e:
+            logger.error(f"API status error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except Exception as e:
+            logger.error(f"Error from OpenAI API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     # Override base method
     @staticmethod
@@ -454,6 +501,9 @@ class OpenAIChat(Model):
                 )
             except Exception as e:
                 logger.warning(f"Error processing audio: {e}")
+
+        if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
+            provider_response.reasoning_content = response_message.reasoning_content
 
         if response.usage is not None:
             provider_response.response_usage = response.usage

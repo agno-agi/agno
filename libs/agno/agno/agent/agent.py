@@ -24,7 +24,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent.metrics import SessionMetrics
-from agno.exceptions import AgentRunException, StopAgentRun
+from agno.exceptions import AgentRunException, ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
@@ -867,7 +867,7 @@ class Agent:
                             **kwargs,
                         )
                         return next(resp)
-            except Exception as e:
+            except ModelProviderError as e:
                 logger.warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
                     raise e
@@ -1267,7 +1267,7 @@ class Agent:
                             **kwargs,
                         )
                         return await resp.__anext__()
-            except Exception as e:
+            except ModelProviderError as e:
                 logger.warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
                     raise e

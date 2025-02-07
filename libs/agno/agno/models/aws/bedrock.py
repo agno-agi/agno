@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional
 
 from agno.aws.api_client import AwsApiClient  # type: ignore
+from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ProviderResponse
@@ -92,7 +93,7 @@ class AwsBedrock(Model, ABC):
             return self.get_client().converse(**body)
         except Exception as e:
             logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Dict[str, Any]]:
         """
@@ -105,11 +106,15 @@ class AwsBedrock(Model, ABC):
             Iterator[Dict[str, Any]]: The streamed response.
         """
         body = self.format_messages(messages)
-        response = self.get_client().converse_stream(**body)
-        stream = response.get("stream")
-        if stream:
-            for event in stream:
-                yield event
+        try:
+            response = self.get_client().converse_stream(**body)
+            stream = response.get("stream")
+            if stream:
+                for event in stream:
+                    yield event
+        except Exception as e:
+            logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     @abstractmethod
     def format_messages(self, messages: List[Message]) -> Dict[str, Any]:

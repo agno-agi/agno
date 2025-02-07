@@ -3,6 +3,7 @@ from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple
 
 
+from agno.exceptions import ModelProviderError
 from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ProviderResponse
@@ -140,8 +141,12 @@ class Cohere(Model):
         """
 
         request_kwargs = self.request_kwargs
-
-        return self.get_client().chat(model=self.id, messages=self._format_messages(messages), **request_kwargs)
+    
+        try:
+            return self.get_client().chat(model=self.id, messages=self._format_messages(messages), **request_kwargs)
+        except Exception as e:
+            logger.error(f"Unexpected error calling Cohere API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     def invoke_stream(
         self, messages: List[Message]
@@ -156,7 +161,12 @@ class Cohere(Model):
             Iterator[StreamedChatResponseV2]: An iterator of streamed chat responses.
         """
         request_kwargs = self.request_kwargs
-        return self.get_client().chat_stream(model=self.id, messages=self._format_messages(messages), **request_kwargs)
+
+        try:
+            return self.get_client().chat_stream(model=self.id, messages=self._format_messages(messages), **request_kwargs)
+        except Exception as e:
+            logger.error(f"Unexpected error calling Cohere API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     async def ainvoke(
         self, messages: List[Message]
@@ -172,7 +182,11 @@ class Cohere(Model):
         """
         request_kwargs = self.request_kwargs
 
-        return await self.get_async_client().chat(model=self.id, messages=self._format_messages(messages), **request_kwargs)
+        try:
+            return await self.get_async_client().chat(model=self.id, messages=self._format_messages(messages), **request_kwargs)
+        except Exception as e:
+            logger.error(f"Unexpected error calling Cohere API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     async def ainvoke_stream(
         self, messages: List[Message]
@@ -187,9 +201,13 @@ class Cohere(Model):
             AsyncIterator[StreamedChatResponseV2]: An async iterator of streamed chat responses.
         """
         request_kwargs = self.request_kwargs
-
-        async for response in self.get_async_client().chat_stream(model=self.id, messages=self._format_messages(messages), **request_kwargs):
-            yield response
+    
+        try:
+            async for response in self.get_async_client().chat_stream(model=self.id, messages=self._format_messages(messages), **request_kwargs):
+                yield response
+        except Exception as e:
+            logger.error(f"Unexpected error calling Cohere API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     def parse_provider_response(self, response: ChatResponse) -> ProviderResponse:
         """
