@@ -68,6 +68,7 @@ class Newspaper4kTools(Toolkit):
         """
 
         try:
+            logger.debug(f"Reading news: {url}")
             article_data = self.get_article_data(url)
             if not article_data:
                 return f"Error reading article from {url}: No data found."
