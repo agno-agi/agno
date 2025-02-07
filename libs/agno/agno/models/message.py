@@ -148,6 +148,8 @@ class Message(BaseModel):
     stop_after_tool_call: bool = False
     # When True, the message will be added to the agent's memory.
     add_to_agent_memory: bool = True
+    # This flag is enabled when a message is fetched from the agent's memory.
+    from_history: bool = False
     # Metrics for the message.
     metrics: MessageMetrics = Field(default_factory=MessageMetrics)
     # The references added to the message for RAG

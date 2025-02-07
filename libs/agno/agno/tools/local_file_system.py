@@ -53,6 +53,8 @@ class LocalFileSystemTools(Toolkit):
                 filename, file_ext = os.path.splitext(filename)
                 extension = extension or file_ext.lstrip(".")
 
+            logger.debug(f"Writing file to local system: {filename}")
+
             extension = (extension or self.default_extension).lstrip(".")
 
             # Create directory if it doesn't exist

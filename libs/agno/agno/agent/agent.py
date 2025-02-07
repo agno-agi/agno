@@ -2170,19 +2170,29 @@ class Agent:
 
         # 3. Add history to run_messages
         if self.add_history_to_messages:
+            from copy import deepcopy
+
             history: List[Message] = self.memory.get_messages_from_last_n_runs(
                 last_n=self.num_history_responses, skip_role=self.get_system_message_role()
             )
             if len(history) > 0:
-                logger.debug(f"Adding {len(history)} messages from history")
+                # Create a deep copy of the history messages to avoid modifying the original messages
+                history_copy = [deepcopy(msg) for msg in history]
+
+                # Tag each message as coming from history
+                for _msg in history_copy:
+                    _msg.from_history = True
+
+                logger.debug(f"Adding {len(history_copy)} messages from history")
+
                 if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData(history=history)
+                    self.run_response.extra_data = RunResponseExtraData(history=history_copy)
                 else:
                     if self.run_response.extra_data.history is None:
-                        self.run_response.extra_data.history = history
+                        self.run_response.extra_data.history = history_copy
                     else:
-                        self.run_response.extra_data.history.extend(history)
-                run_messages.messages += history
+                        self.run_response.extra_data.history.extend(history_copy)
+                run_messages.messages += history_copy
 
         # 4.Add user message to run_messages
         user_message: Optional[Message] = None
@@ -2547,14 +2557,15 @@ class Agent:
     def aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
         aggregated_metrics: Dict[str, Any] = defaultdict(list)
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
-        # Use a defaultdict(list) to collect all values for each assistant message
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None:
                 for k, v in asdict(m.metrics).items():
-                    if k in ("timer"):
+                    if k == "timer":
                         continue
                     if v is not None:
                         aggregated_metrics[k].append(v)
+        if aggregated_metrics is not None:
+            aggregated_metrics = dict(aggregated_metrics)
         return aggregated_metrics
 
     def calculate_session_metrics(self, messages: List[Message]) -> SessionMetrics:

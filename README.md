@@ -29,7 +29,7 @@ Agno is designed with three core principles:
 
 Here's why you should build Agents with Agno:
 
-- **Lightning Fast**: Agent creation is 6000x faster than LangGraph (see [performance](#performance)).
+- **Lightning Fast**: Agent creation is ~10,000x faster than LangGraph (see [performance](#performance)).
 - **Model Agnostic**: Use any model, any provider, no lock-in.
 - **Multi Modal**: Native support for text, image, audio and video.
 - **Multi Agent**: Delegate tasks across a team of specialized agents.
@@ -222,12 +222,12 @@ python agent_team.py
 
 Agno is designed for high performance agentic systems:
 
-- Agent instantiation: <5μs on average (5000x faster than LangGraph).
-- Memory footprint: <0.01Mib on average (50x less memory than LangGraph).
+- Agent instantiation: <5μs on average (~10,000x faster than LangGraph).
+- Memory footprint: <0.01Mib on average (~50x less memory than LangGraph).
 
 > Tested on an Apple M4 Mackbook Pro.
 
-While an Agent's performance is bottlenecked by inference, we must do everything possible to minimize execution time, reduce memory usage, and parallelize tool calls. These numbers are may seem minimal, but they add up even at medium scale.
+While an Agent's performance is bottlenecked by inference, we must do everything possible to minimize execution time, reduce memory usage, and parallelize tool calls. These numbers are may seem trivial, but they add up even at medium scale.
 
 ### Instantiation time
 
