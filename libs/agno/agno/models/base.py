@@ -561,9 +561,7 @@ class Model(ABC):
                     function_call_response.event == ModelResponseEvent.tool_call_completed.value
                     and function_call_response.tool_calls is not None
                 ):
-                    logger.info(f"function_call_response: {function_call_response}")
                     model_response.tool_calls.extend(function_call_response.tool_calls)  # type: ignore  # model_response.tool_calls are initialized before calling this method
-                    logger.info(f"model_response: {model_response}")
 
             self.format_function_call_results(messages=messages, function_call_results=function_call_results, **kwargs)
 
@@ -851,7 +849,10 @@ class Model(ABC):
 
         # Add tool calls to assistant message
         if model_response.tool_calls is not None and len(model_response.tool_calls) > 0:
-            assistant_message.tool_calls = model_response.tool_calls
+            try:
+                assistant_message.tool_calls = [t.model_dump() for t in model_response.tool_calls]
+            except Exception as e:
+                logger.warning(f"Error processing tool calls: {e}")
 
         # Add audio to assistant message
         if model_response.audio is not None:
@@ -877,7 +878,6 @@ class Model(ABC):
         """
         logger.debug(f"---------- {self.get_provider()} Response Start ----------")
         self._log_messages(messages)
-        model_response = ModelResponse()
 
         # Create assistant message
         assistant_message = Message(role=self.assistant_message_role)
@@ -901,7 +901,7 @@ class Model(ABC):
         messages.append(assistant_message)
 
         # Log response and metrics
-        assistant_message.log()
+        assistant_message.log(metrics=True)
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
@@ -933,7 +933,6 @@ class Model(ABC):
         """
         logger.debug(f"---------- {self.get_provider()} Async Response Start ----------")
         self._log_messages(messages)
-        model_response = ModelResponse()
 
         # Create assistant message
         assistant_message = Message(role=self.assistant_message_role)
@@ -957,7 +956,7 @@ class Model(ABC):
         messages.append(assistant_message)
 
         # Log response and metrics
-        assistant_message.log()
+        assistant_message.log(metrics=True)
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:

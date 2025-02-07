@@ -430,10 +430,7 @@ class OpenAIChat(Model):
 
         # Add tool calls
         if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
-            try:
-                model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
-            except Exception as e:
-                logger.warning(f"Error processing tool calls: {e}")
+            model_response.tool_calls = response_message.tool_calls
 
         # Add audio transcript to content if available
         response_audio: Optional[ChatCompletionAudio] = response_message.audio
@@ -478,7 +475,7 @@ class OpenAIChat(Model):
                 has_content = True
 
             # Add tool calls
-            if delta.tool_calls is not None:
+            if delta.tool_calls is not None and len(delta.tool_calls) > 0:
                 model_response.tool_calls = delta.tool_calls
                 has_content = True
 

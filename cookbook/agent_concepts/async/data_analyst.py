@@ -25,6 +25,4 @@ agent = Agent(
     - movies: contains information about movies from IMDB.
     """),
 )
-asyncio.run(
-    agent.aprint_response("What is the average rating of movies?")
-)
+asyncio.run(agent.aprint_response("What is the average rating of movies?"))
