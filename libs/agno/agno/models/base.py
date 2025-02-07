@@ -892,11 +892,12 @@ class Model(ABC):
         # Log response and metrics
         assistant_message.log(metrics=True)
 
+        # TODO(dirk): i dont think this is needed
         # Update model response with assistant message content and audio
-        if assistant_message.content is not None:
-            model_response.content = assistant_message.get_content_string()
-        if assistant_message.audio_output is not None:
-            model_response.audio = assistant_message.audio_output
+        # if assistant_message.content is not None:
+        #     model_response.content = assistant_message.get_content_string()
+        # if assistant_message.audio_output is not None:
+        #     model_response.audio = assistant_message.audio_output
 
         # Handle tool calls
         if (
@@ -947,11 +948,12 @@ class Model(ABC):
         # Log response and metrics
         assistant_message.log(metrics=True)
 
+        # TODO(dirk): i dont think this is needed
         # Update model response with assistant message content and audio
-        if assistant_message.content is not None:
-            model_response.content = assistant_message.get_content_string()
-        if assistant_message.audio_output is not None:
-            model_response.audio = assistant_message.audio_output
+        # if assistant_message.content is not None:
+        #     model_response.content = assistant_message.get_content_string()
+        # if assistant_message.audio_output is not None:
+        #     model_response.audio = assistant_message.audio_output
 
         # Handle tool calls
         if (
@@ -1019,6 +1021,7 @@ class Model(ABC):
         # Generate response
         assistant_message.metrics.start_timer()
         for response in self.invoke_stream(messages=messages):
+            # Parse model response chunk
             model_response = self.parse_model_response_chunk(response)
             if model_response is not None:
                 yield model_response
