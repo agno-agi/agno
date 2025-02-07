@@ -1,11 +1,8 @@
-from typing import List
-import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse, AgentMemory  # noqa
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.memory.db.postgres import PgMemoryDb
 
 
 def test_basic():
@@ -16,7 +13,7 @@ def test_basic():
 
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["developer", "user", "assistant"]
-    
+
 def test_basic_stream():
     agent = Agent(model=OpenAIChat(id="gpt-4o"), markdown=True)
 
@@ -36,7 +33,7 @@ def test_basic_metrics():
 
     # Test metrics structure and types
     assert isinstance(response.metrics["completion_tokens"], int)
-    assert isinstance(response.metrics["input_tokens"], int) 
+    assert isinstance(response.metrics["input_tokens"], int)
     assert isinstance(response.metrics["total_tokens"], int)
     assert response.metrics["total_tokens"] == response.metrics["completion_tokens"] + response.metrics["input_tokens"]
     assert isinstance(response.metrics["additional_metrics"], list)
@@ -48,9 +45,9 @@ def test_tool_use():
         show_tool_calls=True,
         markdown=True,
     )
-    
+
     response = agent.run("What is the capital of France and what's the current weather there?")
-    
+
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
@@ -64,15 +61,15 @@ def test_with_memory():
         num_history_responses=5,
         markdown=True,
     )
-    
+
     # First interaction
     response1 = agent.run("My name is John Smith")
     assert response1.content is not None
-    
+
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
     assert "John Smith" in response2.content
-    
+
     # Verify memories were created
     assert len(agent.memory.messages) == 5
     assert [m.role for m in agent.memory.messages] == ["developer", "user", "assistant", "user", "assistant"]
@@ -91,12 +88,11 @@ def test_structured_output():
         model=OpenAIChat(id="gpt-4o"),
         response_model=MovieScript,
     )
-    
+
     response = agent.run("Create a movie about time travel")
-    
+
     # Verify structured output
     assert isinstance(response.content, MovieScript)
     assert response.content.title is not None
     assert response.content.genre is not None
     assert response.content.plot is not None
-    

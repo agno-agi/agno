@@ -2,14 +2,13 @@ import asyncio
 import collections.abc
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from pathlib import Path
 from types import GeneratorType
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union, AsyncIterator
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union, AsyncIterator
 
 from agno.exceptions import AgentRunException
-from agno.media import Audio, AudioOutput, Image
+from agno.media import AudioOutput
 from agno.models.message import Message, MessageMetrics
-from agno.models.response import ProviderResponse, ModelResponse, ModelResponseEvent
+from agno.models.response import  ModelResponse, ModelResponseEvent
 from agno.tools.function import Function, FunctionCall
 from agno.utils.log import logger
 from agno.utils.timer import Timer
@@ -606,7 +605,7 @@ class Model(ABC):
     def populate_assistant_message(
         self,
         assistant_message: Message,
-        provider_response: ProviderResponse,
+        provider_response: ModelResponse,
     ) -> Message:
         """
         Populate an assistant message with the provider response data.
@@ -691,7 +690,7 @@ class Model(ABC):
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if provider_response.extra is not None:
-            model_response.extra.update(provider_response.extra)    
+            model_response.extra.update(provider_response.extra)
 
         return assistant_message, bool(assistant_message.tool_calls)
 
@@ -889,7 +888,7 @@ class Model(ABC):
                     # Update stream data
                     if stream_data.response_tool_calls is None:
                         stream_data.response_tool_calls = []
-                    stream_data.response_tool_calls.extend(provider_response_delta.tool_calls)
+                    stream_data.response_tool_calls.extend(model_response_delta.tool_calls)
 
                 if model_response_delta.audio is not None:
                     # Update stream data and yield audio
@@ -928,8 +927,8 @@ class Model(ABC):
             # Generate response
             assistant_message.metrics.start_timer()
             yield from self.process_response_stream(
-                messages=messages, 
-                assistant_message=assistant_message, 
+                messages=messages,
+                assistant_message=assistant_message,
                 stream_data=stream_data
             )
             assistant_message.metrics.stop_timer()
