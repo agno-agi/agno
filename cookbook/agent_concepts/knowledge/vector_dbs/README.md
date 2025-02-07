@@ -165,3 +165,13 @@ docker run -p 6333:6333 -p 6334:6334 -v $(pwd)/qdrant_storage:/qdrant/storage:z 
 ```shell
 python cookbook/vector_dbs/qdrant_db.py
 ```
+
+### Weaviate
+
+```shell
+./cookbook/scripts/run_weviate.sh
+```
+
+```shell
+python cookbook/vector_dbs/weaviate_db.py
+```
