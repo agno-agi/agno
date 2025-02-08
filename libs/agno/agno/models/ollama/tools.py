@@ -253,176 +253,6 @@ class OllamaTools(Ollama):
 
         return function_calls_to_run
 
-        # def handle_tool_calls(
-        #     self,
-        #     assistant_message: Message,
-        #     messages: List[Message],
-        #     model_response: ModelResponse,
-        # ) -> Optional[ModelResponse]:
-        #     """
-        #     Handle tool calls in the assistant message.
-
-        #     Args:
-        #         assistant_message (Message): The assistant message.
-        #         messages (List[Message]): The list of messages.
-        #         model_response (ModelResponse): The model response.
-
-        #     Returns:
-        #         Optional[ModelResponse]: The model response.
-        #     """
-        #     if assistant_message.tool_calls is not None and len(assistant_message.tool_calls) > 0:
-        #         model_response.content = str(remove_tool_calls_from_string(assistant_message.get_content_string()))
-        #         model_response.content += "\n\n"
-        #         function_calls_to_run = self.get_function_calls_to_run(assistant_message, messages)
-        #         function_call_results: List[Message] = []
-
-        #         if self.show_tool_calls:
-        #             if len(function_calls_to_run) == 1:
-        #                 model_response.content += f" - Running: {function_calls_to_run[0].get_call_str()}\n\n"
-        #             elif len(function_calls_to_run) > 1:
-        #                 model_response.content += "Running:"
-        #                 for _f in function_calls_to_run:
-        #                     model_response.content += f"\n - {_f.get_call_str()}"
-        #                 model_response.content += "\n\n"
-
-        #         for _ in self.run_function_calls(
-        #             function_calls=function_calls_to_run,
-        #             function_call_results=function_call_results,
-        #         ):
-        #             pass
-
-        #         self.format_function_call_results(function_call_results, messages)
-
-        #         return model_response
-        #     return None
-
-        # def response_stream(self, messages: List[Message]) -> Iterator[ModelResponse]:
-        #     """
-        #     Generate a streaming response from OllamaTools.
-
-        #     Args:
-        #         messages (List[Message]): A list of messages.
-
-        #     Returns:
-        #         Iterator[ModelResponse]: An iterator of the model responses.
-        #     """
-        #     logger.debug("---------- Ollama Response Start ----------")
-        #     self._log_messages(messages)
-        #     message_data = MessageData()
-        #     metrics: Metrics = Metrics()
-
-        # # -*- Generate response
-        metrics.start_response_timer()
-        for response in self.invoke_stream(messages=messages):
-            #  Parse response
-            message_data.response_message = response.get("message", {})
-            if message_data.response_message:
-                metrics.output_tokens += 1
-                if metrics.output_tokens == 1:
-                    metrics.time_to_first_token = metrics.response_timer.elapsed
-
-            if message_data.response_message:
-                message_data.response_content_chunk = message_data.response_message.get("content", "")
-
-            # Add response content to assistant message
-            if message_data.response_content_chunk is not None:
-                message_data.response_content += message_data.response_content_chunk
-
-            # Detect if response is a tool call
-            # If the response is a tool call, it will start a <tool token
-            if not message_data.response_is_tool_call and "<tool" in message_data.response_content_chunk:
-                message_data.response_is_tool_call = True
-                # logger.debug(f"Response is tool call: {message_data.response_is_tool_call}")
-
-            # If response is a tool call, count the number of tool calls
-            if message_data.response_is_tool_call:
-                # If the response is an opening tool call tag, increment the tool call counter
-                if "<tool" in message_data.response_content_chunk:
-                    message_data.tool_calls_counter += 1
-
-                # If the response is a closing tool call tag, decrement the tool call counter
-                if message_data.response_content.strip().endswith("</tool_call>"):
-                    message_data.tool_calls_counter -= 1
-
-                # If the response is a closing tool call tag and the tool call counter is 0,
-                # tool call response is complete
-                if message_data.tool_calls_counter == 0 and message_data.response_content_chunk.strip().endswith(">"):
-                    message_data.response_is_tool_call = False
-                    # logger.debug(f"Response is tool call: {message_data.response_is_tool_call}")
-                    message_data.is_closing_tool_call_tag = True
-
-            # Yield content if not a tool call and content is not None
-            if not message_data.response_is_tool_call and message_data.response_content_chunk is not None:
-                if message_data.is_closing_tool_call_tag and message_data.response_content_chunk.strip().endswith(">"):
-                    message_data.is_closing_tool_call_tag = False
-                    continue
-
-    #             yield ModelResponse(content=message_data.response_content_chunk)
-
-    #         if response.get("done"):
-    #             message_data.response_usage = response
-    #     metrics.stop_response_timer()
-
-    #     # -*- Create assistant message
-    #     assistant_message = Message(role="assistant", content=message_data.response_content)
-
-    #     # -*- Parse tool calls from the assistant message content
-    #     try:
-    #         if "<tool_call>" in message_data.response_content and "</tool_call>" in message_data.response_content:
-    #             # Break the response into tool calls
-    #             tool_call_responses = message_data.response_content.split("</tool_call>")
-    #             for tool_call_response in tool_call_responses:
-    #                 # Add back the closing tag if this is not the last tool call
-    #                 if tool_call_response != tool_call_responses[-1]:
-    #                     tool_call_response += "</tool_call>"
-
-    #                 if "<tool_call>" in tool_call_response and "</tool_call>" in tool_call_response:
-    #                     # Extract tool call string from response
-    #                     tool_call_content = extract_tool_call_from_string(tool_call_response)
-    #                     # Convert the extracted string to a dictionary
-    #                     try:
-    #                         tool_call_dict = json.loads(tool_call_content)
-    #                     except json.JSONDecodeError:
-    #                         raise ValueError(f"Could not parse tool call from: {tool_call_content}")
-
-    #                     tool_call_name = tool_call_dict.get("name")
-    #                     tool_call_args = tool_call_dict.get("arguments")
-    #                     function_def = {"name": tool_call_name}
-    #                     if tool_call_args is not None:
-    #                         function_def["arguments"] = json.dumps(tool_call_args)
-    #                     message_data.tool_calls.append(
-    #                         {
-    #                             "type": "function",
-    #                             "function": function_def,
-    #                         }
-    #                     )
-
-    #     except Exception as e:
-    #         yield ModelResponse(content=f"Error parsing tool call: {e}")
-    #         logger.warning(e)
-    #         pass
-
-    #     if len(message_data.tool_calls) > 0:
-    #         assistant_message.tool_calls = message_data.tool_calls
-
-    #     # -*- Update usage metrics
-    #     self.update_usage_metrics(
-    #         assistant_message=assistant_message, metrics=metrics, response=message_data.response_usage
-    #     )
-
-    #     # -*- Add assistant message to messages
-    #     messages.append(assistant_message)
-
-    #     # -*- Log response and metrics
-    #     assistant_message.log()
-    #     metrics.log()
-
-    #     # -*- Handle tool calls
-    #     if assistant_message.tool_calls is not None and len(assistant_message.tool_calls) > 0:
-    #         yield from self.handle_stream_tool_calls(assistant_message, messages)
-    #         yield from self.handle_post_tool_call_messages_stream(messages=messages)
-    #     logger.debug("---------- Ollama Response End ----------")
-
     def process_response_stream(
         self, messages: List[Message], assistant_message: Message, stream_data
     ) -> Iterator[ModelResponse]:
@@ -474,7 +304,7 @@ class OllamaTools(Ollama):
                     tool_call_data.tool_calls_counter += 1
 
                 # If the response is a closing tool call tag, decrement the tool call counter
-                if content_delta.strip().endswith("</tool_call>") or content_delta.strip().endswith(">"):
+                if tool_call_data.tool_call_content.strip().endswith("</tool_call>"):
                     tool_call_data.tool_calls_counter -= 1
 
                 # If the response is a closing tool call tag and the tool call counter is 0,
@@ -482,8 +312,6 @@ class OllamaTools(Ollama):
                 if tool_call_data.tool_calls_counter == 0 and content_delta.strip().endswith(">"):
                     tool_call_data.response_is_tool_call = False
                     tool_call_data.is_closing_tool_call_tag = True
-
-                    logger.info(f"Tool call data: {tool_call_data}")
 
                     try:
                         model_response.tool_calls = parse_tool_calls_from_content(tool_call_data.tool_call_content)
@@ -493,12 +321,9 @@ class OllamaTools(Ollama):
                         pass
 
             # Yield content if not a tool call and content is not None
-            logger.info(f"Tool call data: {tool_call_data}")
             if not tool_call_data.response_is_tool_call and content_delta is not None:
                 if tool_call_data.is_closing_tool_call_tag and content_delta.strip().endswith(">"):
                     tool_call_data.is_closing_tool_call_tag = False
-
-                logger.info("I am here")
 
                 model_response.content = content_delta
 
@@ -511,8 +336,6 @@ class OllamaTools(Ollama):
                 model_response.response_usage["total_tokens"] = (
                     model_response.response_usage["input_tokens"] + model_response.response_usage["output_tokens"]
                 )
-
-        logger.info(f"Model response: {model_response}")
 
         return model_response
 
