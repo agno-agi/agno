@@ -326,4 +326,7 @@ class LanceDb(VectorDb):
         return False
 
     def name_exists(self, name: str) -> bool:
-        raise NotImplementedError
+        if self.table is None:
+            return False
+        result = self.table.search().select(["payload"]).to_pandas()
+        return any(row["payload"].get("name") == name for _, row in result.iterrows())

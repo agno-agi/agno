@@ -134,39 +134,37 @@ class AgentMemory(BaseModel):
     def get_messages_from_last_n_runs(
         self, last_n: Optional[int] = None, skip_role: Optional[str] = None
     ) -> List[Message]:
-        """Returns the messages from the last_n runs
+        """Returns the messages from the last_n runs, excluding previously tagged history messages.
 
         Args:
             last_n: The number of runs to return from the end of the conversation.
             skip_role: Skip messages with this role.
 
         Returns:
-            A list of Messages in the last_n runs.
+            A list of Messages from the specified runs, excluding history messages.
         """
-        if last_n is None:
-            logger.debug("Getting messages from all previous runs")
-            messages_from_all_history = []
-            for prev_run in self.runs:
-                if prev_run.response and prev_run.response.messages:
-                    if skip_role:
-                        prev_run_messages = [m for m in prev_run.response.messages if m.role != skip_role]
-                    else:
-                        prev_run_messages = prev_run.response.messages
-                    messages_from_all_history.extend(prev_run_messages)
-            logger.debug(f"Messages from previous runs: {len(messages_from_all_history)}")
-            return messages_from_all_history
+        if not self.runs:
+            return []
 
-        logger.debug(f"Getting messages from last {last_n} runs")
-        messages_from_last_n_history = []
-        for prev_run in self.runs[-last_n:]:
-            if prev_run.response and prev_run.response.messages:
-                if skip_role:
-                    prev_run_messages = [m for m in prev_run.response.messages if m.role != skip_role]
-                else:
-                    prev_run_messages = prev_run.response.messages
-                messages_from_last_n_history.extend(prev_run_messages)
-        logger.debug(f"Messages from last {last_n} runs: {len(messages_from_last_n_history)}")
-        return messages_from_last_n_history
+        runs_to_process = self.runs if last_n is None else self.runs[-last_n:]
+        messages_from_history = []
+
+        for run in runs_to_process:
+            if not (run.response and run.response.messages):
+                continue
+
+            for message in run.response.messages:
+                # Skip messages with specified role
+                if skip_role and message.role == skip_role:
+                    continue
+                # Skip messages that were tagged as history in previous runs
+                if hasattr(message, "from_history") and message.from_history:
+                    continue
+
+                messages_from_history.append(message)
+
+        logger.debug(f"Getting messages from previous runs: {len(messages_from_history)}")
+        return messages_from_history
 
     def get_message_pairs(
         self, user_role: str = "user", assistant_role: Optional[List[str]] = None

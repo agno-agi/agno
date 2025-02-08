@@ -56,3 +56,5 @@ audio_generations
 
 # Google OAuth token
 token.json
+
+.composio.lock
