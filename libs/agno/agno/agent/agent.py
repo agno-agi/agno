@@ -24,7 +24,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent.metrics import SessionMetrics
-from agno.exceptions import AgentRunException, ModelProviderError, StopAgentRun
+from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
@@ -630,9 +630,7 @@ class Agent:
         # 9. Update Agent Memory
         # Add the system message to the memory
         if run_messages.system_message is not None:
-            self.memory.add_system_message(
-                run_messages.system_message, system_message_role=self.system_message_role
-            )
+            self.memory.add_system_message(run_messages.system_message, system_message_role=self.system_message_role)
 
         # Build a list of messages that should be added to the AgentMemory
         messages_for_memory: List[Message] = (
@@ -1062,9 +1060,7 @@ class Agent:
         # 9. Update Agent Memory
         # Add the system message to the memory
         if run_messages.system_message is not None:
-            self.memory.add_system_message(
-                run_messages.system_message, system_message_role=self.system_message_role
-            )
+            self.memory.add_system_message(run_messages.system_message, system_message_role=self.system_message_role)
 
         # Build a list of messages that should be added to the AgentMemory
         messages_for_memory: List[Message] = (
@@ -1829,7 +1825,7 @@ class Agent:
             if self.response_model is not None and not self.structured_outputs:
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
-            return Message(role=self.system_message_role, content=sys_message_content)
+            return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
 
         # 2. If create_default_system_message is False, return None.
         if not self.create_default_system_message:
@@ -1971,7 +1967,7 @@ class Agent:
 
         # Return the system message
         return (
-            Message(role=self.system_message_role, content=system_message_content.strip())
+            Message(role=self.system_message_role, content=system_message_content.strip())  # type: ignore
             if system_message_content
             else None
         )

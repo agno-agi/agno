@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Union
 
@@ -13,7 +13,6 @@ from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
 try:
-    from huggingface_hub.errors import InferenceTimeoutError
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionOutput,
@@ -23,6 +22,7 @@ try:
         ChatCompletionStreamOutputDeltaToolCall,
         InferenceClient,
     )
+    from huggingface_hub.errors import InferenceTimeoutError
 except (ModuleNotFoundError, ImportError):
     raise ImportError("`huggingface_hub` not installed. Please install using `pip install huggingface_hub`")
 
@@ -243,7 +243,6 @@ class HuggingFace(Model):
             logger.error(f"Error invoking HuggingFace model: {e}")
             raise ModelProviderError(e, self.name, self.id) from e
 
-
     async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletionOutput]:
         """
         Sends an asynchronous chat completion request to the HuggingFace Hub Inference.
@@ -264,7 +263,6 @@ class HuggingFace(Model):
         except InferenceTimeoutError as e:
             logger.error(f"Error invoking HuggingFace model: {e}")
             raise ModelProviderError(e, self.name, self.id) from e
-
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionStreamOutput]:
         """
@@ -306,13 +304,13 @@ class HuggingFace(Model):
                     stream=True,
                     stream_options={"include_usage": True},
                     **self.request_kwargs,
-                    )
+                )
                 async for chunk in stream:
                     yield chunk
         except InferenceTimeoutError as e:
             logger.error(f"Error invoking HuggingFace model: {e}")
             raise ModelProviderError(e, self.name, self.id) from e
-    
+
     # Override base method
     @staticmethod
     def parse_tool_calls(tool_calls_data: List[ChatCompletionStreamOutputDeltaToolCall]) -> List[Dict[str, Any]]:
@@ -402,4 +400,3 @@ class HuggingFace(Model):
                 model_response.tool_calls = response_delta_message.tool_calls
 
         return model_response
-

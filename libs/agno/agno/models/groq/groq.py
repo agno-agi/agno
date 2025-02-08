@@ -337,9 +337,7 @@ class Groq(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(
-        self, response: ChatCompletion
-    ) -> ModelResponse:
+    def parse_provider_response(self, response: ChatCompletion) -> ModelResponse:
         """
         Parse the Groq response into a ModelResponse.
 
@@ -375,9 +373,7 @@ class Groq(Model):
 
         return model_response
 
-    def parse_provider_response_delta(
-        self, response: ChatCompletionChunk
-    ) -> ModelResponse:
+    def parse_provider_response_delta(self, response: ChatCompletionChunk) -> ModelResponse:
         """
         Parse the Groq streaming response into ModelResponse objects.
 

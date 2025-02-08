@@ -43,7 +43,6 @@ def test_basic_stream():
         assert isinstance(response, RunResponse)
 
 
-
 def test_tool_use():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
@@ -94,7 +93,6 @@ def test_with_memory():
     assert total_tokens[0] == input_tokens[0] + output_tokens[0]
 
 
-
 def test_structured_output():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
@@ -114,6 +112,7 @@ def test_structured_output():
     assert response.content.genre is not None
     assert response.content.plot is not None
 
+
 def test_image_input():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
@@ -123,11 +122,7 @@ def test_image_input():
 
     response = agent.run(
         "Tell me about this image and give me the latest news about it.",
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
-            )
-        ],
+        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
     )
 
     assert "golden" in response.content.lower()

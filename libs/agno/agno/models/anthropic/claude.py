@@ -1,8 +1,8 @@
-from collections.abc import AsyncIterator
 import json
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.exceptions import ModelProviderError
 from agno.media import Image
@@ -34,6 +34,7 @@ ROLE_MAP = {
     "assistant": "assistant",
     "tool": "user",
 }
+
 
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     """
@@ -137,8 +138,8 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
                             else {},
                             name=tool_call["function"]["name"],
                             type="tool_use",
-                            )
                         )
+                    )
 
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
     return chat_messages, " ".join(system_messages)
@@ -171,7 +172,6 @@ class Claude(Model):
     # Anthropic clients
     client: Optional[AnthropicClient] = None
     async_client: Optional[AsyncAnthropicClient] = None
-
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}

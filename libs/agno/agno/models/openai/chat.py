@@ -30,7 +30,6 @@ except ModuleNotFoundError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
 
-
 @dataclass
 class OpenAIChat(Model):
     """

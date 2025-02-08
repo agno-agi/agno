@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Union
 
-
 from agno.exceptions import ModelProviderError
 from agno.media import Image
 from agno.models.base import Model
@@ -11,13 +10,20 @@ from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
 try:
+    from mistralai import CompletionEvent, UsageInfo
     from mistralai import Mistral as MistralClient
-    from mistralai import UsageInfo
-    from mistralai import CompletionEvent
-    from mistralai.models import AssistantMessage, ImageURLChunk, SystemMessage, TextChunk, ToolMessage, UserMessage
+    from mistralai.models import (
+        AssistantMessage,
+        HTTPValidationError,
+        ImageURLChunk,
+        SDKError,
+        SystemMessage,
+        TextChunk,
+        ToolMessage,
+        UserMessage,
+    )
     from mistralai.models.chatcompletionresponse import ChatCompletionResponse
     from mistralai.models.deltamessage import DeltaMessage
-    from mistralai.models import HTTPValidationError, SDKError
     from mistralai.types.basemodel import Unset
 
     MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
@@ -342,7 +348,6 @@ class MistralChat(Model):
             logger.error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(e, self.name, self.id) from e
 
-
     def parse_provider_response(self, response: ChatCompletionResponse) -> ModelResponse:
         """
         Parse the response from the Mistral model.
@@ -385,7 +390,11 @@ class MistralChat(Model):
 
         delta_message: DeltaMessage = response_delta.data.choices[0].delta
         model_response.role = delta_message.role
-        if delta_message.content is not None and not isinstance(delta_message.content, Unset) and isinstance(delta_message.content, str):
+        if (
+            delta_message.content is not None
+            and not isinstance(delta_message.content, Unset)
+            and isinstance(delta_message.content, str)
+        ):
             model_response.content = delta_message.content
 
         if delta_message.tool_calls is not None:
