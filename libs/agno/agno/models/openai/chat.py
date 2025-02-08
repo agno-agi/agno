@@ -450,6 +450,7 @@ class OpenAIChat(Model):
             except Exception as e:
                 logger.warning(f"Error processing tool calls: {e}")
         if hasattr(response_message, "audio") and response_message.audio is not None:
+            # If the audio output modality is requested, we can extract an audio response
             try:
                 assistant_message.audio_output = AudioOutput(
                     id=response_message.audio.id,
@@ -698,7 +699,7 @@ class OpenAIChat(Model):
         # -*- Generate response
         metrics.start_response_timer()
         for response in self.invoke_stream(messages=messages):
-            if len(response.choices) > 0:
+            if response.choices and len(response.choices) > 0:
                 metrics.completion_tokens += 1
                 if metrics.completion_tokens == 1:
                     metrics.time_to_first_token = metrics.response_timer.elapsed

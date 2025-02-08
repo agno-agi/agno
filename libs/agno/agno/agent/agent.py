@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from agno.exceptions import AgentRunException, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
-from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, AudioArtifact, AudioOutput, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
@@ -545,6 +545,22 @@ class Agent:
                         yield self.create_run_response(
                             content=model_response_chunk.content, created_at=model_response_chunk.created_at
                         )
+                    if model_response_chunk.audio is not None:
+                        if model_response.audio is None:
+                            model_response.audio = AudioOutput(id=str(uuid4()), content="", transcript="")
+
+                        model_response.audio.content += model_response_chunk.audio.content
+                        model_response.audio.transcript += model_response_chunk.audio.transcript
+
+                        # Yield the audio and transcript bit by bit
+                        self.run_response.response_audio = AudioOutput(
+                            id=model_response_chunk.audio.id,
+                            content=model_response_chunk.audio.content,
+                            transcript=model_response_chunk.audio.transcript,
+                        )
+                        self.run_response.created_at = model_response_chunk.created_at
+
+                        yield self.run_response
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                     # Add tool calls to the run_response
@@ -976,6 +992,24 @@ class Agent:
                         yield self.create_run_response(
                             content=model_response_chunk.content, created_at=model_response_chunk.created_at
                         )
+
+                    if model_response_chunk.audio is not None:
+                        if model_response.audio is None:
+                            model_response.audio = AudioOutput(id=str(uuid4()), content="", transcript="")
+
+                        model_response.audio.content += model_response_chunk.audio.content
+                        model_response.audio.transcript += model_response_chunk.audio.transcript
+
+                        # Yield the audio and transcript bit by bit
+                        self.run_response.response_audio = AudioOutput(
+                            id=model_response_chunk.audio.id,
+                            content=model_response_chunk.audio.content,
+                            transcript=model_response_chunk.audio.transcript,
+                        )
+                        self.run_response.created_at = model_response_chunk.created_at
+
+                        yield self.run_response
+
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                     # Add tool calls to the run_response

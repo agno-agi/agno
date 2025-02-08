@@ -185,6 +185,7 @@ module = [
   "boto3.*",
   "botocore.*",
   "bs4.*",
+  "bson.*",
   "cassio.*",
   "chonkie.*",
   "chromadb.*",

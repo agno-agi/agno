@@ -266,7 +266,7 @@ class Cohere(Model):
         Args:
             assistant_message (Message): The assistant message.
             messages (List[Message]): The list of messages.
-            response_tool_calls (List[Any]): The list of response tool calls.
+            response_tool_calls (List[ToolCall]): The list of response tool calls.
             model_response (ModelResponse): The model response.
 
         Returns:

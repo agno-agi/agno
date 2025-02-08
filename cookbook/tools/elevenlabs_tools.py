@@ -30,5 +30,4 @@ audio_agent = Agent(
 
 audio_agent.print_response("Generate a very long audio of history of french revolution")
 
-
 audio_agent.print_response("Generate a kick sound effect")

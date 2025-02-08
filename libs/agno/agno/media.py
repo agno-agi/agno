@@ -91,7 +91,7 @@ class Audio(BaseModel):
 class AudioOutput(BaseModel):
     id: str
     content: str  # Base64 encoded
-    expires_at: int
+    expires_at: Optional[int] = None
     transcript: str
 
 
