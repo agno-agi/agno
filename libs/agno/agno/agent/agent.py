@@ -572,7 +572,7 @@ class Agent:
                             }
                             # Process tool calls
                             for tool_call_dict in tool_calls_list:
-                                tool_call_id = tool_call_dict["tool_call_id"]
+                                tool_call_id = tool_call_dict.get("tool_call_id")
                                 index = tool_call_index_map.get(tool_call_id)
                                 if index is not None:
                                     self.run_response.tools[index] = tool_call_dict
@@ -630,9 +630,7 @@ class Agent:
         # 9. Update Agent Memory
         # Add the system message to the memory
         if run_messages.system_message is not None:
-            self.memory.add_system_message(
-                run_messages.system_message, system_message_role=self.system_message_role
-            )
+            self.memory.add_system_message(run_messages.system_message, system_message_role=self.system_message_role)
 
         # Build a list of messages that should be added to the AgentMemory
         messages_for_memory: List[Message] = (
@@ -1062,9 +1060,7 @@ class Agent:
         # 9. Update Agent Memory
         # Add the system message to the memory
         if run_messages.system_message is not None:
-            self.memory.add_system_message(
-                run_messages.system_message, system_message_role=self.system_message_role
-            )
+            self.memory.add_system_message(run_messages.system_message, system_message_role=self.system_message_role)
 
         # Build a list of messages that should be added to the AgentMemory
         messages_for_memory: List[Message] = (

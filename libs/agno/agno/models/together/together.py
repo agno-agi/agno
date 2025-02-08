@@ -5,7 +5,6 @@ from typing import Optional
 from agno.models.openai.like import OpenAILike
 
 
-
 @dataclass
 class Together(OpenAILike):
     """

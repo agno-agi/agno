@@ -330,7 +330,5 @@ class Cohere(Model):
             if model_response is not None:
                 yield model_response
 
-    def parse_provider_response_delta(
-        self, response: Any
-    ) -> Iterator[ModelResponse]:
+    def parse_provider_response_delta(self, response: Any) -> Iterator[ModelResponse]:
         pass

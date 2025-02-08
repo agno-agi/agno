@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from time import time
-from typing import Any, Dict, List, Optional, Sequence, Union, Literal
+from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer
 

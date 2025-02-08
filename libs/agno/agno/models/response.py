@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 from agno.media import AudioOutput
 
@@ -23,7 +23,7 @@ class ModelResponse:
     content: Optional[str] = None
     parsed: Optional[Any] = None
     audio: Optional[AudioOutput] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     event: str = ModelResponseEvent.assistant_response.value
 
     reasoning_content: Optional[str] = None
