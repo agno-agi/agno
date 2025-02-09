@@ -160,18 +160,21 @@ class CalComTools(Toolkit):
             logger.error(f"Error creating booking: {e}")
             return f"Error: {str(e)}"
 
-    def get_upcoming_bookings(self, email: str) -> str:
+    def get_upcoming_bookings(self, email: Optional[str] = None) -> str:
         """Get all upcoming bookings for an attendee.
 
         Args:
-            email: Attendee's email
+            email (str): Attendee's email [Optional]
 
         Returns:
             str: List of upcoming bookings or error message
         """
         try:
             url = "https://api.cal.com/v2/bookings"
-            querystring = {"status": "upcoming", "attendeeEmail": email}
+            querystring = {"status": "upcoming"}
+            if email:
+                querystring["attendeeEmail"] = email
+            
 
             response = requests.get(url, headers=self._get_headers(), params=querystring)
             if response.status_code == 200:

@@ -1,5 +1,5 @@
 """
-Gmail Toolset for interacting with Gmail API
+Gmail Toolkit for interacting with Gmail API
 
 Required Environment Variables:
 -----------------------------
@@ -23,7 +23,7 @@ How to Get These Credentials:
    - Go through the OAuth consent screen setup
    - Give it a name and click "Create"
    - You'll receive:
-     * Client ID (GMAIL_CLIENT_ID)
+     * Client ID (GOOGLE_CLIENT_ID)
      * Client Secret (GOOGLE_CLIENT_SECRET)
    - The Project ID (GOOGLE_PROJECT_ID) is visible in the project dropdown at the top of the page
 
@@ -41,8 +41,11 @@ A token.json file will be created to store the authentication credentials for fu
 """
 
 import base64
-import os
+import re
 from datetime import datetime, timedelta
+from functools import wraps
+from os import getenv
+from pathlib import Path
 from typing import List, Optional
 
 from agno.tools import Toolkit
@@ -61,7 +64,35 @@ except ImportError:
     )
 
 
+def authenticate(func):
+    """Decorator to ensure authentication before executing a function."""
+
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        if not self.creds or not self.creds.valid:
+            self._auth()
+        if not self.service:
+            self.service = build("gmail", "v1", credentials=self.creds)
+        return func(self, *args, **kwargs)
+
+    return wrapper
+
+
+def validate_email(email: str) -> bool:
+    """Validate email format."""
+    email = email.strip()
+    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    return bool(re.match(pattern, email))
+
+
 class GmailTools(Toolkit):
+    # Default scopes for Gmail API access
+    DEFAULT_SCOPES = [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.compose",
+    ]
+
     def __init__(
         self,
         get_latest_emails: bool = True,
@@ -73,11 +104,57 @@ class GmailTools(Toolkit):
         create_draft_email: bool = True,
         send_email: bool = True,
         search_emails: bool = True,
+        creds: Optional[Credentials] = None,
+        credentials_path: Optional[str] = None,
+        token_path: Optional[str] = None,
+        scopes: Optional[List[str]] = None,
     ):
-        """Initialize GmailTools and authenticate with Gmail API"""
-        super().__init__()
-        self.creds = self._authenticate()
-        self.service = build("gmail", "v1", credentials=self.creds)
+        """Initialize GmailTools and authenticate with Gmail API
+
+        Args:
+            get_latest_emails (bool): Enable getting latest emails. Defaults to True.
+            get_emails_from_user (bool): Enable getting emails from specific user. Defaults to True.
+            get_unread_emails (bool): Enable getting unread emails. Defaults to True.
+            get_starred_emails (bool): Enable getting starred emails. Defaults to True.
+            get_emails_by_context (bool): Enable getting emails by context. Defaults to True.
+            get_emails_by_date (bool): Enable getting emails by date. Defaults to True.
+            create_draft_email (bool): Enable creating draft emails. Defaults to True.
+            send_email (bool): Enable sending emails. Defaults to True.
+            search_emails (bool): Enable searching emails. Defaults to True.
+            creds (Optional[Credentials]): Pre-existing credentials. Defaults to None.
+            credentials_path (Optional[str]): Path to credentials file. Defaults to None.
+            token_path (Optional[str]): Path to token file. Defaults to None.
+            scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
+        """
+        super().__init__(name="gmail_tools")
+        self.creds = creds
+        self.credentials_path = credentials_path
+        self.token_path = token_path
+        self.service = None
+        self.scopes = scopes or self.DEFAULT_SCOPES
+
+        # Validate that required scopes are present for requested operations
+        if (create_draft_email or send_email) and "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
+            raise ValueError(
+                "The scope https://www.googleapis.com/auth/gmail.compose is required for email composition operations"
+            )
+
+        read_operations = [
+            get_latest_emails,
+            get_emails_from_user,
+            get_unread_emails,
+            get_starred_emails,
+            get_emails_by_context,
+            get_emails_by_date,
+            search_emails,
+        ]
+
+        if any(read_operations):
+            read_scope = "https://www.googleapis.com/auth/gmail.readonly"
+            write_scope = "https://www.googleapis.com/auth/gmail.modify"
+            if read_scope not in self.scopes and write_scope not in self.scopes:
+                raise ValueError(f"The scope {read_scope} is required for email reading operations")
+
         if get_latest_emails:
             self.register(self.get_latest_emails)
         if get_emails_from_user:
@@ -97,39 +174,38 @@ class GmailTools(Toolkit):
         if search_emails:
             self.register(self.search_emails)
 
-    def _authenticate(self) -> Credentials:
-        """Authenticate and return Gmail API credentials"""
+    def _auth(self) -> None:
+        """Authenticate with Gmail API"""
+        token_file = Path(self.token_path or "token.json")
+        creds_file = Path(self.credentials_path or "credentials.json")
 
-        # If modifying these scopes, delete the file token.json.
-        SCOPES = [
-            "https://www.googleapis.com/auth/gmail.readonly",
-            "https://www.googleapis.com/auth/gmail.modify",
-            "https://www.googleapis.com/auth/gmail.compose",
-        ]
+        if token_file.exists():
+            self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
 
-        creds = None
-        if os.path.exists("token.json"):
-            creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+        if not self.creds or not self.creds.valid:
+            if self.creds and self.creds.expired and self.creds.refresh_token:
+                self.creds.refresh(Request())
             else:
                 client_config = {
                     "installed": {
-                        "client_id": os.getenv("GOOGLE_CLIENT_ID"),
-                        "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
-                        "project_id": os.getenv("GOOGLE_PROJECT_ID"),
+                        "client_id": getenv("GOOGLE_CLIENT_ID"),
+                        "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
+                        "project_id": getenv("GOOGLE_PROJECT_ID"),
                         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                         "token_uri": "https://oauth2.googleapis.com/token",
                         "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                        "redirect_uris": [os.getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
+                        "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
                     }
                 }
-                flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-                creds = flow.run_local_server(port=0)
-            with open("token.json", "w") as token:
-                token.write(creds.to_json())
-        return creds
+                if creds_file.exists():
+                    flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+                else:
+                    flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
+                self.creds = flow.run_local_server(port=0)
+
+            # Save the credentials for future use
+            if self.creds and self.creds.valid:
+                token_file.write_text(self.creds.to_json())
 
     def _format_emails(self, emails: List[dict]) -> str:
         """Format list of email dictionaries into a readable string"""
@@ -149,6 +225,7 @@ class GmailTools(Toolkit):
 
         return "\n\n".join(formatted_emails)
 
+    @authenticate
     def get_latest_emails(self, count: int) -> str:
         """
         Get the latest X emails from the user's inbox.
@@ -160,7 +237,7 @@ class GmailTools(Toolkit):
             str: Formatted string containing email details
         """
         try:
-            results = self.service.users().messages().list(userId="me", maxResults=count).execute()
+            results = self.service.users().messages().list(userId="me", maxResults=count).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
@@ -168,6 +245,7 @@ class GmailTools(Toolkit):
         except Exception as error:
             return f"Unexpected error retrieving latest emails: {type(error).__name__}: {error}"
 
+    @authenticate
     def get_emails_from_user(self, user: str, count: int) -> str:
         """
         Get X number of emails from a specific user (name or email).
@@ -181,7 +259,7 @@ class GmailTools(Toolkit):
         """
         try:
             query = f"from:{user}" if "@" in user else f"from:{user}*"
-            results = self.service.users().messages().list(userId="me", q=query, maxResults=count).execute()
+            results = self.service.users().messages().list(userId="me", q=query, maxResults=count).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
@@ -189,6 +267,7 @@ class GmailTools(Toolkit):
         except Exception as error:
             return f"Unexpected error retrieving emails from {user}: {type(error).__name__}: {error}"
 
+    @authenticate
     def get_unread_emails(self, count: int) -> str:
         """
         Get the X number of latest unread emails from the user's inbox.
@@ -200,7 +279,7 @@ class GmailTools(Toolkit):
             str: Formatted string containing email details
         """
         try:
-            results = self.service.users().messages().list(userId="me", q="is:unread", maxResults=count).execute()
+            results = self.service.users().messages().list(userId="me", q="is:unread", maxResults=count).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
@@ -208,6 +287,7 @@ class GmailTools(Toolkit):
         except Exception as error:
             return f"Unexpected error retrieving unread emails: {type(error).__name__}: {error}"
 
+    @authenticate
     def get_starred_emails(self, count: int) -> str:
         """
         Get X number of starred emails from the user's inbox.
@@ -219,7 +299,7 @@ class GmailTools(Toolkit):
             str: Formatted string containing email details
         """
         try:
-            results = self.service.users().messages().list(userId="me", q="is:starred", maxResults=count).execute()
+            results = self.service.users().messages().list(userId="me", q="is:starred", maxResults=count).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
@@ -227,6 +307,7 @@ class GmailTools(Toolkit):
         except Exception as error:
             return f"Unexpected error retrieving starred emails: {type(error).__name__}: {error}"
 
+    @authenticate
     def get_emails_by_context(self, context: str, count: int) -> str:
         """
         Get X number of emails matching a specific context or search term.
@@ -239,7 +320,7 @@ class GmailTools(Toolkit):
             str: Formatted string containing email details
         """
         try:
-            results = self.service.users().messages().list(userId="me", q=context, maxResults=count).execute()
+            results = self.service.users().messages().list(userId="me", q=context, maxResults=count).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
@@ -247,6 +328,7 @@ class GmailTools(Toolkit):
         except Exception as error:
             return f"Unexpected error retrieving emails by context '{context}': {type(error).__name__}: {error}"
 
+    @authenticate
     def get_emails_by_date(
         self, start_date: int, range_in_days: Optional[int] = None, num_emails: Optional[int] = 10
     ) -> str:
@@ -269,7 +351,7 @@ class GmailTools(Toolkit):
             else:
                 query = f"after:{start_date_dt.strftime('%Y/%m/%d')}"
 
-            results = self.service.users().messages().list(userId="me", q=query, maxResults=num_emails).execute()
+            results = self.service.users().messages().list(userId="me", q=query, maxResults=num_emails).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
@@ -277,6 +359,7 @@ class GmailTools(Toolkit):
         except Exception as error:
             return f"Unexpected error retrieving emails by date: {type(error).__name__}: {error}"
 
+    @authenticate
     def create_draft_email(self, to: str, subject: str, body: str, cc: Optional[str] = None) -> str:
         """
         Create and save a draft email. to and cc are comma separated string of email ids
@@ -289,11 +372,13 @@ class GmailTools(Toolkit):
         Returns:
             str: Stringified dictionary containing draft email details including id
         """
+        self._validate_email_params(to, subject, body)
         message = self._create_message(to.split(","), subject, body, cc.split(",") if cc else None)
         draft = {"message": message}
-        draft = self.service.users().drafts().create(userId="me", body=draft).execute()
+        draft = self.service.users().drafts().create(userId="me", body=draft).execute()  # type: ignore
         return str(draft)
 
+    @authenticate
     def send_email(self, to: str, subject: str, body: str, cc: Optional[str] = None) -> str:
         """
         Send an email immediately. to and cc are comma separated string of email ids
@@ -306,11 +391,13 @@ class GmailTools(Toolkit):
         Returns:
             str: Stringified dictionary containing sent email details including id
         """
+        self._validate_email_params(to, subject, body)
         body = body.replace("\n", "<br>")
         message = self._create_message(to.split(","), subject, body, cc.split(",") if cc else None)
-        message = self.service.users().messages().send(userId="me", body=message).execute()
+        message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
         return str(message)
 
+    @authenticate
     def search_emails(self, query: str, count: int) -> str:
         """
         Get X number of emails based on a given natural text query.
@@ -324,13 +411,29 @@ class GmailTools(Toolkit):
             str: Formatted string containing email details
         """
         try:
-            results = self.service.users().messages().list(userId="me", q=query, maxResults=count).execute()
+            results = self.service.users().messages().list(userId="me", q=query, maxResults=count).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
             return f"Error retrieving emails with query '{query}': {error}"
         except Exception as error:
             return f"Unexpected error retrieving emails with query '{query}': {type(error).__name__}: {error}"
+
+    def _validate_email_params(self, to: str, subject: str, body: str) -> None:
+        """Validate email parameters."""
+        if not to:
+            raise ValueError("Recipient email cannot be empty")
+
+        # Validate each email in the comma-separated list
+        for email in to.split(","):
+            if not validate_email(email.strip()):
+                raise ValueError(f"Invalid recipient email format: {email}")
+
+        if not subject or not subject.strip():
+            raise ValueError("Subject cannot be empty")
+
+        if body is None:
+            raise ValueError("Email body cannot be None")
 
     def _create_message(self, to: List[str], subject: str, body: str, cc: Optional[List[str]] = None) -> dict:
         """Create email message"""
@@ -347,7 +450,7 @@ class GmailTools(Toolkit):
         """Get details for list of messages"""
         details = []
         for msg in messages:
-            msg_data = self.service.users().messages().get(userId="me", id=msg["id"], format="full").execute()
+            msg_data = self.service.users().messages().get(userId="me", id=msg["id"], format="full").execute()  # type: ignore
             details.append(
                 {
                     "id": msg_data["id"],
