@@ -1,7 +1,0 @@
-ollama
-pgvector
-phidata
-psycopg[binary]
-sqlalchemy
-streamlit
-youtube_transcript_api

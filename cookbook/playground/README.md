@@ -1,39 +1,47 @@
-# Agent UI
+# Agent Playground
 
-> Note: Fork and clone this repository if needed
+Agno provides a beautiful Agent UI for interacting with your agents.
+
+## Setup
 
 ### Create and activate a virtual environment
 
 ```shell
-python3 -m venv ~/.venvs/aienv
-source ~/.venvs/aienv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 ```
-
-## OpenAI Agents
 
 ### Export your API keys
 
 ```shell
 export OPENAI_API_KEY=***
+# If you need Exa search
 export EXA_API_KEY=***
+...
 ```
 
 ### Install libraries
 
 ```shell
-pip install -U openai exa_py duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api phidata
+pip install -U openai exa_py duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api agno
 ```
 
-### Authenticate with phidata.app
+### Authenticate with agno.app
 
 ```
-phi auth
+ag auth
 ```
 
-### Connect OpenAI Agents to the Agent UI
+## Connect your Agents to the Agent UI
 
 ```shell
 python cookbook/playground/demo.py
+```
+
+## Test Multimodal Agents
+
+```shell
+python cookbook/playground/multimodal_agents.py
 ```
 
 ## Fully local Ollama Agents
@@ -44,28 +52,26 @@ python cookbook/playground/demo.py
 ollama pull llama3.1:8b
 ```
 
-### Install libraries
-
-```shell
-pip install -U ollama duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' phidata youtube-transcript-api
-```
-
 ### Connect Ollama agents to the Agent UI
 
 ```shell
 python cookbook/playground/ollama_agents.py
 ```
 
-## Grok Agents
-
-### Install libraries
-
-```shell
-pip install -U openai duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' phidata youtube-transcript-api
-```
-
-### Connect Grok agents to the Agent UI
+## xAi Grok Agents
 
 ```shell
 python cookbook/playground/grok_agents.py
+```
+
+## Groq Agents
+
+```shell
+python cookbook/playground/groq_agents.py
+```
+
+## Gemini Agents
+
+```shell
+python cookbook/playground/gemini_agents.py
 ```

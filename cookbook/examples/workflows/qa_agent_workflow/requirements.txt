@@ -1,4 +1,0 @@
-phidata
-lancedb
-openai
-tantivy

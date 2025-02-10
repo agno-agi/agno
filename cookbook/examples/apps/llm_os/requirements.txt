@@ -1,0 +1,16 @@
+agno
+openai
+exa_py
+yfinance
+duckdb
+bs4
+duckduckgo-search
+nest_asyncio
+qdrant-client
+pgvector
+psycopg[binary]
+pypdf
+sqlalchemy
+streamlit
+pandas
+matplotlib

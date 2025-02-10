@@ -1,8 +1,0 @@
-openai
-pandas
-phidata
-streamlit
-sqlalchemy
-simplejson
-pgvector
-psycopg[binary]

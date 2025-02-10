@@ -1,20 +1,61 @@
 """
-1. Install dependencies using: `pip install openai exa_py sqlalchemy phidata`
-2. Run the script using: `python cookbook/workflows/blog_post_generator.py`
+🚀 Startup Idea Validator - Your Personal Business Validation Assistant!
+
+This workflow helps entrepreneurs validate their startup ideas by:
+1. Clarifying and refining the core business concept
+2. Evaluating originality compared to existing solutions
+3. Defining clear mission and objectives
+4. Conducting comprehensive market research and analysis
+
+Why is this helpful?
+--------------------------------------------------------------------------------
+• Get objective feedback on your startup idea before investing resources
+• Understand your total addressable market and target segments
+• Validate assumptions about market opportunity and competition
+• Define clear mission and objectives to guide execution
+
+Who should use this?
+--------------------------------------------------------------------------------
+• Entrepreneurs and Startup Founders
+• Product Managers and Business Strategists
+• Innovation Teams
+• Angel Investors and VCs doing initial screening
+
+Example use cases:
+--------------------------------------------------------------------------------
+• New product/service validation
+• Market opportunity assessment
+• Competitive analysis
+• Business model validation
+• Target customer segmentation
+• Mission/vision refinement
+
+Quick Start:
+--------------------------------------------------------------------------------
+1. Install dependencies:
+   pip install openai agno
+
+2. Set environment variables:
+   - OPENAI_API_KEY
+
+3. Run:
+   python startup_idea_validator.py
+
+The workflow will guide you through validating your startup idea with AI-powered
+analysis and research. Use the insights to refine your concept and business plan!
 """
 
 import json
-from typing import Optional, Iterator
+from typing import Iterator, Optional
 
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.storage.workflow.sqlite import SqliteWorkflowStorage
+from agno.tools.googlesearch import GoogleSearch
+from agno.utils.log import logger
+from agno.utils.pprint import pprint_run_response
+from agno.workflow import RunEvent, RunResponse, Workflow
 from pydantic import BaseModel, Field
-
-from phi.agent import Agent
-from phi.model.openai import OpenAIChat
-from phi.tools.googlesearch import GoogleSearch
-from phi.workflow import Workflow, RunResponse, RunEvent
-from phi.storage.workflow.sqlite import SqlWorkflowStorage
-from phi.utils.pprint import pprint_run_response
-from phi.utils.log import logger
 
 
 class IdeaClarification(BaseModel):
@@ -24,9 +65,15 @@ class IdeaClarification(BaseModel):
 
 
 class MarketResearch(BaseModel):
-    total_addressable_market: str = Field(..., description="Total addressable market (TAM).")
-    serviceable_available_market: str = Field(..., description="Serviceable available market (SAM).")
-    serviceable_obtainable_market: str = Field(..., description="Serviceable obtainable market (SOM).")
+    total_addressable_market: str = Field(
+        ..., description="Total addressable market (TAM)."
+    )
+    serviceable_available_market: str = Field(
+        ..., description="Serviceable available market (SAM)."
+    )
+    serviceable_obtainable_market: str = Field(
+        ..., description="Serviceable obtainable market (SOM)."
+    )
     target_customer_segments: str = Field(..., description="Target customer segments.")
 
 
@@ -106,11 +153,15 @@ class StartupIdeaValidator(Workflow):
 
         return None
 
-    def get_market_research(self, startup_idea: str, idea_clarification: IdeaClarification) -> Optional[MarketResearch]:
+    def get_market_research(
+        self, startup_idea: str, idea_clarification: IdeaClarification
+    ) -> Optional[MarketResearch]:
         agent_input = {"startup_idea": startup_idea, **idea_clarification.model_dump()}
 
         try:
-            response: RunResponse = self.market_research_agent.run(json.dumps(agent_input, indent=4))
+            response: RunResponse = self.market_research_agent.run(
+                json.dumps(agent_input, indent=4)
+            )
 
             # Check if we got a valid response
             if not response or not response.content:
@@ -127,11 +178,15 @@ class StartupIdeaValidator(Workflow):
 
         return None
 
-    def get_competitor_analysis(self, startup_idea: str, market_research: MarketResearch) -> Optional[str]:
+    def get_competitor_analysis(
+        self, startup_idea: str, market_research: MarketResearch
+    ) -> Optional[str]:
         agent_input = {"startup_idea": startup_idea, **market_research.model_dump()}
 
         try:
-            response: RunResponse = self.competitor_analysis_agent.run(json.dumps(agent_input, indent=4))
+            response: RunResponse = self.competitor_analysis_agent.run(
+                json.dumps(agent_input, indent=4)
+            )
 
             # Check if we got a valid response
             if not response or not response.content:
@@ -148,7 +203,9 @@ class StartupIdeaValidator(Workflow):
         logger.info(f"Generating a startup validation report for: {startup_idea}")
 
         # Clarify and quantify the idea
-        idea_clarification: Optional[IdeaClarification] = self.get_idea_clarification(startup_idea)
+        idea_clarification: Optional[IdeaClarification] = self.get_idea_clarification(
+            startup_idea
+        )
 
         if idea_clarification is None:
             yield RunResponse(
@@ -158,7 +215,9 @@ class StartupIdeaValidator(Workflow):
             return
 
         # Do some market research
-        market_research: Optional[MarketResearch] = self.get_market_research(startup_idea, idea_clarification)
+        market_research: Optional[MarketResearch] = self.get_market_research(
+            startup_idea, idea_clarification
+        )
 
         if market_research is None:
             yield RunResponse(
@@ -167,7 +226,9 @@ class StartupIdeaValidator(Workflow):
             )
             return
 
-        competitor_analysis: Optional[str] = self.get_competitor_analysis(startup_idea, market_research)
+        competitor_analysis: Optional[str] = self.get_competitor_analysis(
+            startup_idea, market_research
+        )
 
         # Compile the final report
         final_response: RunResponse = self.report_agent.run(
@@ -182,7 +243,9 @@ class StartupIdeaValidator(Workflow):
             )
         )
 
-        yield RunResponse(content=final_response.content, event=RunEvent.workflow_completed)
+        yield RunResponse(
+            content=final_response.content, event=RunEvent.workflow_completed
+        )
 
 
 # Run the workflow if the script is executed directly
@@ -201,11 +264,10 @@ if __name__ == "__main__":
     startup_idea_validator = StartupIdeaValidator(
         description="Startup Idea Validator",
         session_id=f"validate-startup-idea-{url_safe_idea}",
-        storage=SqlWorkflowStorage(
+        storage=SqliteWorkflowStorage(
             table_name="validate_startup_ideas_workflow",
-            db_file="tmp/workflows.db",
+            db_file="tmp/agno_workflows.db",
         ),
-        debug_mode=True,
     )
 
     final_report: Iterator[RunResponse] = startup_idea_validator.run(startup_idea=idea)

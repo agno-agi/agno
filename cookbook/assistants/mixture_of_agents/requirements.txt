@@ -1,4 +1,0 @@
-phidata
-groq
-pandas
-MLB-StatsAPI

@@ -1,8 +1,14 @@
-from phi.agent import Agent
-from phi.tools.searxng import Searxng
+from agno.agent import Agent
+from agno.tools.searxng import Searxng
 
 # Initialize Searxng with your Searxng instance URL
-searxng = Searxng(host="http://localhost:53153", engines=[], fixed_max_results=5, news=True, science=True)
+searxng = Searxng(
+    host="http://localhost:53153",
+    engines=[],
+    fixed_max_results=5,
+    news=True,
+    science=True,
+)
 
 # Create an agent with Searxng
 agent = Agent(tools=[searxng])

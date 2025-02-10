@@ -1,6 +1,6 @@
-from phi.agent import Agent
-from phi.model.openai import OpenAIChat
-from phi.tools.replicate import ReplicateTools
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.replicate import ReplicateTools
 
 """Create an agent specialized for Replicate AI content generation"""
 

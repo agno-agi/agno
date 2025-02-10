@@ -2,15 +2,17 @@
 pip install elevenlabs
 """
 
-from phi.agent import Agent
-from phi.model.openai import OpenAIChat
-from phi.tools.eleven_labs_tools import ElevenLabsTools
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.eleven_labs import ElevenLabsTools
 
 audio_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         ElevenLabsTools(
-            voice_id="21m00Tcm4TlvDq8ikWAM", model_id="eleven_multilingual_v2", target_directory="audio_generations"
+            voice_id="21m00Tcm4TlvDq8ikWAM",
+            model_id="eleven_multilingual_v2",
+            target_directory="audio_generations",
         )
     ],
     description="You are an AI agent that can generate audio using the ElevenLabs API.",

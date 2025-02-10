@@ -1,12 +1,12 @@
-"""Run `pip install ollama duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api phidata` to install dependencies."""
+"""Run `pip install ollama duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api agno` to install dependencies."""
 
-from phi.agent import Agent
-from phi.model.ollama import Ollama
-from phi.playground import Playground, serve_playground_app
-from phi.storage.agent.sqlite import SqlAgentStorage
-from phi.tools.duckduckgo import DuckDuckGo
-from phi.tools.yfinance import YFinanceTools
-from phi.tools.youtube_tools import YouTubeTools
+from agno.agent import Agent
+from agno.models.ollama import Ollama
+from agno.playground import Playground, serve_playground_app
+from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.yfinance import YFinanceTools
+from agno.tools.youtube import YouTubeTools
 
 local_agent_storage_file: str = "tmp/local_agents.db"
 common_instructions = [
@@ -18,9 +18,11 @@ web_agent = Agent(
     role="Search the web for information",
     agent_id="web-agent",
     model=Ollama(id="llama3.1:8b"),
-    tools=[DuckDuckGo()],
+    tools=[DuckDuckGoTools()],
     instructions=["Always include sources."] + common_instructions,
-    storage=SqlAgentStorage(table_name="web_agent", db_file=local_agent_storage_file),
+    storage=SqliteAgentStorage(
+        table_name="web_agent", db_file=local_agent_storage_file
+    ),
     show_tool_calls=True,
     add_history_to_messages=True,
     num_history_responses=2,
@@ -34,10 +36,19 @@ finance_agent = Agent(
     role="Get financial data",
     agent_id="finance-agent",
     model=Ollama(id="llama3.1:8b"),
-    tools=[YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True, company_news=True)],
+    tools=[
+        YFinanceTools(
+            stock_price=True,
+            analyst_recommendations=True,
+            company_info=True,
+            company_news=True,
+        )
+    ],
     description="You are an investment analyst that researches stocks and helps users make informed decisions.",
     instructions=["Always use tables to display data"] + common_instructions,
-    storage=SqlAgentStorage(table_name="finance_agent", db_file=local_agent_storage_file),
+    storage=SqliteAgentStorage(
+        table_name="finance_agent", db_file=local_agent_storage_file
+    ),
     add_history_to_messages=True,
     num_history_responses=5,
     add_name_to_instructions=True,
@@ -65,7 +76,9 @@ youtube_agent = Agent(
     show_tool_calls=True,
     add_name_to_instructions=True,
     add_datetime_to_instructions=True,
-    storage=SqlAgentStorage(table_name="youtube_agent", db_file=local_agent_storage_file),
+    storage=SqliteAgentStorage(
+        table_name="youtube_agent", db_file=local_agent_storage_file
+    ),
     markdown=True,
 )
 

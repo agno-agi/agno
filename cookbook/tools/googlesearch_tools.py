@@ -1,5 +1,5 @@
-from phi.agent import Agent
-from phi.tools.googlesearch import GoogleSearch
+from agno.agent import Agent
+from agno.tools.googlesearch import GoogleSearch
 
 agent = Agent(
     tools=[GoogleSearch()],

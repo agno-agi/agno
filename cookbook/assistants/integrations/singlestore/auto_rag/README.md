@@ -1,1 +1,0 @@
-- This cookbook has been moved to the [SingleStore AI Apps](/cookbook/integrations/singlestore/ai_apps/README.md) folder.

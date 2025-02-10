@@ -1,2 +1,0 @@
-class InvalidToolCallException(Exception):
-    pass

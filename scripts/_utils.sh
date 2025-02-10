@@ -1,9 +1,7 @@
 #!/bin/bash
 
 ############################################################################
-#
-# Collection of helper functions to import in other scripts
-#
+# Helper functions to import in other scripts
 ############################################################################
 
 space_to_continue() {

@@ -1,8 +1,8 @@
-from phi.agent import Agent
-from phi.tools.baidusearch import BaiduSearch
+from agno.agent import Agent
+from agno.tools.baidusearch import BaiduSearchTools
 
 agent = Agent(
-    tools=[BaiduSearch()],
+    tools=[BaiduSearchTools()],
     description="You are a search agent that helps users find the most relevant information using Baidu.",
     instructions=[
         "Given a topic by the user, respond with the 3 most relevant search results about that topic.",

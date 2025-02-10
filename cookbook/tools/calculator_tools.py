@@ -1,9 +1,9 @@
-from phi.agent import Agent
-from phi.tools.calculator import Calculator
+from agno.agent import Agent
+from agno.tools.calculator import CalculatorTools
 
 agent = Agent(
     tools=[
-        Calculator(
+        CalculatorTools(
             add=True,
             subtract=True,
             multiply=True,

@@ -1,0 +1,102 @@
+name: Performance Comparison
+
+on:
+  workflow_dispatch:
+
+jobs:
+  langgraph-performance:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install openai agno langgraph langchain_openai
+
+    - name: Run LangGraph Performance Test
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        echo "Running LangGraph Performance Test..."
+        python evals/performance/other/langgraph_instantiation.py | tee langgraph_results.txt
+
+    - name: Format Results
+      run: |
+        echo "## LangGraph Results" > langgraph_results.md
+        echo "========================" >> langgraph_results.md
+        cat langgraph_results.txt >> langgraph_results.md
+
+    - name: Upload LangGraph Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: langgraph-results
+        path: langgraph_results.md
+
+  agno-performance:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install openai agno
+
+    - name: Run Agno Performance Test
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        echo "Running Agno Performance Test..."
+        python evals/performance/instantiation_with_tool.py | tee agno_results.txt
+
+    - name: Format Results
+      run: |
+        echo "## Agno Results" > agno_results.md
+        echo "========================" >> agno_results.md
+        cat agno_results.txt >> agno_results.md
+
+    - name: Upload Agno Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: agno-results
+        path: agno_results.md
+
+  combine-results:
+    needs: [langgraph-performance, agno-performance]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download LangGraph Results
+      uses: actions/download-artifact@v4
+      with:
+        name: langgraph-results
+
+    - name: Download Agno Results
+      uses: actions/download-artifact@v4
+      with:
+        name: agno-results
+
+    - name: Combine Results
+      run: |
+        echo "Performance Test Results" > final_results.md
+        echo "========================" >> final_results.md
+        echo "" >> final_results.md
+        cat langgraph_results.md >> final_results.md
+        echo "" >> final_results.md
+        cat agno_results.md >> final_results.md
+
+    - name: Upload Combined Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: final-results
+        path: final_results.md

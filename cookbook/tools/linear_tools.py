@@ -1,9 +1,9 @@
-from phi.agent import Agent
-from phi.tools.linear_tools import LinearTool
+from agno.agent import Agent
+from agno.tools.linear import LinearTools
 
 agent = Agent(
     name="Linear Tool Agent",
-    tools=[LinearTool()],
+    tools=[LinearTools()],
     show_tool_calls=True,
     markdown=True,
 )
@@ -21,6 +21,8 @@ agent.print_response(f"Show the issue with the issue id: {issue_id}")
 agent.print_response(
     f"Create a new issue with the title: {new_issue_title} with description: {desc} and team id: {team_id}"
 )
-agent.print_response(f"Update the issue with the issue id: {issue_id} with new title: {new_title}")
+agent.print_response(
+    f"Update the issue with the issue id: {issue_id} with new title: {new_title}"
+)
 agent.print_response(f"Show all the issues assigned to user id: {user_id}")
 agent.print_response("Show all the high priority issues")

@@ -1,7 +1,0 @@
-torch
-torchvision
-Pillow
-pinecone-client
-phidata
-scipy
-git+https://github.com/openai/CLIP.git

@@ -1,6 +1,7 @@
 import os
-from phi.agent import Agent
-from phi.tools.discord_tools import DiscordTools
+
+from agno.agent import Agent
+from agno.tools.discord import DiscordTools
 
 # Get Discord token from environment
 discord_token = os.getenv("DISCORD_BOT_TOKEN")
@@ -33,7 +34,9 @@ channel_id = "YOUR_CHANNEL_ID"
 server_id = "YOUR_SERVER_ID"
 
 # Example 1: Send a message
-discord_agent.print_response(f"Send a message 'Hello from Phi!' to channel {channel_id}", stream=True)
+discord_agent.print_response(
+    f"Send a message 'Hello from Agno!' to channel {channel_id}", stream=True
+)
 
 # Example 2: Get channel info
 discord_agent.print_response(f"Get information about channel {channel_id}", stream=True)
@@ -42,7 +45,9 @@ discord_agent.print_response(f"Get information about channel {channel_id}", stre
 discord_agent.print_response(f"List all channels in server {server_id}", stream=True)
 
 # Example 4: Get message history
-discord_agent.print_response(f"Get the last 5 messages from channel {channel_id}", stream=True)
+discord_agent.print_response(
+    f"Get the last 5 messages from channel {channel_id}", stream=True
+)
 
 # Example 5: Delete a message (replace message_id with an actual message ID)
 # message_id = 123456789

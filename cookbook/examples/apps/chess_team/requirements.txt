@@ -1,0 +1,7 @@
+agno==0.1.2
+streamlit>=1.41.1
+nest_asyncio>=1.6.0
+openai>=1.60.1
+pydantic>=2.10.6
+typing-extensions>=4.12.2
+python-dotenv>=1.0.0

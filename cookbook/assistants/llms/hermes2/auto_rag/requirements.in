@@ -1,7 +1,0 @@
-ollama
-streamlit
-pgvector
-pypdf
-psycopg[binary]
-sqlalchemy
-phidata

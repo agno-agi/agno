@@ -1,0 +1,271 @@
+[project]
+name = "agno"
+version = "1.0.8"
+description = "Agno: a lightweight framework for building multi-modal Agents"
+requires-python = ">=3.7,<4"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+  {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+  "docstring-parser",
+  "gitpython",
+  "httpx",
+  "pydantic-settings",
+  "pydantic",
+  "python-dotenv",
+  "python-multipart",
+  "pyyaml",
+  "rich",
+  "tomli",
+  "typer",
+  "typing-extensions",
+]
+
+[project.optional-dependencies]
+dev = ["mypy", "pytest", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
+
+# Dependencies for Models
+anthropic = ["anthropic"]
+cohere = ["cohere"]
+google = ["google-generativeai"]
+groq = ["groq"]
+mistral = ["mistralai"]
+openai = ["openai"]
+ollama = ["ollama"]
+
+# Dependencies for Tools
+exa = ["exa_py"]
+yfinance = ["yfinance"]
+ddg = ["duckduckgo-search"]
+duckdb = ["duckdb"]
+newspaper = ["newspaper4k", "lxml_html_clean"]
+youtube = ["youtube_transcript_api"]
+firecrawl = ["firecrawl-py"]
+
+# Dependencies for Storage
+sql = ["sqlalchemy"]
+postgres = ["psycopg-binary"]
+
+# Dependencies for Vector databases
+pgvector = ["pgvector"]
+chromadb = ["chromadb"]
+lancedb = ["lancedb", "tantivy"]
+qdrant = ["qdrant-client"]
+
+# Dependencies for Knowledge
+pdf = ["pypdf"]
+
+# Dependencies for Performance
+performance = ["memory_profiler"]
+
+# Dependencies for Running cookbook
+cookbooks = ["inquirer", "email_validator"]
+
+# Dependencies for Docker
+docker = ["agno-docker"]
+
+# Dependencies for AWS
+aws = ["agno-aws", "agno-docker"]
+
+# All models
+models = [
+  "agno[anthropic]",
+  "agno[cohere]",
+  "agno[google]",
+  "agno[groq]",
+  "agno[mistral]",
+  "agno[ollama]",
+  "agno[openai]",
+]
+
+# All tools
+tools = [
+  "agno[exa]",
+  "agno[yfinance]",
+  "agno[ddg]",
+  "agno[duckdb]",
+  "agno[newspaper]",
+  "agno[youtube]",
+  "agno[firecrawl]",
+]
+
+# All storage
+storage = [
+  "agno[sql]",
+  "agno[postgres]",
+]
+
+# All vector databases
+vectordbs = [
+  "agno[pgvector]",
+  "agno[chromadb]",
+  "agno[lancedb]",
+  "agno[qdrant]",
+]
+
+# All knowledge
+knowledge = [
+  "agno[pdf]",
+]
+
+# All libraries for testing
+tests = [
+    "agno[dev]",
+    "agno[models]",
+    "agno[tools]",
+    "agno[storage]",
+    "agno[vectordbs]",
+    "agno[knowledge]",
+    "agno[performance]",
+    "agno[cookbooks]",
+    "twine", "build"
+]
+
+[project.scripts]
+ag = "agno.cli.entrypoint:agno_cli"
+agno = "agno.cli.entrypoint:agno_cli"
+
+[project.urls]
+homepage = "https://agno.com"
+documentation = "https://docs.agno.com"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["agno*"]
+
+[tool.setuptools.package-data]
+agno = ["py.typed"]
+include = ["LICENSE"]
+
+[tool.pytest.ini_options]
+log_cli = true
+testpaths = "tests"
+
+[tool.ruff]
+line-length = 120
+# Ignore `F401` (import violations) in all `__init__.py` files
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.mypy]
+check_untyped_defs = true
+no_implicit_optional = true
+warn_unused_configs = true
+disable_error_code = ["override"]
+plugins = ["pydantic.mypy"]
+exclude = ["tests*"]
+
+[[tool.mypy.overrides]]
+module = [
+  "altair.*",
+  "anthropic.*",
+  "apify_client.*",
+  "arxiv.*",
+  "atlassian.*",
+  "boto3.*",
+  "botocore.*",
+  "bs4.*",
+  "cassio.*",
+  "chonkie.*",
+  "chromadb.*",
+  "clickhouse_connect.*",
+  "clip.*",
+  "cohere.*",
+  "crawl4ai.*",
+  "docker.*",
+  "docx.*",
+  "duckdb.*",
+  "duckduckgo_search.*",
+  "email_validator.*",
+  "exa_py.*",
+  "fastapi.*",
+  "firecrawl.*",
+  "github.*",
+  "google.*",
+  "googlemaps.*",
+  "google_auth_oauthlib.*",
+  "googleapiclient.*",
+  "googlesearch.*",
+  "groq.*",
+  "huggingface_hub.*",
+  "imghdr.*",
+  "jira.*",
+  "kubernetes.*",
+  "lancedb.*",
+  "langchain_core.*",
+  "langchain.*",
+  "llama_index.*",
+  "mem0.*",
+  "memory_profiler.*",
+  "mistralai.*",
+  "mlx_whisper.*",
+  "nest_asyncio.*",
+  "newspaper.*",
+  "numpy.*",
+  "ollama.*",
+  "openai.*",
+  "openbb.*",
+  "pandas.*",
+  "pgvector.*",
+  "PIL.*",
+  "pinecone_text.*",
+  "pinecone.*",
+  "psycopg.*",
+  "psycopg2.*",
+  "pyarrow.*",
+  "pycountry.*",
+  "pymongo.*",
+  "pypdf.*",
+  "pytz.*",
+  "qdrant_client.*",
+  "rapidocr_onnxruntime.*",
+  "replicate.*",
+  "requests.*",
+  "scrapegraph_py.*",
+  "sentence_transformers.*",
+  "serpapi.*",
+  "setuptools.*",
+  "simplejson.*",
+  "slack_sdk.*",
+  "spider.*",
+  "sqlalchemy.*",
+  "starlette.*",
+  "streamlit.*",
+  "tantivy.*",
+  "tavily.*",
+  "textract.*",
+  "timeout_decorator.*",
+  "torch.*",
+  "todoist_api_python.*",
+  "tweepy.*",
+  "twilio.*",
+  "tzlocal.*",
+  "uvicorn.*",
+  "vertexai.*",
+  "voyageai.*",
+  "weaviate.*",
+  "wikipedia.*",
+  "yfinance.*",
+  "youtube_transcript_api.*",
+]
+ignore_missing_imports = true

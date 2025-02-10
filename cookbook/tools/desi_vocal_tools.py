@@ -2,9 +2,9 @@
 pip install requests
 """
 
-from phi.agent import Agent
-from phi.model.openai import OpenAIChat
-from phi.tools.desi_vocal_tools import DesiVocalTools
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.desi_vocal import DesiVocalTools
 
 audio_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
@@ -22,4 +22,6 @@ audio_agent = Agent(
     show_tool_calls=True,
 )
 
-audio_agent.print_response("Generate a very small audio of history of french revolution")
+audio_agent.print_response(
+    "Generate a very small audio of history of french revolution"
+)

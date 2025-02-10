@@ -1,0 +1,9 @@
+agno
+openai
+pandas
+pgvector
+psycopg[binary]
+simplejson
+sqlalchemy
+streamlit
+nest_asyncio

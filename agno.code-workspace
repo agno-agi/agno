@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+    "python.analysis.extraPaths": [
+      "libs/agno",
+      "libs/infra/agno_docker",
+      "libs/infra/agno_aws"
+  ]
+  }
+}
+

@@ -1,17 +1,17 @@
-"""Run `pip install openai exa_py duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' phidata youtube-transcript-api` to install dependencies."""
+"""Run `pip install openai exa_py duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' agno youtube-transcript-api` to install dependencies."""
 
-from textwrap import dedent
 from datetime import datetime
+from textwrap import dedent
 
-from phi.agent import Agent
-from phi.model.azure.openai_chat import AzureOpenAIChat
-from phi.playground import Playground, serve_playground_app
-from phi.storage.agent.sqlite import SqlAgentStorage
-from phi.tools.dalle import Dalle
-from phi.tools.duckduckgo import DuckDuckGo
-from phi.tools.exa import ExaTools
-from phi.tools.yfinance import YFinanceTools
-from phi.tools.youtube_tools import YouTubeTools
+from agno.agent import Agent
+from agno.models.azure.openai_chat import AzureOpenAI
+from agno.playground import Playground, serve_playground_app
+from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.tools.dalle import DalleTools
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.exa import ExaTools
+from agno.tools.yfinance import YFinanceTools
+from agno.tools.youtube import YouTubeTools
 
 agent_storage_file: str = "tmp/azure_openai_agents.db"
 
@@ -19,10 +19,13 @@ web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
     agent_id="web-agent",
-    model=AzureOpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGo()],
-    instructions=["Break down the users request into 2-3 different searches.", "Always include sources"],
-    storage=SqlAgentStorage(table_name="web_agent", db_file=agent_storage_file),
+    model=AzureOpenAI(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    instructions=[
+        "Break down the users request into 2-3 different searches.",
+        "Always include sources",
+    ],
+    storage=SqliteAgentStorage(table_name="web_agent", db_file=agent_storage_file),
     add_history_to_messages=True,
     num_history_responses=5,
     add_datetime_to_instructions=True,
@@ -33,10 +36,17 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
     agent_id="finance-agent",
-    model=AzureOpenAIChat(id="gpt-4o"),
-    tools=[YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True, company_news=True)],
+    model=AzureOpenAI(id="gpt-4o"),
+    tools=[
+        YFinanceTools(
+            stock_price=True,
+            analyst_recommendations=True,
+            company_info=True,
+            company_news=True,
+        )
+    ],
     instructions=["Always use tables to display data"],
-    storage=SqlAgentStorage(table_name="finance_agent", db_file=agent_storage_file),
+    storage=SqliteAgentStorage(table_name="finance_agent", db_file=agent_storage_file),
     add_history_to_messages=True,
     num_history_responses=5,
     add_datetime_to_instructions=True,
@@ -45,22 +55,31 @@ finance_agent = Agent(
 
 image_agent = Agent(
     name="Image Agent",
-    role="Generate images given a prompt",
-    agent_id="image-agent",
-    model=AzureOpenAIChat(id="gpt-4o"),
-    tools=[Dalle(model="dall-e-3", size="1792x1024", quality="hd", style="vivid")],
-    storage=SqlAgentStorage(table_name="image_agent", db_file=agent_storage_file),
+    agent_id="image_agent",
+    model=AzureOpenAI(id="gpt-4o"),
+    tools=[DalleTools(model="dall-e-3", size="1792x1024", quality="hd", style="vivid")],
+    description="You are an AI agent that can generate images using DALL-E.",
+    instructions=[
+        "When the user asks you to create an image, use the `create_image` tool to create the image.",
+        "Don't provide the URL of the image in the response. Only describe what image was generated.",
+    ],
+    markdown=True,
+    debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
-    markdown=True,
+    storage=SqliteAgentStorage(table_name="image_agent", db_file=agent_storage_file),
 )
 
 research_agent = Agent(
     name="Research Agent",
     role="Write research reports for the New York Times",
     agent_id="research-agent",
-    model=AzureOpenAIChat(id="gpt-4o"),
-    tools=[ExaTools(start_published_date=datetime.now().strftime("%Y-%m-%d"), type="keyword")],
+    model=AzureOpenAI(id="gpt-4o"),
+    tools=[
+        ExaTools(
+            start_published_date=datetime.now().strftime("%Y-%m-%d"), type="keyword"
+        )
+    ],
     description=(
         "You are a Research Agent that has the special skill of writing New York Times worthy articles. "
         "If you can directly respond to the user, do so. If the user asks for a report or provides a topic, follow the instructions below."
@@ -92,7 +111,7 @@ research_agent = Agent(
     - [Reference 1](link)
     - [Reference 2](link)
     """),
-    storage=SqlAgentStorage(table_name="research_agent", db_file=agent_storage_file),
+    storage=SqliteAgentStorage(table_name="research_agent", db_file=agent_storage_file),
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     markdown=True,
@@ -101,7 +120,7 @@ research_agent = Agent(
 youtube_agent = Agent(
     name="YouTube Agent",
     agent_id="youtube-agent",
-    model=AzureOpenAIChat(id="gpt-4o"),
+    model=AzureOpenAI(id="gpt-4o"),
     tools=[YouTubeTools()],
     description="You are a YouTube agent that has the special skill of understanding YouTube videos and answering questions about them.",
     instructions=[
@@ -114,11 +133,13 @@ youtube_agent = Agent(
     num_history_responses=5,
     show_tool_calls=True,
     add_datetime_to_instructions=True,
-    storage=SqlAgentStorage(table_name="youtube_agent", db_file=agent_storage_file),
+    storage=SqliteAgentStorage(table_name="youtube_agent", db_file=agent_storage_file),
     markdown=True,
 )
 
-app = Playground(agents=[web_agent, finance_agent, youtube_agent, research_agent, image_agent]).get_app()
+app = Playground(
+    agents=[web_agent, finance_agent, youtube_agent, research_agent, image_agent]
+).get_app()
 
 if __name__ == "__main__":
     serve_playground_app("azure_openai_agents:app", reload=True)
