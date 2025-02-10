@@ -80,7 +80,6 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
 
 
 
-
 def convert_schema(schema_dict):
     """
     Recursively convert a JSON-like schema dictionary to a types.Schema object.
@@ -140,7 +139,7 @@ class Gemini(Model):
     """
     Gemini model class for Google's Generative AI models.
 
-    Set `vertexai` to `True` to use the Vertex AI API. You will then also need `project_id`, `location` and `http_options` (optional).
+    Set `vertexai` to `True` to use the Vertex AI API. You will then also need `project_id`, `location` and `http_options` ().
 
     Based on https://googleapis.github.io/python-genai/
     """
