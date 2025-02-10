@@ -1,0 +1,541 @@
+import json
+import time
+import traceback
+from dataclasses import dataclass, field
+from os import getenv
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterator, List, Optional, Union
+
+from agno.media import Audio, Image, Video
+from agno.models.base import Model
+from agno.models.message import Message
+from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.tools import Function, Toolkit
+from agno.utils.log import logger
+
+try:
+    from google import genai
+    from google.genai import Client as GeminiClient
+    from google.genai.types import (
+        Content,
+        File,
+        FunctionDeclaration,
+        GenerateContentConfig,
+        Part,
+        Schema,
+        Tool,
+    )
+except ImportError:
+    raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
+
+
+def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
+    # Case 1: Image is a URL
+    # Download the image from the URL and add it as base64 encoded data
+    if image.url is not None and image.image_url_content is not None:
+        try:
+            import base64
+
+            content_bytes = image.image_url_content
+            image_data = {
+                "mime_type": "image/jpeg",
+                "data": base64.b64encode(content_bytes).decode("utf-8"),
+            }
+            return image_data
+        except Exception as e:
+            logger.warning(f"Failed to download image from {image}: {e}")
+            return None
+    # Case 2: Image is a local path
+    # Open the image file and add it as base64 encoded data
+    elif image.filepath is not None:
+        try:
+            import PIL.Image
+        except ImportError:
+            logger.error("`PIL.Image not installed. Please install it using 'pip install pillow'`")
+            raise
+
+        try:
+            image_path = Path(image.filepath)
+            if image_path.exists() and image_path.is_file():
+                image_data = PIL.Image.open(image_path)  # type: ignore
+            else:
+                logger.error(f"Image file {image_path} does not exist.")
+                raise
+            return image_data  # type: ignore
+        except Exception as e:
+            logger.warning(f"Failed to load image from {image.filepath}: {e}")
+            return None
+
+    # Case 3: Image is a bytes object
+    # Add it as base64 encoded data
+    elif image.content is not None and isinstance(image.content, bytes):
+        import base64
+
+        image_data = {"mime_type": "image/jpeg", "data": base64.b64encode(image.content).decode("utf-8")}
+        return image_data
+    else:
+        logger.warning(f"Unknown image type: {type(image)}")
+        return None
+
+
+# def _format_audio_for_message(audio: Audio) -> Optional[Union[Dict[str, Any], File]]:
+#     if audio.content and isinstance(audio.content, bytes):
+#         audio_content = {"mime_type": "audio/mp3", "data": audio.content}
+#         return audio_content
+
+#     elif audio.filepath is not None:
+#         audio_path = audio.filepath if isinstance(audio.filepath, Path) else Path(audio.filepath)
+
+#         remote_file_name = f"files/{audio_path.stem.lower()}"
+#         # Check if video is already uploaded
+#         existing_audio_upload = None
+#         try:
+#             existing_audio_upload = genai.get_file(remote_file_name)
+#         except Exception as e:
+#             logger.info(f"Error getting file {remote_file_name}: {e}")
+#             pass
+
+#         if existing_audio_upload:
+#             audio_file = existing_audio_upload
+#         else:
+#             # Upload the video file to the Gemini API
+#             if audio_path.exists() and audio_path.is_file():
+#                 audio_file = genai.upload_file(path=audio_path, name=remote_file_name, display_name=audio_path.stem)
+#             else:
+#                 logger.error(f"Audio file {audio_path} does not exist.")
+#                 raise Exception(f"Audio file {audio_path} does not exist.")
+
+#             # Check whether the file is ready to be used.
+#             while audio_file.state.name == "PROCESSING":
+#                 time.sleep(2)
+#                 audio_file = genai.get_file(audio_file.name)
+
+#             if audio_file.state.name == "FAILED":
+#                 raise ValueError(audio_file.state.name)
+#         return audio_file
+#     else:
+#         logger.warning(f"Unknown audio type: {type(audio.content)}")
+#         return None
+
+
+# def _format_video_for_message(video: Video) -> Optional[File]:
+#     # If video is stored locally
+#     if video.filepath is not None:
+#         video_path = video.filepath if isinstance(video.filepath, Path) else Path(video.filepath)
+
+#         remote_file_name = f"files/{video_path.stem.lower()}"
+#         # Check if video is already uploaded
+#         existing_video_upload = None
+#         try:
+#             existing_video_upload = genai.get_file(remote_file_name)
+#         except Exception as e:
+#             logger.info(f"Error getting file {remote_file_name}: {e}")
+#             pass
+
+#         if existing_video_upload:
+#             video_file = existing_video_upload
+#         else:
+#             # Upload the video file to the Gemini API
+#             if video_path.exists() and video_path.is_file():
+#                 video_file = genai.upload_file(path=video_path, name=remote_file_name, display_name=video_path.stem)
+#             else:
+#                 logger.error(f"Video file {video_path} does not exist.")
+#                 raise Exception(f"Video file {video_path} does not exist.")
+
+#             # Check whether the file is ready to be used.
+#             while video_file.state.name == "PROCESSING":
+#                 time.sleep(2)
+#                 video_file = genai.get_file(video_file.name)
+
+#             if video_file.state.name == "FAILED":
+#                 raise ValueError(video_file.state.name)
+
+#         return video_file
+#     else:
+#         logger.warning(f"Unknown video type: {type(video.content)}")
+#         return None
+
+
+def convert_schema(schema_dict):
+    """
+    Recursively convert a JSON-like schema dictionary to a types.Schema object.
+
+    Parameters:
+        schema_dict (dict): The JSON schema dictionary with keys like "type", "description",
+                            "properties", and "required".
+
+    Returns:
+        types.Schema: The converted schema.
+    """
+    schema_type = schema_dict.get("type", "").upper()
+    description = schema_dict.get("description", "")
+
+    if schema_type == "OBJECT" and "properties" in schema_dict:
+        properties = {key: convert_schema(prop_def) for key, prop_def in schema_dict["properties"].items()}
+        required = schema_dict.get("required", [])
+        return Schema(
+            type=schema_type,
+            properties=properties,
+            required=required,
+            description=description,
+        )
+    else:
+        return Schema(type=schema_type, description=description)
+
+
+def _format_function_definitions(tools_list):
+    function_declarations = []
+
+    for tool in tools_list:
+        if tool.get("type") == "function":
+            func_info = tool.get("function", {})
+            name = func_info.get("name")
+            description = func_info.get("description", "")
+            parameters_dict = func_info.get("parameters", {})
+
+            parameters_schema = convert_schema(parameters_dict)
+
+            # Create a FunctionDeclaration instance
+            function_decl = FunctionDeclaration(
+                name=name,
+                description=description,
+                parameters=parameters_schema,
+            )
+
+            function_declarations.append(function_decl)
+
+    if function_declarations:
+        return Tool(function_declarations=function_declarations)
+    else:
+        return None
+
+
+def _format_messages(messages: List[Message]):
+    """
+    Converts a list of Message objects to the Gemini-compatible format.
+
+    Args:
+        messages (List[Message]): The list of messages to convert.
+    """
+    formatted_messages: List = []
+    system_message = None
+    for message in messages:
+        message_for_model: Dict[str, Any] = {}
+
+        role = message.role
+        if role in ["system", "developer"]:
+            system_message = message.content
+            continue
+
+        # Add content to the message for the model
+        content = message.content
+        # Initialize message_parts to be used for Gemini
+        message_parts: List[Any] = []
+
+        # Function calls
+        if (not content or message.role == "model") and message.tool_calls:
+            for tool_call in message.tool_calls:
+                message_parts.append(
+                    Part.from_function_call(
+                        name=tool_call["function"]["name"],
+                        args=json.loads(tool_call["function"]["arguments"]),
+                    )
+                )
+        # Function results
+        elif message.role == "tool":
+            if hasattr(message, "combined_function_details"):
+                for result in message.combined_function_details:
+                    message_parts.append(Part.from_function_response(name=result[0], response={"result": result[1]}))
+            else:
+                message_parts = [
+                    Part.from_function_response(name=message.tool_name, response={"result": message.content})
+                ]
+        else:
+            if isinstance(content, str):
+                message_parts = [Part.from_text(text=content)]
+
+        if message.role == "user":
+            # Add images to the message for the model
+            if message.images is not None:
+                for image in message.images:
+                    if image.content is not None and isinstance(image.content, File):
+                        # Google recommends that if using a single image, place the text prompt after the image.
+                        message_parts.insert(0, image.content)
+                    else:
+                        image_content = _format_image_for_message(image)
+                        if image_content:
+                            message_parts.append(Part.from_bytes(**image_content))
+
+            # Add videos to the message for the model
+            # if message.videos is not None:
+            #     try:
+            #         for video in message.videos:
+            #             # Case 1: Video is a file_types.File object (Recommended)
+            #             # Add it as a File object
+            #             if video.content is not None and isinstance(video.content, file_types.File):
+            #                 # Google recommends that if using a single image, place the text prompt after the image.
+            #                 message_parts.insert(0, video.content)
+            #             else:
+            #                 video_file = _format_video_for_message(video)
+
+            #                 # Google recommends that if using a single video, place the text prompt after the video.
+            #                 if video_file is not None:
+            #                     message_parts.insert(0, video_file)  # type: ignore
+            #     except Exception as e:
+            #         traceback.print_exc()
+            #         logger.warning(f"Failed to load video from {message.videos}: {e}")
+            #         continue
+
+            # Add audio to the message for the model
+            # if message.audio is not None:
+            #     try:
+            #         for audio_snippet in message.audio:
+            #             if audio_snippet.content is not None and isinstance(audio_snippet.content, File):
+            #                 # Google recommends that if using a single image, place the text prompt after the image.
+            #                 message_parts.insert(0, audio_snippet.content)
+            #             else:
+            #                 audio_content = _format_audio_for_message(audio_snippet)
+            #                 if audio_content:
+            #                     message_parts.append(Part(**audio_content))
+            #     except Exception as e:
+            #         logger.warning(f"Failed to load audio from {message.audio}: {e}")
+            #         continue
+
+        final_message = Content(role=role, parts=message_parts)
+        formatted_messages.append(final_message)
+
+    return formatted_messages, system_message
+
+
+@dataclass
+class Gemini(Model):
+    """
+    Gemini model class for Google's Generative AI models.
+
+    Based on https://googleapis.github.io/python-genai/
+    """
+
+    id: str = "gemini-2.0-flash-exp"
+    name: str = "Gemini"
+    provider: str = "Google"
+
+    # Request parameters
+    function_declarations: Optional[List[Any]] = None
+    generation_config: Optional[Any] = None
+    safety_settings: Optional[Any] = None
+    generative_model_kwargs: Optional[Dict[str, Any]] = None
+    request_params: Optional[Dict[str, Any]] = None
+
+    # Client parameters
+    api_key: Optional[str] = None
+    client_params: Optional[Dict[str, Any]] = None
+    vertex_ai: bool = False
+
+    # Gemini client
+    client: Optional[GeminiClient] = None
+
+    def get_client(self) -> GeminiClient:
+        """
+        Returns an instance of the GeminiClient client.
+
+        Returns:
+            GeminiClient: The GeminiClient client.
+        """
+        if self.client:
+            return self.client
+
+        client_params: Dict[str, Any] = {}
+
+        self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
+        if not self.api_key:
+            logger.error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
+        client_params["api_key"] = self.api_key
+
+        if self.client_params:
+            client_params.update(self.client_params)
+        # genai.configure(**client_params)
+
+        self.client = genai.Client(**client_params)
+        return self.client
+
+    @property
+    def request_kwargs(self) -> Dict[str, Any]:
+        """
+        Returns the request keyword arguments for the GenerativeModel client.
+
+        Returns:
+            Dict[str, Any]: The request keyword arguments.
+        """
+        base_params: Dict[str, Any] = {
+            "generation_config": self.generation_config,
+            "safety_settings": self.safety_settings,
+            "generative_model_kwargs": self.generative_model_kwargs,
+        }
+        if self._tools:
+            base_params["config"] = GenerateContentConfig(tools=[_format_function_definitions(self._tools)])
+
+        # Filter out None values
+        request_params = {k: v for k, v in base_params.items() if v is not None}
+        if self.request_params:
+            request_params.update(self.request_params)
+        return request_params
+
+    def invoke(self, messages: List[Message]):
+        """
+        Invokes the model with a list of messages and returns the response.
+
+        Args:
+            messages (List[Message]): The list of messages to send to the model.
+
+        Returns:
+            GenerateContentResponse: The response from the model.
+        """
+        formatted_messages, system_message = _format_messages(messages)
+
+        if system_message is not None:
+            self.request_kwargs["system_instruction"] = system_message
+
+        return self.get_client().models.generate_content(
+            model=self.id,
+            contents=formatted_messages,
+            **self.request_kwargs,
+        )
+
+    def invoke_stream(self, messages: List[Message]):
+        """
+        Invokes the model with a list of messages and returns the response as a stream.
+
+        Args:
+            messages (List[Message]): The list of messages to send to the model.
+
+        Returns:
+            Iterator[GenerateContentResponse]: The response from the model as a stream.
+        """
+        formatted_messages, system_message = _format_messages(messages)
+
+        if system_message:
+            self.request_kwargs["system_instruction"] = system_message
+
+        yield from self.get_client().models.generate_content_stream(
+            model=self.id,
+            contents=formatted_messages,
+            **self.request_kwargs,
+        )
+
+    def ainvoke(self, messages: List[Message]):
+        """
+        Invokes the model with a list of messages and returns the response.
+        """
+        return self.get_client().models.generate_content(
+            model_name=self.id,
+            contents=_format_messages(messages),
+            **self.request_kwargs,
+        )
+
+    def ainvoke_stream(self, messages: List[Message]):
+        """
+        Invokes the model with a list of messages and returns the response as a stream.
+        """
+        yield from self.get_client().models.generate_content(
+            contents=_format_messages(messages),
+            stream=True,
+        )
+
+    def format_function_call_results(
+        self, messages: List[Message], function_call_results: List[Message], **kwargs
+    ) -> None:
+        """
+        Format function call results.
+        """
+        combined_content: List = []
+        combined_function_result: List = []
+        logger.info(f"Function call results: {function_call_results}")
+        if len(function_call_results) > 0:
+            for result in function_call_results:
+                combined_content.append(result.content)
+                combined_function_result.append((result.tool_name, result.content))
+
+        messages.append(
+            Message(role="tool", content=combined_content, combined_function_details=combined_function_result)
+        )
+
+    def parse_provider_response(self, response) -> ModelResponse:
+        """
+        Parse the OpenAI response into a ModelResponse.
+
+        Args:
+            response: Raw response from OpenAI
+
+        Returns:
+            ModelResponse: Parsed response data
+        """
+        model_response = ModelResponse()
+
+        # Get response message
+        response_message = response.candidates[0].content
+
+        # Add role
+        if response_message.role is not None:
+            model_response.role = response_message.role
+
+        # Add content
+        if response_message.parts is not None:
+            for part in response_message.parts:
+                # Extract text if present
+                if hasattr(part, "text") and part.text is not None:
+                    model_response.content = part.text
+
+                # Extract function call if present
+                if hasattr(part, "function_call") and part.function_call is not None:
+                    tool_call = {
+                        "type": "function",
+                        "function": {
+                            "name": part.function_call.name,
+                            "arguments": json.dumps(part.function_call.args)
+                            if part.function_call.args is not None
+                            else "",
+                        },
+                    }
+
+                    model_response.tool_calls.append(tool_call)
+
+        if hasattr(response, "usage_metadata"):
+            model_response.response_usage = {
+                "input_tokens": response.usage_metadata.prompt_token_count or 0,
+                "output_tokens": response.usage_metadata.candidates_token_count or 0,
+                "total_tokens": response.usage_metadata.total_token_count or 0,
+            }
+
+        return model_response
+
+    def parse_provider_response_delta(self, response_delta) -> ModelResponse:
+        model_response = ModelResponse()
+
+        response_message = response_delta.candidates[0].content
+
+        if response_message.parts is not None:
+            for part in response_message.parts:
+                if hasattr(part, "text") and part.text is not None:
+                    model_response.content = part.text
+
+                if hasattr(part, "function_call") and part.function_call is not None:
+                    tool_call = {
+                        "type": "function",
+                        "function": {
+                            "name": part.function_call.name,
+                            "arguments": json.dumps(part.function_call.args)
+                            if part.function_call.args is not None
+                            else "",
+                        },
+                    }
+
+                    model_response.tool_calls.append(tool_call)
+
+        if hasattr(response_delta, "usage_metadata"):
+            model_response.response_usage = {
+                "input_tokens": response_delta.usage_metadata.prompt_token_count or 0,
+                "output_tokens": response_delta.usage_metadata.candidates_token_count or 0,
+                "total_tokens": response_delta.usage_metadata.total_token_count or 0,
+            }
+
+        return model_response
