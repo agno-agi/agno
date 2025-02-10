@@ -24,6 +24,7 @@ class Claude(AnthropicClaude):
         aws_access_key (Optional[str]): The AWS access key to use.
         aws_secret_key (Optional[str]): The AWS secret key to use.
     """
+
     id: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
     name: str = "AwsBedrockAnthropicClaude"
     provider: str = "AwsBedrock"

@@ -62,7 +62,7 @@ class AzureOpenAI(OpenAILike):
             "azure_deployment": self.azure_deployment,
             "azure_ad_token": self.azure_ad_token,
             "azure_ad_token_provider": self.azure_ad_token_provider,
-            "http_client": self.http_client
+            "http_client": self.http_client,
         }
 
         _client_params.update({k: v for k, v in params_mapping.items() if v is not None})

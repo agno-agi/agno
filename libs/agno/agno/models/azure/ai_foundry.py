@@ -3,8 +3,8 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Union
 
-from anthropic import BaseModel
 import httpx
+from anthropic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
@@ -17,12 +17,12 @@ try:
     from azure.ai.inference import ChatCompletionsClient
     from azure.ai.inference.aio import ChatCompletionsClient as AsyncChatCompletionsClient
     from azure.ai.inference.models import (
-        ChatCompletionsToolDefinition,
         ChatCompletions,
-        StreamingChatCompletionsUpdate,
+        ChatCompletionsToolDefinition,
         FunctionDefinition,
-        StreamingChatResponseToolCallUpdate,
         JsonSchemaFormat,
+        StreamingChatCompletionsUpdate,
+        StreamingChatResponseToolCallUpdate,
     )
     from azure.core.credentials import AzureKeyCredential
     from azure.core.exceptions import HttpResponseError
@@ -110,19 +110,29 @@ class AzureAIFoundry(Model):
         if self._tools:
             tools = []
             for _tool in self._tools:
-                tools.append(ChatCompletionsToolDefinition(function=FunctionDefinition(name=_tool["function"]["name"], description=_tool["function"]["description"], parameters=_tool["function"]["parameters"])))
+                tools.append(
+                    ChatCompletionsToolDefinition(
+                        function=FunctionDefinition(
+                            name=_tool["function"]["name"],
+                            description=_tool["function"]["description"],
+                            parameters=_tool["function"]["parameters"],
+                        )
+                    )
+                )
             base_params["tools"] = tools
             if self.tool_choice:
                 base_params["tool_choice"] = self.tool_choice
 
         if self.response_format is not None and self.structured_outputs:
             if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
-                base_params["response_format"] = JsonSchemaFormat(
-                    name=self.response_format.__name__,
-                    schema=self.response_format.model_json_schema(),
-                    description=self.response_format.__doc__,
-                    strict=True,
-                ),
+                base_params["response_format"] = (
+                    JsonSchemaFormat(
+                        name=self.response_format.__name__,
+                        schema=self.response_format.model_json_schema(),
+                        description=self.response_format.__doc__,
+                        strict=True,
+                    ),
+                )
             else:
                 raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
 
@@ -145,7 +155,7 @@ class AzureAIFoundry(Model):
         base_params = {
             "endpoint": self.azure_endpoint,
             "credential": AzureKeyCredential(self.api_key),
-            "api_version": self.api_version
+            "api_version": self.api_version,
         }
 
         # Create client_params dict with non-None values
@@ -197,8 +207,7 @@ class AzureAIFoundry(Model):
         """
         try:
             return self.get_client().complete(
-                messages=[_format_message(m) for m in messages],
-                **self._get_request_kwargs()
+                messages=[_format_message(m) for m in messages], **self._get_request_kwargs()
             )
         except HttpResponseError as e:
             logger.error(f"Azure AI API error: {e}")
@@ -243,9 +252,7 @@ class AzureAIFoundry(Model):
         """
         try:
             yield from self.get_client().complete(
-                messages=[_format_message(m) for m in messages],
-                stream=True,
-                **self._get_request_kwargs()
+                messages=[_format_message(m) for m in messages], stream=True, **self._get_request_kwargs()
             )
         except HttpResponseError as e:
             logger.error(f"Azure AI API error: {e}")
@@ -351,10 +358,7 @@ class AzureAIFoundry(Model):
                 current_tool_call = {
                     "id": tool_call.id,
                     "type": "function",
-                    "function": {
-                        "name": tool_call.function.name,
-                        "arguments": tool_call.function.arguments or ""
-                    }
+                    "function": {"name": tool_call.function.name, "arguments": tool_call.function.arguments or ""},
                 }
             elif current_tool_call and tool_call.function and tool_call.function.arguments:
                 # Append arguments to current tool call
