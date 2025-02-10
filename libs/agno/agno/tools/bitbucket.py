@@ -60,9 +60,11 @@ class BitbucketTools(Toolkit):
         """
         try:
             repo = self.bitbucket.get_repo(repo_slug)
+            logger.debug(f"Repository information: {repo}")
             return json.dumps(repo)
         except Exception as e:
-            return f"Error retrieving repository information: {str(e)}"
+            logger.error(f"Error retrieving repository information: {str(e)}")
+            return json.dumps({"error": str(e)})
 
     def get_repo_branches(self, repo_slug: str) -> str:
         """
@@ -73,9 +75,11 @@ class BitbucketTools(Toolkit):
         """
         try:
             branches = self.bitbucket.get_branches(repo_slug)
+            logger.debug(f"Branches: {branches}")
             return json.dumps(branches)
         except Exception as e:
-            return f"Error retrieving branches: {str(e)}"
+            logger.error(f"Error retrieving branches: {str(e)}")
+            return json.dumps({"error": str(e)})
 
     def get_repo_commits(self, repo_slug: str, branch: str) -> str:
         """
@@ -87,9 +91,11 @@ class BitbucketTools(Toolkit):
         """
         try:
             commits = self.bitbucket.get_commits(repo_slug, branch)
+            logger.debug(f"Commits: {commits}")
             return json.dumps(commits)
         except Exception as e:
-            return f"Error retrieving commits: {str(e)}"
+            logger.error(f"Error retrieving commits: {str(e)}")
+            return json.dumps({"error": str(e)})
 
     def get_repo_pull_requests(self, repo_slug: str) -> str:
         """
@@ -100,9 +106,11 @@ class BitbucketTools(Toolkit):
         """
         try:
             pull_requests = self.bitbucket.get_pull_requests(repo_slug)
+            logger.debug(f"Pull requests: {pull_requests}")
             return json.dumps(pull_requests)
         except Exception as e:
-            return f"Error retrieving pull requests: {str(e)}"
+            logger.error(f"Error retrieving pull requests: {str(e)}")
+            return json.dumps({"error": str(e)})
 
     def get_repo_issues(self, repo_slug: str) -> str:
         """
@@ -113,9 +121,11 @@ class BitbucketTools(Toolkit):
         """
         try:
             issues = self.bitbucket.get_issues(repo_slug)
+            logger.debug(f"Issues: {issues}")
             return json.dumps(issues)
         except Exception as e:
-            return f"Error retrieving issues: {str(e)}"
+            logger.error(f"Error retrieving issues: {str(e)}")
+            return json.dumps({"error": str(e)})
 
     def get_repo_pipelines(self, repo_slug: str) -> str:
         """
@@ -126,9 +136,11 @@ class BitbucketTools(Toolkit):
         """
         try:
             pipelines = self.bitbucket.get_pipelines(repo_slug)
+            logger.debug(f"Pipelines: {pipelines}")
             return json.dumps(pipelines)
         except Exception as e:
-            return f"Error retrieving pipelines: {str(e)}"
+            logger.error(f"Error retrieving pipelines: {str(e)}")
+            return json.dumps({"error": str(e)})
 
     def get_repo_pipeline_runs(self, repo_slug: str) -> str:
         """
@@ -139,9 +151,11 @@ class BitbucketTools(Toolkit):
         """
         try:
             pipeline_runs = self.bitbucket.get_pipeline_runs(repo_slug)
+            logger.debug(f"Pipeline runs: {pipeline_runs}")
             return json.dumps(pipeline_runs)
         except Exception as e:
-            return f"Error retrieving pipeline runs: {str(e)}"
+            logger.error(f"Error retrieving pipeline runs: {str(e)}")
+            return json.dumps({"error": str(e)})
 
     def get_repo_pipeline_steps(self, repo_slug: str) -> str:
         """
@@ -152,6 +166,8 @@ class BitbucketTools(Toolkit):
         """
         try:
             pipeline_steps = self.bitbucket.get_pipeline_steps(repo_slug)
+            logger.debug(f"Pipeline steps: {pipeline_steps}")
             return json.dumps(pipeline_steps)
         except Exception as e:
-            return f"Error retrieving pipeline steps: {str(e)}"
+            logger.error(f"Error retrieving pipeline steps: {str(e)}")
+            return json.dumps({"error": str(e)})
