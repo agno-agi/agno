@@ -149,7 +149,6 @@ image_to_image_agent = Agent(
     tools=[FalTools()],
     markdown=True,
     debug_mode=True,
-    show_tool_calls=True,
     instructions=[
         "You have to use the `image_to_image` tool to generate the image.",
         "You are an AI agent that can generate images using the Fal AI API.",
