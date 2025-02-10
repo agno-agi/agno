@@ -142,7 +142,7 @@ class Gemini(Model):
 
     Vertex AI:
     - You will need Google Cloud credentials to use the Vertex AI API. Run `gcloud auth application-default login` to set credentials.
-    - Set `vertexai` to `True` to use the Vertex AI API. 
+    - Set `vertexai` to `True` to use the Vertex AI API.
     - Set your `project_id` (or set `GOOGLE_CLOUD_PROJECT` environment variable) and `location` (optional).
     - Set `http_options` (optional) to configure the HTTP options.
 
@@ -241,7 +241,11 @@ class Gemini(Model):
         if system_message is not None:
             config["system_instruction"] = system_message
 
-        if self.response_format is not None and isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+        if (
+            self.response_format is not None
+            and isinstance(self.response_format, type)
+            and issubclass(self.response_format, BaseModel)
+        ):
             config["response_mime_type"] = "application/json"
             config["response_schema"] = self.response_format
 
@@ -258,7 +262,6 @@ class Gemini(Model):
         if self.request_params:
             request_params.update(self.request_params)
         return request_params
-
 
     def invoke(self, messages: List[Message]):
         """
@@ -322,7 +325,7 @@ class Gemini(Model):
 
         request_kwargs = self._get_request_kwargs(system_message)
 
-        try:    
+        try:
             return await self.get_client().aio.models.generate_content(
                 model=self.id,
                 contents=formatted_messages,

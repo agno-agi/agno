@@ -192,6 +192,9 @@ class Model(ABC):
                     messages=messages, function_call_results=function_call_results, **model_response.extra
                 )
 
+                logger.debug(f"---------- {self.get_provider()} Response ----------")
+                self._log_messages(messages)
+
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
@@ -256,6 +259,9 @@ class Model(ABC):
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
+
+                logger.debug(f"---------- {self.get_provider()} Async Response ----------")
+                self._log_messages(messages)
 
                 # Continue loop to get next response
                 continue
@@ -450,7 +456,7 @@ class Model(ABC):
 
             # Add assistant message to messages
             messages.append(assistant_message)
-            assistant_message.log(metrics=True)
+            assistant_message.log()
 
             # Handle tool calls if present
             if assistant_message.tool_calls:
@@ -474,6 +480,9 @@ class Model(ABC):
                 self.format_function_call_results(
                     messages=messages, function_call_results=function_call_results, **stream_data.extra
                 )
+
+                logger.debug(f"---------- {self.get_provider()} Response Stream ----------")
+                self._log_messages(messages)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
@@ -562,6 +571,9 @@ class Model(ABC):
                 self.format_function_call_results(
                     messages=messages, function_call_results=function_call_results, **stream_data.extra
                 )
+
+                logger.debug(f"---------- {self.get_provider()} Async Response Stream ----------")
+                self._log_messages(messages)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):

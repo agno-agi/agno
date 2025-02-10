@@ -234,15 +234,19 @@ class Message(BaseModel):
 
         if metrics and self.metrics is not None and self.metrics != MessageMetrics():
             _logger("**************** METRICS ****************")
-            _logger(f"* Input tokens:                {self.metrics.input_tokens}")
-            _logger(f"* Output tokens:               {self.metrics.output_tokens}")
-            _logger(f"* Total tokens:                {self.metrics.total_tokens}")
+            if self.metrics.input_tokens:
+                _logger(f"* Input tokens:                {self.metrics.input_tokens}")
+            if self.metrics.output_tokens:
+                _logger(f"* Output tokens:               {self.metrics.output_tokens}")
+            if self.metrics.total_tokens:
+                _logger(f"* Total tokens:                {self.metrics.total_tokens}")
             if self.metrics.prompt_tokens_details:
                 _logger(f"* Prompt tokens details:       {self.metrics.prompt_tokens_details}")
             if self.metrics.completion_tokens_details:
                 _logger(f"* Completion tokens details:   {self.metrics.completion_tokens_details}")
             if self.metrics.time is not None:
                 _logger(f"* Time:                        {self.metrics.time:.4f}s")
+            if self.metrics.output_tokens and self.metrics.time:
                 _logger(f"* Tokens per second:           {self.metrics.output_tokens / self.metrics.time:.4f} tokens/s")
             if self.metrics.time_to_first_token is not None:
                 _logger(f"* Time to first token:         {self.metrics.time_to_first_token:.4f}s")
