@@ -1,10 +1,6 @@
-from typing import List
-
 import pytest
-from pydantic import BaseModel, Field
 
 from agno.agent import Agent, AgentMemory, RunResponse  # noqa
-from agno.memory.db.postgres import PgMemoryDb
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 

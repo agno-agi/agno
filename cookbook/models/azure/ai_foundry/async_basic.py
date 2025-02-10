@@ -1,10 +1,10 @@
 import asyncio
 
 from agno.agent import Agent
-from agno.models.azure import AzureOpenAI
+from agno.models.azure.ai_foundry import AzureAIFoundry
 
 agent = Agent(
-    model=AzureOpenAI(id="gpt-4o-mini"),
+    model=AzureAIFoundry(id="Phi-4"),
     description="You help people with their health and fitness goals.",
     instructions=["Recipes should be under 5 ingredients"],
 )

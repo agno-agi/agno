@@ -3,7 +3,7 @@
 from agno.agent import Agent
 from agno.embedder.azure_openai import AzureOpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.models.azure import AzureOpenAI
+from agno.models.azure.ai_foundry import AzureAIFoundry
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -19,7 +19,7 @@ knowledge_base = PDFUrlKnowledgeBase(
 knowledge_base.load(recreate=False)  # Comment out after first run
 
 agent = Agent(
-    model=AzureOpenAI(id="gpt-4o-mini"),
+    model=AzureAIFoundry(id="Cohere-command-r-08-2024"),
     knowledge=knowledge_base,
     show_tool_calls=True,
     debug_mode=True,

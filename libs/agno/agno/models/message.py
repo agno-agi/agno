@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from time import time
-from typing import Any, Dict, List, Literal, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
@@ -115,8 +115,8 @@ class Message(BaseModel):
     """Message sent to the Model"""
 
     # The role of the message author.
-    # One of system, developer, user, assistant, or tool.
-    role: Literal["system", "user", "assistant", "tool"]
+    # One of system, user, assistant, or tool.
+    role: str
     # The contents of the message.
     content: Optional[Union[List[Any], str]] = None
     # An optional name for the participant.

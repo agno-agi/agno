@@ -22,7 +22,7 @@ class MessageData:
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     response_audio: Optional[AudioOutput] = None
 
-    extra: Optional[Dict[str, Any]] = field(default_factory=dict)
+    extra: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -183,6 +183,8 @@ class Model(ABC):
                         function_call_response.event == ModelResponseEvent.tool_call_completed.value
                         and function_call_response.tool_calls is not None
                     ):
+                        if not model_response.tool_calls:
+                            model_response.tool_calls = []
                         model_response.tool_calls.extend(function_call_response.tool_calls)
 
                 # Format and add results to messages
@@ -242,6 +244,8 @@ class Model(ABC):
                         function_call_response.event == ModelResponseEvent.tool_call_completed.value
                         and function_call_response.tool_calls is not None
                     ):
+                        if not model_response.tool_calls:
+                            model_response.tool_calls = []
                         model_response.tool_calls.extend(function_call_response.tool_calls)
 
                 # Format and add results to messages
@@ -902,6 +906,8 @@ class Model(ABC):
         """
         Show tool calls in the model response.
         """
+        if not model_response.content:
+            model_response.content = ""
         if len(function_calls_to_run) == 1:
             model_response.content += f" - Running: {function_calls_to_run[0].get_call_str()}\n\n"
         elif len(function_calls_to_run) > 1:

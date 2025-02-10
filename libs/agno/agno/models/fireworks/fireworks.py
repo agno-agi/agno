@@ -1,10 +1,7 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Iterator, List, Optional
+from typing import Optional
 
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
-
-from agno.models.message import Message
 from agno.models.openai import OpenAILike
 
 

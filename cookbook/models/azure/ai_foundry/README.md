@@ -1,6 +1,8 @@
-# Azure OpenAI Cookbook
+# Azure AI Interface Cookbook
 
 > Note: Fork and clone this repository if needed
+>
+> Note: This cookbook is for the Azure AI Interface model. It uses the `AzureAIFoundry` class with the `Phi-4` model. Please change the model ID to the one you want to use.
 
 ### 1. Create and activate a virtual environment
 
@@ -11,14 +13,15 @@ source ~/.venvs/aienv/bin/activate
 
 ### 2. Export environment variables
 
-Navigate to the AzureOpenAI on the [Azure Portal](https://portal.azure.com/) and create a service. Then, using the Azure AI Foundry portal, create a deployment and set your environment variables.
+Navigate to the Azure AI Foundry on the [Azure Portal](https://portal.azure.com/) and create a service. Then, using the Azure AI Foundry portal, create a deployment and set your environment variables.
 
 ```shell
-export AZURE_OPENAI_API_KEY=***
-export AZURE_OPENAI_ENDPOINT="https://<your-resource-name>.openai.azure.com/openai/deployments/<your-deployment-name>"
-export AZURE_API_VERSION="2024-10-21"  # Optional
-export AZURE_DEPLOYMENT=***  # Optional
+export AZURE_API_KEY=***
+export AZURE_ENDPOINT="https://<your-host-name>.services.ai.azure.com/models"
+export AZURE_API_VERSION="2024-05-01-preview"
 ```
+
+You can get the endpoint from the Azure AI Foundry portal. Click on the deployed model and copy the "Target URI"
 
 ### 3. Install libraries
 
