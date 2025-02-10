@@ -136,6 +136,8 @@ class Gemini(Model):
     """
     Gemini model class for Google's Generative AI models.
 
+    Set `vertexai` to `True` to use the Vertex AI API. You will then also need `project_id`, `location` and `http_options` (optional).
+
     Based on https://googleapis.github.io/python-genai/
     """
 
@@ -149,6 +151,17 @@ class Gemini(Model):
     safety_settings: Optional[Any] = None
     generative_model_kwargs: Optional[Dict[str, Any]] = None
     request_params: Optional[Dict[str, Any]] = None
+
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    max_output_tokens: Optional[int] = None
+    stop_sequences: Optional[list[str]] = None
+    logprobs: Optional[bool] = None
+    presence_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    seed: Optional[int] = None
+    response_modalities: Optional[list[str]] = None
 
     # Client parameters
     api_key: Optional[str] = None
@@ -197,6 +210,16 @@ class Gemini(Model):
             "generation_config": self.generation_config,
             "safety_settings": self.safety_settings,
             "generative_model_kwargs": self.generative_model_kwargs,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "max_output_tokens": self.max_output_tokens,
+            "stop_sequences": self.stop_sequences,
+            "logprobs": self.logprobs,
+            "presence_penalty": self.presence_penalty,
+            "frequency_penalty": self.frequency_penalty,
+            "seed": self.seed,
+            "response_modalities": self.response_modalities,
         }
         if self._tools:
             base_params["config"] = GenerateContentConfig(tools=[_format_function_definitions(self._tools)])
