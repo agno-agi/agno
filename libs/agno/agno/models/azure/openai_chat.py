@@ -27,26 +27,48 @@ class AzureOpenAI(OpenAILike):
         api_version (str): The API version to use.
         azure_endpoint (Optional[str]): The Azure endpoint to use.
         azure_deployment (Optional[str]): The Azure deployment to use.
-        base_url (Optional[str]): The base URL to use.
         azure_ad_token (Optional[str]): The Azure AD token to use.
         azure_ad_token_provider (Optional[Any]): The Azure AD token provider to use.
         organization (Optional[str]): The organization to use.
-        openai_client (Optional[AzureOpenAIClient]): The OpenAI client to use.
+        client (Optional[AzureOpenAIClient]): The OpenAI client to use.
+        async_client (Optional[AsyncAzureOpenAIClient]): The OpenAI client to use.
     """
 
     id: str
     name: str = "AzureOpenAI"
     provider: str = "Azure"
 
-    api_key: Optional[str] = getenv("AZURE_OPENAI_API_KEY")
-    api_version: str = getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
-    azure_endpoint: Optional[str] = getenv("AZURE_OPENAI_ENDPOINT")
-    azure_deployment: Optional[str] = getenv("AZURE_DEPLOYMENT")
+    api_key: Optional[str] = None
+    api_version: Optional[str] = "2024-10-21"
+    azure_endpoint: Optional[str] = None
+    azure_deployment: Optional[str] = None
     azure_ad_token: Optional[str] = None
     azure_ad_token_provider: Optional[Any] = None
 
     client: Optional[AzureOpenAIClient] = None
     async_client: Optional[AsyncAzureOpenAIClient] = None
+
+    def _get_client_params(self) -> Dict[str, Any]:
+        _client_params: Dict[str, Any] = {}
+
+        self.api_key = self.api_key or getenv("AZURE_OPENAI_API_KEY")
+        self.azure_endpoint = self.azure_endpoint or getenv("AZURE_OPENAI_ENDPOINT")
+        self.azure_deployment = self.azure_deployment or getenv("AZURE_DEPLOYMENT")
+        params_mapping = {
+            "api_key": self.api_key,
+            "api_version": self.api_version,
+            "organization": self.organization,
+            "azure_endpoint": self.azure_endpoint,
+            "azure_deployment": self.azure_deployment,
+            "azure_ad_token": self.azure_ad_token,
+            "azure_ad_token_provider": self.azure_ad_token_provider,
+            "http_client": self.http_client
+        }
+
+        _client_params.update({k: v for k, v in params_mapping.items() if v is not None})
+        if self.client_params:
+            _client_params.update(self.client_params)
+        return _client_params
 
     def get_client(self) -> AzureOpenAIClient:
         """
@@ -87,27 +109,3 @@ class AzureOpenAI(OpenAILike):
 
         self.async_client = AsyncAzureOpenAIClient(**_client_params)
         return self.async_client
-
-    def _get_client_params(self) -> Dict[str, Any]:
-        _client_params: Dict[str, Any] = {}
-        if self.api_key:
-            _client_params["api_key"] = self.api_key
-        if self.api_version:
-            _client_params["api_version"] = self.api_version
-        if self.organization:
-            _client_params["organization"] = self.organization
-        if self.azure_endpoint:
-            _client_params["azure_endpoint"] = self.azure_endpoint
-        if self.azure_deployment:
-            _client_params["azure_deployment"] = self.azure_deployment
-        if self.base_url:
-            _client_params["base_url"] = self.base_url
-        if self.azure_ad_token:
-            _client_params["azure_ad_token"] = self.azure_ad_token
-        if self.azure_ad_token_provider:
-            _client_params["azure_ad_token_provider"] = self.azure_ad_token_provider
-        if self.http_client:
-            _client_params["http_client"] = self.http_client
-        if self.client_params:
-            _client_params.update(self.client_params)
-        return _client_params
