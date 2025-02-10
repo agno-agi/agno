@@ -25,7 +25,7 @@ json_mode_agent = Agent(
 
 # Agent that uses structured outputs
 structured_output_agent = Agent(
-    model=LangDB(id="gpt-4o"),
+    model=LangDB(id="gpt-4o", project_id="langdb-project-id"),
     description="You write movie scripts.",
     response_model=MovieScript,
     structured_outputs=True,

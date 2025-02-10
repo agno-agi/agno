@@ -5,7 +5,7 @@ from phi.model.langdb import LangDB
 from phi.tools.yfinance import YFinanceTools
 
 agent = Agent(
-    model=LangDB(id="gpt-4o"),
+    model=LangDB(id="gpt-4o", project_id="langdb-project-id"),
     tools=[YFinanceTools(stock_price=True)],
     instructions=["Use tables where possible."],
     markdown=True,

@@ -14,6 +14,7 @@ class LangDB(OpenAILike):
         provider (str): The provider name. Defaults to "LangDB: " + id.
         api_key (Optional[str]): The API key. Defaults to getenv("LANGDB_API_KEY").
         base_url (str): The base URL. Defaults to "https://api.us-east-1.langdb.ai".
+        project_id (Optional[str]): The project id. Defaults to None.
     """
 
     id: str = "gpt-4o"
@@ -22,4 +23,11 @@ class LangDB(OpenAILike):
 
     api_key: Optional[str] = getenv("LANGDB_API_KEY")
     base_url: str = "https://api.us-east-1.langdb.ai"
+    project_id: Optional[str] = None
     default_headers: Optional[dict] = None
+
+    def __init__(self, project_id: Optional[str] = None) -> None:
+        super().__init__()
+        self.project_id = project_id
+        if self.project_id:
+            self.base_url = f"https://api.us-east-1.langdb.ai/{self.project_id}/v1"

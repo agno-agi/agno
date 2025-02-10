@@ -6,7 +6,7 @@ from phi.model.langdb import LangDB
 from phi.tools.yfinance import YFinanceTools
 
 agent = Agent(
-    model=LangDB(id="gemini-1.5-pro-latest"),
+    model=LangDB(id="gemini-1.5-pro-latest", project_id="langdb-project-id"),
     tools=[YFinanceTools(stock_price=True)],
     instructions=["Use tables where possible."],
     markdown=True,
