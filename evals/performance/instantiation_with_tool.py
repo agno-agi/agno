@@ -6,6 +6,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.eval.perf import PerfEval
 
+
 def get_weather(city: Literal["nyc", "sf"]):
     """Use this to get weather information."""
     if city == "nyc":
@@ -15,10 +16,13 @@ def get_weather(city: Literal["nyc", "sf"]):
     else:
         raise AssertionError("Unknown city")
 
+
 tools = [get_weather]
 
+
 def instantiate_agent():
-    return Agent(model=OpenAIChat(id='gpt-4o'), tools=tools)
+    return Agent(model=OpenAIChat(id="gpt-4o"), tools=tools)
+
 
 instantiation_perf = PerfEval(func=instantiate_agent, num_iterations=1000)
 

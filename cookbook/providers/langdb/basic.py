@@ -1,7 +1,9 @@
 from phi.agent import Agent, RunResponse  # noqa
 from phi.model.langdb import LangDB
 
-agent = Agent(model=LangDB(id="deepseek-chat", project_id="langdb-project-id"), markdown=True)
+agent = Agent(
+    model=LangDB(id="deepseek-chat", project_id="langdb-project-id"), markdown=True
+)
 
 # Get the response in a variable
 # run: RunResponse = agent.run("Share a 2 sentence horror story")

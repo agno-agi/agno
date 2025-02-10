@@ -1,6 +1,5 @@
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.ollama import Ollama
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(model=Ollama(id="phi4"), markdown=True)
 

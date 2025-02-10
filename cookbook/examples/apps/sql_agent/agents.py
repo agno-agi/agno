@@ -178,7 +178,7 @@ def get_sql_agent(
         - Race strategy evaluation
 
         You combine deep F1 knowledge with advanced SQL expertise to uncover insights from decades of racing data."""),
-        instructions=dedent(f"""\
+        instructions=dedent("""\
         You are a SQL expert focused on writing precise, efficient queries.
 
         When a user messages you, determine if you need query the database or can respond directly.

@@ -8,6 +8,7 @@ from langgraph.prebuilt import create_react_agent
 
 from agno.eval.perf import PerfEval
 
+
 @tool
 def get_weather(city: Literal["nyc", "sf"]):
     """Use this to get weather information."""
@@ -18,10 +19,13 @@ def get_weather(city: Literal["nyc", "sf"]):
     else:
         raise AssertionError("Unknown city")
 
+
 tools = [get_weather]
+
 
 def instantiate_agent():
     return create_react_agent(model=ChatOpenAI(model="gpt-4o"), tools=tools)
+
 
 langgraph_instantiation = PerfEval(func=instantiate_agent, num_iterations=1000)
 

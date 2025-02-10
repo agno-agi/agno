@@ -1,6 +1,6 @@
 from phi.agent import AgentKnowledge
-from phi.vectordb.pgvector import PgVector
 from phi.embedder.langdb import LangDBEmbedder
+from phi.vectordb.pgvector import PgVector
 
 embeddings = LangDBEmbedder().get_embedding("Embed me")
 

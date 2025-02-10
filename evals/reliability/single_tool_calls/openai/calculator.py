@@ -8,8 +8,7 @@ from agno.run.response import RunResponse
 
 
 def factorial():
-
-    agent=Agent(
+    agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[CalculatorTools(factorial=True)],
     )

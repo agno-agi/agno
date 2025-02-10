@@ -1,5 +1,3 @@
-from typing import Optional
-
 import typer
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase

@@ -91,7 +91,7 @@ def display_tool_calls(tool_calls_container, tools):
                     st.markdown("**Results:**")
                     try:
                         st.json(_content)
-                    except Exception as e:
+                    except Exception:
                         st.markdown(_content)
 
                 if _metrics:

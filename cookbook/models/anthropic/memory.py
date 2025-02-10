@@ -10,7 +10,6 @@ from agno.agent import Agent, AgentMemory
 from agno.memory.db.postgres import PgMemoryDb
 from agno.models.anthropic import Claude
 from agno.storage.agent.postgres import PostgresAgentStorage
-from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
