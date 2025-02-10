@@ -1,12 +1,16 @@
-# Import necessary modules
+"""
+Import necessary modules
+pip install langchain langchain-community agno
+"""
+
 import pathlib
 
 from agno.agent import Agent
 from agno.knowledge.langchain import LangChainKnowledgeBase
-from langchain.document_loaders import TextLoader
-from langchain.embeddings import OpenAIEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.vectorstores import Chroma
+from langchain_community.document_loaders import TextLoader
+from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
 
 # Define the directory where the Chroma database is located
 chroma_db_dir = pathlib.Path("./chroma_db")
