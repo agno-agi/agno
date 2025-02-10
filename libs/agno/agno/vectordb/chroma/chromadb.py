@@ -209,9 +209,10 @@ class ChromaDb(VectorDb):
         distances = result.get("distances", [[]])[0]  # type: ignore
         uris = result.get("uris")
         data = result.get("data")
-        metadata["distances"] = distances  # type: ignore
-        metadata["uris"] = uris  # type: ignore
-        metadata["data"] = data  # type: ignore
+        for i, distance in enumerate(distances):
+            metadata[i]["distance"] = distance  # type: ignore        
+            metadata[i]["uris"] = uris  # type: ignore
+            metadata[i]["data"] = data  # type: ignore
 
         try:
             # Use zip to iterate over multiple lists simultaneously
