@@ -568,11 +568,13 @@ class Agent:
                         if self.run_response.tools:
                             # Create a mapping of tool_call_id to index
                             tool_call_index_map = {
-                                tc["tool_call_id"]: i for i, tc in enumerate(self.run_response.tools)
+                                tc["tool_call_id"]: i
+                                for i, tc in enumerate(self.run_response.tools)
+                                if tc.get("tool_call_id") is not None
                             }
                             # Process tool calls
                             for tool_call_dict in tool_calls_list:
-                                tool_call_id = tool_call_dict["tool_call_id"]
+                                tool_call_id = tool_call_dict.get("tool_call_id")
                                 index = tool_call_index_map.get(tool_call_id)
                                 if index is not None:
                                     self.run_response.tools[index] = tool_call_dict

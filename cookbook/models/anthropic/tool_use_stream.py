@@ -1,11 +1,11 @@
 """Run `pip install duckduckgo-search` to install dependencies."""
 
 from agno.agent import Agent
-from agno.models.vertexai import Gemini
+from agno.models.anthropic import Claude
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Claude(id="claude-3-5-sonnet-20240620"),
     tools=[DuckDuckGoTools()],
     show_tool_calls=True,
     markdown=True,

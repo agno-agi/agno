@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import requests
 from agno.agent import Agent
 from agno.media import Audio
@@ -19,5 +17,4 @@ audio_content = response.content
 agent.print_response(
     "Tell me about this audio",
     audio=[Audio(content=audio_content)],
-    stream=True,
 )
