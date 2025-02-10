@@ -19,5 +19,4 @@ audio_content = response.content
 agent.print_response(
     "Tell me about this audio",
     audio=[Audio(content=audio_content)],
-    stream=True,
 )
