@@ -6,6 +6,7 @@ from os import getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
+from agno.exceptions import ModelProviderError
 from agno.media import Audio, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message
@@ -15,6 +16,7 @@ from agno.utils.log import logger
 try:
     from google import genai
     from google.genai import Client as GeminiClient
+    from google.genai.errors import ClientError, ServerError
     from google.genai.types import (
         Content,
         File,
@@ -254,11 +256,18 @@ class Gemini(Model):
         if system_message is not None:
             self.request_kwargs["system_instruction"] = system_message
 
-        return self.get_client().models.generate_content(
-            model=self.id,
-            contents=formatted_messages,
-            **self.request_kwargs,
-        )
+        try:
+            return self.get_client().models.generate_content(
+                model=self.id,
+                contents=formatted_messages,
+                **self.request_kwargs,
+            )
+        except (ClientError, ServerError) as e:
+            logger.error(f"Error from Gemini API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except Exception as e:
+            logger.error(f"Unknown error from Gemini API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     def invoke_stream(self, messages: List[Message]):
         """
@@ -275,11 +284,18 @@ class Gemini(Model):
         if system_message:
             self.request_kwargs["system_instruction"] = system_message
 
-        yield from self.get_client().models.generate_content_stream(
-            model=self.id,
-            contents=formatted_messages,
-            **self.request_kwargs,
-        )
+        try:
+            yield from self.get_client().models.generate_content_stream(
+                model=self.id,
+                contents=formatted_messages,
+                **self.request_kwargs,
+            )
+        except (ClientError, ServerError) as e:
+            logger.error(f"Error from Gemini API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except Exception as e:
+            logger.error(f"Unknown error from Gemini API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     async def ainvoke(self, messages: List[Message]):
         """
@@ -290,11 +306,18 @@ class Gemini(Model):
         if system_message:
             self.request_kwargs["system_instruction"] = system_message
 
-        return await self.get_client().aio.models.generate_content(
-            model=self.id,
-            contents=formatted_messages,
-            **self.request_kwargs,
-        )
+        try:    
+            return await self.get_client().aio.models.generate_content(
+                model=self.id,
+                contents=formatted_messages,
+                **self.request_kwargs,
+            )
+        except (ClientError, ServerError) as e:
+            logger.error(f"Error from Gemini API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except Exception as e:
+            logger.error(f"Unknown error from Gemini API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]):
         """
@@ -305,13 +328,20 @@ class Gemini(Model):
         if system_message:
             self.request_kwargs["system_instruction"] = system_message
 
-        async_stream = await self.get_client().aio.models.generate_content_stream(
-            model=self.id,
-            contents=formatted_messages,
-            **self.request_kwargs,
-        )
-        async for chunk in async_stream:
-            yield chunk
+        try:
+            async_stream = await self.get_client().aio.models.generate_content_stream(
+                model=self.id,
+                contents=formatted_messages,
+                **self.request_kwargs,
+            )
+            async for chunk in async_stream:
+                yield chunk
+        except (ClientError, ServerError) as e:
+            logger.error(f"Error from Gemini API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except Exception as e:
+            logger.error(f"Unknown error from Gemini API: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     def _format_messages(self, messages: List[Message]):
         """
