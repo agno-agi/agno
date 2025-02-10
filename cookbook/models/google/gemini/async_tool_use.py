@@ -1,15 +1,15 @@
 """
-Async example using Cohere with tool calls.
+Async example using Gemini with tool calls.
 """
 
 import asyncio
 
 from agno.agent.agent import Agent
-from agno.models.cohere import Cohere
+from agno.models.google import Gemini
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=Cohere(id="command-r-08-2024"),
+    model=Gemini(id="gemini-2.0-flash-exp"),
     tools=[DuckDuckGoTools()],
     show_tool_calls=True,
     markdown=True,

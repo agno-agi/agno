@@ -1,14 +1,14 @@
 """
-Basic streaming async example using Cohere.
+Basic streaming async example using Fireworks.
 """
 
 import asyncio
 
 from agno.agent.agent import Agent
-from agno.models.cohere import Cohere
+from agno.models.fireworks import Fireworks
 
 agent = Agent(
-    model=Cohere(id="command-r-08-2024"),
+    model=Fireworks(id="accounts/fireworks/models/llama-v3p1-405b-instruct"),
     markdown=True,
 )
 
