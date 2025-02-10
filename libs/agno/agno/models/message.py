@@ -197,7 +197,7 @@ class Message(BaseModel):
     def serialize_model(self):
         return self.to_dict()
 
-    def log(self, metrics: bool = False, level: Optional[str] = None):
+    def log(self, metrics: bool = True, level: Optional[str] = None):
         """Log the message to the console
 
         Args:
@@ -232,7 +232,7 @@ class Message(BaseModel):
         if self.audio:
             _logger(f"Audio Files added: {len(self.audio)}")
 
-        if metrics and self.metrics is not None:
+        if metrics and self.metrics is not None and self.metrics != MessageMetrics():
             _logger("**************** METRICS ****************")
             _logger(f"* Input tokens:                {self.metrics.input_tokens}")
             _logger(f"* Output tokens:               {self.metrics.output_tokens}")
