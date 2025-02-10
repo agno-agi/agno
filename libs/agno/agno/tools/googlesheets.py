@@ -307,7 +307,6 @@ class GoogleSheetsTools(Toolkit):
                     spreadsheetId=source_id,
                     sheetId=sheet["properties"]["sheetId"],
                     body={"destinationSpreadsheetId": new_id},
-                    name=sheet["properties"]["title"],
                 ).execute()
 
             # Remove default sheet
