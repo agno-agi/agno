@@ -489,7 +489,7 @@ class OpenAIChat(Model):
             except Exception as e:
                 logger.warning(f"Error processing tool calls: {e}")
 
-        # -*- Add audio transcript to content if available
+        # Add audio transcript to content if available
         response_audio: Optional[ChatCompletionAudio] = response_message.audio
         if response_audio and response_audio.transcript and not model_response.content:
             model_response.content = response_audio.transcript

@@ -183,8 +183,6 @@ class Model(ABC):
                         function_call_response.event == ModelResponseEvent.tool_call_completed.value
                         and function_call_response.tool_calls is not None
                     ):
-                        if not model_response.tool_calls:
-                            model_response.tool_calls = []
                         model_response.tool_calls.extend(function_call_response.tool_calls)
 
                 # Format and add results to messages
@@ -247,8 +245,6 @@ class Model(ABC):
                         function_call_response.event == ModelResponseEvent.tool_call_completed.value
                         and function_call_response.tool_calls is not None
                     ):
-                        if not model_response.tool_calls:
-                            model_response.tool_calls = []
                         model_response.tool_calls.extend(function_call_response.tool_calls)
 
                 # Format and add results to messages
@@ -309,10 +305,15 @@ class Model(ABC):
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
-            model_response.content = assistant_message.get_content_string()
+            if model_response.content is None:
+                model_response.content = assistant_message.get_content_string()
+            else:
+                model_response.content += assistant_message.get_content_string()
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if provider_response.extra is not None:
+            if model_response.extra is None:
+                model_response.extra = {}
             model_response.extra.update(provider_response.extra)
 
         return assistant_message, bool(assistant_message.tool_calls)
@@ -361,6 +362,8 @@ class Model(ABC):
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if provider_response.extra is not None:
+            if model_response.extra is None:
+                model_response.extra = {}
             model_response.extra.update(provider_response.extra)
 
         return assistant_message, bool(assistant_message.tool_calls)
@@ -416,10 +419,9 @@ class Model(ABC):
         """
         for response_delta in self.invoke_stream(messages=messages):
             model_response_delta = self.parse_provider_response_delta(response_delta)
-            if model_response_delta:
-                yield from self._populate_stream_data_and_assistant_message(
-                    stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
-                )
+            yield from self._populate_stream_data_and_assistant_message(
+                stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
+            )
 
     def response_stream(self, messages: List[Message]) -> Iterator[ModelResponse]:
         """
@@ -459,7 +461,7 @@ class Model(ABC):
             assistant_message.log()
 
             # Handle tool calls if present
-            if assistant_message.tool_calls:
+            if assistant_message.tool_calls is not None:
                 yield ModelResponse(content="\n\n")
 
                 # Prepare function calls
@@ -504,11 +506,10 @@ class Model(ABC):
         """
         async for response_delta in self.ainvoke_stream(messages=messages):
             model_response_delta = self.parse_provider_response_delta(response_delta)
-            if model_response_delta:
-                for model_response in self._populate_stream_data_and_assistant_message(
-                    stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
-                ):
-                    yield model_response
+            for model_response in self._populate_stream_data_and_assistant_message(
+                stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
+            ):
+                yield model_response
 
     async def aresponse_stream(self, messages: List[Message]) -> AsyncIterator[ModelResponse]:
         """
@@ -549,7 +550,7 @@ class Model(ABC):
             assistant_message.log(metrics=True)
 
             # Handle tool calls if present
-            if assistant_message.tool_calls:
+            if assistant_message.tool_calls is not None:
                 yield ModelResponse(content="\n\n")
 
                 # Prepare function calls

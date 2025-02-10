@@ -164,8 +164,6 @@ class Message(BaseModel):
         if isinstance(self.content, str):
             return self.content
         if isinstance(self.content, list):
-            import json
-
             return json.dumps(self.content)
         return ""
 
