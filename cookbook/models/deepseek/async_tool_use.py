@@ -1,15 +1,15 @@
 """
-Async example using Cohere with tool calls.
+Async example using Claude with tool calls.
 """
 
 import asyncio
 
 from agno.agent.agent import Agent
-from agno.models.cohere import Cohere
+from agno.models.deepseek import DeepSeek
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=Cohere(id="command-r-08-2024"),
+    model=DeepSeek(id="deepseek-chat"),
     tools=[DuckDuckGoTools()],
     show_tool_calls=True,
     markdown=True,

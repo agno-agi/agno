@@ -1,14 +1,14 @@
 """
-Basic streaming async example using Cohere.
+Basic streaming async example using Claude.
 """
 
 import asyncio
 
 from agno.agent.agent import Agent
-from agno.models.cohere import Cohere
+from agno.models.deepseek import DeepSeek
 
 agent = Agent(
-    model=Cohere(id="command-r-08-2024"),
+    model=DeepSeek(id="deepseek-chat"),
     markdown=True,
 )
 
