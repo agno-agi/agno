@@ -162,6 +162,7 @@ class Gemini(Model):
     frequency_penalty: Optional[float] = None
     seed: Optional[int] = None
     response_modalities: Optional[list[str]] = None
+    speech_config: Optional[dict[str, Any]] = None
 
     # Client parameters
     api_key: Optional[str] = None
@@ -210,6 +211,9 @@ class Gemini(Model):
             "generation_config": self.generation_config,
             "safety_settings": self.safety_settings,
             "generative_model_kwargs": self.generative_model_kwargs,
+        }
+
+        config = {
             "temperature": self.temperature,
             "top_p": self.top_p,
             "top_k": self.top_k,
@@ -220,10 +224,15 @@ class Gemini(Model):
             "frequency_penalty": self.frequency_penalty,
             "seed": self.seed,
             "response_modalities": self.response_modalities,
+            # "speech_config": self.speech_config,
         }
         if self._tools:
-            base_params["config"] = GenerateContentConfig(tools=[_format_function_definitions(self._tools)])
+            config["tools"] = [_format_function_definitions(self._tools)]
 
+        config = {k: v for k, v in config.items() if v is not None}
+
+        if config:
+            base_params["config"] = GenerateContentConfig(**config)
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
         if self.request_params:
