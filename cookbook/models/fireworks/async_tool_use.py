@@ -4,7 +4,7 @@ Async example using Fireworks with tool calls.
 
 import asyncio
 
-from agno.agent.agent import Agent
+from agno.agent import Agent
 from agno.models.fireworks import Fireworks
 from agno.tools.duckduckgo import DuckDuckGoTools
 

@@ -1,10 +1,10 @@
 """
-Basic async example using Claude.
+Basic async example using DeepSeek.
 """
 
 import asyncio
 
-from agno.agent.agent import Agent
+from agno.agent import Agent
 from agno.models.deepseek import DeepSeek
 
 agent = Agent(

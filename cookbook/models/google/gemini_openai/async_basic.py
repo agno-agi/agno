@@ -4,7 +4,7 @@ Basic async example using GeminiOpenAI.
 
 import asyncio
 
-from agno.agent.agent import Agent
+from agno.agent import Agent
 from agno.models.google import GeminiOpenAI
 
 agent = Agent(

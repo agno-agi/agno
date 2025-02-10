@@ -4,7 +4,7 @@ Basic streaming async example using Fireworks.
 
 import asyncio
 
-from agno.agent.agent import Agent
+from agno.agent import Agent
 from agno.models.fireworks import Fireworks
 
 agent = Agent(
