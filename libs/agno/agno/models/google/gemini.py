@@ -140,7 +140,11 @@ class Gemini(Model):
     """
     Gemini model class for Google's Generative AI models.
 
-    Set `vertexai` to `True` to use the Vertex AI API. You will then also need `project_id`, `location` and `http_options` (optional).
+    Vertex AI:
+    - You will need Google Cloud credentials to use the Vertex AI API. Run `gcloud auth application-default login` to set credentials.
+    - Set `vertexai` to `True` to use the Vertex AI API. 
+    - Set your `project_id` (or set `GOOGLE_CLOUD_PROJECT` environment variable) and `location` (optional).
+    - Set `http_options` (optional) to configure the HTTP options.
 
     Based on https://googleapis.github.io/python-genai/
     """
@@ -172,6 +176,8 @@ class Gemini(Model):
     api_key: Optional[str] = None
     client_params: Optional[Dict[str, Any]] = None
     vertexai: bool = False
+    project_id: Optional[str] = None
+    location: Optional[str] = None
 
     # Gemini client
     client: Optional[GeminiClient] = None
@@ -187,18 +193,21 @@ class Gemini(Model):
             return self.client
 
         client_params: Dict[str, Any] = {}
-
-        self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
-        if not self.api_key:
-            logger.error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
-        client_params["api_key"] = self.api_key
-
-        if self.vertexai:
+        if not self.vertexai:
+            self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
+            if not self.api_key:
+                logger.error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
+            client_params["api_key"] = self.api_key
+        else:
             client_params["vertexai"] = True
+
+        client_params["project"] = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
+        client_params["location"] = self.location
+
+        client_params = {k: v for k, v in client_params.items() if v is not None}
 
         if self.client_params:
             client_params.update(self.client_params)
-        # genai.configure(**client_params)
 
         self.client = genai.Client(**client_params)
         return self.client
