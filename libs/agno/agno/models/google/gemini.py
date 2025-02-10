@@ -6,6 +6,8 @@ from os import getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
+from pydantic import BaseModel
+
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, Image, Video
 from agno.models.base import Model
@@ -201,8 +203,7 @@ class Gemini(Model):
         self.client = genai.Client(**client_params)
         return self.client
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def _get_request_kwargs(self, system_message: Optional[str] = None) -> Dict[str, Any]:
         """
         Returns the request keyword arguments for the GenerativeModel client.
 
@@ -226,8 +227,15 @@ class Gemini(Model):
             "frequency_penalty": self.frequency_penalty,
             "seed": self.seed,
             "response_modalities": self.response_modalities,
-            # "speech_config": self.speech_config,
+            "speech_config": self.speech_config,
         }
+        if system_message is not None:
+            config["system_instruction"] = system_message
+
+        if self.response_format is not None and isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+            config["response_mime_type"] = "application/json"
+            config["response_schema"] = self.response_format
+
         if self._tools:
             config["tools"] = [_format_function_definitions(self._tools)]
 
@@ -235,11 +243,13 @@ class Gemini(Model):
 
         if config:
             base_params["config"] = GenerateContentConfig(**config)
+
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
         if self.request_params:
             request_params.update(self.request_params)
         return request_params
+
 
     def invoke(self, messages: List[Message]):
         """
@@ -253,14 +263,13 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        if system_message is not None:
-            self.request_kwargs["system_instruction"] = system_message
+        request_kwargs = self._get_request_kwargs(system_message)
 
         try:
             return self.get_client().models.generate_content(
                 model=self.id,
                 contents=formatted_messages,
-                **self.request_kwargs,
+                **request_kwargs,
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
@@ -281,14 +290,13 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        if system_message:
-            self.request_kwargs["system_instruction"] = system_message
+        request_kwargs = self._get_request_kwargs(system_message)
 
         try:
             yield from self.get_client().models.generate_content_stream(
                 model=self.id,
                 contents=formatted_messages,
-                **self.request_kwargs,
+                **request_kwargs,
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
@@ -303,14 +311,13 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        if system_message:
-            self.request_kwargs["system_instruction"] = system_message
+        request_kwargs = self._get_request_kwargs(system_message)
 
         try:    
             return await self.get_client().aio.models.generate_content(
                 model=self.id,
                 contents=formatted_messages,
-                **self.request_kwargs,
+                **request_kwargs,
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
@@ -325,14 +332,13 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        if system_message:
-            self.request_kwargs["system_instruction"] = system_message
+        request_kwargs = self._get_request_kwargs(system_message)
 
         try:
             async_stream = await self.get_client().aio.models.generate_content_stream(
                 model=self.id,
                 contents=formatted_messages,
-                **self.request_kwargs,
+                **request_kwargs,
             )
             async for chunk in async_stream:
                 yield chunk
