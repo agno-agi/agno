@@ -42,6 +42,7 @@ class AudioArtifact(Media):
 class Video(BaseModel):
     filepath: Optional[Union[Path, str]] = None  # Absolute local location for video
     content: Optional[Any] = None  # Actual video bytes content
+    format: Optional[str] = None
 
     @model_validator(mode="before")
     def validate_exclusive_video(cls, data: Any):

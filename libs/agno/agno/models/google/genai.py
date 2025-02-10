@@ -78,82 +78,7 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         return None
 
 
-# def _format_audio_for_message(audio: Audio) -> Optional[Union[Dict[str, Any], File]]:
-#     if audio.content and isinstance(audio.content, bytes):
-#         audio_content = {"mime_type": "audio/mp3", "data": audio.content}
-#         return audio_content
 
-#     elif audio.filepath is not None:
-#         audio_path = audio.filepath if isinstance(audio.filepath, Path) else Path(audio.filepath)
-
-#         remote_file_name = f"files/{audio_path.stem.lower()}"
-#         # Check if video is already uploaded
-#         existing_audio_upload = None
-#         try:
-#             existing_audio_upload = genai.get_file(remote_file_name)
-#         except Exception as e:
-#             logger.info(f"Error getting file {remote_file_name}: {e}")
-#             pass
-
-#         if existing_audio_upload:
-#             audio_file = existing_audio_upload
-#         else:
-#             # Upload the video file to the Gemini API
-#             if audio_path.exists() and audio_path.is_file():
-#                 audio_file = genai.upload_file(path=audio_path, name=remote_file_name, display_name=audio_path.stem)
-#             else:
-#                 logger.error(f"Audio file {audio_path} does not exist.")
-#                 raise Exception(f"Audio file {audio_path} does not exist.")
-
-#             # Check whether the file is ready to be used.
-#             while audio_file.state.name == "PROCESSING":
-#                 time.sleep(2)
-#                 audio_file = genai.get_file(audio_file.name)
-
-#             if audio_file.state.name == "FAILED":
-#                 raise ValueError(audio_file.state.name)
-#         return audio_file
-#     else:
-#         logger.warning(f"Unknown audio type: {type(audio.content)}")
-#         return None
-
-
-# def _format_video_for_message(video: Video) -> Optional[File]:
-#     # If video is stored locally
-#     if video.filepath is not None:
-#         video_path = video.filepath if isinstance(video.filepath, Path) else Path(video.filepath)
-
-#         remote_file_name = f"files/{video_path.stem.lower()}"
-#         # Check if video is already uploaded
-#         existing_video_upload = None
-#         try:
-#             existing_video_upload = genai.get_file(remote_file_name)
-#         except Exception as e:
-#             logger.info(f"Error getting file {remote_file_name}: {e}")
-#             pass
-
-#         if existing_video_upload:
-#             video_file = existing_video_upload
-#         else:
-#             # Upload the video file to the Gemini API
-#             if video_path.exists() and video_path.is_file():
-#                 video_file = genai.upload_file(path=video_path, name=remote_file_name, display_name=video_path.stem)
-#             else:
-#                 logger.error(f"Video file {video_path} does not exist.")
-#                 raise Exception(f"Video file {video_path} does not exist.")
-
-#             # Check whether the file is ready to be used.
-#             while video_file.state.name == "PROCESSING":
-#                 time.sleep(2)
-#                 video_file = genai.get_file(video_file.name)
-
-#             if video_file.state.name == "FAILED":
-#                 raise ValueError(video_file.state.name)
-
-#         return video_file
-#     else:
-#         logger.warning(f"Unknown video type: {type(video.content)}")
-#         return None
 
 
 def convert_schema(schema_dict):
@@ -210,103 +135,6 @@ def _format_function_definitions(tools_list):
         return None
 
 
-def _format_messages(messages: List[Message]):
-    """
-    Converts a list of Message objects to the Gemini-compatible format.
-
-    Args:
-        messages (List[Message]): The list of messages to convert.
-    """
-    formatted_messages: List = []
-    system_message = None
-    for message in messages:
-        message_for_model: Dict[str, Any] = {}
-
-        role = message.role
-        if role in ["system", "developer"]:
-            system_message = message.content
-            continue
-
-        # Add content to the message for the model
-        content = message.content
-        # Initialize message_parts to be used for Gemini
-        message_parts: List[Any] = []
-
-        # Function calls
-        if (not content or message.role == "model") and message.tool_calls:
-            for tool_call in message.tool_calls:
-                message_parts.append(
-                    Part.from_function_call(
-                        name=tool_call["function"]["name"],
-                        args=json.loads(tool_call["function"]["arguments"]),
-                    )
-                )
-        # Function results
-        elif message.role == "tool":
-            if hasattr(message, "combined_function_details"):
-                for result in message.combined_function_details:
-                    message_parts.append(Part.from_function_response(name=result[0], response={"result": result[1]}))
-            else:
-                message_parts = [
-                    Part.from_function_response(name=message.tool_name, response={"result": message.content})
-                ]
-        else:
-            if isinstance(content, str):
-                message_parts = [Part.from_text(text=content)]
-
-        if message.role == "user":
-            # Add images to the message for the model
-            if message.images is not None:
-                for image in message.images:
-                    if image.content is not None and isinstance(image.content, File):
-                        # Google recommends that if using a single image, place the text prompt after the image.
-                        message_parts.insert(0, image.content)
-                    else:
-                        image_content = _format_image_for_message(image)
-                        if image_content:
-                            message_parts.append(Part.from_bytes(**image_content))
-
-            # Add videos to the message for the model
-            # if message.videos is not None:
-            #     try:
-            #         for video in message.videos:
-            #             # Case 1: Video is a file_types.File object (Recommended)
-            #             # Add it as a File object
-            #             if video.content is not None and isinstance(video.content, file_types.File):
-            #                 # Google recommends that if using a single image, place the text prompt after the image.
-            #                 message_parts.insert(0, video.content)
-            #             else:
-            #                 video_file = _format_video_for_message(video)
-
-            #                 # Google recommends that if using a single video, place the text prompt after the video.
-            #                 if video_file is not None:
-            #                     message_parts.insert(0, video_file)  # type: ignore
-            #     except Exception as e:
-            #         traceback.print_exc()
-            #         logger.warning(f"Failed to load video from {message.videos}: {e}")
-            #         continue
-
-            # Add audio to the message for the model
-            # if message.audio is not None:
-            #     try:
-            #         for audio_snippet in message.audio:
-            #             if audio_snippet.content is not None and isinstance(audio_snippet.content, File):
-            #                 # Google recommends that if using a single image, place the text prompt after the image.
-            #                 message_parts.insert(0, audio_snippet.content)
-            #             else:
-            #                 audio_content = _format_audio_for_message(audio_snippet)
-            #                 if audio_content:
-            #                     message_parts.append(Part(**audio_content))
-            #     except Exception as e:
-            #         logger.warning(f"Failed to load audio from {message.audio}: {e}")
-            #         continue
-
-        final_message = Content(role=role, parts=message_parts)
-        formatted_messages.append(final_message)
-
-    return formatted_messages, system_message
-
-
 @dataclass
 class Gemini(Model):
     """
@@ -358,6 +186,7 @@ class Gemini(Model):
         self.client = genai.Client(**client_params)
         return self.client
 
+
     @property
     def request_kwargs(self) -> Dict[str, Any]:
         """
@@ -390,7 +219,7 @@ class Gemini(Model):
         Returns:
             GenerateContentResponse: The response from the model.
         """
-        formatted_messages, system_message = _format_messages(messages)
+        formatted_messages, system_message = self._format_messages(messages)
 
         if system_message is not None:
             self.request_kwargs["system_instruction"] = system_message
@@ -411,7 +240,7 @@ class Gemini(Model):
         Returns:
             Iterator[GenerateContentResponse]: The response from the model as a stream.
         """
-        formatted_messages, system_message = _format_messages(messages)
+        formatted_messages, system_message = self._format_messages(messages)
 
         if system_message:
             self.request_kwargs["system_instruction"] = system_message
@@ -422,25 +251,218 @@ class Gemini(Model):
             **self.request_kwargs,
         )
 
-    def ainvoke(self, messages: List[Message]):
+    async def ainvoke(self, messages: List[Message]):
         """
         Invokes the model with a list of messages and returns the response.
         """
-        return self.get_client().models.generate_content(
-            model_name=self.id,
-            contents=_format_messages(messages),
+        formatted_messages, system_message = self._format_messages(messages)
+
+        if system_message:
+            self.request_kwargs["system_instruction"] = system_message
+
+        return await self.get_client().aio.models.generate_content(
+            model=self.id,
+            contents=formatted_messages,
             **self.request_kwargs,
         )
 
-    def ainvoke_stream(self, messages: List[Message]):
+    async def ainvoke_stream(self, messages: List[Message]):
         """
         Invokes the model with a list of messages and returns the response as a stream.
         """
-        yield from self.get_client().models.generate_content(
-            contents=_format_messages(messages),
-            stream=True,
-        )
+        formatted_messages, system_message = self._format_messages(messages)
 
+        if system_message:
+            self.request_kwargs["system_instruction"] = system_message
+
+        async_stream = await self.get_client().aio.models.generate_content_stream(
+            model=self.id,
+            contents=formatted_messages,
+            **self.request_kwargs,
+        )
+        async for chunk in async_stream:
+            yield chunk
+
+    def _format_messages(self, messages: List[Message]):
+        """
+        Converts a list of Message objects to the Gemini-compatible format.
+
+        Args:
+            messages (List[Message]): The list of messages to convert.
+        """
+        formatted_messages: List = []
+        system_message = None
+        for message in messages:
+
+            role = message.role
+            if role in ["system", "developer"]:
+                system_message = message.content
+                continue
+
+            # Add content to the message for the model
+            content = message.content
+            # Initialize message_parts to be used for Gemini
+            message_parts: List[Any] = []
+
+            # Function calls
+            if (not content or message.role == "model") and message.tool_calls:
+                for tool_call in message.tool_calls:
+                    message_parts.append(
+                        Part.from_function_call(
+                            name=tool_call["function"]["name"],
+                            args=json.loads(tool_call["function"]["arguments"]),
+                        )
+                    )
+            # Function results
+            elif message.role == "tool":
+                if hasattr(message, "combined_function_details"):
+                    for result in message.combined_function_details:
+                        message_parts.append(
+                            Part.from_function_response(name=result[0], response={"result": result[1]})
+                        )
+                else:
+                    message_parts = [
+                        Part.from_function_response(name=message.tool_name, response={"result": message.content})
+                    ]
+            else:
+                if isinstance(content, str):
+                    message_parts = [Part.from_text(text=content)]
+
+            if message.role == "user":
+                # Add images to the message for the model
+                if message.images is not None:
+                    for image in message.images:
+                        if image.content is not None and isinstance(image.content, File):
+                            # Google recommends that if using a single image, place the text prompt after the image.
+                            message_parts.insert(0, image.content)
+                        else:
+                            image_content = _format_image_for_message(image)
+                            if image_content:
+                                message_parts.append(Part.from_bytes(**image_content))
+
+                # Add videos to the message for the model
+                if message.videos is not None:
+                    try:
+                        for video in message.videos:
+                            # Case 1: Video is a file_types.File object (Recommended)
+                            # Add it as a File object
+                            if video.content is not None and isinstance(video.content, File):
+                                # Google recommends that if using a single image, place the text prompt after the image.
+                                message_parts.insert(0, Part.from_uri(file_uri=video.content.uri, mime_type=video.content.mime_type))
+                            else:
+                                video_file = self._format_video_for_message(video)
+
+                                # Google recommends that if using a single video, place the text prompt after the video.
+                                if video_file is not None:
+                                    message_parts.insert(0, video_file)  # type: ignore
+                    except Exception as e:
+                        traceback.print_exc()
+                        logger.warning(f"Failed to load video from {message.videos}: {e}")
+                        continue
+
+                # Add audio to the message for the model
+                if message.audio is not None:
+                    try:
+                        for audio_snippet in message.audio:
+                            if audio_snippet.content is not None and isinstance(audio_snippet.content, File):
+                                # Google recommends that if using a single image, place the text prompt after the image.
+                                message_parts.insert(0, Part.from_uri(file_uri=audio_snippet.content.uri, mime_type=audio_snippet.content.mime_type))
+                            else:
+                                audio_content = self._format_audio_for_message(audio_snippet)
+                                if audio_content:
+                                    message_parts.append(audio_content)
+                    except Exception as e:
+                        logger.warning(f"Failed to load audio from {message.audio}: {e}")
+                        continue
+
+            final_message = Content(role=role, parts=message_parts)
+            formatted_messages.append(final_message)
+        return formatted_messages, system_message
+
+    def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, File]]:
+        # Case 1: Audio is a bytes object
+        if audio.content and isinstance(audio.content, bytes):
+            return Part.from_bytes(mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3", data=audio.content)
+
+        # Case 2: Audio is a local file path
+        elif audio.filepath is not None:
+            audio_path = audio.filepath if isinstance(audio.filepath, Path) else Path(audio.filepath)
+
+            remote_file_name = f"files/{audio_path.stem.lower().replace("_", "")}"
+            # Check if video is already uploaded
+            existing_audio_upload = None
+            try:
+                existing_audio_upload = self.get_client().files.get(name=remote_file_name)
+            except Exception as e:
+                logger.warning(f"Error getting file {remote_file_name}: {e}")
+                pass
+
+            if existing_audio_upload:
+                audio_file = existing_audio_upload
+            else:
+                # Upload the video file to the Gemini API
+                if audio_path.exists() and audio_path.is_file():
+                    audio_file = self.get_client().files.upload(file=audio_path, config=dict(name=remote_file_name,
+                                                                                             display_name=audio_path.stem,
+                                                                                             mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3"))
+                else:
+                    logger.error(f"Audio file {audio_path} does not exist.")
+                    raise Exception(f"Audio file {audio_path} does not exist.")
+
+                # Check whether the file is ready to be used.
+                while audio_file.state.name == "PROCESSING":
+                    time.sleep(2)
+                    audio_file = self.get_client().files.get(name=audio_file.name)
+
+                if audio_file.state.name == "FAILED":
+                    raise ValueError(audio_file.state.name)
+            return Part.from_uri(file_uri=audio_file.uri, mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3")
+        else:
+            logger.warning(f"Unknown audio type: {type(audio.content)}")
+            return None
+
+    def _format_video_for_message(self, video: Video) -> Optional[File]:
+        # Case 1: Video is a bytes object
+        if video.content and isinstance(video.content, bytes):
+            return Part.from_bytes(mime_type=f"video/{video.format}" if video.format else "video/mp4", data=video.content)
+        # Case 2: Video is stored locally
+        elif video.filepath is not None:
+            video_path = video.filepath if isinstance(video.filepath, Path) else Path(video.filepath)
+
+            remote_file_name = f"files/{video_path.stem.lower().replace("_", "")}"
+            # Check if video is already uploaded
+            existing_video_upload = None
+            try:
+                existing_video_upload = self.get_client().files.get(name=remote_file_name)
+            except Exception as e:
+                logger.warning(f"Error getting file {remote_file_name}: {e}")
+                pass
+
+            if existing_video_upload:
+                video_file = existing_video_upload
+            else:
+                # Upload the video file to the Gemini API
+                if video_path.exists() and video_path.is_file():
+                    video_file = self.get_client().files.upload(file=video_path, config=dict(name=remote_file_name,
+                                                                                             display_name=video_path.stem,
+                                                                                             mime_type=f"video/{video.format}" if video.format else "video/mp4"))
+                else:
+                    logger.error(f"Video file {video_path} does not exist.")
+                    raise Exception(f"Video file {video_path} does not exist.")
+
+                # Check whether the file is ready to be used.
+                while video_file.state.name == "PROCESSING":
+                    time.sleep(2)
+                    video_file = self.get_client().files.get(name=video_file.name)
+
+                if video_file.state.name == "FAILED":
+                    raise ValueError(video_file.state.name)
+
+            return Part.from_uri(file_uri=video_file.uri, mime_type=f"video/{video.format}" if video.format else "video/mp4")
+        else:
+            logger.warning(f"Unknown video type: {type(video.content)}")
+            return None
+        
     def format_function_call_results(
         self, messages: List[Message], function_call_results: List[Message], **kwargs
     ) -> None:

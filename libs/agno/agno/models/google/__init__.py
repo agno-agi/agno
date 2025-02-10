@@ -1,4 +1,4 @@
-from agno.models.google.gemini import Gemini
+from agno.models.google.genai import Gemini
 
 try:
     from agno.models.google.gemini_openai import GeminiOpenAI

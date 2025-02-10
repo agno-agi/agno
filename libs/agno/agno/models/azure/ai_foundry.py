@@ -328,7 +328,11 @@ class AzureAIFoundry(Model):
 
             # Add usage metrics if present
             if response.usage is not None:
-                model_response.response_usage = response.usage
+                model_response.response_usage = {
+                "input_tokens": response.usage.prompt_tokens or 0,
+                "output_tokens": response.usage.completion_tokens or 0,
+                "total_tokens": response.usage.total_tokens or 0,
+            }
 
         except Exception as e:
             logger.error(f"Error parsing Azure AI response: {e}")
@@ -394,7 +398,11 @@ class AzureAIFoundry(Model):
                     model_response.tool_calls = delta.tool_calls
             # Add usage metrics if present
             if response_delta.usage is not None:
-                model_response.response_usage = response_delta.usage
+                model_response.response_usage = {
+                "input_tokens": response_delta.usage.prompt_tokens or 0,
+                "output_tokens": response_delta.usage.completion_tokens or 0,
+                "total_tokens": response_delta.usage.total_tokens or 0,
+            }
 
         except Exception as e:
             logger.error(f"Error parsing Azure AI response delta: {e}")
