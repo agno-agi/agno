@@ -1,12 +1,12 @@
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Union
 
 from pydantic import BaseModel
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
 try:

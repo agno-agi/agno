@@ -3,8 +3,6 @@ from dataclasses import dataclass, field
 from textwrap import dedent
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Union
 
-from pydantic import BaseModel
-
 from agno.models.message import Message, MessageMetrics
 from agno.models.ollama.chat import ChatResponse, Ollama
 from agno.models.response import ModelResponse
@@ -182,7 +180,6 @@ class OllamaTools(Ollama):
         model_response.content = str(remove_tool_calls_from_string(assistant_message.get_content_string()))
         model_response.content += "\n\n"
         function_calls_to_run = self.get_function_calls_to_run(assistant_message, messages)
-        function_call_results: List[Message] = []
 
         if self.show_tool_calls:
             self._show_tool_calls(function_calls_to_run, model_response)

@@ -1,15 +1,16 @@
 import json
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Union
 
 from agno.media import Audio, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.tools import Function, Toolkit
 from agno.utils.log import logger
 
 try:
@@ -77,7 +78,10 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _convert_schema(schema_dict):
+
+
+
+def convert_schema(schema_dict):
     """
     Recursively convert a JSON-like schema dictionary to a types.Schema object.
 
@@ -92,7 +96,7 @@ def _convert_schema(schema_dict):
     description = schema_dict.get("description", "")
 
     if schema_type == "OBJECT" and "properties" in schema_dict:
-        properties = {key: _convert_schema(prop_def) for key, prop_def in schema_dict["properties"].items()}
+        properties = {key: convert_schema(prop_def) for key, prop_def in schema_dict["properties"].items()}
         required = schema_dict.get("required", [])
         return Schema(
             type=schema_type,
@@ -114,7 +118,7 @@ def _format_function_definitions(tools_list):
             description = func_info.get("description", "")
             parameters_dict = func_info.get("parameters", {})
 
-            parameters_schema = _convert_schema(parameters_dict)
+            parameters_schema = convert_schema(parameters_dict)
 
             # Create a FunctionDeclaration instance
             function_decl = FunctionDeclaration(
@@ -136,6 +140,8 @@ class Gemini(Model):
     """
     Gemini model class for Google's Generative AI models.
 
+    Set `vertexai` to `True` to use the Vertex AI API. You will then also need `project_id`, `location` and `http_options` (optional).
+
     Based on https://googleapis.github.io/python-genai/
     """
 
@@ -153,7 +159,10 @@ class Gemini(Model):
     # Client parameters
     api_key: Optional[str] = None
     client_params: Optional[Dict[str, Any]] = None
-    vertexai: bool = False
+    vertex_ai: bool = False
+    project_id: Optional[str] = None
+    location: Optional[str] = None
+    http_options: Optional[Dict[str, Any]] = None
 
     # Gemini client
     client: Optional[GeminiClient] = None
@@ -168,22 +177,23 @@ class Gemini(Model):
         if self.client:
             return self.client
 
-        client_params: Dict[str, Any] = {}
-
         self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
         if not self.api_key:
             logger.error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
-        client_params["api_key"] = self.api_key
 
-        if self.vertexai:
-            client_params["vertexai"] = True
+        client_params: Dict[str, Any] = {
+            "api_key": self.api_key,
+            "vertex_ai": self.vertex_ai,
+            "project": self.project_id,
+            "location": self.location,
+            "http_options": self.http_options,
+        }
 
-        if self.client_params:
-            client_params.update(self.client_params)
-        # genai.configure(**client_params)
+        client_params = {k: v for k, v in client_params.items() if v is not None}
 
         self.client = genai.Client(**client_params)
         return self.client
+
 
     @property
     def request_kwargs(self) -> Dict[str, Any]:
@@ -291,6 +301,7 @@ class Gemini(Model):
         formatted_messages: List = []
         system_message = None
         for message in messages:
+
             role = message.role
             if role in ["system", "developer"]:
                 system_message = message.content
@@ -345,9 +356,7 @@ class Gemini(Model):
                             # Add it as a File object
                             if video.content is not None and isinstance(video.content, File):
                                 # Google recommends that if using a single image, place the text prompt after the image.
-                                message_parts.insert(
-                                    0, Part.from_uri(file_uri=video.content.uri, mime_type=video.content.mime_type)
-                                )
+                                message_parts.insert(0, Part.from_uri(file_uri=video.content.uri, mime_type=video.content.mime_type))
                             else:
                                 video_file = self._format_video_for_message(video)
 
@@ -365,12 +374,7 @@ class Gemini(Model):
                         for audio_snippet in message.audio:
                             if audio_snippet.content is not None and isinstance(audio_snippet.content, File):
                                 # Google recommends that if using a single image, place the text prompt after the image.
-                                message_parts.insert(
-                                    0,
-                                    Part.from_uri(
-                                        file_uri=audio_snippet.content.uri, mime_type=audio_snippet.content.mime_type
-                                    ),
-                                )
+                                message_parts.insert(0, Part.from_uri(file_uri=audio_snippet.content.uri, mime_type=audio_snippet.content.mime_type))
                             else:
                                 audio_content = self._format_audio_for_message(audio_snippet)
                                 if audio_content:
@@ -386,15 +390,13 @@ class Gemini(Model):
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, File]]:
         # Case 1: Audio is a bytes object
         if audio.content and isinstance(audio.content, bytes):
-            return Part.from_bytes(
-                mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3", data=audio.content
-            )
+            return Part.from_bytes(mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3", data=audio.content)
 
         # Case 2: Audio is a local file path
         elif audio.filepath is not None:
             audio_path = audio.filepath if isinstance(audio.filepath, Path) else Path(audio.filepath)
 
-            remote_file_name = f"files/{audio_path.stem.lower().replace('_', '')}"
+            remote_file_name = f"files/{audio_path.stem.lower().replace("_", "")}"
             # Check if video is already uploaded
             existing_audio_upload = None
             try:
@@ -408,14 +410,9 @@ class Gemini(Model):
             else:
                 # Upload the video file to the Gemini API
                 if audio_path.exists() and audio_path.is_file():
-                    audio_file = self.get_client().files.upload(
-                        file=audio_path,
-                        config=dict(
-                            name=remote_file_name,
-                            display_name=audio_path.stem,
-                            mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3",
-                        ),
-                    )
+                    audio_file = self.get_client().files.upload(file=audio_path, config=dict(name=remote_file_name,
+                                                                                             display_name=audio_path.stem,
+                                                                                             mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3"))
                 else:
                     logger.error(f"Audio file {audio_path} does not exist.")
                     raise Exception(f"Audio file {audio_path} does not exist.")
@@ -427,9 +424,7 @@ class Gemini(Model):
 
                 if audio_file.state.name == "FAILED":
                     raise ValueError(audio_file.state.name)
-            return Part.from_uri(
-                file_uri=audio_file.uri, mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3"
-            )
+            return Part.from_uri(file_uri=audio_file.uri, mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3")
         else:
             logger.warning(f"Unknown audio type: {type(audio.content)}")
             return None
@@ -437,14 +432,12 @@ class Gemini(Model):
     def _format_video_for_message(self, video: Video) -> Optional[File]:
         # Case 1: Video is a bytes object
         if video.content and isinstance(video.content, bytes):
-            return Part.from_bytes(
-                mime_type=f"video/{video.format}" if video.format else "video/mp4", data=video.content
-            )
+            return Part.from_bytes(mime_type=f"video/{video.format}" if video.format else "video/mp4", data=video.content)
         # Case 2: Video is stored locally
         elif video.filepath is not None:
             video_path = video.filepath if isinstance(video.filepath, Path) else Path(video.filepath)
 
-            remote_file_name = f"files/{video_path.stem.lower().replace('_', '')}"
+            remote_file_name = f"files/{video_path.stem.lower().replace("_", "")}"
             # Check if video is already uploaded
             existing_video_upload = None
             try:
@@ -458,14 +451,9 @@ class Gemini(Model):
             else:
                 # Upload the video file to the Gemini API
                 if video_path.exists() and video_path.is_file():
-                    video_file = self.get_client().files.upload(
-                        file=video_path,
-                        config=dict(
-                            name=remote_file_name,
-                            display_name=video_path.stem,
-                            mime_type=f"video/{video.format}" if video.format else "video/mp4",
-                        ),
-                    )
+                    video_file = self.get_client().files.upload(file=video_path, config=dict(name=remote_file_name,
+                                                                                             display_name=video_path.stem,
+                                                                                             mime_type=f"video/{video.format}" if video.format else "video/mp4"))
                 else:
                     logger.error(f"Video file {video_path} does not exist.")
                     raise Exception(f"Video file {video_path} does not exist.")
@@ -478,13 +466,11 @@ class Gemini(Model):
                 if video_file.state.name == "FAILED":
                     raise ValueError(video_file.state.name)
 
-            return Part.from_uri(
-                file_uri=video_file.uri, mime_type=f"video/{video.format}" if video.format else "video/mp4"
-            )
+            return Part.from_uri(file_uri=video_file.uri, mime_type=f"video/{video.format}" if video.format else "video/mp4")
         else:
             logger.warning(f"Unknown video type: {type(video.content)}")
             return None
-
+        
     def format_function_call_results(
         self, messages: List[Message], function_call_results: List[Message], **kwargs
     ) -> None:

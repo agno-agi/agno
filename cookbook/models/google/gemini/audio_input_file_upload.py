@@ -23,7 +23,10 @@ except Exception as e:
 
 if not audio_file:
     try:
-        audio_file = model.get_client().files.upload(file=audio_path, config=dict(name=audio_path.stem, display_name=audio_path.stem))
+        audio_file = model.get_client().files.upload(
+            file=audio_path,
+            config=dict(name=audio_path.stem, display_name=audio_path.stem),
+        )
         print(f"Uploaded audio: {audio_file}")
     except Exception as e:
         print(f"Error uploading audio: {e}")
