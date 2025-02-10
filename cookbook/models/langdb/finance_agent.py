@@ -1,11 +1,11 @@
 """Run `pip install yfinance` to install dependencies."""
 
-from phi.agent import Agent
-from phi.model.langdb import LangDB
-from phi.tools.yfinance import YFinanceTools
+from agno.agent import Agent
+from agno.models.langdb import LangDB
+from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
-    model=LangDB(id="gpt-4o", project_id="langdb-project-id"),
+    model=LangDB(id="gpt-4o"),
     tools=[
         YFinanceTools(
             stock_price=True, analyst_recommendations=True, stock_fundamentals=True

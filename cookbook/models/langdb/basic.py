@@ -1,5 +1,5 @@
-from phi.agent import Agent, RunResponse  # noqa
-from phi.model.langdb import LangDB
+from agno.agent import Agent, RunResponse  # noqa
+from agno.models.langdb import LangDB
 
 agent = Agent(
     model=LangDB(id="deepseek-chat", project_id="langdb-project-id"), markdown=True

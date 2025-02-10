@@ -1,8 +1,8 @@
 """Run `pip install duckduckgo-search` to install dependencies."""
 
-from phi.agent import Agent
-from phi.model.langdb import LangDB
-from phi.tools.duckduckgo import DuckDuckGo
+from agno.agent import Agent
+from agno.models.langdb import LangDB
+from agno.tools.duckduckgo import DuckDuckGo
 
 agent = Agent(
     model=LangDB(id="claude-3-5-sonnet-20240620", project_id="langdb-project-id"),

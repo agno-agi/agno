@@ -1,9 +1,10 @@
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
+from typing_extensions import Literal
+
 from agno.embedder.base import Embedder
 from agno.utils.log import logger
-from typing_extensions import Literal
 
 try:
     from openai import OpenAI as OpenAIClient
@@ -18,8 +19,9 @@ class LangDBEmbedder(Embedder):
     encoding_format: Literal["float", "base64"] = "float"
     user: Optional[str] = None
     api_key: Optional[str] = getenv("LANGDB_API_KEY")
+    project_id: Optional[str] = getenv("LANGDB_PROJECT_ID")
     organization: Optional[str] = None
-    base_url: Optional[str] = "https://api.us-east-1.langdb.ai"
+    base_url: Optional[str] = f"https://api.us-east-1.langdb.ai/{project_id}/v1"
     request_params: Optional[Dict[str, Any]] = None
     client_params: Optional[Dict[str, Any]] = None
     openai_client: Optional[OpenAIClient] = None

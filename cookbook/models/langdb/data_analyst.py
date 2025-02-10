@@ -2,9 +2,9 @@
 
 from textwrap import dedent
 
-from phi.agent import Agent
-from phi.model.langdb import LangDB
-from phi.tools.duckdb import DuckDbTools
+from agno.agent import Agent
+from agno.models.langdb import LangDB
+from agno.tools.duckdb import DuckDbTools
 
 duckdb_tools = DuckDbTools(
     create_tables=False, export_tables=False, summarize_tables=False
