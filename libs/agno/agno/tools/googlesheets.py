@@ -56,7 +56,7 @@ try:
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import build
+    from googleapiclient.discovery import build, Resource
 except ImportError:
     raise ImportError(
         "`google-api-python-client` `google-auth-httplib2` `google-auth-oauthlib` not installed. Please install using `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
@@ -83,6 +83,8 @@ class GoogleSheetsTools(Toolkit):
         "read": "https://www.googleapis.com/auth/spreadsheets.readonly",
         "write": "https://www.googleapis.com/auth/spreadsheets",
     }
+
+    service: Optional[Resource]
 
     def __init__(
         self,
@@ -117,7 +119,7 @@ class GoogleSheetsTools(Toolkit):
         self.creds = creds
         self.credentials_path = creds_path
         self.token_path = token_path
-        self.service = None
+        self.service: Optional[Resource] = None
 
         # Determine required scopes based on operations if no custom scopes provided
         if scopes is None:
@@ -281,6 +283,8 @@ class GoogleSheetsTools(Toolkit):
     def create_duplicate_sheet(self, source_id: str, new_title: Optional[str] = None) -> str:
         """Create a duplicate Google Spreadsheet with all sheets and formatting."""
         try:
+            assert self.service is not None
+            
             # Get title from source if not provided
             if not new_title:
                 source = self.service.spreadsheets().get(spreadsheetId=source_id, fields="properties(title)").execute()
