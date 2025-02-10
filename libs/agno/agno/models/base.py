@@ -309,7 +309,10 @@ class Model(ABC):
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
-            model_response.content = assistant_message.get_content_string()
+            if model_response.content is None:
+                model_response.content = assistant_message.get_content_string()
+            else:
+                model_response.content += assistant_message.get_content_string()
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if provider_response.extra is not None:
@@ -918,8 +921,6 @@ class Model(ABC):
         """
         Show tool calls in the model response.
         """
-        if not model_response.content:
-            model_response.content = ""
         if len(function_calls_to_run) == 1:
             model_response.content += f" - Running: {function_calls_to_run[0].get_call_str()}\n\n"
         elif len(function_calls_to_run) > 1:
