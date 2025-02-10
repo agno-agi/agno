@@ -279,48 +279,43 @@ class GoogleSheetsTools(Toolkit):
 
     @authenticate
     def create_duplicate_sheet(self, source_id: str, new_title: Optional[str] = None) -> str:
-        """
-        Create a new Google Sheet that duplicates an existing one.
-
-        Args:
-            source_id: The ID of the source spreadsheet to duplicate
-            new_title: Optional new title (defaults to "Copy of [original title]")
-
-        Returns:
-            The ID of the created Google Sheet
-        """
-        if not self.creds:
-            return "Not authenticated. Call auth() first."
-
+        """Create a duplicate Google Spreadsheet with all sheets and formatting."""
         try:
-            # Get the source spreadsheet to copy its properties
-            source = self.service.spreadsheets().get(spreadsheetId=source_id).execute()  # type: ignore
-
+            # Get title from source if not provided
             if not new_title:
-                new_title = f"{source['properties']['title']}"
+                source = self.service.spreadsheets().get(spreadsheetId=source_id, fields="properties(title)").execute()
+                new_title = source["properties"]["title"]
 
-            body = {"properties": {"title": new_title}, "sheets": source["sheets"]}
+            # Create new spreadsheet
+            new_spreadsheet = (
+                self.service.spreadsheets()
+                .create(body={"properties": {"title": new_title}}, fields="spreadsheetId,sheets(properties(sheetId))")
+                .execute()
+            )
+            new_id = new_spreadsheet["spreadsheetId"]
+            default_sheet_id = new_spreadsheet["sheets"][0]["properties"]["sheetId"]
 
-            # Create new spreadsheet with copied properties
-            spreadsheet = self.service.spreadsheets().create(body=body, fields="spreadsheetId").execute()  # type: ignore
+            # Copy all sheets from source
+            source_sheets = (
+                self.service.spreadsheets()
+                .get(spreadsheetId=source_id, fields="sheets(properties(sheetId))")
+                .execute()["sheets"]
+            )
 
-            spreadsheet_id = spreadsheet.get("spreadsheetId")
+            for sheet in source_sheets:
+                self.service.spreadsheets().sheets().copyTo(
+                    spreadsheetId=source_id,
+                    sheetId=sheet["properties"]["sheetId"],
+                    body={"destinationSpreadsheetId": new_id},
+                    name=sheet["properties"]["title"],
+                ).execute()
 
-            # Copy the data from source to new spreadsheet
-            for sheet in source["sheets"]:
-                range_name = sheet["properties"]["title"]
+            # Remove default sheet
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=new_id, body={"requests": [{"deleteSheet": {"sheetId": default_sheet_id}}]}
+            ).execute()
 
-                # Get data from source
-                result = self.service.spreadsheets().values().get(spreadsheetId=source_id, range=range_name).execute()  # type: ignore
-                values = result.get("values", [])
-
-                if values:
-                    # Copy to new spreadsheet
-                    self.service.spreadsheets().values().update(  # type: ignore
-                        spreadsheetId=spreadsheet_id, range=range_name, valueInputOption="RAW", body={"values": values}
-                    ).execute()
-
-            return f"Spreadsheet created: https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
+            return f"Spreadsheet created: https://docs.google.com/spreadsheets/d/{new_id}"
 
         except Exception as e:
             return f"Error creating duplicate Google Sheet: {e}"
