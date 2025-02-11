@@ -103,7 +103,7 @@ class Agent:
     # --- Agent Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
-    # If you provide a dict, it is not called by the model.
+    # If you provide a dict, it is not called by the agent.
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
     # Show tool calls in Agent response.
     show_tool_calls: bool = False

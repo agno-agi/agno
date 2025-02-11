@@ -37,10 +37,10 @@ class Model(ABC):
     # -*- Do not set the following attributes directly -*-
     # -*- Set them on the Agent instead -*-
 
-    # Used for structured_outputs, do not set this directly
-    # Set the response_model attribute on the Agent instead
+    # response_format tells the model to generate a json_object
+    # Do not set this directly, set the response_model attribute on the Agent instead
     response_format: Optional[Any] = None
-    # Whether to use the structured outputs with this Model.
+    # Whether to generate structured outputs from this Model.
     structured_outputs: bool = False
     # True if the Model supports structured outputs natively (e.g. OpenAI)
     supports_structured_outputs: bool = False
