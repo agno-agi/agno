@@ -15,10 +15,11 @@ from agno.utils.log import logger
 from agno.vectordb.base import VectorDb
 
 DEFAULT_NAMESPACE = ""
-USE_UPSTASH_EMBEDDINGS = False
 
 class UpstashVectorDb(VectorDb):
-    """A class representing an Upstash Vector database.
+    """
+    This class provides an interface to Upstash Vector database with support for both
+    custom embeddings and Upstash's hosted embedding models.
 
     Args:
         url (str): The Upstash Vector database URL.
@@ -26,7 +27,7 @@ class UpstashVectorDb(VectorDb):
         retries (Optional[int], optional): Number of retry attempts for operations. Defaults to 3.
         retry_interval (Optional[float], optional): Time interval between retries in seconds. Defaults to 1.0.
         dimension (Optional[int], optional): The dimension of the embeddings. Defaults to None.
-        embedder (Optional[Embedder], optional): The embedder to use. Defaults to Upstash hosted embedding models.
+        embedder (Optional[Embedder], optional): The embedder to use. If None, uses Upstash hosted embedding models.
         namespace (Optional[str], optional): The namespace to use. Defaults to DEFAULT_NAMESPACE.
         reranker (Optional[Reranker], optional): The reranker to use. Defaults to None.
         **kwargs: Additional keyword arguments.
@@ -42,8 +43,8 @@ class UpstashVectorDb(VectorDb):
         embedder: Optional[Embedder] = None,
         namespace: Optional[str] = DEFAULT_NAMESPACE,
         reranker: Optional[Reranker] = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         self._index: Optional[Index] = None
         self.url: str = url
         self.token: str = token
@@ -52,13 +53,14 @@ class UpstashVectorDb(VectorDb):
         self.dimension: Optional[int] = dimension
         self.namespace: str = namespace if namespace is not None else DEFAULT_NAMESPACE
         self.kwargs: Dict[str, Any] = kwargs
+        self.use_upstash_embeddings: bool = embedder is None
 
-        # Initialize embedder for embedding the document contents
-        _embedder = embedder
-        if _embedder is None:
-            USE_UPSTASH_EMBEDDINGS = True
-            logger.warning("You have not provided an embedder, using Upstash hosted embedding models. Make sure you created your index with an embedding model.")
-        self.embedder: Embedder = None
+        if embedder is None:
+            logger.warning(
+                "You have not provided an embedder, using Upstash hosted embedding models. "
+                "Make sure you created your index with an embedding model."
+            )
+        self.embedder: Optional[Embedder] = embedder
         self.reranker: Optional[Reranker] = reranker
 
     @property
@@ -89,14 +91,19 @@ class UpstashVectorDb(VectorDb):
         return self._index
 
     def exists(self) -> bool:
-        """Check if the index exists.
+        """Check if the index exists and is accessible.
+        
         Returns:
-            bool: True if the index exists, False otherwise.
+            bool: True if the index exists and is accessible, False otherwise.
+        
+        Raises:
+            Exception: If there's an error communicating with Upstash.
         """
         try:
             self.index.info()
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error checking index existence: {str(e)}")
             return False
 
     def create(self) -> None:
@@ -148,8 +155,8 @@ class UpstashVectorDb(VectorDb):
         Returns:
             bool: True if the index exists, False otherwise. (Name is not used.)
         """
-        logger.warning(f"You can check if an index with name {name} exists in Upstash Console.
-        The token and url parameters you provided are used to connect to a specific index.")
+        logger.warning(f"You can check if an index with name {name} exists in Upstash Console."
+        "The token and url parameters you provided are used to connect to a specific index.")
         return self.exists()
 
     def namespace_exists(self, namespace: str) -> bool:
@@ -166,6 +173,7 @@ class UpstashVectorDb(VectorDb):
         self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, namespace: Optional[str] = None
     ) -> None:
         """Upsert documents into the index.
+        
         Args:
             documents (List[Document]): The documents to upsert.
             filters (Optional[Dict[str, Any]], optional): The filters for the upsert. Defaults to None.
@@ -173,23 +181,37 @@ class UpstashVectorDb(VectorDb):
         """
         _namespace = self.namespace if namespace is None else namespace
         vectors = []
+        
         for document in documents:
-            if document.id is None or document.embedding is None:
-                logger.error(
-                    f"Document ID and embedding must not be None. Skipping document with content: {document.content[:100]}..."
-                )
+            if document.id is None:
+                logger.error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
                 continue
+                
             document.meta_data["text"] = document.content
-            if not USE_UPSTASH_EMBEDDINGS:
+            
+            if not self.use_upstash_embeddings:
+                if self.embedder is None:
+                    logger.error("Embedder is None but use_upstash_embeddings is False")
+                    continue
+                    
                 document.embed(embedder=self.embedder)
-                data_to_upsert = Vector(
-                    id=document.id, vector=document.embedding, metadata=document.meta_data, data=document.content
+                if document.embedding is None:
+                    logger.error(f"Failed to generate embedding for document: {document.id}")
+                    continue
+                    
+                vector = Vector(
+                    id=document.id,
+                    vector=document.embedding,
+                    metadata=document.meta_data,
+                    data=document.content
                 )
             else:
-                data_to_upsert = Vector(
-                    id=document.id, data=document.content, metadata=document.meta_data, data=document.content
+                vector = Vector(
+                    id=document.id,
+                    data=document.content,
+                    metadata=document.meta_data
                 )
-            vectors.append(data_to_upsert)
+            vectors.append(vector)
 
         if not vectors:
             logger.warning("No valid documents to upsert")
@@ -235,7 +257,7 @@ class UpstashVectorDb(VectorDb):
 
         filter_str = "" if filters is None else str(filters)
 
-        if not USE_UPSTASH_EMBEDDINGS:
+        if not self.use_upstash_embeddings:
             dense_embedding = self.embedder.get_embedding(query)
 
             if dense_embedding is None:
