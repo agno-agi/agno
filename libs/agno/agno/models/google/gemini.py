@@ -209,9 +209,8 @@ class Gemini(Model):
             client_params["api_key"] = self.api_key
         else:
             client_params["vertexai"] = True
-
-        client_params["project"] = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
-        client_params["location"] = self.location
+            client_params["project"] = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
+            client_params["location"] = self.location
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
 

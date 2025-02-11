@@ -596,7 +596,7 @@ class Model(ABC):
         """Update the stream data and assistant message with the model response."""
 
         # Update metrics
-        assistant_message.metrics.completion_tokens += 1
+        assistant_message.metrics.output_tokens += 1
         if not assistant_message.metrics.time_to_first_token:
             assistant_message.metrics.set_time_to_first_token()
 
@@ -986,17 +986,17 @@ class Model(ABC):
             response_usage: Usage data from model provider
         """
         # Standard token metrics
-        if hasattr(response_usage, "input_tokens"):
+        if hasattr(response_usage, "input_tokens") and response_usage.input_tokens:
             assistant_message.metrics.input_tokens = response_usage.input_tokens
-        if hasattr(response_usage, "output_tokens"):
+        if hasattr(response_usage, "output_tokens") and response_usage.output_tokens:
             assistant_message.metrics.output_tokens = response_usage.output_tokens
-        if hasattr(response_usage, "prompt_tokens"):
+        if hasattr(response_usage, "prompt_tokens") and response_usage.prompt_tokens is not None:
             assistant_message.metrics.input_tokens = response_usage.prompt_tokens
             assistant_message.metrics.prompt_tokens = response_usage.prompt_tokens
-        if hasattr(response_usage, "completion_tokens"):
+        if hasattr(response_usage, "completion_tokens") and response_usage.completion_tokens is not None:
             assistant_message.metrics.output_tokens = response_usage.completion_tokens
             assistant_message.metrics.completion_tokens = response_usage.completion_tokens
-        if hasattr(response_usage, "total_tokens"):
+        if hasattr(response_usage, "total_tokens") and response_usage.total_tokens is not None:
             assistant_message.metrics.total_tokens = response_usage.total_tokens
         else:
             assistant_message.metrics.total_tokens = (

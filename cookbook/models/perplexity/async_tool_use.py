@@ -7,9 +7,9 @@ from agno.models.perplexity import Perplexity
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=Perplexity(id="sonar"),
+    model=Perplexity(id="sonar-pro"),
     tools=[DuckDuckGoTools()],
     show_tool_calls=True,
     markdown=True,
 )
-asyncio.run(agent.aprint_response("Whats happening in France?", stream=True))
+asyncio.run(agent.aprint_response("Whats happening in France? Use the DuckDuckGo tool to find the latest news.", stream=True))

@@ -262,6 +262,7 @@ class OpenAIChat(Model):
 
         message_dict = message.to_dict()
         message_dict["role"] = self.role_map[message_dict["role"]]
+
         return message_dict
 
     def invoke(self, messages: List[Message]) -> Union[ChatCompletion, ParsedChatCompletion]:
@@ -419,7 +420,7 @@ class OpenAIChat(Model):
         """
         tool_calls: List[Dict[str, Any]] = []
         for _tool_call in tool_calls_data:
-            _index = _tool_call.index
+            _index = _tool_call.index or 0
             _tool_call_id = _tool_call.id
             _tool_call_type = _tool_call.type
             _function_name = _tool_call.function.name if _tool_call.function else None
