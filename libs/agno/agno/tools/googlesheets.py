@@ -298,20 +298,23 @@ class GoogleSheetsTools(Toolkit):
         """
         if not self.creds:
             return "Not authenticated. Call auth() first."
-
+        
+        if not self.service:
+            return "Service not initialized"
+        
         try:
             # Ensure the drive scope is included
             if "https://www.googleapis.com/auth/drive" not in self.scopes:
                 self.scopes.append("https://www.googleapis.com/auth/drive")
                 self._auth()  # Re-authenticate with updated scopes
-
+            
             drive_service = build("drive", "v3", credentials=self.creds)
-
+            
             # Use new_title if provided, otherwise fetch the title from the source spreadsheet
             if not new_title:
                 source_sheet = self.service.spreadsheets().get(spreadsheetId=source_id).execute()
                 new_title = source_sheet["properties"]["title"]
-
+            
             body = {"name": new_title}
             new_file = drive_service.files().copy(fileId=source_id, body=body).execute()
             new_spreadsheet_id = new_file.get("id")
