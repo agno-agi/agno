@@ -122,7 +122,7 @@ class AwsBedrock(Model, ABC):
                 formatted_message["content"] = []
                 # Handle tool results
                 if isinstance(message.content, list):
-                    formatted_message["content"].extend(message.content)    
+                    formatted_message["content"].extend(message.content)
                 elif message.tool_calls:
                     formatted_message["content"].extend([{"toolUse": {
                         "toolUseId": tool_call["id"],
@@ -131,7 +131,7 @@ class AwsBedrock(Model, ABC):
                     }} for tool_call in message.tool_calls])
                 else:
                     formatted_message["content"].append({"text": message.content})
-                
+
 
                 if message.images:
                     for image in message.images:
@@ -378,11 +378,11 @@ class AwsBedrock(Model, ABC):
             if not assistant_message.metrics.time_to_first_token:
                 assistant_message.metrics.set_time_to_first_token()
 
-            if model_response.content is not None:
+            if model_response.content:
                 stream_data.response_content += model_response.content
                 should_yield = True
 
-            if model_response.tool_calls is not None:
+            if model_response.tool_calls:
                 if stream_data.response_tool_calls is None:
                     stream_data.response_tool_calls = []
                 stream_data.response_tool_calls.extend(model_response.tool_calls)

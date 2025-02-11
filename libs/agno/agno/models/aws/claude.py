@@ -69,6 +69,7 @@ class Claude(AnthropicClaude):
             aws_secret_key=self.aws_secret_key,
             aws_access_key=self.aws_access_key,
             aws_region=self.aws_region,
+            **self.client_params,
         )
         return self._client
 
@@ -80,6 +81,7 @@ class Claude(AnthropicClaude):
             aws_secret_key=self.aws_secret_key,
             aws_access_key=self.aws_access_key,
             aws_region=self.aws_region,
+            **self.client_params,
         )
         return self._async_client
 
