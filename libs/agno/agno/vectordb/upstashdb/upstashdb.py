@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 
 try:
     from upstash_vector import Index, Vector
-    from upstash_vector.types import FusionAlgorithm, InfoResult, QueryMode, WeightingStrategy
+    from upstash_vector.types import InfoResult
 except ImportError:
     raise ImportError(
         "The `upstash-vector` package is not installed, please install using `pip install upstash-vector`"
@@ -257,7 +257,7 @@ class UpstashVectorDb(VectorDb):
 
         filter_str = "" if filters is None else str(filters)
 
-        if not self.use_upstash_embeddings:
+        if not self.use_upstash_embeddings and self.embedder is not None:
             dense_embedding = self.embedder.get_embedding(query)
 
             if dense_embedding is None:
