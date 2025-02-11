@@ -1006,7 +1006,9 @@ class Agent:
                             }
                             # Process tool calls
                             for tool_call_dict in tool_calls_list:
-                                tool_call_id = tool_call_dict["tool_call_id"]
+                                tool_call_id = (
+                                    tool_call_dict["tool_call_id"] if "tool_call_id" in tool_call_dict else None
+                                )
                                 index = tool_call_index_map.get(tool_call_id)
                                 if index is not None:
                                     self.run_response.tools[index] = tool_call_dict

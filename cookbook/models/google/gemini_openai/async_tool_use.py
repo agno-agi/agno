@@ -4,7 +4,7 @@ Async example using GeminiOpenAI with tool calls.
 
 import asyncio
 
-from agno.agent.agent import Agent
+from agno.agent import Agent
 from agno.models.google import GeminiOpenAI
 from agno.tools.duckduckgo import DuckDuckGoTools
 

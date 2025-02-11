@@ -24,6 +24,8 @@ try:
         File,
         FunctionDeclaration,
         GenerateContentConfig,
+        GenerateContentResponse,
+        GenerateContentResponseUsageMetadata,
         Part,
         Schema,
         Tool,
@@ -136,13 +138,20 @@ def _format_function_definitions(tools_list):
 
 
 @dataclass
+class GeminiResponseUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass
 class Gemini(Model):
     """
     Gemini model class for Google's Generative AI models.
 
     Vertex AI:
     - You will need Google Cloud credentials to use the Vertex AI API. Run `gcloud auth application-default login` to set credentials.
-    - Set `vertexai` to `True` to use the Vertex AI API. 
+    - Set `vertexai` to `True` to use the Vertex AI API.
     - Set your `project_id` (or set `GOOGLE_CLOUD_PROJECT` environment variable) and `location` (optional).
     - Set `http_options` (optional) to configure the HTTP options.
 
@@ -241,7 +250,11 @@ class Gemini(Model):
         if system_message is not None:
             config["system_instruction"] = system_message
 
-        if self.response_format is not None and isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+        if (
+            self.response_format is not None
+            and isinstance(self.response_format, type)
+            and issubclass(self.response_format, BaseModel)
+        ):
             config["response_mime_type"] = "application/json"
             config["response_schema"] = self.response_format
 
@@ -258,7 +271,6 @@ class Gemini(Model):
         if self.request_params:
             request_params.update(self.request_params)
         return request_params
-
 
     def invoke(self, messages: List[Message]):
         """
@@ -322,7 +334,7 @@ class Gemini(Model):
 
         request_kwargs = self._get_request_kwargs(system_message)
 
-        try:    
+        try:
             return await self.get_client().aio.models.generate_content(
                 model=self.id,
                 contents=formatted_messages,
@@ -570,7 +582,6 @@ class Gemini(Model):
         """
         combined_content: List = []
         combined_function_result: List = []
-        logger.info(f"Function call results: {function_call_results}")
         if len(function_call_results) > 0:
             for result in function_call_results:
                 combined_content.append(result.content)
@@ -580,7 +591,7 @@ class Gemini(Model):
             Message(role="tool", content=combined_content, combined_function_details=combined_function_result)
         )
 
-    def parse_provider_response(self, response) -> ModelResponse:
+    def parse_provider_response(self, response: GenerateContentResponse) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
 
@@ -593,7 +604,7 @@ class Gemini(Model):
         model_response = ModelResponse()
 
         # Get response message
-        response_message = response.candidates[0].content
+        response_message: Content = response.candidates[0].content
 
         # Add role
         if response_message.role is not None:
@@ -620,25 +631,29 @@ class Gemini(Model):
 
                     model_response.tool_calls.append(tool_call)
 
+        # Extract usage metadata if present
         if hasattr(response, "usage_metadata"):
-            model_response.response_usage = {
-                "input_tokens": response.usage_metadata.prompt_token_count or 0,
-                "output_tokens": response.usage_metadata.candidates_token_count or 0,
-                "total_tokens": response.usage_metadata.total_token_count or 0,
-            }
+            usage: GenerateContentResponseUsageMetadata = response.usage_metadata
+            model_response.response_usage = GeminiResponseUsage(
+                input_tokens=usage.prompt_token_count or 0,
+                output_tokens=usage.candidates_token_count or 0,
+                total_tokens=usage.total_token_count or 0,
+            )
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta) -> ModelResponse:
+    def parse_provider_response_delta(self, response_delta: GenerateContentResponse) -> ModelResponse:
         model_response = ModelResponse()
 
-        response_message = response_delta.candidates[0].content
+        response_message: Content = response_delta.candidates[0].content
 
         if response_message.parts is not None:
             for part in response_message.parts:
+                # Extract text if present
                 if hasattr(part, "text") and part.text is not None:
                     model_response.content = part.text
 
+                # Extract function call if present
                 if hasattr(part, "function_call") and part.function_call is not None:
                     tool_call = {
                         "type": "function",
@@ -652,11 +667,13 @@ class Gemini(Model):
 
                     model_response.tool_calls.append(tool_call)
 
+        # Extract usage metadata if present
         if hasattr(response_delta, "usage_metadata"):
-            model_response.response_usage = {
-                "input_tokens": response_delta.usage_metadata.prompt_token_count or 0,
-                "output_tokens": response_delta.usage_metadata.candidates_token_count or 0,
-                "total_tokens": response_delta.usage_metadata.total_token_count or 0,
-            }
+            usage: GenerateContentResponseUsageMetadata = response_delta.usage_metadata
+            model_response.response_usage = GeminiResponseUsage(
+                input_tokens=usage.prompt_token_count or 0,
+                output_tokens=usage.candidates_token_count or 0,
+                total_tokens=usage.total_token_count or 0,
+            )
 
         return model_response

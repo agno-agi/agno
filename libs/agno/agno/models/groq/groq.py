@@ -384,6 +384,7 @@ class Groq(Model):
             ModelResponse: Iterator of parsed response data
         """
         model_response = ModelResponse()
+
         if len(response.choices) > 0:
             delta: ChoiceDelta = response.choices[0].delta
 
@@ -396,7 +397,7 @@ class Groq(Model):
                 model_response.tool_calls = delta.tool_calls
 
         # Add usage metrics if present
-        if response.usage is not None:
-            model_response.response_usage = response.usage
+        if response.x_groq is not None and response.x_groq.usage is not None:
+            model_response.response_usage = response.x_groq.usage
 
         return model_response

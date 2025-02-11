@@ -192,6 +192,9 @@ class Model(ABC):
                     messages=messages, function_call_results=function_call_results, **model_response.extra
                 )
 
+                logger.debug(f"---------- {self.get_provider()} Response ----------")
+                self._log_messages(messages)
+
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
@@ -257,6 +260,9 @@ class Model(ABC):
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
 
+                logger.debug(f"---------- {self.get_provider()} Async Response ----------")
+                self._log_messages(messages)
+
                 # Continue loop to get next response
                 continue
 
@@ -303,7 +309,10 @@ class Model(ABC):
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
-            model_response.content = assistant_message.get_content_string()
+            if model_response.content is None:
+                model_response.content = assistant_message.get_content_string()
+            else:
+                model_response.content += assistant_message.get_content_string()
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if provider_response.extra is not None:
@@ -450,7 +459,7 @@ class Model(ABC):
 
             # Add assistant message to messages
             messages.append(assistant_message)
-            assistant_message.log(metrics=True)
+            assistant_message.log()
 
             # Handle tool calls if present
             if assistant_message.tool_calls:
@@ -474,6 +483,9 @@ class Model(ABC):
                 self.format_function_call_results(
                     messages=messages, function_call_results=function_call_results, **stream_data.extra
                 )
+
+                logger.debug(f"---------- {self.get_provider()} Response Stream ----------")
+                self._log_messages(messages)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
@@ -562,6 +574,9 @@ class Model(ABC):
                 self.format_function_call_results(
                     messages=messages, function_call_results=function_call_results, **stream_data.extra
                 )
+
+                logger.debug(f"---------- {self.get_provider()} Async Response Stream ----------")
+                self._log_messages(messages)
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
@@ -906,8 +921,6 @@ class Model(ABC):
         """
         Show tool calls in the model response.
         """
-        if not model_response.content:
-            model_response.content = ""
         if len(function_calls_to_run) == 1:
             model_response.content += f" - Running: {function_calls_to_run[0].get_call_str()}\n\n"
         elif len(function_calls_to_run) > 1:
@@ -986,7 +999,7 @@ class Model(ABC):
                 assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
             )
 
-        # Additional timing metrics (e.g., from Groq)
+        # Additional timing metrics (e.g., from Groq, Ollama)
         if assistant_message.metrics.additional_metrics is None:
             assistant_message.metrics.additional_metrics = {}
 
@@ -995,6 +1008,10 @@ class Model(ABC):
             "completion_time",
             "queue_time",
             "total_time",
+            "total_duration",
+            "load_duration",
+            "prompt_eval_duration",
+            "eval_duration",
         ]
 
         for metric in additional_metrics:

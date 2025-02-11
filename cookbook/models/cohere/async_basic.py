@@ -4,7 +4,7 @@ Basic async example using Cohere.
 
 import asyncio
 
-from agno.agent.agent import Agent
+from agno.agent import Agent
 from agno.models.cohere import Cohere
 
 agent = Agent(

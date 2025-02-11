@@ -1,10 +1,10 @@
 """
-Basic streaming async example using Claude.
+Basic streaming async example using Mistral.
 """
 
 import asyncio
 
-from agno.agent.agent import Agent
+from agno.agent import Agent
 from agno.models.mistral.mistral import MistralChat
 
 agent = Agent(
