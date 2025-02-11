@@ -999,7 +999,7 @@ class Model(ABC):
                 assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
             )
 
-        # Additional timing metrics (e.g., from Groq)
+        # Additional timing metrics (e.g., from Groq, Ollama)
         if assistant_message.metrics.additional_metrics is None:
             assistant_message.metrics.additional_metrics = {}
 
@@ -1008,6 +1008,10 @@ class Model(ABC):
             "completion_time",
             "queue_time",
             "total_time",
+            "total_duration",
+            "load_duration",
+            "prompt_eval_duration",
+            "eval_duration",
         ]
 
         for metric in additional_metrics:
