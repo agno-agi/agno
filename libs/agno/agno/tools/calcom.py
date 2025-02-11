@@ -171,7 +171,13 @@ class CalComTools(Toolkit):
         """
         try:
             url = "https://api.cal.com/v2/bookings"
+<<<<<<< Updated upstream
             querystring = {"status": "upcoming", "attendeeEmail": email}
+=======
+            querystring = {"status": "upcoming"}
+            if email:
+                querystring["attendeeEmail"] = email
+>>>>>>> Stashed changes
 
             response = requests.get(url, headers=self._get_headers(), params=querystring)
             if response.status_code == 200:

@@ -11,4 +11,3 @@ agent = Agent(
     markdown=True,
 )
 agent.print_response("Whats happening in France?", stream=True)
-

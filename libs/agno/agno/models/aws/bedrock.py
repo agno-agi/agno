@@ -1,6 +1,6 @@
+import json
 from abc import ABC
 from dataclasses import dataclass
-import json
 from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
@@ -58,12 +58,16 @@ class AwsBedrock(Model, ABC):
         self.aws_region = self.aws_region or getenv("AWS_REGION")
 
         if not self.aws_access_key_id or not self.aws_secret_access_key:
-            raise ModelProviderError("AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.")
+            raise ModelProviderError(
+                "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables."
+            )
 
-        self.client = AwsClient(service_name="bedrock-runtime",
-                                region_name=self.aws_region,
-                                aws_access_key_id=self.aws_access_key_id,
-                                aws_secret_access_key=self.aws_secret_access_key)
+        self.client = AwsClient(
+            service_name="bedrock-runtime",
+            region_name=self.aws_region,
+            aws_access_key_id=self.aws_access_key_id,
+            aws_secret_access_key=self.aws_secret_access_key,
+        )
         return self.client
 
     def _format_tools_for_request(self) -> List[Dict[str, Any]]:
@@ -110,7 +114,6 @@ class AwsBedrock(Model, ABC):
         request_kwargs = {k: v for k, v in request_kwargs.items() if v is not None}
         return request_kwargs
 
-
     def _format_messages(self, messages: List[Message]) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
         formatted_messages = []
         system_message = None
@@ -124,14 +127,20 @@ class AwsBedrock(Model, ABC):
                 if isinstance(message.content, list):
                     formatted_message["content"].extend(message.content)
                 elif message.tool_calls:
-                    formatted_message["content"].extend([{"toolUse": {
-                        "toolUseId": tool_call["id"],
-                        "name": tool_call["function"]["name"],
-                        "input": json.loads(tool_call["function"]["arguments"]),
-                    }} for tool_call in message.tool_calls])
+                    formatted_message["content"].extend(
+                        [
+                            {
+                                "toolUse": {
+                                    "toolUseId": tool_call["id"],
+                                    "name": tool_call["function"]["name"],
+                                    "input": json.loads(tool_call["function"]["arguments"]),
+                                }
+                            }
+                            for tool_call in message.tool_calls
+                        ]
+                    )
                 else:
                     formatted_message["content"].append({"text": message.content})
-
 
                 if message.images:
                     for image in message.images:
@@ -140,14 +149,16 @@ class AwsBedrock(Model, ABC):
                             if image.format not in ["png", "jpeg", "webp", "gif"]:
                                 raise ValueError(f"Unsupported image format: {image.format}")
 
-                            formatted_message["content"].append({
-                                "image": {
-                                    "format": image.format,
-                                    "source": {
-                                        "bytes": image.content,
+                            formatted_message["content"].append(
+                                {
+                                    "image": {
+                                        "format": image.format,
+                                        "source": {
+                                            "bytes": image.content,
+                                        },
                                     }
                                 }
-                            })
+                            )
                         else:
                             raise ValueError("Image content and format are required.")
 
@@ -157,23 +168,34 @@ class AwsBedrock(Model, ABC):
                 if message.videos:
                     for video in message.videos:
                         if video.content and video.format:
-                            if video.format not in ["mp4", "mov", "mkv", "webm", "flv", "mpeg", "mpg", "wmv", "three_gp"]:
+                            if video.format not in [
+                                "mp4",
+                                "mov",
+                                "mkv",
+                                "webm",
+                                "flv",
+                                "mpeg",
+                                "mpg",
+                                "wmv",
+                                "three_gp",
+                            ]:
                                 raise ValueError(f"Unsupported video format: {video.format}")
 
-                            formatted_message["content"].append({
-                                "video": {
-                                    "format": video.format,
-                                    "source": {
-                                        "bytes": video.content,
+                            formatted_message["content"].append(
+                                {
+                                    "video": {
+                                        "format": video.format,
+                                        "source": {
+                                            "bytes": video.content,
+                                        },
                                     }
                                 }
-                            })
+                            )
                         else:
                             raise ValueError("Video content and format are required.")
                 formatted_messages.append(formatted_message)
         # TODO: Add caching: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-call.html
         return formatted_messages, system_message
-
 
     def invoke(self, messages: List[Message]) -> Dict[str, Any]:
         """
@@ -198,7 +220,8 @@ class AwsBedrock(Model, ABC):
                 messages=formatted_messages,
                 inferenceConfig=request_kwargs,
                 system=system_message,
-                toolConfig=tool_config)
+                toolConfig=tool_config,
+            )
         except ClientError as e:
             logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
@@ -229,7 +252,8 @@ class AwsBedrock(Model, ABC):
                 messages=formatted_messages,
                 inferenceConfig=request_kwargs,
                 system=system_message,
-                toolConfig=tool_config)["stream"]
+                toolConfig=tool_config,
+            )["stream"]
         except ClientError as e:
             logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
@@ -250,16 +274,16 @@ class AwsBedrock(Model, ABC):
             tool_ids (List[str]): The tool ids.
         """
         if len(function_call_results) > 0:
-                tool_result_content: List = []
+            tool_result_content: List = []
 
-                for _fc_message_index, _fc_message in enumerate(function_call_results):
-                    tool_result = {
-                        "toolUseId": tool_ids[_fc_message_index],
-                        "content": [{"json": {"result": _fc_message.content}}],
-                    }
-                    tool_result_content.append({"toolResult": tool_result})
+            for _fc_message_index, _fc_message in enumerate(function_call_results):
+                tool_result = {
+                    "toolUseId": tool_ids[_fc_message_index],
+                    "content": [{"json": {"result": _fc_message.content}}],
+                }
+                tool_result_content.append({"toolResult": tool_result})
 
-                messages.append(Message(role="user", content=tool_result_content))
+            messages.append(Message(role="user", content=tool_result_content))
 
     def parse_provider_response(self, response: Dict[str, Any]) -> ModelResponse:
         model_response = ModelResponse()
@@ -297,8 +321,6 @@ class AwsBedrock(Model, ABC):
 
             model_response.content = content
 
-
-
         if "usage" in response:
             model_response.usage = {
                 "input_tokens": response["usage"]["inputTokens"],
@@ -307,7 +329,6 @@ class AwsBedrock(Model, ABC):
             }
 
         return model_response
-
 
     def process_response_stream(
         self, messages: List[Message], assistant_message: Message, stream_data: MessageData
@@ -370,7 +391,7 @@ class AwsBedrock(Model, ABC):
                     model_response.usage = {
                         "input_tokens": usage.get("inputTokens", 0),
                         "output_tokens": usage.get("outputTokens", 0),
-                        "total_tokens": usage.get("totalTokens", 0)
+                        "total_tokens": usage.get("totalTokens", 0),
                     }
 
             # Update metrics
@@ -399,7 +420,6 @@ class AwsBedrock(Model, ABC):
         if tool_ids:
             stream_data.extra["tool_ids"] = tool_ids
 
-
     def parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:
         pass
 
@@ -408,4 +428,3 @@ class AwsBedrock(Model, ABC):
 
     async def ainvoke_stream(self, *args, **kwargs) -> Any:
         raise NotImplementedError(f"Async not supported on {self.name}.")
-

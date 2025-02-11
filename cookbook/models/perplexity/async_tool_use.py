@@ -12,4 +12,9 @@ agent = Agent(
     show_tool_calls=True,
     markdown=True,
 )
-asyncio.run(agent.aprint_response("Whats happening in France? Use the DuckDuckGo tool to find the latest news.", stream=True))
+asyncio.run(
+    agent.aprint_response(
+        "Whats happening in France? Use the DuckDuckGo tool to find the latest news.",
+        stream=True,
+    )
+)

@@ -28,7 +28,6 @@ class GeminiOpenAI(OpenAILike):
     api_key: Optional[str] = getenv("GOOGLE_API_KEY", None)
     base_url: Optional[str] = "https://generativelanguage.googleapis.com/v1beta/"
 
-
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """
         Format a message into the format expected by OpenAI.
@@ -55,7 +54,7 @@ class GeminiOpenAI(OpenAILike):
 
         message_dict = message.to_dict()
         message_dict["role"] = self.role_map[message_dict["role"]]
-        
+
         # Gemini expects the content to be removed if it is None
         if message_dict["content"] is None:
             message_dict.pop("content")

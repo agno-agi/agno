@@ -1517,7 +1517,7 @@ class Agent:
             agent_data=self.get_agent_data(),
             session_data=self.get_session_data(),
             extra_data=self.extra_data,
-            created_at=int(time())
+            created_at=int(time()),
         )
 
     def load_agent_session(self, session: AgentSession):

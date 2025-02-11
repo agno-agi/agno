@@ -32,7 +32,6 @@ except (ModuleNotFoundError, ImportError):
     raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
 
 
-
 def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
     # Case 1: Image is a URL
     if image.url is not None:

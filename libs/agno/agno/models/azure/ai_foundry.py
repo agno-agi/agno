@@ -1,6 +1,6 @@
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-import json
 from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Union
 
@@ -29,6 +29,7 @@ try:
     from azure.core.exceptions import HttpResponseError
 except ImportError:
     logger.error("`azure-ai-inference` not installed. Please install it via `pip install azure-ai-inference aiohttp`.")
+
 
 @dataclass
 class AzureAIFoundryResponseUsage:
