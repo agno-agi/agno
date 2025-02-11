@@ -10,7 +10,7 @@ from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
 try:
-    from mistralai import CompletionEvent, UsageInfo
+    from mistralai import CompletionEvent
     from mistralai import Mistral as MistralClient
     from mistralai.models import (
         AssistantMessage,
@@ -31,12 +31,6 @@ try:
 except (ModuleNotFoundError, ImportError):
     raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
 
-
-@dataclass
-class MessageData:
-    response_content: str = ""
-    response_usage: Optional[UsageInfo] = None
-    response_tool_calls: Optional[List[Any]] = None
 
 
 def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
