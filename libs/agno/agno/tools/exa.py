@@ -34,8 +34,7 @@ class ExaTools(Toolkit):
         include_domains (Optional[List[str]]): Restrict results to these domains.
         exclude_domains (Optional[List[str]]): Exclude results from these domains.
         show_results (bool): Log search results for debugging. Default is False.
-        stream (bool): Stream search results. Default is False.
-
+        model (Optional[str]): The search model to use. Options are 'exa' or 'exa-pro'.
     """
 
     def __init__(
@@ -61,7 +60,7 @@ class ExaTools(Toolkit):
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
         show_results: bool = False,
-        stream:bool = False,
+        model: Optional[str] = None,
     ):
         super().__init__(name="exa")
 
@@ -87,7 +86,7 @@ class ExaTools(Toolkit):
         self.category: Optional[str] = category
         self.include_domains: Optional[List[str]] = include_domains
         self.exclude_domains: Optional[List[str]] = exclude_domains
-        self.stream: bool = stream
+        self.model: Optional[str] = model
 
         if search:
             self.register(self.search_exa)
@@ -97,7 +96,6 @@ class ExaTools(Toolkit):
             self.register(self.find_similar)
         if answer:
             self.register(self.exa_answer)
-
 
     def _parse_results(self, exa_results: SearchResponse) -> str:
         exa_results_parsed = []
@@ -237,27 +235,26 @@ class ExaTools(Toolkit):
             logger.error(f"Failed to get similar links from Exa: {e}")
             return f"Error: {e}"
 
-    def exa_answer(self,query: str,model: str = "exa" ,text:bool = False)->str:
-        """Use this function to get an LLM answer to a question informed by Exa search results.
+    def exa_answer(self, query: str, text: bool = False) -> str:
+        """
+        Get an LLM answer to a question informed by Exa search results.
 
-           Args:
-               query (str): The question or query to answer.
-               model (str): The search model to use. Options are 'exa' or 'exa-pro'.
-                   'exa-pro' uses 2 expanded queries. Defaults to 'exa'.
-               text (bool): Include full text from citation. Default is False.
-           Returns:
-               str: The answer results in JSON format with both generated answer and sources.
-           """
+        Args:
+            query (str): The question or query to answer.
+            text (bool): Include full text from citation. Default is False.
+        Returns:
+            str: The answer results in JSON format with both generated answer and sources.
+        """
 
-        if model not in ["exa", "exa-pro"]:
+        if self.model and self.model not in ["exa", "exa-pro"]:
             raise ValueError("Model must be either 'exa' or 'exa-pro'")
         try:
             logger.info(f"Generating answer for query: {query}")
             answer_kwargs: Dict[str, Any] = {
-                "model": model,
-                "stream": self.stream,
+                "model": self.model,
                 "text": text,
             }
+            answer_kwargs = {k: v for k, v in answer_kwargs.items() if v is not None}
             answer = self.exa.answer(query=query, **answer_kwargs)
             result = {
                 "answer": answer.answer,
@@ -271,7 +268,7 @@ class ExaTools(Toolkit):
                         "text": citation.text if text else None,
                     }
                     for citation in answer.citations
-                ]
+                ],
             }
             if self.show_results:
                 logger.info(json.dumps(result))
@@ -281,4 +278,3 @@ class ExaTools(Toolkit):
         except Exception as e:
             logger.error(f"Failed to get answer from Exa: {e}")
             return f"Error: {e}"
-
