@@ -103,8 +103,7 @@ class Agent:
     # --- Agent Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
-    # If you provide a dict, it is not called by the agent.
-    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
+    tools: Optional[List[Union[Toolkit, Callable, Function]]] = None
     # Show tool calls in Agent response.
     show_tool_calls: bool = False
     # Maximum number of tool calls allowed.
@@ -251,7 +250,7 @@ class Agent:
         references_format: Literal["json", "yaml"] = "json",
         storage: Optional[AgentStorage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
+        tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
         show_tool_calls: bool = False,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -1006,7 +1005,9 @@ class Agent:
                             }
                             # Process tool calls
                             for tool_call_dict in tool_calls_list:
-                                tool_call_id = tool_call_dict["tool_call_id"]
+                                tool_call_id = (
+                                    tool_call_dict["tool_call_id"] if "tool_call_id" in tool_call_dict else None
+                                )
                                 index = tool_call_index_map.get(tool_call_id)
                                 if index is not None:
                                     self.run_response.tools[index] = tool_call_dict
@@ -1501,6 +1502,8 @@ class Agent:
         return session_data
 
     def get_agent_session(self) -> AgentSession:
+        from time import time
+
         """Get an AgentSession object, which can be saved to the database"""
         self.memory = cast(AgentMemory, self.memory)
         self.session_id = cast(str, self.session_id)
@@ -1513,6 +1516,7 @@ class Agent:
             agent_data=self.get_agent_data(),
             session_data=self.get_session_data(),
             extra_data=self.extra_data,
+            created_at=int(time()),
         )
 
     def load_agent_session(self, session: AgentSession):

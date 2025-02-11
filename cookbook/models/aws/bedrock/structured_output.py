@@ -1,7 +1,7 @@
 from typing import List
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.aws.claude import Claude
+from agno.models.aws import AwsBedrock
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -26,7 +26,7 @@ class MovieScript(BaseModel):
 
 
 movie_agent = Agent(
-    model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0"),
+    model=AwsBedrock(id="mistral.mistral-large-2402-v1:0"),
     description="You help people write movie scripts.",
     response_model=MovieScript,
 )

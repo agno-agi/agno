@@ -16,13 +16,13 @@ source ~/.venvs/aienv/bin/activate
 ```shell
 export AWS_ACCESS_KEY_ID=***
 export AWS_SECRET_ACCESS_KEY=***
-export AWS_DEFAULT_REGION=***
+export AWS_REGION=***
 ```
 
 ### 3. Install libraries
 
 ```shell
-pip install -U boto3 duckduckgo-search duckdb yfinance agno
+pip install -U boto3 duckduckgo-search agno
 ```
 
 ### 4. Run basic agent
@@ -30,13 +30,13 @@ pip install -U boto3 duckduckgo-search duckdb yfinance agno
 - Streaming on
 
 ```shell
-python cookbook/models/aws/bedrock_claude/basic_stream.py
+python cookbook/models/aws/claude/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/aws/bedrock_claude/basic.py
+python cookbook/models/aws/claude/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -44,23 +44,23 @@ python cookbook/models/aws/bedrock_claude/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/aws/bedrock_claude/tool_use.py
+python cookbook/models/aws/claude/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/models/aws/bedrock_claude/structured_output.py
+python cookbook/models/aws/claude/structured_output.py
 ```
 
 ### 7. Run Agent that uses storage
 
 ```shell
-python cookbook/models/aws/bedrock_claude/storage.py
+python cookbook/models/aws/claude/storage.py
 ```
 
 ### 8. Run Agent that uses knowledge
 
 ```shell
-python cookbook/models/aws/bedrock_claude/knowledge.py
+python cookbook/models/aws/claude/knowledge.py
 ```

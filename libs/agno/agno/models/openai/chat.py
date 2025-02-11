@@ -262,6 +262,7 @@ class OpenAIChat(Model):
 
         message_dict = message.to_dict()
         message_dict["role"] = self.role_map[message_dict["role"]]
+
         return message_dict
 
     def invoke(self, messages: List[Message]) -> Union[ChatCompletion, ParsedChatCompletion]:
@@ -419,7 +420,7 @@ class OpenAIChat(Model):
         """
         tool_calls: List[Dict[str, Any]] = []
         for _tool_call in tool_calls_data:
-            _index = _tool_call.index
+            _index = _tool_call.index or 0
             _tool_call_id = _tool_call.id
             _tool_call_type = _tool_call.type
             _function_name = _tool_call.function.name if _tool_call.function else None
@@ -451,7 +452,7 @@ class OpenAIChat(Model):
         Parse the OpenAI response into a ModelResponse.
 
         Args:
-            response: Raw response from OpenAI
+            response: Response from invoke() method
 
         Returns:
             ModelResponse: Parsed response data
@@ -516,7 +517,7 @@ class OpenAIChat(Model):
 
     def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
         """
-        Parse the OpenAI streaming response into ModelProviderResponse objects.
+        Parse the OpenAI streaming response into a ModelResponse.
 
         Args:
             response_delta: Raw response chunk from OpenAI
@@ -534,7 +535,7 @@ class OpenAIChat(Model):
 
             # Add tool calls
             if delta.tool_calls is not None:
-                model_response.tool_calls = delta.tool_calls
+                model_response.tool_calls = delta.tool_calls  # type: ignore
 
             # Add audio if present
             if hasattr(delta, "audio") and delta.audio is not None:

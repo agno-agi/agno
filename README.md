@@ -1,9 +1,9 @@
 <div align="center" id="top">
   <a href="https://docs.agno.com">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset=".assets/logo-dark.svg">
-      <source media="(prefers-color-scheme: light)" srcset=".assets/logo-light.svg">
-      <img src=".assets/logo-light.svg" alt="Agno">
+      <source media="(prefers-color-scheme: dark)" srcset="https://agno-public.s3.us-east-1.amazonaws.com/assets/logo-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="https://agno-public.s3.us-east-1.amazonaws.com/assets/logo-light.svg">
+      <img src="https://agno-public.s3.us-east-1.amazonaws.com/assets/logo-light.svg" alt="Agno">
     </picture>
   </a>
 </div>

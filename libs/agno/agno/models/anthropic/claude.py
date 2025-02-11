@@ -538,8 +538,8 @@ class Claude(Model):
 
         elif isinstance(response, ContentBlockStopEvent):
             # Handle tool calls
-            if isinstance(response.content_block, ToolUseBlock):
-                tool_use = response.content_block
+            if isinstance(response.content_block, ToolUseBlock):  # type: ignore
+                tool_use = response.content_block  # type: ignore
                 tool_name = tool_use.name
                 tool_input = tool_use.input
 

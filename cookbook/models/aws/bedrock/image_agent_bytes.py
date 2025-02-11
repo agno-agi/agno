@@ -2,10 +2,12 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import Image
-from agno.models.azure import AzureAIFoundry
+from agno.models.aws import AwsBedrock
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=AzureAIFoundry(id="Llama-3.2-11B-Vision-Instruct"),
+    model=AwsBedrock(id="amazon.nova-pro-v1:0"),
+    tools=[DuckDuckGoTools()],
     markdown=True,
 )
 
@@ -16,9 +18,8 @@ with open(image_path, "rb") as img_file:
     image_bytes = img_file.read()
 
 agent.print_response(
-    "Tell me about this image.",
+    "Tell me about this image and give me the latest news about it.",
     images=[
-        Image(content=image_bytes),
+        Image(content=image_bytes, format="jpeg"),
     ],
-    stream=True,
 )

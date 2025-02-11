@@ -1,12 +1,8 @@
-import asyncio
 from typing import Iterator  # noqa
-
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.aws.claude import Claude
+from agno.models.aws import AwsBedrock
 
-agent = Agent(
-    model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0"), markdown=True
-)
+agent = Agent(model=AwsBedrock(id="mistral.mistral-small-2402-v1:0"), markdown=True)
 
 # Get the response in a variable
 # run_response: Iterator[RunResponse] = agent.run("Share a 2 sentence horror story", stream=True)
@@ -14,4 +10,4 @@ agent = Agent(
 #     print(chunk.content)
 
 # Print the response in the terminal
-asyncio.run(agent.aprint_response("Share a 2 sentence horror story", stream=True))
+agent.print_response("Share a 2 sentence horror story", stream=True)

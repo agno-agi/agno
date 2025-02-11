@@ -1,7 +1,7 @@
 from typing import List
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.google import GeminiOpenAI
+from agno.models.aws import Claude
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -25,15 +25,14 @@ class MovieScript(BaseModel):
     )
 
 
-# Agent that uses JSON mode
 movie_agent = Agent(
-    model=GeminiOpenAI(id="gemini-2.0-flash-exp"),
-    description="You write movie scripts.",
+    model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0"),
+    description="You help people write movie scripts.",
     response_model=MovieScript,
 )
 
 # Get the response in a variable
-# run: RunResponse = movie_agent.run("New York")
-# pprint(run.content)
+# movie_agent: RunResponse = movie_agent.run("New York")
+# pprint(movie_agent.content)
 
 movie_agent.print_response("New York")

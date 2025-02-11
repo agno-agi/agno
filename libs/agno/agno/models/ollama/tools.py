@@ -1,10 +1,10 @@
 import json
 from dataclasses import dataclass, field
 from textwrap import dedent
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, Union
 
 from agno.models.message import Message, MessageMetrics
-from agno.models.ollama.chat import ChatResponse, Ollama
+from agno.models.ollama.chat import ChatResponse, Ollama, OllamaResponseUsage
 from agno.models.response import ModelResponse
 from agno.tools.function import FunctionCall
 from agno.utils.log import logger
@@ -108,14 +108,19 @@ class OllamaTools(Ollama):
 
         # Get response usage
         if response.get("done"):
-            model_response.response_usage = {
-                "input_tokens": response.get("prompt_eval_count", 0),
-                "output_tokens": response.get("eval_count", 0),
-            }
-            if model_response.response_usage["input_tokens"] or model_response.response_usage["output_tokens"]:
-                model_response.response_usage["total_tokens"] = (
-                    model_response.response_usage["input_tokens"] + model_response.response_usage["output_tokens"]
+            model_response.response_usage = OllamaResponseUsage(
+                input_tokens=response.get("prompt_eval_count", 0),
+                output_tokens=response.get("eval_count", 0),
+                total_duration=response.get("total_duration", 0),
+                load_duration=response.get("load_duration", 0),
+                prompt_eval_duration=response.get("prompt_eval_duration", 0),
+                eval_duration=response.get("eval_duration", 0),
+            )
+            if model_response.response_usage.input_tokens or model_response.response_usage.output_tokens:
+                model_response.response_usage.total_tokens = (
+                    model_response.response_usage.input_tokens + model_response.response_usage.output_tokens
                 )
+
         return model_response
 
     def _create_function_call_result(
@@ -201,12 +206,28 @@ class OllamaTools(Ollama):
                     stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
                 )
 
-    def parse_provider_response_delta(self, response_delta, tool_call_data: ToolCall) -> Iterator[ModelResponse]:
+    async def aprocess_response_stream(
+        self, messages: List[Message], assistant_message: Message, stream_data
+    ) -> AsyncIterator[ModelResponse]:
+        """
+        Process a streaming response from the model.
+        """
+        tool_call_data = ToolCall()
+
+        async for response_delta in self.ainvoke_stream(messages=messages):
+            model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
+            if model_response_delta:
+                for model_response in self._populate_stream_data_and_assistant_message(
+                    stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
+                ):
+                    yield model_response
+
+    def parse_provider_response_delta(self, response_delta, tool_call_data: ToolCall) -> ModelResponse:
         """
         Parse the provider response delta.
 
         Args:
-            response_delta (ChatResponse): The response from the provider.
+            response_delta: The response from the provider.
 
         Returns:
             Iterator[ModelResponse]: An iterator of the model response.
@@ -261,13 +282,17 @@ class OllamaTools(Ollama):
                 model_response.content = content_delta
 
         if response_delta.get("done"):
-            model_response.response_usage = {
-                "input_tokens": response_delta.get("prompt_eval_count", 0),
-                "output_tokens": response_delta.get("eval_count", 0),
-            }
-            if model_response.response_usage["input_tokens"] or model_response.response_usage["output_tokens"]:
-                model_response.response_usage["total_tokens"] = (
-                    model_response.response_usage["input_tokens"] + model_response.response_usage["output_tokens"]
+            model_response.response_usage = OllamaResponseUsage(
+                input_tokens=response_delta.get("prompt_eval_count", 0),
+                output_tokens=response_delta.get("eval_count", 0),
+                total_duration=response_delta.get("total_duration", 0),
+                load_duration=response_delta.get("load_duration", 0),
+                prompt_eval_duration=response_delta.get("prompt_eval_duration", 0),
+                eval_duration=response_delta.get("eval_duration", 0),
+            )
+            if model_response.response_usage.input_tokens or model_response.response_usage.output_tokens:
+                model_response.response_usage.total_tokens = (
+                    model_response.response_usage.input_tokens + model_response.response_usage.output_tokens
                 )
 
         return model_response

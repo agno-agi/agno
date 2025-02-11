@@ -1,5 +1,5 @@
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.azure.ai_foundry import AzureAIFoundry
+from agno.models.azure import AzureAIFoundry
 
 agent = Agent(model=AzureAIFoundry(id="Phi-4"), markdown=True)
 

@@ -62,7 +62,7 @@ class Cohere(Model):
         _client_params["api_key"] = self.api_key
 
         self.client = CohereClient(**_client_params)
-        return self.client
+        return self.client  # type: ignore
 
     def get_async_client(self) -> CohereAsyncClient:
         if self.async_client:
@@ -78,7 +78,7 @@ class Cohere(Model):
         _client_params["api_key"] = self.api_key
 
         self.async_client = CohereAsyncClient(**_client_params)
-        return self.async_client
+        return self.async_client  # type: ignore
 
     @property
     def request_kwargs(self) -> Dict[str, Any]:
@@ -141,7 +141,7 @@ class Cohere(Model):
         request_kwargs = self.request_kwargs
 
         try:
-            return self.get_client().chat(model=self.id, messages=self._format_messages(messages), **request_kwargs)
+            return self.get_client().chat(model=self.id, messages=self._format_messages(messages), **request_kwargs)  # type: ignore
         except Exception as e:
             logger.error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
@@ -160,7 +160,9 @@ class Cohere(Model):
 
         try:
             return self.get_client().chat_stream(
-                model=self.id, messages=self._format_messages(messages), **request_kwargs
+                model=self.id,
+                messages=self._format_messages(messages),  # type: ignore
+                **request_kwargs,
             )
         except Exception as e:
             logger.error(f"Unexpected error calling Cohere API: {str(e)}")
@@ -180,7 +182,9 @@ class Cohere(Model):
 
         try:
             return await self.get_async_client().chat(
-                model=self.id, messages=self._format_messages(messages), **request_kwargs
+                model=self.id,
+                messages=self._format_messages(messages),  # type: ignore
+                **request_kwargs,
             )
         except Exception as e:
             logger.error(f"Unexpected error calling Cohere API: {str(e)}")
@@ -200,7 +204,9 @@ class Cohere(Model):
 
         try:
             async for response in self.get_async_client().chat_stream(
-                model=self.id, messages=self._format_messages(messages), **request_kwargs
+                model=self.id,
+                messages=self._format_messages(messages),  # type: ignore
+                **request_kwargs,
             ):
                 yield response
         except Exception as e:
@@ -230,9 +236,9 @@ class Cohere(Model):
 
         if response.usage is not None and response.usage.tokens is not None:
             model_response.response_usage = CohereResponseUsage(
-                input_tokens=int(response.usage.tokens.input_tokens) or 0,
-                output_tokens=int(response.usage.tokens.output_tokens) or 0,
-                total_tokens=int(response.usage.tokens.input_tokens + response.usage.tokens.output_tokens) or 0,
+                input_tokens=int(response.usage.tokens.input_tokens) or 0,  # type: ignore
+                output_tokens=int(response.usage.tokens.output_tokens) or 0,  # type: ignore
+                total_tokens=int(response.usage.tokens.input_tokens + response.usage.tokens.output_tokens) or 0,  # type: ignore
             )
 
         return model_response
@@ -243,7 +249,7 @@ class Cohere(Model):
         assistant_message: Message,
         stream_data: MessageData,
         tool_use: Dict[str, Any],
-    ) -> Tuple[ModelResponse, Dict[str, Any]]:
+    ) -> Tuple[Optional[ModelResponse], Dict[str, Any]]:
         """
         Common handler for processing stream responses from Cohere.
 
@@ -260,6 +266,7 @@ class Cohere(Model):
 
         if (
             response.type == "content-delta"
+            and response.delta is not None
             and response.delta.message is not None
             and response.delta.message.content is not None
         ):
@@ -272,12 +279,16 @@ class Cohere(Model):
             stream_data.response_content += response.delta.message.content.text
             model_response = ModelResponse(content=response.delta.message.content.text)
 
-        elif response.type == "tool-call-start":
-            if response.delta.message is not None:
+        elif response.type == "tool-call-start" and response.delta is not None:
+            if response.delta.message is not None and response.delta.message.tool_calls is not None:
                 tool_use = response.delta.message.tool_calls.model_dump()
 
-        elif response.type == "tool-call-delta":
-            if response.delta.message is not None and response.delta.message.tool_calls is not None:
+        elif response.type == "tool-call-delta" and response.delta is not None:
+            if (
+                response.delta.message is not None
+                and response.delta.message.tool_calls is not None
+                and response.delta.message.tool_calls.function is not None
+            ):
                 tool_use["function"]["arguments"] += response.delta.message.tool_calls.function.arguments
 
         elif response.type == "tool-call-end":
@@ -286,21 +297,24 @@ class Cohere(Model):
             assistant_message.tool_calls.append(tool_use)
             tool_use = {}
 
-        elif response.type == "message-end":
-            if (
-                response.delta is not None
-                and response.delta.usage is not None
-                and response.delta.usage.tokens is not None
-            ):
-                self._add_usage_metrics_to_assistant_message(
-                    assistant_message=assistant_message,
-                    response_usage=CohereResponseUsage(
-                        input_tokens=response.delta.usage.tokens.input_tokens,
-                        output_tokens=response.delta.usage.tokens.output_tokens,
-                        total_tokens=response.delta.usage.tokens.input_tokens
-                        + response.delta.usage.tokens.output_tokens,
-                    ),
-                )
+
+        elif (
+            response.type == "message-end"
+            and response.delta is not None
+            and response.delta.usage is not None
+            and response.delta.usage.tokens is not None
+        ):
+            self._add_usage_metrics_to_assistant_message(
+                assistant_message=assistant_message,
+                response_usage=CohereResponseUsage(
+                    input_tokens=int(response.delta.usage.tokens.input_tokens) or 0,  # type: ignore
+                    output_tokens=int(response.delta.usage.tokens.output_tokens) or 0,  # type: ignore
+                    total_tokens=int(
+                        response.delta.usage.tokens.input_tokens + response.delta.usage.tokens.output_tokens  # type: ignore
+                    )
+                    or 0,
+                ),
+            )
 
         return model_response, tool_use
 
@@ -330,5 +344,5 @@ class Cohere(Model):
             if model_response is not None:
                 yield model_response
 
-    def parse_provider_response_delta(self, response: Any) -> Iterator[ModelResponse]:
+    def parse_provider_response_delta(self, response: Any) -> ModelResponse:  # type: ignore
         pass

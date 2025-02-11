@@ -1,7 +1,7 @@
 """Run `pip install duckduckgo-search sqlalchemy anthropic` to install dependencies."""
 
 from agno.agent import Agent
-from agno.models.aws.claude import Claude
+from agno.models.aws import Claude
 from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 

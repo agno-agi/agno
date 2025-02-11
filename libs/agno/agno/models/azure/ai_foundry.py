@@ -30,6 +30,13 @@ except ImportError:
     logger.error("`azure-ai-inference` not installed. Please install it via `pip install azure-ai-inference aiohttp`.")
 
 
+@dataclass
+class AzureAIFoundryResponseUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
 def _format_message(message: Message) -> Dict[str, Any]:
     """
     Format a message into the format expected by Azure AI.
@@ -55,8 +62,8 @@ class AzureAIFoundry(Model):
     """
     A class for interacting with Azure AI Interface models.
 
-    - For Managed Compute, set the `api_key` to your Azure AI Foundry API key and the `azure_endpoint` to the endpoint URL in the format `https://<your-host-name>.<your-azure-region>.models.ai.azure.com`
-    - For Serverless API, set the `api_key` to your Azure AI Foundry API key and the `azure_endpoint` to the endpoint URL in the format `https://<your-host-name>.<your-azure-region>.models.ai.azure.com`
+    - For Managed Compute, set the `api_key` to your Azure AI Foundry API key and the `azure_endpoint` to the endpoint URL in the format `https://<your-host-name>.<your-azure-region>.models.ai.azure.com/models`
+    - For Serverless API, set the `api_key` to your Azure AI Foundry API key and the `azure_endpoint` to the endpoint URL in the format `https://<your-host-name>.<your-azure-region>.models.ai.azure.com/models`
     - For Github Models, set the `api_key` to the Github Personal Access Token.
     - For Azure OpenAI, set the `api_key` to your Azure AI Foundry API key, the `api_version` to `2024-06-01` and the `azure_endpoint` to the endpoint URL in the format `https://<your-resource-name>.openai.azure.com/openai/deployments/<your-deployment-name>`
 
@@ -119,16 +126,16 @@ class AzureAIFoundry(Model):
                         )
                     )
                 )
-            base_params["tools"] = tools
+            base_params["tools"] = tools  # type: ignore
             if self.tool_choice:
                 base_params["tool_choice"] = self.tool_choice
 
         if self.response_format is not None and self.structured_outputs:
             if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
-                base_params["response_format"] = (
+                base_params["response_format"] = (  # type: ignore
                     JsonSchemaFormat(
                         name=self.response_format.__name__,
-                        schema=self.response_format.model_json_schema(),
+                        schema=self.response_format.model_json_schema(),  # type: ignore
                         description=self.response_format.__doc__,
                         strict=True,
                     ),
@@ -187,9 +194,6 @@ class AzureAIFoundry(Model):
         Returns:
             AsyncChatCompletionsClient: An instance of the asynchronous Azure AI client.
         """
-        if self.async_client:
-            return self.async_client
-
         client_params = self._get_client_params()
 
         self.async_client = AsyncChatCompletionsClient(**client_params)
@@ -278,7 +282,7 @@ class AzureAIFoundry(Model):
                     stream=True,
                     **self._get_request_kwargs(),
                 )
-                async for chunk in stream:
+                async for chunk in stream:  # type: ignore
                     yield chunk
 
         except HttpResponseError as e:
@@ -328,11 +332,11 @@ class AzureAIFoundry(Model):
 
             # Add usage metrics if present
             if response.usage is not None:
-                model_response.response_usage = {
-                    "input_tokens": response.usage.prompt_tokens or 0,
-                    "output_tokens": response.usage.completion_tokens or 0,
-                    "total_tokens": response.usage.total_tokens or 0,
-                }
+                model_response.response_usage = AzureAIFoundryResponseUsage(
+                    input_tokens=response.usage.prompt_tokens or 0,
+                    output_tokens=response.usage.completion_tokens or 0,
+                    total_tokens=response.usage.total_tokens or 0,
+                )
 
         except Exception as e:
             logger.error(f"Error parsing Azure AI response: {e}")
@@ -395,7 +399,7 @@ class AzureAIFoundry(Model):
 
                 # Add tool calls if present
                 if delta.tool_calls and len(delta.tool_calls) > 0:
-                    model_response.tool_calls = delta.tool_calls
+                    model_response.tool_calls = delta.tool_calls  # type: ignore
             # Add usage metrics if present
             if response_delta.usage is not None:
                 model_response.response_usage = {

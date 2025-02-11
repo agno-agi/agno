@@ -10,7 +10,7 @@ from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
 try:
-    from mistralai import CompletionEvent, UsageInfo
+    from mistralai import CompletionEvent
     from mistralai import Mistral as MistralClient
     from mistralai.models import (
         AssistantMessage,
@@ -30,13 +30,6 @@ try:
 
 except (ModuleNotFoundError, ImportError):
     raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
-
-
-@dataclass
-class MessageData:
-    response_content: str = ""
-    response_usage: Optional[UsageInfo] = None
-    response_tool_calls: Optional[List[Any]] = None
 
 
 def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
@@ -360,7 +353,7 @@ class MistralChat(Model):
             response_message: AssistantMessage = response.choices[0].message
 
             # -*- Set content
-            model_response.content = response_message.content
+            model_response.content = response_message.content  # type: ignore
 
             # -*- Set role
             model_response.role = response_message.role
@@ -389,7 +382,7 @@ class MistralChat(Model):
         model_response = ModelResponse()
 
         delta_message: DeltaMessage = response_delta.data.choices[0].delta
-        model_response.role = delta_message.role
+        model_response.role = delta_message.role  # type: ignore
         if (
             delta_message.content is not None
             and not isinstance(delta_message.content, Unset)
@@ -402,11 +395,11 @@ class MistralChat(Model):
             for tool_call in delta_message.tool_calls:
                 model_response.tool_calls.append(
                     {
-                        "id": tool_call.id,
+                        "id": tool_call.id,  # type: ignore
                         "type": "function",
                         "function": {
-                            "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments,
+                            "name": tool_call.function.name,  # type: ignore
+                            "arguments": tool_call.function.arguments,  # type: ignore
                         },
                     }
                 )

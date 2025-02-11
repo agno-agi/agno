@@ -283,6 +283,7 @@ class Groq(Model):
         Returns:
             Any: An asynchronous iterator of chat completion chunks.
         """
+
         try:
             stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
@@ -290,7 +291,7 @@ class Groq(Model):
                 stream=True,
                 **self.request_kwargs,
             )
-            async for chunk in stream:
+            async for chunk in stream:  # type: ignore
                 yield chunk
         except Exception as e:
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
@@ -336,6 +337,7 @@ class Groq(Model):
                 if _tool_call_type:
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
+
 
     def parse_provider_response(self, response: ChatCompletion) -> ModelResponse:
         """
@@ -384,6 +386,7 @@ class Groq(Model):
             ModelResponse: Iterator of parsed response data
         """
         model_response = ModelResponse()
+
         if len(response.choices) > 0:
             delta: ChoiceDelta = response.choices[0].delta
 
@@ -393,10 +396,10 @@ class Groq(Model):
 
             # Add tool calls
             if delta.tool_calls is not None:
-                model_response.tool_calls = delta.tool_calls
+                model_response.tool_calls = delta.tool_calls  # type: ignore
 
         # Add usage metrics if present
-        if response.usage is not None:
-            model_response.response_usage = response.usage
+        if response.x_groq is not None and response.x_groq.usage is not None:
+            model_response.response_usage = response.x_groq.usage
 
         return model_response

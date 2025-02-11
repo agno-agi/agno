@@ -1,3 +1,4 @@
+
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Optional
@@ -54,34 +55,46 @@ class Claude(AnthropicClaude):
         _dict["stop_sequences"] = self.stop_sequences
         return _dict
 
-    _client: Optional[AnthropicBedrock] = None
-    _async_client: Optional[AsyncAnthropicBedrock] = None
+    client: Optional[AnthropicBedrock] = None  # type: ignore
+    async_client: Optional[AsyncAnthropicBedrock] = None  # type: ignore
 
     def get_client(self):
-        if self._client is not None:
-            return self._client
+        if self.client is not None:
+            return self.client
 
         self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY")
         self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_KEY")
         self.aws_region = self.aws_region or getenv("AWS_REGION")
 
-        self._client = AnthropicBedrock(
-            aws_secret_key=self.aws_secret_key,
-            aws_access_key=self.aws_access_key,
-            aws_region=self.aws_region,
+        client_params = {
+            "aws_secret_key": self.aws_secret_key,
+            "aws_access_key": self.aws_access_key,
+            "aws_region": self.aws_region,
+        }
+        if self.client_params:
+            client_params.update(self.client_params)
+
+        self.client = AnthropicBedrock(
+            **client_params,  # type: ignore
         )
-        return self._client
+        return self.client
 
     def get_async_client(self):
-        if self._async_client is not None:
-            return self._async_client
+        if self.async_client is not None:
+            return self.async_client
 
-        self._async_client = AsyncAnthropicBedrock(
-            aws_secret_key=self.aws_secret_key,
-            aws_access_key=self.aws_access_key,
-            aws_region=self.aws_region,
+        client_params = {
+            "aws_secret_key": self.aws_secret_key,
+            "aws_access_key": self.aws_access_key,
+            "aws_region": self.aws_region,
+        }
+        if self.client_params:
+            client_params.update(self.client_params)
+
+        self.async_client = AsyncAnthropicBedrock(
+            **client_params,  # type: ignore
         )
-        return self._async_client
+        return self.async_client
 
     @property
     def request_kwargs(self) -> Dict[str, Any]:
@@ -102,3 +115,4 @@ class Claude(AnthropicClaude):
         if self.request_params:
             _request_params.update(self.request_params)
         return _request_params
+

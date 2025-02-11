@@ -24,6 +24,8 @@ try:
         File,
         FunctionDeclaration,
         GenerateContentConfig,
+        GenerateContentResponse,
+        GenerateContentResponseUsageMetadata,
         Part,
         Schema,
         Tool,
@@ -136,6 +138,13 @@ def _format_function_definitions(tools_list):
 
 
 @dataclass
+class GeminiResponseUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass
 class Gemini(Model):
     """
     Gemini model class for Google's Generative AI models.
@@ -158,7 +167,6 @@ class Gemini(Model):
     generation_config: Optional[Any] = None
     safety_settings: Optional[Any] = None
     generative_model_kwargs: Optional[Dict[str, Any]] = None
-    request_params: Optional[Dict[str, Any]] = None
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -171,13 +179,14 @@ class Gemini(Model):
     seed: Optional[int] = None
     response_modalities: Optional[list[str]] = None
     speech_config: Optional[dict[str, Any]] = None
+    request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
     api_key: Optional[str] = None
-    client_params: Optional[Dict[str, Any]] = None
     vertexai: bool = False
     project_id: Optional[str] = None
     location: Optional[str] = None
+    client_params: Optional[Dict[str, Any]] = None
 
     # Gemini client
     client: Optional[GeminiClient] = None
@@ -200,9 +209,8 @@ class Gemini(Model):
             client_params["api_key"] = self.api_key
         else:
             client_params["vertexai"] = True
-
-        client_params["project"] = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
-        client_params["location"] = self.location
+            client_params["project"] = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
+            client_params["location"] = self.location
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
 
@@ -239,14 +247,14 @@ class Gemini(Model):
             "speech_config": self.speech_config,
         }
         if system_message is not None:
-            config["system_instruction"] = system_message
+            config["system_instruction"] = system_message  # type: ignore
 
         if (
             self.response_format is not None
             and isinstance(self.response_format, type)
             and issubclass(self.response_format, BaseModel)
         ):
-            config["response_mime_type"] = "application/json"
+            config["response_mime_type"] = "application/json"  # type: ignore
             config["response_schema"] = self.response_format
 
         if self._tools:
@@ -573,7 +581,6 @@ class Gemini(Model):
         """
         combined_content: List = []
         combined_function_result: List = []
-        logger.info(f"Function call results: {function_call_results}")
         if len(function_call_results) > 0:
             for result in function_call_results:
                 combined_content.append(result.content)
@@ -583,7 +590,7 @@ class Gemini(Model):
             Message(role="tool", content=combined_content, combined_function_details=combined_function_result)
         )
 
-    def parse_provider_response(self, response) -> ModelResponse:
+    def parse_provider_response(self, response: GenerateContentResponse) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
 
@@ -596,7 +603,7 @@ class Gemini(Model):
         model_response = ModelResponse()
 
         # Get response message
-        response_message = response.candidates[0].content
+        response_message: Content = response.candidates[0].content
 
         # Add role
         if response_message.role is not None:
@@ -623,25 +630,29 @@ class Gemini(Model):
 
                     model_response.tool_calls.append(tool_call)
 
+        # Extract usage metadata if present
         if hasattr(response, "usage_metadata"):
-            model_response.response_usage = {
-                "input_tokens": response.usage_metadata.prompt_token_count or 0,
-                "output_tokens": response.usage_metadata.candidates_token_count or 0,
-                "total_tokens": response.usage_metadata.total_token_count or 0,
-            }
+            usage: GenerateContentResponseUsageMetadata = response.usage_metadata
+            model_response.response_usage = GeminiResponseUsage(
+                input_tokens=usage.prompt_token_count or 0,
+                output_tokens=usage.candidates_token_count or 0,
+                total_tokens=usage.total_token_count or 0,
+            )
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta) -> ModelResponse:
+    def parse_provider_response_delta(self, response_delta: GenerateContentResponse) -> ModelResponse:
         model_response = ModelResponse()
 
-        response_message = response_delta.candidates[0].content
+        response_message: Content = response_delta.candidates[0].content
 
         if response_message.parts is not None:
             for part in response_message.parts:
+                # Extract text if present
                 if hasattr(part, "text") and part.text is not None:
                     model_response.content = part.text
 
+                # Extract function call if present
                 if hasattr(part, "function_call") and part.function_call is not None:
                     tool_call = {
                         "type": "function",
@@ -655,11 +666,13 @@ class Gemini(Model):
 
                     model_response.tool_calls.append(tool_call)
 
+        # Extract usage metadata if present
         if hasattr(response_delta, "usage_metadata"):
-            model_response.response_usage = {
-                "input_tokens": response_delta.usage_metadata.prompt_token_count or 0,
-                "output_tokens": response_delta.usage_metadata.candidates_token_count or 0,
-                "total_tokens": response_delta.usage_metadata.total_token_count or 0,
-            }
+            usage: GenerateContentResponseUsageMetadata = response_delta.usage_metadata
+            model_response.response_usage = GeminiResponseUsage(
+                input_tokens=usage.prompt_token_count or 0,
+                output_tokens=usage.candidates_token_count or 0,
+                total_tokens=usage.total_token_count or 0,
+            )
 
         return model_response

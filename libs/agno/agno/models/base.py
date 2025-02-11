@@ -3,7 +3,7 @@ import collections.abc
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import GeneratorType
-from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union
 
 from agno.exceptions import AgentRunException
 from agno.media import AudioOutput
@@ -108,7 +108,7 @@ class Model(ABC):
         pass
 
     @abstractmethod
-    async def ainvoke_stream(self, *args, **kwargs) -> Any:
+    async def ainvoke_stream(self, *args, **kwargs) -> AsyncGenerator[Any, None]:
         pass
 
     @abstractmethod
@@ -504,7 +504,7 @@ class Model(ABC):
         """
         Process a streaming response from the model.
         """
-        async for response_delta in self.ainvoke_stream(messages=messages):
+        async for response_delta in self.ainvoke_stream(messages=messages):  # type: ignore
             model_response_delta = self.parse_provider_response_delta(response_delta)
             for model_response in self._populate_stream_data_and_assistant_message(
                 stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
@@ -594,7 +594,6 @@ class Model(ABC):
         """Update the stream data and assistant message with the model response."""
 
         # Update metrics
-        assistant_message.metrics.completion_tokens += 1
         if not assistant_message.metrics.time_to_first_token:
             assistant_message.metrics.set_time_to_first_token()
 
@@ -919,11 +918,17 @@ class Model(ABC):
         """
         Show tool calls in the model response.
         """
-        if not model_response.content:
-            model_response.content = ""
         if len(function_calls_to_run) == 1:
+            if model_response.content and len(model_response.content) > 0 and model_response.content[-1] != "\n":
+                model_response.content += "\n\n"
+            else:
+                model_response.content = ""
             model_response.content += f" - Running: {function_calls_to_run[0].get_call_str()}\n\n"
         elif len(function_calls_to_run) > 1:
+            if model_response.content and len(model_response.content) > 0 and model_response.content[-1] != "\n":
+                model_response.content += "\n\n"
+            else:
+                model_response.content = ""
             model_response.content += "Running:"
             for _f in function_calls_to_run:
                 model_response.content += f"\n - {_f.get_call_str()}"
@@ -982,24 +987,24 @@ class Model(ABC):
             response_usage: Usage data from model provider
         """
         # Standard token metrics
-        if hasattr(response_usage, "input_tokens"):
+        if hasattr(response_usage, "input_tokens") and response_usage.input_tokens:
             assistant_message.metrics.input_tokens = response_usage.input_tokens
-        if hasattr(response_usage, "output_tokens"):
+        if hasattr(response_usage, "output_tokens") and response_usage.output_tokens:
             assistant_message.metrics.output_tokens = response_usage.output_tokens
-        if hasattr(response_usage, "prompt_tokens"):
+        if hasattr(response_usage, "prompt_tokens") and response_usage.prompt_tokens is not None:
             assistant_message.metrics.input_tokens = response_usage.prompt_tokens
             assistant_message.metrics.prompt_tokens = response_usage.prompt_tokens
-        if hasattr(response_usage, "completion_tokens"):
+        if hasattr(response_usage, "completion_tokens") and response_usage.completion_tokens is not None:
             assistant_message.metrics.output_tokens = response_usage.completion_tokens
             assistant_message.metrics.completion_tokens = response_usage.completion_tokens
-        if hasattr(response_usage, "total_tokens"):
+        if hasattr(response_usage, "total_tokens") and response_usage.total_tokens is not None:
             assistant_message.metrics.total_tokens = response_usage.total_tokens
         else:
             assistant_message.metrics.total_tokens = (
                 assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
             )
 
-        # Additional timing metrics (e.g., from Groq)
+        # Additional timing metrics (e.g., from Groq, Ollama)
         if assistant_message.metrics.additional_metrics is None:
             assistant_message.metrics.additional_metrics = {}
 
@@ -1008,6 +1013,10 @@ class Model(ABC):
             "completion_time",
             "queue_time",
             "total_time",
+            "total_duration",
+            "load_duration",
+            "prompt_eval_duration",
+            "eval_duration",
         ]
 
         for metric in additional_metrics:
