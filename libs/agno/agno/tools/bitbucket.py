@@ -1,6 +1,9 @@
 import json
 import os
-from typing import Optional
+from typing import Optional, Dict, Any
+
+import requests
+import base64
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -13,12 +16,13 @@ except ImportError:
 
 
 class BitbucketTools(Toolkit):
-    def __init__(self,
-        cloud: Optional[bool] = False,
-        server_url: Optional[str] = None,
+    def __init__(
+        self,
+        server_url: Optional[str] = "api.bitbucket.org",
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
+        api_version: Optional[str] = "2.0",
     ):
         super().__init__(name="bitbucket_tools")
 
@@ -26,29 +30,15 @@ class BitbucketTools(Toolkit):
         self.username = username or os.getenv("BITBUCKET_USERNAME")
         self.password = password or os.getenv("BITBUCKET_PASSWORD")
         self.token = token or os.getenv("BITBUCKET_TOKEN")
+        self.auth_password = self.token or self.password
+        self.base_url = f"https://{self.server_url}/{api_version}"
 
-        # For cloud instance, server_url is not needed
-        if cloud and not (self.username and (self.password or self.token)):
-            raise ValueError("Bitbucket Cloud requires username and either password or token.")
-        # For server instance, we need server_url
-        elif not cloud and not self.server_url:
-            raise ValueError("Bitbucket server URL not provided.")
+        if not (self.username and self.auth_password):
+            logger.error("Username and password or token are required")
+            raise ValueError("Username and password or token are required")
 
-        # Use token as password if provided
-        auth_password = self.token or self.password
+        self.headers = {"Accept": "application/json", "Authorization": f"Basic {self._generate_access_token()}"}
 
-        if cloud:
-            self.bitbucket = Cloud(
-                username=self.username,
-                password=auth_password,
-                cloud=True,
-            )
-        else:
-            self.bitbucket = Bitbucket(
-                url=self.server_url,
-                username=self.username,
-                password=auth_password,
-            )
         # Register methods
         self.register(self.get_repo_info)
         self.register(self.get_repo_branches)
@@ -59,7 +49,21 @@ class BitbucketTools(Toolkit):
         self.register(self.get_repo_pipeline_runs)
         self.register(self.get_repo_pipeline_steps)
 
-    def get_repo_info(self, repo_slug: str) -> str:
+    def _generate_access_token(self) -> str:
+        """Generate an access token for Bitbucket API using Basic Auth."""
+        auth_str = f"{self.username}:{self.auth_password}"
+        auth_bytes = auth_str.encode("ascii")
+        auth_base64 = base64.b64encode(auth_bytes).decode("ascii")
+        return auth_base64
+
+    def _make_request(self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Make a request to Bitbucket API."""
+        url = f"{self.server_url}{endpoint}"
+        response = requests.request(method, url, headers=self.headers, json=data)
+        response.raise_for_status()
+        return response.json() if response.text else {}
+
+    def get_repo_info(self, workspace: str, repo_slug: str) -> str:
         """
         Retrieves repository information.
 
@@ -67,9 +71,12 @@ class BitbucketTools(Toolkit):
         :return: A JSON string containing repository information.
         """
         try:
-            repo = self.bitbucket.get_repo(repo_slug)
+            # repo = self.bitbucket.get_repo(project_key, repo_slug)
+            repo = self.bitbucket.repositories.get(workspace, repo_slug)
             logger.debug(f"Repository information: {repo}")
-            return json.dumps(repo)
+            # return json.dumps(repo, default=vars)
+            return repo
+            # repo = requests.request("GET", f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}")
         except Exception as e:
             logger.error(f"Error retrieving repository information: {str(e)}")
             return json.dumps({"error": str(e)})
