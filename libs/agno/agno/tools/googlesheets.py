@@ -56,7 +56,7 @@ try:
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import build, Resource
+    from googleapiclient.discovery import Resource, build
 except ImportError:
     raise ImportError(
         "`google-api-python-client` `google-auth-httplib2` `google-auth-oauthlib` not installed. Please install using `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
@@ -280,45 +280,67 @@ class GoogleSheetsTools(Toolkit):
             return f"Error updating Google Sheet: {e}"
 
     @authenticate
-    def create_duplicate_sheet(self, source_id: str, new_title: Optional[str] = None) -> str:
-        """Create a duplicate Google Spreadsheet with all sheets and formatting."""
+    def create_duplicate_sheet(
+        self, source_id: str, new_title: Optional[str] = None, copy_permissions: bool = True
+    ) -> str:
+        """Duplicate a Google Spreadsheet using the Google Drive API's copy feature.
+        This ensures an exact duplicate including formatting and data.
+
+        Note: Make sure your credentials include the drive scope 'https://www.googleapis.com/auth/drive'
+
+        Args:
+            source_id: The ID of the source spreadsheet.
+            new_title: Optional new title for the duplicated spreadsheet. If not provided, the source title will be used.
+            copy_permissions: Whether to copy the permissions from the source spreadsheet. Defaults to True.
+
+        Returns:
+            A link to the duplicated spreadsheet.
+        """
+        if not self.creds:
+            return "Not authenticated. Call auth() first."
+
         try:
-            assert self.service is not None
-            
-            # Get title from source if not provided
+            # Ensure the drive scope is included
+            if "https://www.googleapis.com/auth/drive" not in self.scopes:
+                self.scopes.append("https://www.googleapis.com/auth/drive")
+                self._auth()  # Re-authenticate with updated scopes
+
+            drive_service = build("drive", "v3", credentials=self.creds)
+
+            # Use new_title if provided, otherwise fetch the title from the source spreadsheet
             if not new_title:
-                source = self.service.spreadsheets().get(spreadsheetId=source_id, fields="properties(title)").execute()
-                new_title = source["properties"]["title"]
+                source_sheet = self.service.spreadsheets().get(spreadsheetId=source_id).execute()
+                new_title = source_sheet["properties"]["title"]
 
-            # Create new spreadsheet
-            new_spreadsheet = (
-                self.service.spreadsheets()
-                .create(body={"properties": {"title": new_title}}, fields="spreadsheetId,sheets(properties(sheetId))")
-                .execute()
-            )
-            new_id = new_spreadsheet["spreadsheetId"]
-            default_sheet_id = new_spreadsheet["sheets"][0]["properties"]["sheetId"]
+            body = {"name": new_title}
+            new_file = drive_service.files().copy(fileId=source_id, body=body).execute()
+            new_spreadsheet_id = new_file.get("id")
 
-            # Copy all sheets from source
-            source_sheets = (
-                self.service.spreadsheets()
-                .get(spreadsheetId=source_id, fields="sheets(properties(sheetId))")
-                .execute()["sheets"]
-            )
+            # Copy permissions if requested
+            if copy_permissions:
+                # Get permissions from source file
+                source_permissions = (
+                    drive_service.permissions()
+                    .list(fileId=source_id, fields="permissions(emailAddress,role,type)")
+                    .execute()
+                    .get("permissions", [])
+                )
 
-            for sheet in source_sheets:
-                self.service.spreadsheets().sheets().copyTo(
-                    spreadsheetId=source_id,
-                    sheetId=sheet["properties"]["sheetId"],
-                    body={"destinationSpreadsheetId": new_id},
-                ).execute()
+                # Apply each permission to the new file
+                for permission in source_permissions:
+                    # Skip the owner permission as it can't be transferred
+                    if permission.get("role") == "owner":
+                        continue
 
-            # Remove default sheet
-            self.service.spreadsheets().batchUpdate(
-                spreadsheetId=new_id, body={"requests": [{"deleteSheet": {"sheetId": default_sheet_id}}]}
-            ).execute()
+                    drive_service.permissions().create(
+                        fileId=new_spreadsheet_id,
+                        body={
+                            "role": permission.get("role"),
+                            "type": permission.get("type"),
+                            "emailAddress": permission.get("emailAddress"),
+                        },
+                    ).execute()
 
-            return f"Spreadsheet created: https://docs.google.com/spreadsheets/d/{new_id}"
-
+            return f"Spreadsheet duplicated successfully: https://docs.google.com/spreadsheets/d/{new_spreadsheet_id}"
         except Exception as e:
-            return f"Error creating duplicate Google Sheet: {e}"
+            return f"Error duplicating spreadsheet via Drive API: {e}"
