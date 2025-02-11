@@ -1,6 +1,7 @@
+from dataclasses import dataclass
 from os import getenv
 from typing import Optional
-from dataclasses import dataclass
+
 from agno.models.openai.like import OpenAILike
 
 

@@ -20,6 +20,8 @@ class LangDBEmbedder(Embedder):
     user: Optional[str] = None
     api_key: Optional[str] = getenv("LANGDB_API_KEY")
     project_id: Optional[str] = getenv("LANGDB_PROJECT_ID")
+    if not project_id:
+        logger.warning("LANGDB_PROJECT_ID not set in the environment")
     organization: Optional[str] = None
     base_url: Optional[str] = f"https://api.us-east-1.langdb.ai/{project_id}/v1"
     request_params: Optional[Dict[str, Any]] = None

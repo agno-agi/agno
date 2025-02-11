@@ -1036,16 +1036,16 @@ class Model(ABC):
                 continue
 
             # Use current_index if index is not available
-            _index = getattr(_tool_call, 'index', None)
+            _index = getattr(_tool_call, "index", None)
             if _index is None:
                 _index = current_index
                 current_index += 1
 
-            _tool_call_id = getattr(_tool_call, 'id', None)
-            _tool_call_type = getattr(_tool_call, 'type', None)
-            _function = getattr(_tool_call, 'function', None)
-            _function_name = getattr(_function, 'name', None) if _function else None
-            _function_arguments = getattr(_function, 'arguments', None) if _function else None
+            _tool_call_id = getattr(_tool_call, "id", None)
+            _tool_call_type = getattr(_tool_call, "type", None)
+            _function = getattr(_tool_call, "function", None)
+            _function_name = getattr(_function, "name", None) if _function else None
+            _function_arguments = getattr(_function, "arguments", None) if _function else None
 
             # Ensure _index is valid
             while len(tool_calls) <= _index:
