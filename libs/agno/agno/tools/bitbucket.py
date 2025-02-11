@@ -1,11 +1,12 @@
 import json
 import os
-from typing import Optional, cast
+from typing import Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
 try:
+    from atlassian.bitbucket import Cloud
     from atlassian import Bitbucket
 except ImportError:
     raise ImportError("`atlassian-python-api` not installed. Please install using `pip install atlassian-python-api`")
@@ -13,6 +14,7 @@ except ImportError:
 
 class BitbucketTools(Toolkit):
     def __init__(self,
+        cloud: Optional[bool] = False,
         server_url: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
@@ -25,22 +27,28 @@ class BitbucketTools(Toolkit):
         self.password = password or os.getenv("BITBUCKET_PASSWORD")
         self.token = token or os.getenv("BITBUCKET_TOKEN")
 
-        if not self.server_url:
+        # For cloud instance, server_url is not needed
+        if cloud and not (self.username and (self.password or self.token)):
+            raise ValueError("Bitbucket Cloud requires username and either password or token.")
+        # For server instance, we need server_url
+        elif not cloud and not self.server_url:
             raise ValueError("Bitbucket server URL not provided.")
 
-        # Initialize Bitbucket client
-        if self.token and self.username:
-            auth = (self.username, self.token)
-        elif self.username and self.password:
-            auth = (self.username, self.password)
-        else:
-            auth = None
+        # Use token as password if provided
+        auth_password = self.token or self.password
 
-        if auth:
-            self.bitbucket = Bitbucket(server=self.server_url, basic_auth=cast(tuple[str, str], auth))
+        if cloud:
+            self.bitbucket = Cloud(
+                username=self.username,
+                password=auth_password,
+                cloud=True,
+            )
         else:
-            self.bitbucket = Bitbucket(server=self.server_url)
-
+            self.bitbucket = Bitbucket(
+                url=self.server_url,
+                username=self.username,
+                password=auth_password,
+            )
         # Register methods
         self.register(self.get_repo_info)
         self.register(self.get_repo_branches)
