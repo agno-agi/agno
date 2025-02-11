@@ -34,6 +34,7 @@ class BitbucketTools(Toolkit):
         self.headers = {"Accept": "application/json", "Authorization": f"Basic {self._generate_access_token()}"}
 
         # Register methods
+        self.register(self.list_repos)
         self.register(self.get_repo_info)
         self.register(self.get_repo_branches)
         self.register(self.get_repo_commits)
@@ -56,6 +57,26 @@ class BitbucketTools(Toolkit):
         response = requests.request(method, url, headers=self.headers, json=data)
         response.raise_for_status()
         return response.json() if response.text else {}
+
+    def list_repos(self, workspace: str) -> str:
+        """
+        TODO: Add optional pagination query parameters. Also only selectively return fields from response to save tokens.
+
+        List repository info for a given workspace.
+        API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-repositories/#api-repositories-workspace-get
+
+        Args:
+            workspace (str): The slug of the workspace where the repository exists.
+
+        Returns:
+            str: A JSON string containing repository list.
+        """
+        try:
+            repo = self._make_request("GET", f"/repositories/{workspace}")
+            return json.dumps(repo, indent=2)
+        except Exception as e:
+            logger.error(f"Error retrieving repository list for workspace {workspace}: {str(e)}")
+            return json.dumps({"error": str(e)})
 
     def get_repo_info(self, workspace: str, repo_slug: str) -> str:
         """
