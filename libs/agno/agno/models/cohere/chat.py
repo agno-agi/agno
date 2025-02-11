@@ -297,6 +297,7 @@ class Cohere(Model):
             assistant_message.tool_calls.append(tool_use)
             tool_use = {}
 
+
         elif (
             response.type == "message-end"
             and response.delta is not None

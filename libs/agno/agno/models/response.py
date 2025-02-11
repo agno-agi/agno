@@ -7,7 +7,7 @@ from agno.media import AudioOutput
 
 
 class ModelResponseEvent(str, Enum):
-    """Events that can be sent by the Model.response() method"""
+    """Events that can be sent by the model provider"""
 
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
@@ -16,7 +16,7 @@ class ModelResponseEvent(str, Enum):
 
 @dataclass
 class ModelResponse:
-    """Response returned by Model.response()"""
+    """Response from the model provider"""
 
     role: Optional[str] = None
 
@@ -33,6 +33,7 @@ class ModelResponse:
     created_at: int = int(time())
 
     extra: Dict[str, Any] = field(default_factory=dict)
+
 
 
 class FileType(str, Enum):

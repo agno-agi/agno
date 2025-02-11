@@ -452,7 +452,7 @@ class OpenAIChat(Model):
         Parse the OpenAI response into a ModelResponse.
 
         Args:
-            response: Raw response from OpenAI
+            response: Response from invoke() method
 
         Returns:
             ModelResponse: Parsed response data
@@ -490,7 +490,7 @@ class OpenAIChat(Model):
             except Exception as e:
                 logger.warning(f"Error processing tool calls: {e}")
 
-        # -*- Add audio transcript to content if available
+        # Add audio transcript to content if available
         response_audio: Optional[ChatCompletionAudio] = response_message.audio
         if response_audio and response_audio.transcript and not model_response.content:
             model_response.content = response_audio.transcript
@@ -517,7 +517,7 @@ class OpenAIChat(Model):
 
     def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
         """
-        Parse the OpenAI streaming response into ModelProviderResponse objects.
+        Parse the OpenAI streaming response into a ModelResponse.
 
         Args:
             response_delta: Raw response chunk from OpenAI

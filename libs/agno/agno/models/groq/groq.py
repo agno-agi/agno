@@ -283,6 +283,7 @@ class Groq(Model):
         Returns:
             Any: An asynchronous iterator of chat completion chunks.
         """
+
         try:
             stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
@@ -336,6 +337,7 @@ class Groq(Model):
                 if _tool_call_type:
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
+
 
     def parse_provider_response(self, response: ChatCompletion) -> ModelResponse:
         """
