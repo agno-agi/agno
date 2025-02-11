@@ -11,8 +11,8 @@ agent.print_response(
     "Tell me about this image.",
     images=[
         Image(
-            url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg",
-            detail="High",
+            url="https://raw.githubusercontent.com/Azure/azure-sdk-for-python/main/sdk/ai/azure-ai-inference/samples/sample1.png",
+            detail="high",
         )
     ],
     stream=True,

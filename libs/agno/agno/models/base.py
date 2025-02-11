@@ -922,8 +922,12 @@ class Model(ABC):
         Show tool calls in the model response.
         """
         if len(function_calls_to_run) == 1:
+            if len(model_response.content) > 0 and model_response.content[-1] != "\n":
+                model_response.content += "\n\n"
             model_response.content += f" - Running: {function_calls_to_run[0].get_call_str()}\n\n"
         elif len(function_calls_to_run) > 1:
+            if len(model_response.content) > 0 and model_response.content[-1] != "\n":
+                model_response.content += "\n\n"
             model_response.content += "Running:"
             for _f in function_calls_to_run:
                 model_response.content += f"\n - {_f.get_call_str()}"
