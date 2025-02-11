@@ -18,7 +18,8 @@ class BitbucketTools(Toolkit):
         token: Optional[str] = None,
         api_version: Optional[str] = "2.0",
     ):
-        super().__init__(name="bitbucket_tools")
+        """Initializes Bitbucket Tools."""
+        super().__init__(name="bitbucket")
 
         self.server_url = server_url or os.getenv("BITBUCKET_SERVER_URL")
         self.username = username or os.getenv("BITBUCKET_USERNAME")
@@ -34,8 +35,8 @@ class BitbucketTools(Toolkit):
         self.headers = {"Accept": "application/json", "Authorization": f"Basic {self._generate_access_token()}"}
 
         # Register methods
-        self.register(self.list_repos)
-        self.register(self.get_repo_info)
+        self.register(self.list_repositories)
+        self.register(self.get_repository)
         self.register(self.get_repo_branches)
         self.register(self.get_repo_commits)
         self.register(self.get_repo_pull_requests)
@@ -58,7 +59,7 @@ class BitbucketTools(Toolkit):
         response.raise_for_status()
         return response.json() if response.text else {}
 
-    def list_repos(self, workspace: str) -> str:
+    def list_repositories(self, workspace: str) -> str:
         """
         TODO: Add optional pagination query parameters. Also only selectively return fields from response to save tokens.
 
@@ -78,7 +79,7 @@ class BitbucketTools(Toolkit):
             logger.error(f"Error retrieving repository list for workspace {workspace}: {str(e)}")
             return json.dumps({"error": str(e)})
 
-    def get_repo_info(self, workspace: str, repo_slug: str) -> str:
+    def get_repository(self, workspace: str, repo_slug: str) -> str:
         """
         Retrieves repository information.
         API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-repositories/#api-repositories-workspace-repo-slug-get
@@ -95,6 +96,40 @@ class BitbucketTools(Toolkit):
             return json.dumps(repo, indent=2)
         except Exception as e:
             logger.error(f"Error retrieving repository information for {repo_slug}: {str(e)}")
+            return json.dumps({"error": str(e)})
+
+    def create_repository(
+        self,
+        workspace: str,
+        repo_slug: str,
+        name: str,
+        project: Optional[str] = None,
+        is_private: bool = False,
+        description: Optional[str] = None,
+        language: Optional[str] = None,
+        has_issues: bool = False,
+        has_wiki: bool = False,
+    ) -> str:
+        """
+        Creates a new repository in Bitbucket for the given workspace.
+        API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-repositories/#api-repositories-workspace-repo-slug-post
+
+        Args:
+            workspace (str): The slug of the workspace where the repository exists.
+            repo_slug (str): The slug of the new repository.
+            name (str): The name of the new repository.
+            is_private (bool, optional): Whether the repository is private. Defaults to False.
+            description (str, optional): A short description of the repository.
+
+        Returns:
+            str: A JSON string containing repository information.
+        """
+        try:
+            payload = {}
+            repo = self._make_request("POST", f"/repositories/{workspace}/{repo_slug}")
+            return json.dumps(repo, indent=2)
+        except Exception as e:
+            logger.error(f"Error creating repository {repo_slug} for {workspace}: {str(e)}")
             return json.dumps({"error": str(e)})
 
     def get_repo_branches(self, repo_slug: str) -> str:
