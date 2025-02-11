@@ -8,12 +8,6 @@ import base64
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
-try:
-    from atlassian.bitbucket import Cloud
-    from atlassian import Bitbucket
-except ImportError:
-    raise ImportError("`atlassian-python-api` not installed. Please install using `pip install atlassian-python-api`")
-
 
 class BitbucketTools(Toolkit):
     def __init__(
@@ -34,8 +28,8 @@ class BitbucketTools(Toolkit):
         self.base_url = f"https://{self.server_url}/{api_version}"
 
         if not (self.username and self.auth_password):
-            logger.error("Username and password or token are required")
-            raise ValueError("Username and password or token are required")
+            logger.error("Username and assword or token are required")
+            raise ValueError("Username and assword or token are required")
 
         self.headers = {"Accept": "application/json", "Authorization": f"Basic {self._generate_access_token()}"}
 
@@ -58,7 +52,7 @@ class BitbucketTools(Toolkit):
 
     def _make_request(self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Make a request to Bitbucket API."""
-        url = f"{self.server_url}{endpoint}"
+        url = f"{self.base_url}{endpoint}"
         response = requests.request(method, url, headers=self.headers, json=data)
         response.raise_for_status()
         return response.json() if response.text else {}
@@ -66,19 +60,20 @@ class BitbucketTools(Toolkit):
     def get_repo_info(self, workspace: str, repo_slug: str) -> str:
         """
         Retrieves repository information.
+        API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-repositories/#api-repositories-workspace-repo-slug-get
 
-        :param repo_slug: The slug of the repository to retrieve information for.
-        :return: A JSON string containing repository information.
+        Args:
+            workspace (str): The slug of the workspace where the repository exists.
+            repo_slug (str): The slug of the repository to retrieve information for.
+
+        Returns:
+            str: A JSON string containing repository information.
         """
         try:
-            # repo = self.bitbucket.get_repo(project_key, repo_slug)
-            repo = self.bitbucket.repositories.get(workspace, repo_slug)
-            logger.debug(f"Repository information: {repo}")
-            # return json.dumps(repo, default=vars)
-            return repo
-            # repo = requests.request("GET", f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}")
+            repo = self._make_request("GET", f"/repositories/{workspace}/{repo_slug}")
+            return json.dumps(repo, indent=2)
         except Exception as e:
-            logger.error(f"Error retrieving repository information: {str(e)}")
+            logger.error(f"Error retrieving repository information for {repo_slug}: {str(e)}")
             return json.dumps({"error": str(e)})
 
     def get_repo_branches(self, repo_slug: str) -> str:
