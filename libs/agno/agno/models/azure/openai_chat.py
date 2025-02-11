@@ -53,7 +53,7 @@ class AzureOpenAI(OpenAILike):
 
         self.api_key = self.api_key or getenv("AZURE_OPENAI_API_KEY")
         self.azure_endpoint = self.azure_endpoint or getenv("AZURE_OPENAI_ENDPOINT")
-        self.azure_deployment = self.azure_deployment or getenv("AZURE_DEPLOYMENT")
+        self.azure_deployment = self.azure_deployment or getenv("AZURE_OPENAI_DEPLOYMENT")
         params_mapping = {
             "api_key": self.api_key,
             "api_version": self.api_version,

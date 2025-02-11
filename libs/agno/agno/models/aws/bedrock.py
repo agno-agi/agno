@@ -35,6 +35,9 @@ class AwsBedrock(Model, ABC):
         aws_access_key_id (Optional[str]): The AWS access key ID to use.
         aws_secret_access_key (Optional[str]): The AWS secret access key to use.
     """
+    id: str = "mistral.mistral-small-2402-v1:0"
+    name: str = "AwsBedrock"
+    provider: str = "AwsBedrock"
 
     aws_region: Optional[str] = None
     aws_access_key_id: Optional[str] = None
@@ -47,7 +50,7 @@ class AwsBedrock(Model, ABC):
     stop_sequences: Optional[List[str]] = None
     request_params: Optional[Dict[str, Any]] = None
 
-    client: Optional[Any] = None
+    client: Optional[AwsClient] = None
 
     def get_client(self) -> AwsClient:
         if self.client is not None:

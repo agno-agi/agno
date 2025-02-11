@@ -167,7 +167,6 @@ class Gemini(Model):
     generation_config: Optional[Any] = None
     safety_settings: Optional[Any] = None
     generative_model_kwargs: Optional[Dict[str, Any]] = None
-    request_params: Optional[Dict[str, Any]] = None
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -180,13 +179,14 @@ class Gemini(Model):
     seed: Optional[int] = None
     response_modalities: Optional[list[str]] = None
     speech_config: Optional[dict[str, Any]] = None
+    request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
     api_key: Optional[str] = None
-    client_params: Optional[Dict[str, Any]] = None
     vertexai: bool = False
     project_id: Optional[str] = None
     location: Optional[str] = None
+    client_params: Optional[Dict[str, Any]] = None
 
     # Gemini client
     client: Optional[GeminiClient] = None

@@ -38,16 +38,6 @@ class GeminiOpenAI(OpenAILike):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        if message.role == "user":
-            if message.images is not None:
-                message = add_images_to_message(message=message, images=message.images)
-
-            if message.audio is not None:
-                message = add_audio_to_message(message=message, audio=message.audio)
-
-            if message.videos is not None:
-                logger.warning("Video input is currently unsupported.")
-
         # OpenAI expects the tool_calls to be None if empty, not an empty list
         if message.tool_calls is not None and len(message.tool_calls) == 0:
             message.tool_calls = None

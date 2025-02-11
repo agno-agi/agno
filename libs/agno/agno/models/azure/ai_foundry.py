@@ -63,8 +63,8 @@ class AzureAIFoundry(Model):
     """
     A class for interacting with Azure AI Interface models.
 
-    - For Managed Compute, set the `api_key` to your Azure AI Foundry API key and the `azure_endpoint` to the endpoint URL in the format `https://<your-host-name>.<your-azure-region>.models.ai.azure.com`
-    - For Serverless API, set the `api_key` to your Azure AI Foundry API key and the `azure_endpoint` to the endpoint URL in the format `https://<your-host-name>.<your-azure-region>.models.ai.azure.com`
+    - For Managed Compute, set the `api_key` to your Azure AI Foundry API key and the `azure_endpoint` to the endpoint URL in the format `https://<your-host-name>.<your-azure-region>.models.ai.azure.com/models`
+    - For Serverless API, set the `api_key` to your Azure AI Foundry API key and the `azure_endpoint` to the endpoint URL in the format `https://<your-host-name>.<your-azure-region>.models.ai.azure.com/models`
     - For Github Models, set the `api_key` to the Github Personal Access Token.
     - For Azure OpenAI, set the `api_key` to your Azure AI Foundry API key, the `api_version` to `2024-06-01` and the `azure_endpoint` to the endpoint URL in the format `https://<your-resource-name>.openai.azure.com/openai/deployments/<your-deployment-name>`
 
