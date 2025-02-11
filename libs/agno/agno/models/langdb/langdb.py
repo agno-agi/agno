@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from os import getenv
 from typing import Optional
-
+from agno.utils.log import logger
 from agno.models.openai.like import OpenAILike
 
 
@@ -24,5 +24,7 @@ class LangDB(OpenAILike):
 
     api_key: Optional[str] = getenv("LANGDB_API_KEY")
     project_id: Optional[str] = getenv("LANGDB_PROJECT_ID")
+    if not project_id:
+        logger.warning("LANGDB_PROJECT_ID not set in the environment")
     base_url: str = f"https://api.us-east-1.langdb.ai/{project_id}/v1"
     default_headers: Optional[dict] = None
