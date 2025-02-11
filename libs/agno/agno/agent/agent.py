@@ -24,7 +24,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent.metrics import SessionMetrics
-from agno.exceptions import AgentRunException, StopAgentRun
+from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
@@ -104,7 +104,7 @@ class Agent:
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
     # If you provide a dict, it is not called by the model.
-    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
+    tools: Optional[List[Union[Toolkit, Callable, Function]]] = None
     # Show tool calls in Agent response.
     show_tool_calls: bool = False
     # Maximum number of tool calls allowed.
@@ -251,7 +251,7 @@ class Agent:
         references_format: Literal["json", "yaml"] = "json",
         storage: Optional[AgentStorage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
+        tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
         show_tool_calls: bool = False,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -568,11 +568,13 @@ class Agent:
                         if self.run_response.tools:
                             # Create a mapping of tool_call_id to index
                             tool_call_index_map = {
-                                tc["tool_call_id"]: i for i, tc in enumerate(self.run_response.tools)
+                                tc["tool_call_id"]: i
+                                for i, tc in enumerate(self.run_response.tools)
+                                if tc.get("tool_call_id") is not None
                             }
                             # Process tool calls
                             for tool_call_dict in tool_calls_list:
-                                tool_call_id = tool_call_dict["tool_call_id"]
+                                tool_call_id = tool_call_dict.get("tool_call_id")
                                 index = tool_call_index_map.get(tool_call_id)
                                 if index is not None:
                                     self.run_response.tools[index] = tool_call_dict
@@ -630,9 +632,7 @@ class Agent:
         # 9. Update Agent Memory
         # Add the system message to the memory
         if run_messages.system_message is not None:
-            self.memory.add_system_message(
-                run_messages.system_message, system_message_role=self.get_system_message_role()
-            )
+            self.memory.add_system_message(run_messages.system_message, system_message_role=self.system_message_role)
 
         # Build a list of messages that should be added to the AgentMemory
         messages_for_memory: List[Message] = (
@@ -867,7 +867,7 @@ class Agent:
                             **kwargs,
                         )
                         return next(resp)
-            except Exception as e:
+            except ModelProviderError as e:
                 logger.warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
                     raise e
@@ -1006,7 +1006,9 @@ class Agent:
                             }
                             # Process tool calls
                             for tool_call_dict in tool_calls_list:
-                                tool_call_id = tool_call_dict["tool_call_id"]
+                                tool_call_id = (
+                                    tool_call_dict["tool_call_id"] if "tool_call_id" in tool_call_dict else None
+                                )
                                 index = tool_call_index_map.get(tool_call_id)
                                 if index is not None:
                                     self.run_response.tools[index] = tool_call_dict
@@ -1062,9 +1064,7 @@ class Agent:
         # 9. Update Agent Memory
         # Add the system message to the memory
         if run_messages.system_message is not None:
-            self.memory.add_system_message(
-                run_messages.system_message, system_message_role=self.get_system_message_role()
-            )
+            self.memory.add_system_message(run_messages.system_message, system_message_role=self.system_message_role)
 
         # Build a list of messages that should be added to the AgentMemory
         messages_for_memory: List[Message] = (
@@ -1267,7 +1267,7 @@ class Agent:
                             **kwargs,
                         )
                         return await resp.__anext__()
-            except Exception as e:
+            except ModelProviderError as e:
                 logger.warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
                     raise e
@@ -1503,6 +1503,8 @@ class Agent:
         return session_data
 
     def get_agent_session(self) -> AgentSession:
+        from time import time
+
         """Get an AgentSession object, which can be saved to the database"""
         self.memory = cast(AgentMemory, self.memory)
         self.session_id = cast(str, self.session_id)
@@ -1515,6 +1517,7 @@ class Agent:
             agent_data=self.get_agent_data(),
             session_data=self.get_session_data(),
             extra_data=self.extra_data,
+            created_at=int(time()),
         )
 
     def load_agent_session(self, session: AgentSession):
@@ -1799,15 +1802,6 @@ class Agent:
         )
         return self._formatter.format(msg, **format_variables)  # type: ignore
 
-    def get_system_message_role(self) -> str:
-        """Return the role for the system message
-        The role may be updated by the model if override_system_role is True.
-        """
-        self.model = cast(Model, self.model)
-        if self.model.override_system_role and self.system_message_role == "system":
-            return self.model.system_message_role
-        return self.system_message_role
-
     def get_system_message(self) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -1838,7 +1832,7 @@ class Agent:
             if self.response_model is not None and not self.structured_outputs:
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
-            return Message(role=self.get_system_message_role(), content=sys_message_content)
+            return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
 
         # 2. If create_default_system_message is False, return None.
         if not self.create_default_system_message:
@@ -1980,7 +1974,7 @@ class Agent:
 
         # Return the system message
         return (
-            Message(role=self.get_system_message_role(), content=system_message_content.strip())
+            Message(role=self.system_message_role, content=system_message_content.strip())  # type: ignore
             if system_message_content
             else None
         )
@@ -2170,19 +2164,29 @@ class Agent:
 
         # 3. Add history to run_messages
         if self.add_history_to_messages:
+            from copy import deepcopy
+
             history: List[Message] = self.memory.get_messages_from_last_n_runs(
-                last_n=self.num_history_responses, skip_role=self.get_system_message_role()
+                last_n=self.num_history_responses, skip_role=self.system_message_role
             )
             if len(history) > 0:
-                logger.debug(f"Adding {len(history)} messages from history")
+                # Create a deep copy of the history messages to avoid modifying the original messages
+                history_copy = [deepcopy(msg) for msg in history]
+
+                # Tag each message as coming from history
+                for _msg in history_copy:
+                    _msg.from_history = True
+
+                logger.debug(f"Adding {len(history_copy)} messages from history")
+
                 if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData(history=history)
+                    self.run_response.extra_data = RunResponseExtraData(history=history_copy)
                 else:
                     if self.run_response.extra_data.history is None:
-                        self.run_response.extra_data.history = history
+                        self.run_response.extra_data.history = history_copy
                     else:
-                        self.run_response.extra_data.history.extend(history)
-                run_messages.messages += history
+                        self.run_response.extra_data.history.extend(history_copy)
+                run_messages.messages += history_copy
 
         # 4.Add user message to run_messages
         user_message: Optional[Message] = None
@@ -2547,14 +2551,15 @@ class Agent:
     def aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
         aggregated_metrics: Dict[str, Any] = defaultdict(list)
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
-        # Use a defaultdict(list) to collect all values for each assistant message
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None:
                 for k, v in asdict(m.metrics).items():
-                    if k in ("timer"):
+                    if k == "timer":
                         continue
                     if v is not None:
                         aggregated_metrics[k].append(v)
+        if aggregated_metrics is not None:
+            aggregated_metrics = dict(aggregated_metrics)
         return aggregated_metrics
 
     def calculate_session_metrics(self, messages: List[Message]) -> SessionMetrics:
@@ -2612,7 +2617,7 @@ class Agent:
         gen_session_name_prompt += "\n\nConversation Name: "
 
         system_message = Message(
-            role=self.get_system_message_role(),
+            role=self.system_message_role,
             content="Please provide a suitable name for this conversation in maximum 5 words. "
             "Remember, do not exceed 5 words.",
         )

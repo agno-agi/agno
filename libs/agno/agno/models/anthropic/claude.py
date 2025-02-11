@@ -1,12 +1,14 @@
 import json
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+from agno.exceptions import ModelProviderError
 from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.response import ProviderResponse
+from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
 try:
@@ -25,6 +27,13 @@ try:
     from anthropic.types import Message as AnthropicMessage
 except (ModuleNotFoundError, ImportError):
     raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
+
+ROLE_MAP = {
+    "system": "system",
+    "user": "user",
+    "assistant": "assistant",
+    "tool": "user",
+}
 
 
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
@@ -115,24 +124,24 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
                         content.append(image_content)
 
         # Handle tool calls from history
-        elif message.role == "assistant" and isinstance(message.content, str) and message.tool_calls:
-            if message.content:
-                content = [TextBlock(text=message.content, type="text")]
-            else:
-                content = []
-            for tool_call in message.tool_calls:
-                content.append(
-                    ToolUseBlock(
-                        id=tool_call["id"],
-                        input=json.loads(tool_call["function"]["arguments"])
-                        if "arguments" in tool_call["function"]
-                        else {},
-                        name=tool_call["function"]["name"],
-                        type="tool_use",
+        elif message.role == "assistant":
+            content = []
+            if isinstance(message.content, str) and message.content:
+                content.append(TextBlock(text=message.content, type="text"))
+            if message.tool_calls:
+                for tool_call in message.tool_calls:
+                    content.append(
+                        ToolUseBlock(
+                            id=tool_call["id"],
+                            input=json.loads(tool_call["function"]["arguments"])
+                            if "arguments" in tool_call["function"]
+                            else {},
+                            name=tool_call["function"]["name"],
+                            type="tool_use",
+                        )
                     )
-                )
 
-        chat_messages.append({"role": message.role, "content": content})  # type: ignore
+        chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
     return chat_messages, " ".join(system_messages)
 
 
@@ -308,16 +317,16 @@ class Claude(Model):
             )
         except APIConnectionError as e:
             logger.error(f"Connection error while calling Claude API: {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
         except RateLimitError as e:
             logger.warning(f"Rate limit exceeded: {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
         except APIStatusError as e:
             logger.error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Claude API: {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Any:
         """
@@ -344,16 +353,16 @@ class Claude(Model):
             )
         except APIConnectionError as e:
             logger.error(f"Connection error while calling Claude API: {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
         except RateLimitError as e:
             logger.warning(f"Rate limit exceeded: {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
         except APIStatusError as e:
             logger.error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Claude API: {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> AnthropicMessage:
         """
@@ -381,18 +390,18 @@ class Claude(Model):
             )
         except APIConnectionError as e:
             logger.error(f"Connection error while calling Claude API: {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
         except RateLimitError as e:
             logger.warning(f"Rate limit exceeded: {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
         except APIStatusError as e:
             logger.error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Claude API: {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> Any:
+    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """
         Stream an asynchronous response from the Anthropic API.
 
@@ -405,28 +414,25 @@ class Claude(Model):
         try:
             chat_messages, system_message = _format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message)
-
-            return (
-                await self.get_async_client()
-                .messages.stream(
-                    model=self.id,
-                    messages=chat_messages,  # type: ignore
-                    **request_kwargs,
-                )
-                .__aenter__()
-            )
+            async with self.get_async_client().messages.stream(
+                model=self.id,
+                messages=chat_messages,  # type: ignore
+                **request_kwargs,
+            ) as stream:
+                async for chunk in stream:
+                    yield chunk
         except APIConnectionError as e:
             logger.error(f"Connection error while calling Claude API: {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
         except RateLimitError as e:
             logger.warning(f"Rate limit exceeded: {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
         except APIStatusError as e:
             logger.error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Claude API: {str(e)}")
-            raise
+            raise ModelProviderError(e, self.name, self.id) from e
 
     # Overwrite the default from the base model
     def format_function_call_results(
@@ -459,31 +465,31 @@ class Claude(Model):
             return tool_call_prompt
         return None
 
-    def parse_model_provider_response(self, response: AnthropicMessage) -> ProviderResponse:
+    def parse_provider_response(self, response: AnthropicMessage) -> ModelResponse:
         """
-        Parse the Claude response into a ModelProviderResponse.
+        Parse the Claude response into a ModelResponse.
 
         Args:
             response: Raw response from Anthropic
 
         Returns:
-            ProviderResponse: Parsed response data
+            ModelResponse: Parsed response data
         """
-        provider_response = ProviderResponse()
+        model_response = ModelResponse()
 
         # Add role (Claude always uses 'assistant')
-        provider_response.role = response.role or "assistant"
+        model_response.role = response.role or "assistant"
 
         if response.content:
             first_block = response.content[0]
             if isinstance(first_block, TextBlock):
-                provider_response.content = first_block.text
+                model_response.content = first_block.text
             elif isinstance(first_block, ToolUseBlock):
                 tool_name = first_block.name
                 tool_input = first_block.input
 
                 if tool_input and isinstance(tool_input, dict):
-                    provider_response.content = tool_input.get("query", "")
+                    model_response.content = tool_input.get("query", "")
 
         # -*- Extract tool calls from the response
         if response.stop_reason == "tool_use":
@@ -496,8 +502,8 @@ class Claude(Model):
                     if tool_input:
                         function_def["arguments"] = json.dumps(tool_input)
 
-                    provider_response.extra.setdefault("tool_ids", []).append(block.id)
-                    provider_response.tool_calls.append(
+                    model_response.extra.setdefault("tool_ids", []).append(block.id)
+                    model_response.tool_calls.append(
                         {
                             "id": block.id,
                             "type": "function",
@@ -507,13 +513,13 @@ class Claude(Model):
 
         # Add usage metrics
         if response.usage is not None:
-            provider_response.response_usage = response.usage
+            model_response.response_usage = response.usage
 
-        return provider_response
+        return model_response
 
-    def parse_model_provider_response_stream(
+    def parse_provider_response_delta(
         self, response: Union[ContentBlockDeltaEvent, ContentBlockStopEvent, MessageDeltaEvent]
-    ) -> Iterator[ProviderResponse]:
+    ) -> ModelResponse:
         """
         Parse the Claude streaming response into ModelProviderResponse objects.
 
@@ -521,21 +527,19 @@ class Claude(Model):
             response: Raw response chunk from Anthropic
 
         Returns:
-            Iterator[ProviderResponse]: Iterator of parsed response data
+            ModelResponse: Iterator of parsed response data
         """
-        provider_response = ProviderResponse()
-        has_content = False
+        model_response = ModelResponse()
 
         if isinstance(response, ContentBlockDeltaEvent):
             # Handle text content
             if isinstance(response.delta, TextDelta):
-                provider_response.content = response.delta.text
-                has_content = True
+                model_response.content = response.delta.text
 
         elif isinstance(response, ContentBlockStopEvent):
             # Handle tool calls
-            if isinstance(response.content_block, ToolUseBlock):
-                tool_use = response.content_block
+            if isinstance(response.content_block, ToolUseBlock):  # type: ignore
+                tool_use = response.content_block  # type: ignore
                 tool_name = tool_use.name
                 tool_input = tool_use.input
 
@@ -543,22 +547,19 @@ class Claude(Model):
                 if tool_input:
                     function_def["arguments"] = json.dumps(tool_input)
 
-                provider_response.extra.setdefault("tool_ids", []).append(tool_use.id)
+                model_response.extra.setdefault("tool_ids", []).append(tool_use.id)
 
-                provider_response.tool_calls = [
+                model_response.tool_calls = [
                     {
                         "id": tool_use.id,
                         "type": "function",
                         "function": function_def,
                     }
                 ]
-                has_content = True
 
         # Handle message completion and usage metrics
         elif isinstance(response, MessageStopEvent):
             if response.message.usage is not None:
-                provider_response.response_usage = response.message.usage
-                has_content = True
+                model_response.response_usage = response.message.usage
 
-        if has_content:
-            yield provider_response
+        return model_response

@@ -42,6 +42,7 @@ class AudioArtifact(Media):
 class Video(BaseModel):
     filepath: Optional[Union[Path, str]] = None  # Absolute local location for video
     content: Optional[Any] = None  # Actual video bytes content
+    format: Optional[str] = None  # E.g. `mp4`, `mov`, `avi`, `mkv`, `webm`, `flv`, `mpeg`, `mpg`, `wmv`, `three_gp`
 
     @model_validator(mode="before")
     def validate_exclusive_video(cls, data: Any):
@@ -99,6 +100,7 @@ class Image(BaseModel):
     url: Optional[str] = None  # Remote location for image
     filepath: Optional[Union[Path, str]] = None  # Absolute local location for image
     content: Optional[Any] = None  # Actual image bytes content
+    format: Optional[str] = None  # E.g. `png`, `jpeg`, `webp`, `gif`
     detail: Optional[str] = (
         None  # low, medium, high or auto (per OpenAI spec https://platform.openai.com/docs/guides/vision?lang=node#low-or-high-fidelity-image-understanding)
     )

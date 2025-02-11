@@ -4,9 +4,10 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 
 import httpx
 
+from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.response import ProviderResponse
+from agno.models.response import ModelResponse
 from agno.utils.log import logger
 from agno.utils.openai import add_images_to_message
 
@@ -221,11 +222,15 @@ class Groq(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
-        return self.get_client().chat.completions.create(
-            model=self.id,
-            messages=[format_message(m) for m in messages],  # type: ignore
-            **self.request_kwargs,
-        )
+        try:
+            return self.get_client().chat.completions.create(
+                model=self.id,
+                messages=[format_message(m) for m in messages],  # type: ignore
+                **self.request_kwargs,
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error calling Groq API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> ChatCompletion:
         """
@@ -237,11 +242,15 @@ class Groq(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
-        return await self.get_async_client().chat.completions.create(
-            model=self.id,
-            messages=[format_message(m) for m in messages],  # type: ignore
-            **self.request_kwargs,
-        )
+        try:
+            return await self.get_async_client().chat.completions.create(
+                model=self.id,
+                messages=[format_message(m) for m in messages],  # type: ignore
+                **self.request_kwargs,
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error calling Groq API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
         """
@@ -253,12 +262,16 @@ class Groq(Model):
         Returns:
             Iterator[ChatCompletionChunk]: An iterator of chat completion chunks.
         """
-        return self.get_client().chat.completions.create(
-            model=self.id,
-            messages=[format_message(m) for m in messages],  # type: ignore
-            stream=True,
-            **self.request_kwargs,
-        )
+        try:
+            return self.get_client().chat.completions.create(
+                model=self.id,
+                messages=[format_message(m) for m in messages],  # type: ignore
+                stream=True,
+                **self.request_kwargs,
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error calling Groq API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> Any:
         """
@@ -270,12 +283,19 @@ class Groq(Model):
         Returns:
             Any: An asynchronous iterator of chat completion chunks.
         """
-        return await self.get_async_client().chat.completions.create(
-            model=self.id,
-            messages=[format_message(m) for m in messages],  # type: ignore
-            stream=True,
-            **self.request_kwargs,
-        )
+
+        try:
+            stream = await self.get_async_client().chat.completions.create(
+                model=self.id,
+                messages=[format_message(m) for m in messages],  # type: ignore
+                stream=True,
+                **self.request_kwargs,
+            )
+            async for chunk in stream:  # type: ignore
+                yield chunk
+        except Exception as e:
+            logger.error(f"Unexpected error calling Groq API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     # Override base method
     @staticmethod
@@ -318,71 +338,68 @@ class Groq(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_model_provider_response(self, response: ChatCompletion) -> ProviderResponse:
+
+    def parse_provider_response(self, response: ChatCompletion) -> ModelResponse:
         """
-        Parse the Groq response into a ModelProviderResponse.
+        Parse the Groq response into a ModelResponse.
 
         Args:
             response: Raw response from Groq
 
         Returns:
-            ProviderResponse: Parsed response data
+            ModelResponse: Parsed response data
         """
-        provider_response = ProviderResponse()
+        model_response = ModelResponse()
 
         # Get response message
         response_message = response.choices[0].message
 
         # Add role
         if response_message.role is not None:
-            provider_response.role = response_message.role
+            model_response.role = response_message.role
 
         # Add content
         if response_message.content is not None:
-            provider_response.content = response_message.content
+            model_response.content = response_message.content
 
         # Add tool calls
         if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
             try:
-                provider_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
+                model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
             except Exception as e:
                 logger.warning(f"Error processing tool calls: {e}")
 
         # Add usage metrics if present
         if response.usage is not None:
-            provider_response.response_usage = response.usage
+            model_response.response_usage = response.usage
 
-        return provider_response
+        return model_response
 
-    def parse_model_provider_response_stream(self, response: ChatCompletionChunk) -> Iterator[ProviderResponse]:
+    def parse_provider_response_delta(self, response: ChatCompletionChunk) -> ModelResponse:
         """
-        Parse the Groq streaming response into ModelProviderResponse objects.
+        Parse the Groq streaming response into ModelResponse objects.
 
         Args:
             response: Raw response chunk from Groq
 
         Returns:
-            Iterator[ProviderResponse]: Iterator of parsed response data
+            ModelResponse: Iterator of parsed response data
         """
+        model_response = ModelResponse()
+
         if len(response.choices) > 0:
-            provider_response = ProviderResponse()
             delta: ChoiceDelta = response.choices[0].delta
-            has_content = False
 
             # Add content
             if delta.content is not None:
-                provider_response.content = delta.content
-                has_content = True
+                model_response.content = delta.content
 
             # Add tool calls
             if delta.tool_calls is not None:
-                provider_response.tool_calls = delta.tool_calls
-                has_content = True
+                model_response.tool_calls = delta.tool_calls  # type: ignore
 
-            # Add usage metrics if present
-            if response.usage is not None:
-                provider_response.response_usage = response.usage
-                has_content = True
+        # Add usage metrics if present
+        if response.x_groq is not None and response.x_groq.usage is not None:
+            model_response.response_usage = response.x_groq.usage
 
-            if has_content:
-                yield provider_response
+        return model_response

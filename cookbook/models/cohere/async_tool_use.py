@@ -1,10 +1,10 @@
 """
-Async example using Claude with tool calls.
+Async example using Cohere with tool calls.
 """
 
 import asyncio
 
-from agno.agent.agent import Agent
+from agno.agent import Agent
 from agno.models.cohere import Cohere
 from agno.tools.duckduckgo import DuckDuckGoTools
 

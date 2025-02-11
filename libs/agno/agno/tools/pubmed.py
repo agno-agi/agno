@@ -5,6 +5,7 @@ from xml.etree import ElementTree
 import httpx
 
 from agno.tools import Toolkit
+from agno.utils.log import logger
 
 
 class PubmedTools(Toolkit):
@@ -64,6 +65,7 @@ class PubmedTools(Toolkit):
             str: A JSON string containing the search results.
         """
         try:
+            logger.debug(f"Searching PubMed for: {query}")
             ids = self.fetch_pubmed_ids(query, self.max_results or max_results, self.email)
             details_root = self.fetch_details(ids)
             articles = self.parse_details(details_root)

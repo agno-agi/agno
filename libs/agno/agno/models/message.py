@@ -115,7 +115,7 @@ class Message(BaseModel):
     """Message sent to the Model"""
 
     # The role of the message author.
-    # One of system, developer, user, assistant, or tool.
+    # One of system, user, assistant, or tool.
     role: str
     # The contents of the message.
     content: Optional[Union[List[Any], str]] = None
@@ -148,6 +148,8 @@ class Message(BaseModel):
     stop_after_tool_call: bool = False
     # When True, the message will be added to the agent's memory.
     add_to_agent_memory: bool = True
+    # This flag is enabled when a message is fetched from the agent's memory.
+    from_history: bool = False
     # Metrics for the message.
     metrics: MessageMetrics = Field(default_factory=MessageMetrics)
     # The references added to the message for RAG
@@ -195,7 +197,7 @@ class Message(BaseModel):
     def serialize_model(self):
         return self.to_dict()
 
-    def log(self, metrics: bool = False, level: Optional[str] = None):
+    def log(self, metrics: bool = True, level: Optional[str] = None):
         """Log the message to the console
 
         Args:
@@ -230,17 +232,21 @@ class Message(BaseModel):
         if self.audio:
             _logger(f"Audio Files added: {len(self.audio)}")
 
-        if metrics and self.metrics is not None:
+        if metrics and self.metrics is not None and self.metrics != MessageMetrics():
             _logger("**************** METRICS ****************")
-            _logger(f"* Input tokens:                {self.metrics.input_tokens}")
-            _logger(f"* Output tokens:               {self.metrics.output_tokens}")
-            _logger(f"* Total tokens:                {self.metrics.total_tokens}")
+            if self.metrics.input_tokens:
+                _logger(f"* Input tokens:                {self.metrics.input_tokens}")
+            if self.metrics.output_tokens:
+                _logger(f"* Output tokens:               {self.metrics.output_tokens}")
+            if self.metrics.total_tokens:
+                _logger(f"* Total tokens:                {self.metrics.total_tokens}")
             if self.metrics.prompt_tokens_details:
                 _logger(f"* Prompt tokens details:       {self.metrics.prompt_tokens_details}")
             if self.metrics.completion_tokens_details:
                 _logger(f"* Completion tokens details:   {self.metrics.completion_tokens_details}")
             if self.metrics.time is not None:
                 _logger(f"* Time:                        {self.metrics.time:.4f}s")
+            if self.metrics.output_tokens and self.metrics.time:
                 _logger(f"* Tokens per second:           {self.metrics.output_tokens / self.metrics.time:.4f} tokens/s")
             if self.metrics.time_to_first_token is not None:
                 _logger(f"* Time to first token:         {self.metrics.time_to_first_token:.4f}s")

@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Optional
+from typing import Any, Dict, Optional
 
+from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
 
 
@@ -19,8 +20,31 @@ class GeminiOpenAI(OpenAILike):
     """
 
     id: str = "gemini-1.5-flash"
-    name: str = "Gemini"
+    name: str = "GeminiOpenAI"
     provider: str = "Google"
 
     api_key: Optional[str] = getenv("GOOGLE_API_KEY", None)
     base_url: Optional[str] = "https://generativelanguage.googleapis.com/v1beta/"
+
+    def _format_message(self, message: Message) -> Dict[str, Any]:
+        """
+        Format a message into the format expected by OpenAI.
+
+        Args:
+            message (Message): The message to format.
+
+        Returns:
+            Dict[str, Any]: The formatted message.
+        """
+        # OpenAI expects the tool_calls to be None if empty, not an empty list
+        if message.tool_calls is not None and len(message.tool_calls) == 0:
+            message.tool_calls = None
+
+        message_dict = message.to_dict()
+        message_dict["role"] = self.role_map[message_dict["role"]]
+
+        # Gemini expects the content to be removed if it is None
+        if message_dict["content"] is None:
+            message_dict.pop("content")
+
+        return message_dict

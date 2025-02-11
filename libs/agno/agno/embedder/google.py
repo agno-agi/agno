@@ -58,7 +58,7 @@ class GeminiEmbedder(Embedder):
     def get_embedding(self, text: str) -> List[float]:
         response = self._response(text=text)
         try:
-            return response.get("embedding", [])
+            return response.get("embedding", [])  # type: ignore
         except Exception as e:
             logger.warning(e)
             return []
@@ -67,7 +67,7 @@ class GeminiEmbedder(Embedder):
         response = self._response(text=text)
         usage = None
         try:
-            return response.get("embedding", []), usage
+            return response.get("embedding", []), usage  # type: ignore
         except Exception as e:
             logger.warning(e)
             return [], usage

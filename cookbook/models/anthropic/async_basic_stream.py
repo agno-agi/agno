@@ -4,7 +4,7 @@ Basic streaming async example using Claude.
 
 import asyncio
 
-from agno.agent.agent import Agent
+from agno.agent import Agent
 from agno.models.anthropic import Claude
 
 agent = Agent(

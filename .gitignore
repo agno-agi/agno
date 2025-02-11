@@ -15,6 +15,7 @@
 # Machine specific
 .idea
 .vscode
+*.code-workspace
 
 # Ignore .env files
 .env
