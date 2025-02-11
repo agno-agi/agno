@@ -582,7 +582,6 @@ class Gemini(Model):
         """
         combined_content: List = []
         combined_function_result: List = []
-        logger.info(f"Function call results: {function_call_results}")
         if len(function_call_results) > 0:
             for result in function_call_results:
                 combined_content.append(result.content)
