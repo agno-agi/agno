@@ -1,7 +1,7 @@
 """Unit tests for ExaTools class."""
 
 import json
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 from exa_py import Exa
@@ -280,4 +280,4 @@ def test_exa_answer_with_model_selection(exa_tools, mock_exa_client):
     # Test with invalid model
     exa_tools.model = "invalid-model"
     with pytest.raises(ValueError, match="Model must be either 'exa' or 'exa-pro'"):
-        exa_tools.exa_answer("test question") 
+        exa_tools.exa_answer("test question")
