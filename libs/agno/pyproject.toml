@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.0.6"
+version = "1.0.8"
 description = "Agno: a lightweight framework for building multi-modal Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -256,6 +256,7 @@ module = [
   "textract.*",
   "timeout_decorator.*",
   "torch.*",
+  "todoist_api_python.*",
   "tweepy.*",
   "twilio.*",
   "tzlocal.*",

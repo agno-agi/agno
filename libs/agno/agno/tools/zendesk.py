@@ -60,6 +60,8 @@ class ZendeskTools(Toolkit):
         if not self.username or not self.password or not self.company_name:
             return "Username, password, or company name not provided."
 
+        logger.debug(f"Searching Zendesk for: {search_string}")
+
         auth = (self.username, self.password)
         url = f"https://{self.company_name}.zendesk.com/api/v2/help_center/articles/search.json?query={search_string}"
         try:
