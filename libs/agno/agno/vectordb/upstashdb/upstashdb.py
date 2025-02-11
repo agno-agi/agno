@@ -1,8 +1,8 @@
-from typing import Optional, Dict, List, Any
+from typing import Any, Dict, List, Optional
 
 try:
     from upstash_vector import Index, Vector
-    from upstash_vector.types import InfoResult, QueryMode, WeightingStrategy, FusionAlgorithm
+    from upstash_vector.types import FusionAlgorithm, InfoResult, QueryMode, WeightingStrategy
 except ImportError:
     raise ImportError(
         "The `upstash-vector` package is not installed, please install using `pip install upstash-vector`"
@@ -15,6 +15,7 @@ from agno.utils.log import logger
 from agno.vectordb.base import VectorDb
 
 DEFAULT_NAMESPACE = ""
+
 
 class UpstashVectorDb(VectorDb):
     """
@@ -32,7 +33,7 @@ class UpstashVectorDb(VectorDb):
         reranker (Optional[Reranker], optional): The reranker to use. Defaults to None.
         **kwargs: Additional keyword arguments.
     """
-    
+
     def __init__(
         self,
         url: str,
@@ -92,10 +93,10 @@ class UpstashVectorDb(VectorDb):
 
     def exists(self) -> bool:
         """Check if the index exists and is accessible.
-        
+
         Returns:
             bool: True if the index exists and is accessible, False otherwise.
-        
+
         Raises:
             Exception: If there's an error communicating with Upstash.
         """
@@ -108,12 +109,16 @@ class UpstashVectorDb(VectorDb):
 
     def create(self) -> None:
         """You can create indexes via Upstash Console."""
-        logger.warning("Indexes can only be created through the Upstash Console or the developer API. Please create an index before using this vector database.")
+        logger.warning(
+            "Indexes can only be created through the Upstash Console or the developer API. Please create an index before using this vector database."
+        )
         pass
 
     def drop(self) -> None:
         """You can drop indexes via Upstash Console."""
-        logger.warning("Indexes can only be dropped through the Upstash Console. Make sure you have an existing index before performing operations.")
+        logger.warning(
+            "Indexes can only be dropped through the Upstash Console. Make sure you have an existing index before performing operations."
+        )
         pass
 
     def drop_namespace(self, namespace: Optional[str] = None) -> None:
@@ -155,8 +160,10 @@ class UpstashVectorDb(VectorDb):
         Returns:
             bool: True if the index exists, False otherwise. (Name is not used.)
         """
-        logger.warning(f"You can check if an index with name {name} exists in Upstash Console."
-        "The token and url parameters you provided are used to connect to a specific index.")
+        logger.warning(
+            f"You can check if an index with name {name} exists in Upstash Console."
+            "The token and url parameters you provided are used to connect to a specific index."
+        )
         return self.exists()
 
     def namespace_exists(self, namespace: str) -> bool:
@@ -173,7 +180,7 @@ class UpstashVectorDb(VectorDb):
         self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, namespace: Optional[str] = None
     ) -> None:
         """Upsert documents into the index.
-        
+
         Args:
             documents (List[Document]): The documents to upsert.
             filters (Optional[Dict[str, Any]], optional): The filters for the upsert. Defaults to None.
@@ -181,36 +188,29 @@ class UpstashVectorDb(VectorDb):
         """
         _namespace = self.namespace if namespace is None else namespace
         vectors = []
-        
+
         for document in documents:
             if document.id is None:
                 logger.error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
                 continue
-                
+
             document.meta_data["text"] = document.content
-            
+
             if not self.use_upstash_embeddings:
                 if self.embedder is None:
                     logger.error("Embedder is None but use_upstash_embeddings is False")
                     continue
-                    
+
                 document.embed(embedder=self.embedder)
                 if document.embedding is None:
                     logger.error(f"Failed to generate embedding for document: {document.id}")
                     continue
-                    
+
                 vector = Vector(
-                    id=document.id,
-                    vector=document.embedding,
-                    metadata=document.meta_data,
-                    data=document.content
+                    id=document.id, vector=document.embedding, metadata=document.meta_data, data=document.content
                 )
             else:
-                vector = Vector(
-                    id=document.id,
-                    data=document.content,
-                    metadata=document.meta_data
-                )
+                vector = Vector(id=document.id, data=document.content, metadata=document.meta_data)
             vectors.append(vector)
 
         if not vectors:
