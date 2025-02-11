@@ -135,7 +135,7 @@ class AzureAIFoundry(Model):
                 base_params["response_format"] = (  # type: ignore
                     JsonSchemaFormat(
                         name=self.response_format.__name__,
-                        schema=self.response_format.model_json_schema(),
+                        schema=self.response_format.model_json_schema(),  # type: ignore
                         description=self.response_format.__doc__,
                         strict=True,
                     ),

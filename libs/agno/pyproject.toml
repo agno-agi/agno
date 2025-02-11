@@ -183,7 +183,7 @@ module = [
   "arxiv.*",
   "atlassian.*",
   "azure.ai.inference.*",
-  "azure.core",
+  "azure.core.*",
   "boto3.*",
   "botocore.*",
   "bs4.*",
