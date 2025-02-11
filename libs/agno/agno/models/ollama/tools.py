@@ -222,12 +222,12 @@ class OllamaTools(Ollama):
                 ):
                     yield model_response
 
-    def parse_provider_response_delta(self, response_delta, tool_call_data: ToolCall) -> Iterator[ModelResponse]:
+    def parse_provider_response_delta(self, response_delta, tool_call_data: ToolCall) -> ModelResponse:
         """
         Parse the provider response delta.
 
         Args:
-            response_delta (ChatResponse): The response from the provider.
+            response_delta: The response from the provider.
 
         Returns:
             Iterator[ModelResponse]: An iterator of the model response.

@@ -1,11 +1,9 @@
-from asyncio.log import logger
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Optional
 
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
-from agno.utils.openai import add_audio_to_message, add_images_to_message
 
 
 @dataclass

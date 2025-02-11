@@ -54,8 +54,8 @@ class Claude(AnthropicClaude):
         _dict["stop_sequences"] = self.stop_sequences
         return _dict
 
-    client: Optional[AnthropicBedrock] = None
-    async_client: Optional[AsyncAnthropicBedrock] = None
+    client: Optional[AnthropicBedrock] = None  # type: ignore
+    async_client: Optional[AsyncAnthropicBedrock] = None  # type: ignore
 
     def get_client(self):
         if self.client is not None:
@@ -74,7 +74,7 @@ class Claude(AnthropicClaude):
             client_params.update(self.client_params)
 
         self.client = AnthropicBedrock(
-            **client_params,
+            **client_params,  # type: ignore
         )
         return self.client
 
@@ -91,7 +91,7 @@ class Claude(AnthropicClaude):
             client_params.update(self.client_params)
 
         self.async_client = AsyncAnthropicBedrock(
-            **client_params,
+            **client_params,  # type: ignore
         )
         return self.async_client
 

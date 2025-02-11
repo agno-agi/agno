@@ -1,4 +1,3 @@
-import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
@@ -127,13 +126,13 @@ class AzureAIFoundry(Model):
                         )
                     )
                 )
-            base_params["tools"] = tools
+            base_params["tools"] = tools  # type: ignore
             if self.tool_choice:
                 base_params["tool_choice"] = self.tool_choice
 
         if self.response_format is not None and self.structured_outputs:
             if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
-                base_params["response_format"] = (
+                base_params["response_format"] = (  # type: ignore
                     JsonSchemaFormat(
                         name=self.response_format.__name__,
                         schema=self.response_format.model_json_schema(),
@@ -283,7 +282,7 @@ class AzureAIFoundry(Model):
                     stream=True,
                     **self._get_request_kwargs(),
                 )
-                async for chunk in stream:
+                async for chunk in stream:  # type: ignore
                     yield chunk
 
         except HttpResponseError as e:
@@ -400,7 +399,7 @@ class AzureAIFoundry(Model):
 
                 # Add tool calls if present
                 if delta.tool_calls and len(delta.tool_calls) > 0:
-                    model_response.tool_calls = delta.tool_calls
+                    model_response.tool_calls = delta.tool_calls  # type: ignore
             # Add usage metrics if present
             if response_delta.usage is not None:
                 model_response.response_usage = {

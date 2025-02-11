@@ -3,7 +3,7 @@ import collections.abc
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import GeneratorType
-from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union
 
 from agno.exceptions import AgentRunException
 from agno.media import AudioOutput
@@ -108,7 +108,7 @@ class Model(ABC):
         pass
 
     @abstractmethod
-    async def ainvoke_stream(self, *args, **kwargs) -> Any:
+    async def ainvoke_stream(self, *args, **kwargs) -> AsyncGenerator[Any, None]:
         pass
 
     @abstractmethod
@@ -505,7 +505,7 @@ class Model(ABC):
         """
         Process a streaming response from the model.
         """
-        async for response_delta in self.ainvoke_stream(messages=messages):
+        async for response_delta in self.ainvoke_stream(messages=messages):  # type: ignore
             model_response_delta = self.parse_provider_response_delta(response_delta)
             if model_response_delta:
                 for model_response in self._populate_stream_data_and_assistant_message(
@@ -596,7 +596,6 @@ class Model(ABC):
         """Update the stream data and assistant message with the model response."""
 
         # Update metrics
-        assistant_message.metrics.output_tokens += 1
         if not assistant_message.metrics.time_to_first_token:
             assistant_message.metrics.set_time_to_first_token()
 
@@ -922,12 +921,16 @@ class Model(ABC):
         Show tool calls in the model response.
         """
         if len(function_calls_to_run) == 1:
-            if len(model_response.content) > 0 and model_response.content[-1] != "\n":
+            if model_response.content and len(model_response.content) > 0 and model_response.content[-1] != "\n":
                 model_response.content += "\n\n"
+            else:
+                model_response.content = ""
             model_response.content += f" - Running: {function_calls_to_run[0].get_call_str()}\n\n"
         elif len(function_calls_to_run) > 1:
-            if len(model_response.content) > 0 and model_response.content[-1] != "\n":
+            if model_response.content and len(model_response.content) > 0 and model_response.content[-1] != "\n":
                 model_response.content += "\n\n"
+            else:
+                model_response.content = ""
             model_response.content += "Running:"
             for _f in function_calls_to_run:
                 model_response.content += f"\n - {_f.get_call_str()}"

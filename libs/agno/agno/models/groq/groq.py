@@ -290,7 +290,7 @@ class Groq(Model):
                 stream=True,
                 **self.request_kwargs,
             )
-            async for chunk in stream:
+            async for chunk in stream:  # type: ignore
                 yield chunk
         except Exception as e:
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
@@ -394,7 +394,7 @@ class Groq(Model):
 
             # Add tool calls
             if delta.tool_calls is not None:
-                model_response.tool_calls = delta.tool_calls
+                model_response.tool_calls = delta.tool_calls  # type: ignore
 
         # Add usage metrics if present
         if response.x_groq is not None and response.x_groq.usage is not None:

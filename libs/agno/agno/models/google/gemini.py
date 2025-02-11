@@ -247,14 +247,14 @@ class Gemini(Model):
             "speech_config": self.speech_config,
         }
         if system_message is not None:
-            config["system_instruction"] = system_message
+            config["system_instruction"] = system_message  # type: ignore
 
         if (
             self.response_format is not None
             and isinstance(self.response_format, type)
             and issubclass(self.response_format, BaseModel)
         ):
-            config["response_mime_type"] = "application/json"
+            config["response_mime_type"] = "application/json"  # type: ignore
             config["response_schema"] = self.response_format
 
         if self._tools:

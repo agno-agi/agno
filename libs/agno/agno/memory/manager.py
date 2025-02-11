@@ -58,7 +58,7 @@ class MemoryManager(BaseModel):
             try:
                 function_name = tool.__name__
                 if function_name not in self._functions_for_model:
-                    func = Function.from_callable(tool)
+                    func = Function.from_callable(tool)  # type: ignore
                     self._functions_for_model[func.name] = func
                     self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                     logger.debug(f"Included function {func.name}")

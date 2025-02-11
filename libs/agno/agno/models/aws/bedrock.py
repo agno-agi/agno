@@ -1,5 +1,4 @@
 import json
-from abc import ABC
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Tuple
@@ -19,7 +18,14 @@ except ImportError:
 
 
 @dataclass
-class AwsBedrock(Model, ABC):
+class AwsBedrockResponseUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass
+class AwsBedrock(Model):
     """
     AWS Bedrock model.
 
@@ -35,6 +41,7 @@ class AwsBedrock(Model, ABC):
         aws_access_key_id (Optional[str]): The AWS access key ID to use.
         aws_secret_access_key (Optional[str]): The AWS secret access key to use.
     """
+
     id: str = "mistral.mistral-small-2402-v1:0"
     name: str = "AwsBedrock"
     provider: str = "AwsBedrock"
@@ -62,7 +69,9 @@ class AwsBedrock(Model, ABC):
 
         if not self.aws_access_key_id or not self.aws_secret_access_key:
             raise ModelProviderError(
-                "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables."
+                "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.",
+                model_name=self.name,
+                model_id=self.id,
             )
 
         self.client = AwsClient(
@@ -75,34 +84,35 @@ class AwsBedrock(Model, ABC):
 
     def _format_tools_for_request(self) -> List[Dict[str, Any]]:
         tools = []
-        for f_name, function in self._functions.items():
-            properties = {}
-            required = []
+        if self._functions is not None:
+            for f_name, function in self._functions.items():
+                properties = {}
+                required = []
 
-            for param_name, param_info in function.parameters.get("properties", {}).items():
-                param_type = param_info.get("type")
-                if isinstance(param_type, list):
-                    param_type = [t for t in param_type if t != "null"][0]
+                for param_name, param_info in function.parameters.get("properties", {}).items():
+                    param_type = param_info.get("type")
+                    if isinstance(param_type, list):
+                        param_type = [t for t in param_type if t != "null"][0]
 
-                properties[param_name] = {
-                    "type": param_type or "string",
-                    "description": param_info.get("description") or "",
-                }
-
-                if "null" not in (
-                    param_info.get("type") if isinstance(param_info.get("type"), list) else [param_info.get("type")]
-                ):
-                    required.append(param_name)
-
-            tools.append(
-                {
-                    "toolSpec": {
-                        "name": f_name,
-                        "description": function.description or "",
-                        "inputSchema": {"json": {"type": "object", "properties": properties, "required": required}},
+                    properties[param_name] = {
+                        "type": param_type or "string",
+                        "description": param_info.get("description") or "",
                     }
-                }
-            )
+
+                    if "null" not in (
+                        param_info.get("type") if isinstance(param_info.get("type"), list) else [param_info.get("type")]
+                    ):
+                        required.append(param_name)
+
+                tools.append(
+                    {
+                        "toolSpec": {
+                            "name": f_name,
+                            "description": function.description or "",
+                            "inputSchema": {"json": {"type": "object", "properties": properties, "required": required}},
+                        }
+                    }
+                )
 
         return tools
 
@@ -118,13 +128,13 @@ class AwsBedrock(Model, ABC):
         return request_kwargs
 
     def _format_messages(self, messages: List[Message]) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
-        formatted_messages = []
+        formatted_messages: List[Dict[str, Any]] = []
         system_message = None
         for message in messages:
             if message.role == "system":
                 system_message = [{"text": message.content}]
             else:
-                formatted_message = {"role": message.role}
+                formatted_message: Dict[str, Any] = {"role": message.role}
                 formatted_message["content"] = []
                 # Handle tool results
                 if isinstance(message.content, list):
@@ -225,11 +235,7 @@ class AwsBedrock(Model, ABC):
             }
             body = {k: v for k, v in body.items() if v is not None}
 
-            return self.get_client().converse(
-                modelId=self.id,
-                messages=formatted_messages,
-                **body
-            )
+            return self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
         except ClientError as e:
             logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
@@ -262,11 +268,7 @@ class AwsBedrock(Model, ABC):
             }
             body = {k: v for k, v in body.items() if v is not None}
 
-            return self.get_client().converse_stream(
-                modelId=self.id,
-                messages=formatted_messages,
-                **body
-            )["stream"]
+            return self.get_client().converse_stream(modelId=self.id, messages=formatted_messages, **body)["stream"]
         except ClientError as e:
             logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
@@ -335,11 +337,11 @@ class AwsBedrock(Model, ABC):
             model_response.content = content
 
         if "usage" in response:
-            model_response.usage = {
-                "input_tokens": response["usage"]["inputTokens"],
-                "output_tokens": response["usage"]["outputTokens"],
-                "total_tokens": response["usage"]["totalTokens"],
-            }
+            model_response.response_usage = AwsBedrockResponseUsage(
+                input_tokens=response["usage"]["inputTokens"],
+                output_tokens=response["usage"]["outputTokens"],
+                total_tokens=response["usage"]["totalTokens"],
+            )
 
         return model_response
 
@@ -401,11 +403,11 @@ class AwsBedrock(Model, ABC):
             elif "messageStop" in response_delta:
                 if "usage" in response_delta["messageStop"]:
                     usage = response_delta["messageStop"]["usage"]
-                    model_response.usage = {
-                        "input_tokens": usage.get("inputTokens", 0),
-                        "output_tokens": usage.get("outputTokens", 0),
-                        "total_tokens": usage.get("totalTokens", 0),
-                    }
+                    model_response.response_usage = AwsBedrockResponseUsage(
+                        input_tokens=usage.get("inputTokens", 0),
+                        output_tokens=usage.get("outputTokens", 0),
+                        total_tokens=usage.get("totalTokens", 0),
+                    )
 
             # Update metrics
             assistant_message.metrics.completion_tokens += 1
@@ -433,7 +435,7 @@ class AwsBedrock(Model, ABC):
         if tool_ids:
             stream_data.extra["tool_ids"] = tool_ids
 
-    def parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:
+    def parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:  # type: ignore
         pass
 
     async def ainvoke(self, *args, **kwargs) -> Any:

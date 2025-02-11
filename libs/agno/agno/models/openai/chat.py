@@ -535,7 +535,7 @@ class OpenAIChat(Model):
 
             # Add tool calls
             if delta.tool_calls is not None:
-                model_response.tool_calls = delta.tool_calls
+                model_response.tool_calls = delta.tool_calls  # type: ignore
 
             # Add audio if present
             if hasattr(delta, "audio") and delta.audio is not None:

@@ -353,7 +353,7 @@ class MistralChat(Model):
             response_message: AssistantMessage = response.choices[0].message
 
             # -*- Set content
-            model_response.content = response_message.content
+            model_response.content = response_message.content  # type: ignore
 
             # -*- Set role
             model_response.role = response_message.role
@@ -382,7 +382,7 @@ class MistralChat(Model):
         model_response = ModelResponse()
 
         delta_message: DeltaMessage = response_delta.data.choices[0].delta
-        model_response.role = delta_message.role
+        model_response.role = delta_message.role  # type: ignore
         if (
             delta_message.content is not None
             and not isinstance(delta_message.content, Unset)
@@ -395,11 +395,11 @@ class MistralChat(Model):
             for tool_call in delta_message.tool_calls:
                 model_response.tool_calls.append(
                     {
-                        "id": tool_call.id,
+                        "id": tool_call.id,  # type: ignore
                         "type": "function",
                         "function": {
-                            "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments,
+                            "name": tool_call.function.name,  # type: ignore
+                            "arguments": tool_call.function.arguments,  # type: ignore
                         },
                     }
                 )
