@@ -1,0 +1,4 @@
+agno==0.1.2
+openai
+streamlit
+duckduckgo-search
