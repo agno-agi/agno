@@ -2375,7 +2375,11 @@ class Agent:
             yield self.team_response_separator
 
         # Give a name to the member agent
-        agent_name = member_agent.name.replace(" ", "_").lower() if member_agent.name else f"agent_{index}"
+        agent_name = member_agent.name if member_agent.name else f"agent_{index}"
+        # Convert non-ascii characters to ascii equivalents and ensure only alphanumeric, underscore and hyphen
+        agent_name = "".join(c for c in agent_name if c.isalnum() or c in "_- ").strip()
+        agent_name = agent_name.lower().replace(" ", "_")
+
         if member_agent.name is None:
             member_agent.name = agent_name
 
