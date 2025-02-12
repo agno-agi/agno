@@ -8,7 +8,7 @@ agent = Agent(
     markdown=True,
 )
 
-url = "https://res.cloudinary.com/djs9vdcla/video/upload/v1739365268/QA-01_gfhi37.mp3"
+url = "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/QA-01.mp3"
 
 response = requests.get(url)
 audio_content = response.content
