@@ -2,7 +2,6 @@ import requests
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.mistral.mistral import MistralChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
     model=MistralChat(id="pixtral-12b-2409"),
