@@ -37,8 +37,8 @@ class BitbucketTools(Toolkit):
         # Register methods
         self.register(self.list_repositories)
         self.register(self.get_repository)
-        self.register(self.get_repo_branches)
-        self.register(self.get_repo_commits)
+        self.register(self.create_repository)
+        self.register(self.list_repository_commits)
         self.register(self.get_repo_pull_requests)
         self.register(self.get_repo_issues)
         self.register(self.get_repo_pipelines)
@@ -118,15 +118,29 @@ class BitbucketTools(Toolkit):
             workspace (str): The slug of the workspace where the repository exists.
             repo_slug (str): The slug of the new repository.
             name (str): The name of the new repository.
+            project (str, optional): The key of the project to create the repository in. Defaults to None. If not provided, the repository will be created in the oldest project in the workspace.
             is_private (bool, optional): Whether the repository is private. Defaults to False.
-            description (str, optional): A short description of the repository.
+            description (str, optional): A short description of the repository. Defaults to None.
+            language (str, optional): The primary language of the repository. Defaults to None.
+            has_issues (bool, optional): Whether the repository has issues enabled. Defaults to False.
+            has_wiki (bool, optional): Whether the repository has a wiki enabled. Defaults to False.
 
         Returns:
             str: A JSON string containing repository information.
         """
         try:
-            payload = {}
-            repo = self._make_request("POST", f"/repositories/{workspace}/{repo_slug}")
+            payload: Dict[str, Any] = {
+                "name": name,
+                "scm": "git",
+                "is_private": is_private,
+                "description": description,
+                "language": language,
+                "has_issues": has_issues,
+                "has_wiki": has_wiki,
+            }
+            if project:
+                payload["project"] = {"key": project}
+            repo = self._make_request("POST", f"/repositories/{workspace}/{repo_slug}", data=payload)
             return json.dumps(repo, indent=2)
         except Exception as e:
             logger.error(f"Error creating repository {repo_slug} for {workspace}: {str(e)}")
