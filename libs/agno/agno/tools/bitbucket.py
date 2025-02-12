@@ -70,7 +70,7 @@ class BitbucketTools(Toolkit):
         logger.warning(f"Unsupported content type: {encoding_type}")
         return {}
 
-    def list_repositories(self, workspace: str) -> str:
+    def list_repositories(self, workspace: str, page: int = 1, pagelen: int = 10) -> str:
         """
         TODO: Add optional pagination query parameters. Also only selectively return fields from response to save tokens.
 
@@ -79,12 +79,14 @@ class BitbucketTools(Toolkit):
 
         Args:
             workspace (str): The slug of the workspace where the repository exists.
+            page (int, optional): The page number to retrieve. Defaults to 1.
+            pagelen (int, optional): The number of repositories to retrieve per page. Defaults to 10.
 
         Returns:
             str: A JSON string containing repository list.
         """
         try:
-            repo = self._make_request("GET", f"/repositories/{workspace}")
+            repo = self._make_request("GET", f"/repositories/{workspace}?page={page}&pagelen={pagelen}")
             return json.dumps(repo, indent=2)
         except Exception as e:
             logger.error(f"Error retrieving repository list for workspace {workspace}: {str(e)}")
@@ -157,7 +159,9 @@ class BitbucketTools(Toolkit):
             logger.error(f"Error creating repository {repo_slug} for {workspace}: {str(e)}")
             return json.dumps({"error": str(e)})
 
-    def list_repository_commits(self, workspace: str, repo_slug: str, ctx: Optional[str] = None, page: int = 1) -> str:
+    def list_repository_commits(
+        self, workspace: str, repo_slug: str, ctx: Optional[str] = None, page: int = 1, pagelen: int = 10
+    ) -> str:
         """
         Retrieves all commits in a repository.
         API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-commits/#api-repositories-workspace-repo-slug-commits-get
@@ -169,6 +173,7 @@ class BitbucketTools(Toolkit):
             repo_slug (str): The slug of the repository to retrieve commits for.
             ctx (str, optional): The cursor to navigate between pages. Provided by Bitbucket API. Defaults to None.
             page (int, optional): The page number to retrieve. Defaults to 1.
+            pagelen (int, optional): The number of commits to retrieve per page. Defaults to 10.
 
         Returns:
             str: A JSON string containing all commits.
@@ -176,10 +181,10 @@ class BitbucketTools(Toolkit):
         try:
             if ctx:
                 commits = self._make_request(
-                    "GET", f"/repositories/{workspace}/{repo_slug}/commits?ctx={ctx}&page={page}"
+                    "GET", f"/repositories/{workspace}/{repo_slug}/commits?ctx={ctx}&page={page}&pagelen={pagelen}"
                 )
             else:
-                commits = self._make_request("GET", f"/repositories/{workspace}/{repo_slug}/commits")
+                commits = self._make_request("GET", f"/repositories/{workspace}/{repo_slug}/commits?pagelen={pagelen}")
                 for i in range(2, page + 1):
                     next_url = commits["next"]  # type: ignore
                     query_param = next_url.split("?")[1]
@@ -189,7 +194,9 @@ class BitbucketTools(Toolkit):
             logger.error(f"Error retrieving commits for {repo_slug}: {str(e)}")
             return json.dumps({"error": str(e)})
 
-    def list_pull_requests(self, workspace: str, repo_slug: str, state: str = "OPEN", page: int = 1) -> str:
+    def list_pull_requests(
+        self, workspace: str, repo_slug: str, state: str = "OPEN", page: int = 1, pagelen: int = 10
+    ) -> str:
         """
         Retrieves all pull requests for a repository.
         API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-pullrequests/#api-repositories-workspace-repo-slug-pullrequests-get
@@ -199,6 +206,7 @@ class BitbucketTools(Toolkit):
             repo_slug (str): The slug of the repository to retrieve pull requests for.
             state (str, optional): The state of the pull requests to retrieve. Defaults to "OPEN". Possible values: "OPEN", "MERGED", "DECLINED", "SUPERSEDED".
             page (int, optional): The page number to retrieve. Defaults to 1.
+            pagelen (int, optional): The number of pull requests to retrieve per page. Defaults to 10.
 
         Returns:
             str: A JSON string containing all pull requests.
@@ -209,7 +217,7 @@ class BitbucketTools(Toolkit):
                 raise ValueError(f"Invalid state: {state}. Valid states are: {', '.join(VALID_STATES)}")
 
             pull_requests = self._make_request(
-                "GET", f"/repositories/{workspace}/{repo_slug}/pullrequests?state={state}&page={page}"
+                "GET", f"/repositories/{workspace}/{repo_slug}/pullrequests?state={state}&page={page}&pagelen={pagelen}"
             )
             return json.dumps(pull_requests, indent=2)
         except Exception as e:
