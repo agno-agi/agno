@@ -418,16 +418,31 @@ class OpenAIChat(Model):
         Returns:
             List[Dict[str, Any]]: The built tool calls.
         """
-        tool_calls: List[Dict[str, Any]] = []
-        for _tool_call in tool_calls_data:
-            _index = _tool_call.index or 0
-            _tool_call_id = _tool_call.id
-            _tool_call_type = _tool_call.type
-            _function_name = _tool_call.function.name if _tool_call.function else None
-            _function_arguments = _tool_call.function.arguments if _tool_call.function else None
+        if not tool_calls_data:
+            return []
 
-            if len(tool_calls) <= _index:
-                tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
+        tool_calls: List[Dict[str, Any]] = []
+        current_index = 0
+        for _tool_call in tool_calls_data:
+            if not _tool_call:
+                continue
+
+            # Use current_index if index is not available
+            _index = getattr(_tool_call, "index", None)
+            if _index is None:
+                _index = current_index
+                current_index += 1
+
+            _tool_call_id = getattr(_tool_call, "id", None)
+            _tool_call_type = getattr(_tool_call, "type", None)
+            _function = getattr(_tool_call, "function", None)
+            _function_name = getattr(_function, "name", None) if _function else None
+            _function_arguments = getattr(_function, "arguments", None) if _function else None
+
+            # Ensure _index is valid
+            while len(tool_calls) <= _index:
+                tool_calls.append({})
+
             tool_call_entry = tool_calls[_index]
             if not tool_call_entry:
                 tool_call_entry["id"] = _tool_call_id
