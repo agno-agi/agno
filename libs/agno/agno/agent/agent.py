@@ -1490,7 +1490,7 @@ class Agent:
         if self.session_state is not None and len(self.session_state) > 0:
             session_data["session_state"] = self.session_state
         if self.session_metrics is not None:
-            session_data["session_metrics"] = self.session_metrics
+            session_data["session_metrics"] = asdict(self.session_metrics)
         if self.team_data is not None:
             session_data["team_data"] = self.team_data
         if self.images is not None:

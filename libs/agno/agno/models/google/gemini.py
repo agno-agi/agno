@@ -94,7 +94,10 @@ def _convert_schema(schema_dict):
     Returns:
         types.Schema: The converted schema.
     """
-    schema_type = schema_dict.get("type", "").upper()
+    schema_type = schema_dict.get("type", "")
+    if isinstance(schema_type, list):
+        schema_type = schema_type[0]
+    schema_type = schema_type.upper()
     description = schema_dict.get("description", "")
 
     if schema_type == "OBJECT" and "properties" in schema_dict:
