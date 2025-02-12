@@ -183,7 +183,7 @@ def main() -> None:
             st.session_state["llm_os_run_id"] = None
         else:
             st.session_state["llm_os_run_id"] = llm_os.new_session()
-    except Exception:
+    except Exception as e:
         st.session_state["llm_os_run_id"] = None
 
     # Modify the chat history loading to work without storage

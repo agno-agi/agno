@@ -1,5 +1,4 @@
 """Run `pip install openai memory_profiler crewai crewai[tools]` to install dependencies."""
-
 from typing import Literal
 
 from crewai.agent import Agent
@@ -17,19 +16,14 @@ def get_weather(city: Literal["nyc", "sf"]):
     else:
         raise AssertionError("Unknown city")
 
-
 tools = [get_weather]
 
-
 def instantiate_agent():
-    return Agent(
-        llm="gpt-4o",
-        role="Test Agent",
-        goal="Be concise, reply with one sentence.",
-        tools=tools,
-        backstory="Test",
-    )
-
+    return Agent(llm='gpt-4o',
+                 role='Test Agent',
+                 goal='Be concise, reply with one sentence.',
+                 tools=tools,
+                 backstory='Test')
 
 crew_instantiation = PerfEval(func=instantiate_agent, num_iterations=1000)
 

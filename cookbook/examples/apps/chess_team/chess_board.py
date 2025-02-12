@@ -56,7 +56,7 @@ class ChessBoard:
 
         for i, row in enumerate(self.board):
             # Add rank number and row
-            html_output.append('<div class="chess-row">')
+            html_output.append(f'<div class="chess-row">')
             html_output.append(f'<div class="chess-rank">{8 - i}</div>')
 
             for piece in row:
