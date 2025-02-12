@@ -15,7 +15,7 @@ except ImportError:
     raise ImportError("`pycountry` not installed. Please install using `pip install pycountry`")
 
 
-class GoogleSearch(Toolkit):
+class GoogleSearchTools(Toolkit):
     """
     GoogleSearch is a Python library for searching Google easily.
     It uses requests and BeautifulSoup4 to scrape Google.
