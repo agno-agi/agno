@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Union, Any
 
 import requests
 import base64
@@ -44,8 +44,6 @@ class BitbucketTools(Toolkit):
         self.register(self.get_pull_request_changes)
         self.register(self.list_issues)
         self.register(self.list_repository_pipelines)
-        self.register(self.get_repo_pipeline_runs)
-        self.register(self.get_repo_pipeline_steps)
 
     def _generate_access_token(self) -> str:
         """Generate an access token for Bitbucket API using Basic Auth."""
@@ -72,8 +70,6 @@ class BitbucketTools(Toolkit):
 
     def list_repositories(self, workspace: str, page: int = 1, pagelen: int = 10) -> str:
         """
-        TODO: Add optional pagination query parameters. Also only selectively return fields from response to save tokens.
-
         List repository info for a given workspace.
         API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-repositories/#api-repositories-workspace-get
 
@@ -308,34 +304,4 @@ class BitbucketTools(Toolkit):
             return json.dumps(pipelines, indent=2)
         except Exception as e:
             logger.error(f"Error retrieving pipelines for {repo_slug}: {str(e)}")
-            return json.dumps({"error": str(e)})
-
-    def get_repo_pipeline_runs(self, repo_slug: str) -> str:
-        """
-        Retrieves all pipeline runs for a repository.
-
-        :param repo_slug: The slug of the repository to retrieve pipeline runs for.
-        :return: A JSON string containing all pipeline runs.
-        """
-        try:
-            pipeline_runs = self.bitbucket.get_pipeline_runs(repo_slug)
-            logger.debug(f"Pipeline runs: {pipeline_runs}")
-            return json.dumps(pipeline_runs)
-        except Exception as e:
-            logger.error(f"Error retrieving pipeline runs: {str(e)}")
-            return json.dumps({"error": str(e)})
-
-    def get_repo_pipeline_steps(self, repo_slug: str) -> str:
-        """
-        Retrieves all pipeline steps for a repository.
-
-        :param repo_slug: The slug of the repository to retrieve pipeline steps for.
-        :return: A JSON string containing all pipeline steps.
-        """
-        try:
-            pipeline_steps = self.bitbucket.get_pipeline_steps(repo_slug)
-            logger.debug(f"Pipeline steps: {pipeline_steps}")
-            return json.dumps(pipeline_steps)
-        except Exception as e:
-            logger.error(f"Error retrieving pipeline steps: {str(e)}")
             return json.dumps({"error": str(e)})
