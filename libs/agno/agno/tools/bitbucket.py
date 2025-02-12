@@ -42,7 +42,7 @@ class BitbucketTools(Toolkit):
         self.register(self.list_pull_requests)
         self.register(self.get_pull_request)
         self.register(self.get_pull_request_changes)
-        self.register(self.get_repo_issues)
+        self.register(self.list_issues)
         self.register(self.get_repo_pipelines)
         self.register(self.get_repo_pipeline_runs)
         self.register(self.get_repo_pipeline_steps)
@@ -61,8 +61,8 @@ class BitbucketTools(Toolkit):
         url = f"{self.base_url}{endpoint}"
         response = requests.request(method, url, headers=self.headers, json=data)
         response.raise_for_status()
-        encoding_type = response.headers.get("Content-Type")
-        if encoding_type == "application/json":
+        encoding_type = response.headers.get("Content-Type", "application/json")
+        if encoding_type.startswith("application/json"):
             return response.json() if response.text else {}
         elif encoding_type == "text/plain":
             return response.text
@@ -181,7 +181,7 @@ class BitbucketTools(Toolkit):
             else:
                 commits = self._make_request("GET", f"/repositories/{workspace}/{repo_slug}/commits")
                 for i in range(2, page + 1):
-                    next_url = commits["next"]
+                    next_url = commits["next"]  # type: ignore
                     query_param = next_url.split("?")[1]
                     commits = self._make_request("GET", f"/repositories/{workspace}/{repo_slug}/commits?{query_param}")
             return json.dumps(commits, indent=2)
@@ -260,19 +260,23 @@ class BitbucketTools(Toolkit):
             logger.error(f"Error retrieving changes for pull request {pull_request_id} in {repo_slug}: {str(e)}")
             return json.dumps({"error": str(e)})
 
-    def get_repo_issues(self, workspace: str, repo_slug: str) -> str:
+    def list_issues(self, workspace: str, repo_slug: str) -> str:
         """
         Retrieves all issues for a repository.
+        API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-issue-tracker/#api-repositories-workspace-repo-slug-issues-get
 
-        :param repo_slug: The slug of the repository to retrieve issues for.
-        :return: A JSON string containing all issues.
+        Args:
+            workspace (str): The slug of the workspace where the repository exists.
+            repo_slug (str): The slug of the repository to retrieve issues for.
+
+        Returns:
+            str: A JSON string containing all issues.
         """
         try:
-            issues = self.bitbucket.get_issues(repo_slug)
-            logger.debug(f"Issues: {issues}")
-            return json.dumps(issues)
+            issues = self._make_request("GET", f"/repositories/{workspace}/{repo_slug}/issues")
+            return json.dumps(issues, indent=2)
         except Exception as e:
-            logger.error(f"Error retrieving issues: {str(e)}")
+            logger.error(f"Error retrieving issues for {repo_slug}: {str(e)}")
             return json.dumps({"error": str(e)})
 
     def get_repo_pipelines(self, repo_slug: str) -> str:
