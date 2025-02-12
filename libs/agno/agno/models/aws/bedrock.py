@@ -314,6 +314,7 @@ class AwsBedrock(Model):
             # Tools
             if "stopReason" in response and response["stopReason"] == "tool_use":
                 model_response.tool_calls = []
+                model_response.extra = model_response.extra or {}
                 model_response.extra["tool_ids"] = []
                 for tool in content:
                     if "toolUse" in tool:
