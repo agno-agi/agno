@@ -24,7 +24,7 @@ class AgentRun(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def to_dict(self) -> Dict[str, Any]:
-        response =  {
+        response = {
             "message": self.message.to_dict() if self.message else None,
             "messages": [message.to_dict() for message in self.messages] if self.messages else None,
             "response": self.response.to_dict() if self.response else None,

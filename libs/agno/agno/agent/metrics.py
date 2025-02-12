@@ -93,4 +93,3 @@ class SessionMetrics:
         if other == 0:  # Handle sum() starting value
             return self
         return self + other
-    

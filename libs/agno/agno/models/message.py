@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from time import time
 from typing import Any, Dict, List, Optional, Sequence, Union
 
@@ -42,10 +42,11 @@ class MessageMetrics:
     def _to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         metrics_dict.pop("timer")
-        metrics_dict = {k: v for k, v in metrics_dict.items() 
-                       if v is not None and 
-                       (not isinstance(v, (int, float)) or v != 0) and
-                       (not isinstance(v, dict) or len(v) > 0)}
+        metrics_dict = {
+            k: v
+            for k, v in metrics_dict.items()
+            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
+        }
         return metrics_dict
 
     def start_timer(self):
@@ -215,7 +216,7 @@ class Message(BaseModel):
             message_dict["audio_output"] = self.audio_output.to_dict()
 
         if self.references:
-            message_dict["references"] = asdict(self.references)
+            message_dict["references"] = self.references.model_dump()
         if self.metrics:
             message_dict["metrics"] = self.metrics._to_dict()
             if not message_dict["metrics"]:
