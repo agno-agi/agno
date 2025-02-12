@@ -40,6 +40,8 @@ class BitbucketTools(Toolkit):
         self.register(self.create_repository)
         self.register(self.list_repository_commits)
         self.register(self.list_pull_requests)
+        self.register(self.get_pull_request)
+        self.register(self.get_pull_request_changes)
         self.register(self.get_repo_issues)
         self.register(self.get_repo_pipelines)
         self.register(self.get_repo_pipeline_runs)
@@ -52,12 +54,21 @@ class BitbucketTools(Toolkit):
         auth_base64 = base64.b64encode(auth_bytes).decode("ascii")
         return auth_base64
 
-    def _make_request(self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _make_request(
+        self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None
+    ) -> Union[str, Dict[str, Any]]:
         """Make a request to Bitbucket API."""
         url = f"{self.base_url}{endpoint}"
         response = requests.request(method, url, headers=self.headers, json=data)
         response.raise_for_status()
-        return response.json() if response.text else {}
+        encoding_type = response.headers.get("Content-Type")
+        if encoding_type == "application/json":
+            return response.json() if response.text else {}
+        elif encoding_type == "text/plain":
+            return response.text
+
+        logger.warning(f"Unsupported content type: {encoding_type}")
+        return {}
 
     def list_repositories(self, workspace: str) -> str:
         """
@@ -225,6 +236,28 @@ class BitbucketTools(Toolkit):
             return json.dumps(pull_requests, indent=2)
         except Exception as e:
             logger.error(f"Error retrieving pull requests for {repo_slug}: {str(e)}")
+            return json.dumps({"error": str(e)})
+
+    def get_pull_request_changes(self, workspace: str, repo_slug: str, pull_request_id: int) -> str:
+        """
+        Retrieves changes for a pull request in a repository.
+        API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-pullrequests/#api-repositories-workspace-repo-slug-pullrequests-pull-request-id-diff-get
+
+        Args:
+            workspace (str): The slug of the workspace where the repository exists.
+            repo_slug (str): The slug of the repository to retrieve pull requests for.
+            pull_request_id (int): The ID of the pull request to retrieve.
+
+        Returns:
+            str: A markdown string containing the pull request diff.
+        """
+        try:
+            diff = self._make_request(
+                "GET", f"/repositories/{workspace}/{repo_slug}/pullrequests/{pull_request_id}/diff"
+            )
+            return f"```\n{diff}\n```"
+        except Exception as e:
+            logger.error(f"Error retrieving changes for pull request {pull_request_id} in {repo_slug}: {str(e)}")
             return json.dumps({"error": str(e)})
 
     def get_repo_issues(self, workspace: str, repo_slug: str) -> str:
