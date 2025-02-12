@@ -39,7 +39,7 @@ class BitbucketTools(Toolkit):
         self.register(self.get_repository)
         self.register(self.create_repository)
         self.register(self.list_repository_commits)
-        self.register(self.get_repo_pull_requests)
+        self.register(self.list_pull_requests)
         self.register(self.get_repo_issues)
         self.register(self.get_repo_pipelines)
         self.register(self.get_repo_pipeline_runs)
@@ -178,22 +178,34 @@ class BitbucketTools(Toolkit):
             logger.error(f"Error retrieving commits for {repo_slug}: {str(e)}")
             return json.dumps({"error": str(e)})
 
-    def get_repo_pull_requests(self, repo_slug: str) -> str:
+    def list_pull_requests(self, workspace: str, repo_slug: str, state: str = "OPEN", page: int = 1) -> str:
         """
         Retrieves all pull requests for a repository.
+        API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-pullrequests/#api-repositories-workspace-repo-slug-pullrequests-get
 
-        :param repo_slug: The slug of the repository to retrieve pull requests for.
-        :return: A JSON string containing all pull requests.
+        Args:
+            workspace (str): The slug of the workspace where the repository exists.
+            repo_slug (str): The slug of the repository to retrieve pull requests for.
+            state (str, optional): The state of the pull requests to retrieve. Defaults to "OPEN". Possible values: "OPEN", "MERGED", "DECLINED", "SUPERSEDED".
+            page (int, optional): The page number to retrieve. Defaults to 1.
+
+        Returns:
+            str: A JSON string containing all pull requests.
         """
         try:
-            pull_requests = self.bitbucket.get_pull_requests(repo_slug)
-            logger.debug(f"Pull requests: {pull_requests}")
-            return json.dumps(pull_requests)
+            VALID_STATES = ["OPEN", "MERGED", "DECLINED", "SUPERSEDED"]
+            if state not in VALID_STATES:
+                raise ValueError(f"Invalid state: {state}. Valid states are: {', '.join(VALID_STATES)}")
+
+            pull_requests = self._make_request(
+                "GET", f"/repositories/{workspace}/{repo_slug}/pullrequests?state={state}&page={page}"
+            )
+            return json.dumps(pull_requests, indent=2)
         except Exception as e:
-            logger.error(f"Error retrieving pull requests: {str(e)}")
+            logger.error(f"Error retrieving pull requests for {repo_slug}: {str(e)}")
             return json.dumps({"error": str(e)})
 
-    def get_repo_issues(self, repo_slug: str) -> str:
+    def get_repo_issues(self, workspace: str, repo_slug: str) -> str:
         """
         Retrieves all issues for a repository.
 
