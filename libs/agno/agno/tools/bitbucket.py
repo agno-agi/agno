@@ -43,7 +43,7 @@ class BitbucketTools(Toolkit):
         self.register(self.get_pull_request)
         self.register(self.get_pull_request_changes)
         self.register(self.list_issues)
-        self.register(self.get_repo_pipelines)
+        self.register(self.list_repository_pipelines)
         self.register(self.get_repo_pipeline_runs)
         self.register(self.get_repo_pipeline_steps)
 
@@ -287,19 +287,27 @@ class BitbucketTools(Toolkit):
             logger.error(f"Error retrieving issues for {repo_slug}: {str(e)}")
             return json.dumps({"error": str(e)})
 
-    def get_repo_pipelines(self, repo_slug: str) -> str:
+    def list_repository_pipelines(self, workspace: str, repo_slug: str, page: int = 1, pagelen: int = 10) -> str:
         """
         Retrieves all pipelines for a repository.
+        API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-pipelines/#api-repositories-workspace-repo-slug-pipelines-get
 
-        :param repo_slug: The slug of the repository to retrieve pipelines for.
-        :return: A JSON string containing all pipelines.
+        Args:
+            workspace (str): The slug of the workspace where the repository exists.
+            repo_slug (str): The slug of the repository to retrieve pipelines for.
+            page (int, optional): The page number to retrieve. Defaults to 1.
+            pagelen (int, optional): The number of pipelines to retrieve per page. Defaults to 10.
+
+        Returns:
+            str: A JSON string containing all pipelines.
         """
         try:
-            pipelines = self.bitbucket.get_pipelines(repo_slug)
-            logger.debug(f"Pipelines: {pipelines}")
-            return json.dumps(pipelines)
+            pipelines = self._make_request(
+                "GET", f"/repositories/{workspace}/{repo_slug}/pipelines?page={page}&pagelen={pagelen}"
+            )
+            return json.dumps(pipelines, indent=2)
         except Exception as e:
-            logger.error(f"Error retrieving pipelines: {str(e)}")
+            logger.error(f"Error retrieving pipelines for {repo_slug}: {str(e)}")
             return json.dumps({"error": str(e)})
 
     def get_repo_pipeline_runs(self, repo_slug: str) -> str:
