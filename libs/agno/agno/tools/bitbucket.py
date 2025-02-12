@@ -1,9 +1,9 @@
+import base64
 import json
 import os
-from typing import Optional, Dict, Union, Any
+from typing import Any, Dict, Optional, Union
 
 import requests
-import base64
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
