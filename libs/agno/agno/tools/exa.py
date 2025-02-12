@@ -257,7 +257,7 @@ class ExaTools(Toolkit):
             answer_kwargs = {k: v for k, v in answer_kwargs.items() if v is not None}
             answer = self.exa.answer(query=query, **answer_kwargs)
             result = {
-                "answer": answer.answer,
+                "answer": answer.answer,  # type: ignore
                 "citations": [
                     {
                         "id": citation.id,
@@ -267,7 +267,7 @@ class ExaTools(Toolkit):
                         "author": citation.author,
                         "text": citation.text if text else None,
                     }
-                    for citation in answer.citations
+                    for citation in answer.citations  # type: ignore
                 ],
             }
             if self.show_results:

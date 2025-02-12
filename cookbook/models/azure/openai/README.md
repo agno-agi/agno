@@ -14,12 +14,10 @@ source ~/.venvs/aienv/bin/activate
 Navigate to the AzureOpenAI on the [Azure Portal](https://portal.azure.com/) and create a service. Then, using the Azure AI Foundry portal, create a deployment and set your environment variables.
 
 ```shell
-export AZURE_OPENAI_MODEL_NAME="gpt-4o"
 export AZURE_OPENAI_API_KEY=***
-export AZURE_OPENAI_ENDPOINT="https://example.openai.azure.com/"
-export AZURE_OPENAI_DEPLOYMENT=***
-export AZURE_OPENAI_API_VERSION="2024-02-01"
-export AWS_DEFAULT_REGION=us-east-1
+export AZURE_OPENAI_ENDPOINT="https://<your-resource-name>.openai.azure.com/openai/deployments/<your-deployment-name>"
+export AZURE_API_VERSION="2024-10-21"  # Optional
+export AZURE_DEPLOYMENT=***  # Optional
 ```
 
 ### 3. Install libraries
