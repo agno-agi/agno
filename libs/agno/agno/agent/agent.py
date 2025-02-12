@@ -536,11 +536,13 @@ class Agent:
                 if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
                     if model_response_chunk.content is not None and model_response.content is not None:
                         model_response.content += model_response_chunk.content
+
                         # Update the run_response with the content
                         self.run_response.content = model_response_chunk.content
                         self.run_response.created_at = model_response_chunk.created_at
                         yield self.create_run_response(
-                            content=model_response_chunk.content, created_at=model_response_chunk.created_at
+                            content=model_response_chunk.content,
+                            created_at=model_response_chunk.created_at
                         )
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
@@ -1299,8 +1301,10 @@ class Agent:
             agent_id=self.agent_id,
             content=content,
             tools=self.run_response.tools,
+            audio=self.run_response.audio,
             images=self.run_response.images,
             videos=self.run_response.videos,
+            response_audio=self.run_response.response_audio,
             model=self.run_response.model,
             messages=self.run_response.messages,
             extra_data=self.run_response.extra_data,
@@ -3325,6 +3329,7 @@ class Agent:
         if stream:
             _response_content: str = ""
             reasoning_steps: List[ReasoningStep] = []
+
             with Live(console=console) as live_log:
                 status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
                 live_log.update(status)
@@ -3347,7 +3352,6 @@ class Agent:
                     panels.append(message_panel)
                 if render:
                     live_log.update(Group(*panels))
-
                 for resp in self.run(
                     message=message, messages=messages, audio=audio, images=images, videos=videos, stream=True, **kwargs
                 ):
@@ -3356,7 +3360,6 @@ class Agent:
                             _response_content += resp.content
                         if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
                             reasoning_steps = resp.extra_data.reasoning_steps
-
                     response_content_stream: Union[str, Markdown] = _response_content
                     # Escape special tags before markdown conversion
                     if self.markdown:
