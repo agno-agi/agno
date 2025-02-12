@@ -541,8 +541,7 @@ class Agent:
                         self.run_response.content = model_response_chunk.content
                         self.run_response.created_at = model_response_chunk.created_at
                         yield self.create_run_response(
-                            content=model_response_chunk.content,
-                            created_at=model_response_chunk.created_at
+                            content=model_response_chunk.content, created_at=model_response_chunk.created_at
                         )
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
@@ -2744,7 +2743,7 @@ class Agent:
                 reasoning_agent_messages=[ds_reasoning_message],
             )
         # Use Groq for reasoning
-        if reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
+        elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
             from agno.reasoning.groq import get_groq_reasoning, get_groq_reasoning_agent
 
             groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
@@ -2897,7 +2896,7 @@ class Agent:
                 reasoning_agent_messages=[ds_reasoning_message],
             )
         # Use Groq for reasoning
-        if reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
+        elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
             from agno.reasoning.groq import aget_groq_reasoning, get_groq_reasoning_agent
 
             groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
