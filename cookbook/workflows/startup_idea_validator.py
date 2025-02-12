@@ -51,7 +51,7 @@ from typing import Iterator, Optional
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.workflow.sqlite import SqliteWorkflowStorage
-from agno.tools.googlesearch import GoogleSearch
+from agno.tools.googlesearch import GoogleSearchTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.workflow import RunEvent, RunResponse, Workflow
@@ -94,7 +94,7 @@ class StartupIdeaValidator(Workflow):
 
     market_research_agent: Agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[GoogleSearch()],
+        tools=[GoogleSearchTools()],
         instructions=[
             "You are provided with a startup idea and the company's mission and objectives. ",
             "Estimate the total addressable market (TAM), serviceable available market (SAM), and serviceable obtainable market (SOM). ",
@@ -110,7 +110,7 @@ class StartupIdeaValidator(Workflow):
 
     competitor_analysis_agent: Agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[GoogleSearch()],
+        tools=[GoogleSearchTools()],
         instructions=[
             "You are provided with a startup idea and some market research related to the idea. ",
             "Identify existing competitors in the market. ",

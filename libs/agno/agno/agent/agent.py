@@ -14,6 +14,7 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    Set,
     Type,
     Union,
     cast,
@@ -3223,6 +3224,16 @@ class Agent:
             content, title=title, title_align="left", border_style=border_style, box=HEAVY, expand=True, padding=(1, 1)
         )
 
+    def escape_markdown_tags(self, content: str, tags: Set[str]) -> str:
+        """Escape special tags in markdown content."""
+        escaped_content = content
+        for tag in tags:
+            # Escape opening tag
+            escaped_content = escaped_content.replace(f"<{tag}>", f"&lt;{tag}&gt;")
+            # Escape closing tag
+            escaped_content = escaped_content.replace(f"</{tag}>", f"&lt;/{tag}&gt;")
+        return escaped_content
+
     def print_response(
         self,
         message: Optional[Union[List, Dict, str, Message]] = None,
@@ -3237,6 +3248,8 @@ class Agent:
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
         console: Optional[Any] = None,
+        # Add tags to include in markdown content
+        tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
         **kwargs: Any,
     ) -> None:
         import json
@@ -3291,7 +3304,11 @@ class Agent:
                         if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
                             reasoning_steps = resp.extra_data.reasoning_steps
 
-                    response_content_stream = Markdown(_response_content) if self.markdown else _response_content
+                    response_content_stream: Union[str, Markdown] = _response_content
+                    # Escape special tags before markdown conversion
+                    if self.markdown:
+                        escaped_content = self.escape_markdown_tags(_response_content, tags_to_include_in_markdown)
+                        response_content_stream = Markdown(escaped_content)
 
                     panels = [status]
 
@@ -3430,11 +3447,13 @@ class Agent:
                 response_content_batch: Union[str, JSON, Markdown] = ""
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
-                        response_content_batch = (
-                            Markdown(run_response.content)
-                            if self.markdown
-                            else run_response.get_content_as_string(indent=4)
-                        )
+                        if self.markdown:
+                            escaped_content = self.escape_markdown_tags(
+                                run_response.content, tags_to_include_in_markdown
+                            )
+                            response_content_batch = Markdown(escaped_content)
+                        else:
+                            response_content_batch = run_response.get_content_as_string(indent=4)
                     elif self.response_model is not None and isinstance(run_response.content, BaseModel):
                         try:
                             response_content_batch = JSON(
@@ -3474,6 +3493,8 @@ class Agent:
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
         console: Optional[Any] = None,
+        # Add tags to include in markdown content
+        tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
         **kwargs: Any,
     ) -> None:
         import json
@@ -3528,7 +3549,12 @@ class Agent:
                             _response_content += resp.content
                         if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
                             reasoning_steps = resp.extra_data.reasoning_steps
-                    response_content_stream = Markdown(_response_content) if self.markdown else _response_content
+
+                    response_content_stream: Union[str, Markdown] = _response_content
+                    # Escape special tags before markdown conversion
+                    if self.markdown:
+                        escaped_content = self.escape_markdown_tags(_response_content, tags_to_include_in_markdown)
+                        response_content_stream = Markdown(escaped_content)
 
                     panels = [status]
 
@@ -3667,11 +3693,13 @@ class Agent:
                 response_content_batch: Union[str, JSON, Markdown] = ""
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
-                        response_content_batch = (
-                            Markdown(run_response.content)
-                            if self.markdown
-                            else run_response.get_content_as_string(indent=4)
-                        )
+                        if self.markdown:
+                            escaped_content = self.escape_markdown_tags(
+                                run_response.content, tags_to_include_in_markdown
+                            )
+                            response_content_batch = Markdown(escaped_content)
+                        else:
+                            response_content_batch = run_response.get_content_as_string(indent=4)
                     elif self.response_model is not None and isinstance(run_response.content, BaseModel):
                         try:
                             response_content_batch = JSON(
