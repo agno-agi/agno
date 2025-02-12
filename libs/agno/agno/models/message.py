@@ -191,6 +191,17 @@ class Message(BaseModel):
 
         return _dict
 
+    def to_fc_result(self) -> Dict[str, Any]:
+        return {
+            "content": self.content,
+            "tool_call_id": self.tool_call_id,
+            "tool_name": self.tool_name,
+            "tool_args": self.tool_args,
+            "tool_call_error": self.tool_call_error,
+            "metrics": self.metrics,
+            "created_at": self.created_at,
+        }
+
     @model_serializer
     def serialize_model(self):
         return self.to_dict()

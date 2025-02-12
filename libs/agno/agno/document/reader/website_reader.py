@@ -140,8 +140,10 @@ class WebsiteReader(Reader):
                         parsed_url.path.endswith(ext) for ext in [".pdf", ".jpg", ".png"]
                     ):
                         full_url_str = str(full_url)
-                        if full_url_str not in self._visited and (
-                        full_url_str, current_depth + 1) not in self._urls_to_crawl:
+                        if (
+                            full_url_str not in self._visited
+                            and (full_url_str, current_depth + 1) not in self._urls_to_crawl
+                        ):
                             self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
             except Exception as e:

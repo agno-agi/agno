@@ -183,6 +183,7 @@ class Model(ABC):
                         function_call_response.event == ModelResponseEvent.tool_call_completed.value
                         and function_call_response.tool_calls is not None
                     ):
+                        logger.info(f"Tool calls: {function_call_response.tool_calls}")
                         model_response.tool_calls.extend(function_call_response.tool_calls)
 
                 # Format and add results to messages
@@ -770,19 +771,7 @@ class Model(ABC):
             )
             yield ModelResponse(
                 content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
-                tool_calls=[
-                    function_call_result.model_dump(
-                        include={
-                            "content",
-                            "tool_call_id",
-                            "tool_name",
-                            "tool_args",
-                            "tool_call_error",
-                            "metrics",
-                            "created_at",
-                        }
-                    )
-                ],
+                tool_calls=[function_call_result.to_fc_result()],
                 event=ModelResponseEvent.tool_call_completed.value,
             )
 
@@ -885,19 +874,7 @@ class Model(ABC):
             )
             yield ModelResponse(
                 content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
-                tool_calls=[
-                    function_call_result.model_dump(
-                        include={
-                            "content",
-                            "tool_call_id",
-                            "tool_name",
-                            "tool_args",
-                            "tool_call_error",
-                            "metrics",
-                            "created_at",
-                        }
-                    )
-                ],
+                tool_calls=[function_call_result.to_fc_result()],
                 event=ModelResponseEvent.tool_call_completed.value,
             )
 
