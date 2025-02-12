@@ -22,7 +22,7 @@ class FirecrawlTools(Toolkit):
     ):
         super().__init__(name="firecrawl_tools")
 
-        self.api_key = api_key or getenv("FIRECRAWL_API_KEY")
+        self.api_key: Optional[str] = api_key or getenv("FIRECRAWL_API_KEY")
         if not self.api_key:
             logger.error("FIRECRAWL_API_KEY not set. Please set the FIRECRAWL_API_KEY environment variable.")
 
