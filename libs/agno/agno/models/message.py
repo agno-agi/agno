@@ -42,7 +42,9 @@ class MessageMetrics:
     def _to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         metrics_dict.pop("timer")
-        metrics_dict = {k: v for k, v in metrics_dict.items() if v is not None}
+        metrics_dict = {k: v for k, v in metrics_dict.items() 
+                       if v is not None and 
+                       (not isinstance(v, (int, float)) or v != 0)}
         return metrics_dict
 
     def start_timer(self):
@@ -215,9 +217,11 @@ class Message(BaseModel):
             message_dict["references"] = asdict(self.references)
         if self.metrics:
             message_dict["metrics"] = self.metrics._to_dict()
+            if not message_dict["metrics"]:
+                message_dict.pop("metrics")
 
         message_dict["created_at"] = self.created_at
-
+        print("HERE", message_dict)
         return message_dict
 
     def to_fc_result(self) -> Dict[str, Any]:
