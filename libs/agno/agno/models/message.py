@@ -174,7 +174,7 @@ class Message(BaseModel):
         if isinstance(self.content, str):
             return self.content
         if isinstance(self.content, list):
-            return json.dumps(self.content)
+            return self.content[0].get("text")
         return ""
 
     def serialize_for_model(self) -> Dict[str, Any]:
