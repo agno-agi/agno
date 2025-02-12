@@ -957,302 +957,69 @@ class Model(ABC):
         Add usage metrics from the model provider to the assistant message.
 
         Args:
-            assistant_message (Message): The assistant message.
-            messages (List[Message]): The list of messages.
-            tool_role (str): The role of the tool call. Defaults to "tool".
-
-        Returns:
-            Iterator[ModelResponse]: An iterator of the model response.
+            assistant_message: Message to update with metrics
+            response_usage: Usage data from model provider
         """
-        if assistant_message.tool_calls is not None and len(assistant_message.tool_calls) > 0:
-            function_calls_to_run, function_call_results = self._prepare_stream_tool_calls(
-                assistant_message=assistant_message,
-                messages=messages,
-                tool_role=tool_role,
+        # Standard token metrics
+        if hasattr(response_usage, "input_tokens") and response_usage.input_tokens:
+            assistant_message.metrics.input_tokens = response_usage.input_tokens
+        if hasattr(response_usage, "output_tokens") and response_usage.output_tokens:
+            assistant_message.metrics.output_tokens = response_usage.output_tokens
+        if hasattr(response_usage, "prompt_tokens") and response_usage.prompt_tokens is not None:
+            assistant_message.metrics.input_tokens = response_usage.prompt_tokens
+            assistant_message.metrics.prompt_tokens = response_usage.prompt_tokens
+        if hasattr(response_usage, "completion_tokens") and response_usage.completion_tokens is not None:
+            assistant_message.metrics.output_tokens = response_usage.completion_tokens
+            assistant_message.metrics.completion_tokens = response_usage.completion_tokens
+        if hasattr(response_usage, "total_tokens") and response_usage.total_tokens is not None:
+            assistant_message.metrics.total_tokens = response_usage.total_tokens
+        else:
+            assistant_message.metrics.total_tokens = (
+                assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
             )
 
-            if self.show_tool_calls:
-                yield ModelResponse(content="\nRunning:")
-                for _f in function_calls_to_run:
-                    yield ModelResponse(content=f"\n - {_f.get_call_str()}")
-                yield ModelResponse(content="\n\n")
+        # Additional timing metrics (e.g., from Groq, Ollama)
+        if assistant_message.metrics.additional_metrics is None:
+            assistant_message.metrics.additional_metrics = {}
 
-            async for function_call_response in self.arun_function_calls(
-                function_calls=function_calls_to_run, function_call_results=function_call_results, tool_role=tool_role
-            ):
-                yield function_call_response
+        additional_metrics = [
+            "prompt_time",
+            "completion_time",
+            "queue_time",
+            "total_time",
+            "total_duration",
+            "load_duration",
+            "prompt_eval_duration",
+            "eval_duration",
+        ]
 
-            if len(function_call_results) > 0:
-                messages.extend(function_call_results)
+        for metric in additional_metrics:
+            if hasattr(response_usage, metric) and getattr(response_usage, metric) is not None:
+                assistant_message.metrics.additional_metrics[metric] = getattr(response_usage, metric)
 
-    def _handle_response_after_tool_calls(
-        self, response_after_tool_calls: ModelResponse, model_response: ModelResponse
-    ):
-        if response_after_tool_calls.content is not None:
-            if model_response.content is None:
-                model_response.content = ""
-            model_response.content += response_after_tool_calls.content
-        if response_after_tool_calls.parsed is not None:
-            # bubble up the parsed object, so that the final response has the parsed object
-            # that is visible to the agent
-            model_response.parsed = response_after_tool_calls.parsed
-        if response_after_tool_calls.audio is not None:
-            # bubble up the audio, so that the final response has the audio
-            # that is visible to the agent
-            model_response.audio = response_after_tool_calls.audio
-
-    def _handle_stop_after_tool_calls(self, last_message: Message, model_response: ModelResponse):
-        logger.debug("Stopping execution as stop_after_tool_call=True")
-        if (
-            last_message.role == "assistant"
-            and last_message.content is not None
-            and isinstance(last_message.content, str)
-        ):
-            if model_response.content is None:
-                model_response.content = ""
-            model_response.content += last_message.content
-
-    def handle_post_tool_call_messages(self, messages: List[Message], model_response: ModelResponse) -> ModelResponse:
-        last_message = messages[-1]
-        if last_message.stop_after_tool_call:
-            self._handle_stop_after_tool_calls(last_message, model_response)
-        else:
-            response_after_tool_calls = self.response(messages=messages)
-            self._handle_response_after_tool_calls(response_after_tool_calls, model_response)
-        return model_response
-
-    async def ahandle_post_tool_call_messages(
-        self, messages: List[Message], model_response: ModelResponse
-    ) -> ModelResponse:
-        last_message = messages[-1]
-        if last_message.stop_after_tool_call:
-            self._handle_stop_after_tool_calls(last_message, model_response)
-        else:
-            response_after_tool_calls = await self.aresponse(messages=messages)
-            self._handle_response_after_tool_calls(response_after_tool_calls, model_response)
-        return model_response
-
-    def handle_post_tool_call_messages_stream(self, messages: List[Message]) -> Iterator[ModelResponse]:
-        last_message = messages[-1]
-        if last_message.stop_after_tool_call:
-            logger.debug("Stopping execution as stop_after_tool_call=True")
-            if (
-                last_message.role == "assistant"
-                and last_message.content is not None
-                and isinstance(last_message.content, str)
-            ):
-                yield ModelResponse(content=last_message.content)
-        else:
-            yield from self.response_stream(messages=messages)
-
-    async def ahandle_post_tool_call_messages_stream(self, messages: List[Message]) -> Any:
-        last_message = messages[-1]
-        if last_message.stop_after_tool_call:
-            logger.debug("Stopping execution as stop_after_tool_call=True")
-            if (
-                last_message.role == "assistant"
-                and last_message.content is not None
-                and isinstance(last_message.content, str)
-            ):
-                yield ModelResponse(content=last_message.content)
-        else:
-            async for model_response in self.aresponse_stream(messages=messages):  # type: ignore
-                yield model_response
-
-    def _process_image_url(self, image_url: str) -> Dict[str, Any]:
-        """Process image (base64 or URL)."""
-
-        if image_url.startswith("data:image") or image_url.startswith(("http://", "https://")):
-            return {"type": "image_url", "image_url": {"url": image_url}}
-        else:
-            raise ValueError("Image URL must start with 'data:image' or 'http(s)://'.")
-
-    def _process_image_path(self, image_path: Union[Path, str]) -> Dict[str, Any]:
-        """Process image ( file path)."""
-        # Process local file image
-        import base64
-        import mimetypes
-
-        path = image_path if isinstance(image_path, Path) else Path(image_path)
-        if not path.exists():
-            raise FileNotFoundError(f"Image file not found: {image_path}")
-
-        mime_type = mimetypes.guess_type(image_path)[0] or "image/jpeg"
-        with open(path, "rb") as image_file:
-            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
-            image_url = f"data:{mime_type};base64,{base64_image}"
-            return {"type": "image_url", "image_url": {"url": image_url}}
-
-    def _process_bytes_image(self, image: bytes) -> Dict[str, Any]:
-        """Process bytes image data."""
-        import base64
-
-        base64_image = base64.b64encode(image).decode("utf-8")
-        image_url = f"data:image/jpeg;base64,{base64_image}"
-        return {"type": "image_url", "image_url": {"url": image_url}}
-
-    def _process_image(self, image: Image) -> Optional[Dict[str, Any]]:
-        """Process an image based on the format."""
-
-        if image.url is not None:
-            image_payload = self._process_image_url(image.url)
-
-        elif image.filepath is not None:
-            image_payload = self._process_image_path(image.filepath)
-
-        elif image.content is not None:
-            image_payload = self._process_bytes_image(image.content)
-
-        else:
-            logger.warning(f"Unsupported image type: {type(image)}")
-            return None
-
-        if image.detail:
-            image_payload["image_url"]["detail"] = image.detail
-
-        return image_payload
-
-    def add_images_to_message(self, message: Message, images: Sequence[Image]) -> Message:
-        """
-        Add images to a message for the model. By default, we use the OpenAI image format but other Models
-        can override this method to use a different image format.
-
-        Args:
-            message: The message for the Model
-            images: Sequence of images in various formats:
-                - str: base64 encoded image, URL, or file path
-                - Dict: pre-formatted image data
-                - bytes: raw image data
-
-        Returns:
-            Message content with images added in the format expected by the model
-        """
-        # If no images are provided, return the message as is
-        if len(images) == 0:
-            return message
-
-        # Ignore non-string message content
-        # because we assume that the images/audio are already added to the message
-        if not isinstance(message.content, str):
-            return message
-
-        # Create a default message content with text
-        message_content_with_image: List[Dict[str, Any]] = [{"type": "text", "text": message.content}]
-
-        # Add images to the message content
-        for image in images:
-            try:
-                image_data = self._process_image(image)
-                if image_data:
-                    message_content_with_image.append(image_data)
-            except Exception as e:
-                logger.error(f"Failed to process image: {str(e)}")
-                continue
-
-        # Update the message content with the images
-        message.content = message_content_with_image
-        return message
-
-    @staticmethod
-    def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Message:
-        """
-        Add audio to a message for the model. By default, we use the OpenAI audio format but other Models
-        can override this method to use a different audio format.
-
-        Args:
-            message: The message for the Model
-            audio: Pre-formatted audio data like {
-                        "content": encoded_string,
-                        "format": "wav"
-                    }
-
-        Returns:
-            Message content with audio added in the format expected by the model
-        """
-        if len(audio) == 0:
-            return message
-
-        # Create a default message content with text
-        message_content_with_audio: List[Dict[str, Any]] = [{"type": "text", "text": message.content}]
-
-        for audio_snippet in audio:
-            # This means the audio is raw data
-            if audio_snippet.content:
-                import base64
-
-                encoded_string = base64.b64encode(audio_snippet.content).decode("utf-8")
-
-                # Create a message with audio
-                message_content_with_audio.append(
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "data": encoded_string,
-                            "format": audio_snippet.format,
-                        },
-                    },
+        # Token details (e.g., from OpenAI)
+        if hasattr(response_usage, "prompt_tokens_details"):
+            if isinstance(response_usage.prompt_tokens_details, dict):
+                assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details
+            elif hasattr(response_usage.prompt_tokens_details, "model_dump"):
+                assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details.model_dump(
+                    exclude_none=True
                 )
 
-        # Update the message content with the audio
-        message.content = message_content_with_audio
-        message.audio = None  # The message should not have an audio component after this
+        if hasattr(response_usage, "completion_tokens_details"):
+            if isinstance(response_usage.completion_tokens_details, dict):
+                assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details
+            elif hasattr(response_usage.completion_tokens_details, "model_dump"):
+                assistant_message.metrics.completion_tokens_details = (
+                    response_usage.completion_tokens_details.model_dump(exclude_none=True)
+                )
 
-        return message
-
-    @staticmethod
-    def _build_tool_calls(tool_calls_data: List[Any]) -> List[Dict[str, Any]]:
+    def _log_messages(self, messages: List[Message]) -> None:
         """
-        Build tool calls from tool call data.
-
-        Args:
-            tool_calls_data (List[ChoiceDeltaToolCall]): The tool call data to build from.
-
-        Returns:
-            List[Dict[str, Any]]: The built tool calls.
+        Log messages for debugging.
         """
-        if not tool_calls_data:
-            return []
-
-        tool_calls: List[Dict[str, Any]] = []
-        current_index = 0
-        for _tool_call in tool_calls_data:
-            if not _tool_call:
-                continue
-
-            # Use current_index if index is not available
-            _index = getattr(_tool_call, "index", None)
-            if _index is None:
-                _index = current_index
-                current_index += 1
-
-            _tool_call_id = getattr(_tool_call, "id", None)
-            _tool_call_type = getattr(_tool_call, "type", None)
-            _function = getattr(_tool_call, "function", None)
-            _function_name = getattr(_function, "name", None) if _function else None
-            _function_arguments = getattr(_function, "arguments", None) if _function else None
-
-            # Ensure _index is valid
-            while len(tool_calls) <= _index:
-                tool_calls.append({})
-
-            tool_call_entry = tool_calls[_index]
-            if not tool_call_entry:
-                tool_call_entry["id"] = _tool_call_id
-                tool_call_entry["type"] = _tool_call_type
-                tool_call_entry["function"] = {
-                    "name": _function_name or "",
-                    "arguments": _function_arguments or "",
-                }
-            else:
-                if _function_name:
-                    tool_call_entry["function"]["name"] += _function_name
-                if _function_arguments:
-                    tool_call_entry["function"]["arguments"] += _function_arguments
-                if _tool_call_id:
-                    tool_call_entry["id"] = _tool_call_id
-                if _tool_call_type:
-                    tool_call_entry["type"] = _tool_call_type
-        return tool_calls
+        for m in messages:
+            m.log()
 
     def get_system_message_for_model(self) -> Optional[str]:
         return self.system_prompt
