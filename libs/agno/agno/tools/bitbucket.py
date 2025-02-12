@@ -205,6 +205,28 @@ class BitbucketTools(Toolkit):
             logger.error(f"Error retrieving pull requests for {repo_slug}: {str(e)}")
             return json.dumps({"error": str(e)})
 
+    def get_pull_request(self, workspace: str, repo_slug: str, pull_request_id: int) -> str:
+        """
+        Retrieves a pull request for a repository.
+        API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-pullrequests/#api-repositories-workspace-repo-slug-pullrequests-pull-request-id-get
+
+        Args:
+            workspace (str): The slug of the workspace where the repository exists.
+            repo_slug (str): The slug of the repository to retrieve pull requests for.
+            pull_request_id (int): The ID of the pull request to retrieve.
+
+        Returns:
+            str: A JSON string containing the pull request.
+        """
+        try:
+            pull_requests = self._make_request(
+                "GET", f"/repositories/{workspace}/{repo_slug}/pullrequests/{pull_request_id}"
+            )
+            return json.dumps(pull_requests, indent=2)
+        except Exception as e:
+            logger.error(f"Error retrieving pull requests for {repo_slug}: {str(e)}")
+            return json.dumps({"error": str(e)})
+
     def get_repo_issues(self, workspace: str, repo_slug: str) -> str:
         """
         Retrieves all issues for a repository.
