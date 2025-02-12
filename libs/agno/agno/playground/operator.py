@@ -50,9 +50,12 @@ def get_session_title(session: AgentSession) -> str:
                 try:
                     run_parsed = AgentRun.model_validate(_run)
                     if run_parsed.message is not None and run_parsed.message.role == "user":
-                        content = run_parsed.message.get_content_string()
-                        if content:
-                            return content
+                        if isinstance(run_parsed.message.content, str):
+                            content = run_parsed.message.get_content_string()
+                            if content:
+                                return content
+                        elif isinstance(run_parsed.message.content, list):
+                            return run_parsed.message.content[0].get("text")
                         else:
                             return "No title"
                 except Exception as e:
