@@ -187,7 +187,7 @@ class Model(ABC):
 
                 # Format and add results to messages
                 self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **model_response.extra
+                    messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                 )
 
                 logger.debug(f"---------- {self.get_provider()} Response ----------")
@@ -249,7 +249,7 @@ class Model(ABC):
 
                 # Format and add results to messages
                 self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **model_response.extra
+                    messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                 )
 
                 # Check if we should stop after tool calls
@@ -288,7 +288,7 @@ class Model(ABC):
         assistant_message.metrics.stop_timer()
 
         # Parse provider response
-        provider_response = self.parse_provider_response(response)
+        provider_response: ModelResponse = self.parse_provider_response(response)
 
         # Add parsed data to model response
         if provider_response.parsed is not None:
@@ -338,7 +338,7 @@ class Model(ABC):
         assistant_message.metrics.stop_timer()
 
         # Parse provider response
-        provider_response = self.parse_provider_response(response)
+        provider_response: ModelResponse = self.parse_provider_response(response)
 
         # Add parsed data to model response
         if provider_response.parsed is not None:

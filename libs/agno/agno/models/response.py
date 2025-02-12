@@ -35,7 +35,6 @@ class ModelResponse:
     extra: Optional[Dict[str, Any]] = None
 
 
-
 class FileType(str, Enum):
     MP4 = "mp4"
     GIF = "gif"
