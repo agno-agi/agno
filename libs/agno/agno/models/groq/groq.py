@@ -14,6 +14,7 @@ from agno.utils.openai import add_images_to_message
 try:
     from groq import AsyncGroq as AsyncGroqClient
     from groq import Groq as GroqClient
+    from groq import APIError, APIConnectionError, APITimeoutError, APIStatusError
     from groq.types.chat import ChatCompletion
     from groq.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDelta, ChoiceDeltaToolCall
 except (ModuleNotFoundError, ImportError):
@@ -228,6 +229,9 @@ class Groq(Model):
                 messages=[format_message(m) for m in messages],  # type: ignore
                 **self.request_kwargs,
             )
+        except (APIError, APIConnectionError, APITimeoutError, APIStatusError) as e:
+            logger.error(f"Error calling Groq API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
@@ -248,6 +252,9 @@ class Groq(Model):
                 messages=[format_message(m) for m in messages],  # type: ignore
                 **self.request_kwargs,
             )
+        except (APIError, APIConnectionError, APITimeoutError, APIStatusError) as e:
+            logger.error(f"Error calling Groq API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
@@ -269,6 +276,9 @@ class Groq(Model):
                 stream=True,
                 **self.request_kwargs,
             )
+        except (APIError, APIConnectionError, APITimeoutError, APIStatusError) as e:
+            logger.error(f"Error calling Groq API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
@@ -293,6 +303,9 @@ class Groq(Model):
             )
             async for chunk in stream:  # type: ignore
                 yield chunk
+        except (APIError, APIConnectionError, APITimeoutError, APIStatusError) as e:
+            logger.error(f"Error calling Groq API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
