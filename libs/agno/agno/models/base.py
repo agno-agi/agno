@@ -183,7 +183,6 @@ class Model(ABC):
                         function_call_response.event == ModelResponseEvent.tool_call_completed.value
                         and function_call_response.tool_calls is not None
                     ):
-                        logger.info(f"Tool calls: {function_call_response.tool_calls}")
                         model_response.tool_calls.extend(function_call_response.tool_calls)
 
                 # Format and add results to messages
