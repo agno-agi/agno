@@ -36,3 +36,12 @@ class StopAgentRun(AgentRunException):
         super().__init__(
             exc, user_message=user_message, agent_message=agent_message, messages=messages, stop_execution=True
         )
+
+
+class ModelProviderError(Exception):
+    """Exception raised when a model provider returns an error."""
+
+    def __init__(self, exc, model_name: str, model_id: str):
+        super().__init__(exc)
+        self.model_name = model_name
+        self.model_id = model_id
