@@ -121,7 +121,7 @@ class Cohere(Model):
         """
         formatted_messages = []
         for m in messages:
-            m_dict = m.to_dict()
+            m_dict = m.serialize_for_model()
             if m_dict["content"] is None:
                 m_dict.pop("content")
             formatted_messages.append(m_dict)

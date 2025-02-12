@@ -165,6 +165,8 @@ class Gemini(Model):
     name: str = "Gemini"
     provider: str = "Google"
 
+    assistant_message_role: str = "model"
+
     # Request parameters
     function_declarations: Optional[List[Any]] = None
     generation_config: Optional[Any] = None

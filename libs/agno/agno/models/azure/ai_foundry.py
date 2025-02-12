@@ -54,7 +54,7 @@ def _format_message(message: Message) -> Dict[str, Any]:
     if message.audio is not None:
         message = add_audio_to_message(message=message, audio=message.audio)
 
-    return message.to_dict()
+    return message.serialize_for_model()
 
 
 @dataclass
@@ -234,7 +234,7 @@ class AzureAIFoundry(Model):
         try:
             async with self.get_async_client() as client:
                 return await client.complete(
-                    messages=[m.to_dict() for m in messages],
+                    messages=[m.serialize_for_model() for m in messages],
                     **self._get_request_kwargs(),
                 )
         except HttpResponseError as e:
@@ -278,7 +278,7 @@ class AzureAIFoundry(Model):
         try:
             async with self.get_async_client() as client:
                 stream = await client.complete(
-                    messages=[m.to_dict() for m in messages],
+                    messages=[m.serialize_for_model() for m in messages],
                     stream=True,
                     **self._get_request_kwargs(),
                 )

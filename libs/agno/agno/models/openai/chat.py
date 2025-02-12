@@ -260,7 +260,7 @@ class OpenAIChat(Model):
         if message.tool_calls is not None and len(message.tool_calls) == 0:
             message.tool_calls = None
 
-        message_dict = message.to_dict()
+        message_dict = message.serialize_for_model()
         message_dict["role"] = self.role_map[message_dict["role"]]
 
         return message_dict

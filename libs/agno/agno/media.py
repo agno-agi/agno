@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 from pydantic import BaseModel, model_validator
 
@@ -63,6 +63,14 @@ class Video(BaseModel):
 
         return data
 
+    def to_dict(self) -> Dict[str, Any]:
+        import base64
+        return {
+            "content": base64.b64encode(self.content).decode('utf-8') if isinstance(self.content, bytes) else self.content,
+            "filepath": self.filepath,
+            "format": self.format,
+        }
+
 
 class Audio(BaseModel):
     content: Optional[Any] = None  # Actual audio bytes content
@@ -88,12 +96,29 @@ class Audio(BaseModel):
 
         return data
 
+    def to_dict(self) -> Dict[str, Any]:
+        import base64
+        return {
+            "content": base64.b64encode(self.content).decode('utf-8') if isinstance(self.content, bytes) else self.content,
+            "filepath": self.filepath,
+            "format": self.format,
+        }
+
 
 class AudioOutput(BaseModel):
     id: str
     content: str  # Base64 encoded
     expires_at: int
     transcript: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        import base64
+        return {
+            "id": self.id,
+            "content": base64.b64encode(self.content).decode('utf-8') if isinstance(self.content, bytes) else self.content,
+            "expires_at": self.expires_at,
+            "transcript": self.transcript,
+        }
 
 
 class Image(BaseModel):
@@ -134,3 +159,12 @@ class Image(BaseModel):
             raise ValueError("Only one of `url`, `filepath`, or `content` should be provided.")
 
         return data
+
+    def to_dict(self) -> Dict[str, Any]:
+        import base64
+        return {
+            "content": base64.b64encode(self.content).decode('utf-8') if isinstance(self.content, bytes) else self.content,
+            "filepath": self.filepath,
+            "url": self.url,
+            "detail": self.detail,
+        }

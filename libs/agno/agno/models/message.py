@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from time import time
 from typing import Any, Dict, List, Optional, Sequence, Union
 
@@ -38,6 +38,12 @@ class MessageMetrics:
     time_to_first_token: Optional[float] = None
 
     timer: Optional[Timer] = None
+
+    def _to_dict(self) -> Dict[str, Any]:
+        metrics_dict = asdict(self)
+        metrics_dict.pop("timer")
+        metrics_dict = {k: v for k, v in metrics_dict.items() if v is not None}
+        return metrics_dict
 
     def start_timer(self):
         if self.timer is None:
@@ -167,7 +173,7 @@ class Message(BaseModel):
             return json.dumps(self.content)
         return ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def serialize_for_model(self) -> Dict[str, Any]:
         _dict: Dict[str, Any] = {
             "role": self.role,
             "content": self.content,
@@ -191,6 +197,29 @@ class Message(BaseModel):
 
         return _dict
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Returns the message as a dictionary."""
+        message_dict = self.model_dump(exclude_none=True)
+
+        # Convert media objects to dictionaries
+        if self.images:
+            message_dict["images"] = [img.to_dict() for img in self.images]
+        if self.audio:
+            message_dict["audio"] = [aud.to_dict() for aud in self.audio]
+        if self.videos:
+            message_dict["videos"] = [vid.to_dict() for vid in self.videos]
+        if self.audio_output:
+            message_dict["audio_output"] = self.audio_output.to_dict()
+
+        if self.references:
+            message_dict["references"] = asdict(self.references)
+        if self.metrics:
+            message_dict["metrics"] = self.metrics._to_dict()
+
+        message_dict["created_at"] = self.created_at
+
+        return message_dict
+
     def to_fc_result(self) -> Dict[str, Any]:
         return {
             "content": self.content,
@@ -204,7 +233,7 @@ class Message(BaseModel):
 
     @model_serializer
     def serialize_model(self):
-        return self.to_dict()
+        return self.serialize_for_model()
 
     def log(self, metrics: bool = True, level: Optional[str] = None):
         """Log the message to the console

@@ -34,7 +34,7 @@ def format_message(message: Message) -> Dict[str, Any]:
         if message.images is not None:
             message = add_images_to_message(message=message, images=message.images)
 
-    return message.to_dict()
+    return message.serialize_for_model()
 
 
 @dataclass

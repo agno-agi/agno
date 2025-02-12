@@ -99,7 +99,7 @@ def print_agent_memory(agent):
     console.print(
         Panel(
             JSON(
-                json.dumps([m.to_dict() for m in agent.memory.messages]),
+                json.dumps([m.serialize_for_model() for m in agent.memory.messages]),
                 indent=4,
             ),
             title=f"Chat History for session_id: {agent.session_id}",

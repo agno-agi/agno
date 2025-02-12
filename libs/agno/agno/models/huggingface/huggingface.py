@@ -236,7 +236,7 @@ class HuggingFace(Model):
         try:
             return self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[m.to_dict() for m in messages],
+                messages=[m.serialize_for_model() for m in messages],
                 **self.request_kwargs,
             )
         except InferenceTimeoutError as e:
@@ -257,7 +257,7 @@ class HuggingFace(Model):
             async with self.get_async_client() as client:
                 return await client.chat.completions.create(
                     model=self.id,
-                    messages=[m.to_dict() for m in messages],
+                    messages=[m.serialize_for_model() for m in messages],
                     **self.request_kwargs,
                 )
         except InferenceTimeoutError as e:
@@ -277,7 +277,7 @@ class HuggingFace(Model):
         try:
             yield from self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[m.to_dict() for m in messages],  # type: ignore
+                messages=[m.serialize_for_model() for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.request_kwargs,
@@ -300,7 +300,7 @@ class HuggingFace(Model):
             async with self.get_async_client() as client:
                 stream = await client.chat.completions.create(
                     model=self.id,
-                    messages=[m.to_dict() for m in messages],
+                    messages=[m.serialize_for_model() for m in messages],
                     stream=True,
                     stream_options={"include_usage": True},
                     **self.request_kwargs,
