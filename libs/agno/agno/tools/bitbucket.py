@@ -53,11 +53,25 @@ class BitbucketTools(Toolkit):
         return auth_base64
 
     def _make_request(
-        self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        data: Optional[Dict[str, Any]] = None,
     ) -> Union[str, Dict[str, Any]]:
-        """Make a request to Bitbucket API."""
+        """Make a request to Bitbucket API.
+
+        Args:
+            method (str): The HTTP method to use for the request.
+            endpoint (str): The API endpoint to make the request to.
+            params (Dict[str, Any], optional): Query parameters to include in the request. Defaults to None.
+            data (Dict[str, Any], optional): The payload to send with the request. Defaults to None.
+
+        Returns:
+            Union[str, Dict[str, Any]]: The response from the API as a string or a dictionary.
+        """
         url = f"{self.base_url}{endpoint}"
-        response = requests.request(method, url, headers=self.headers, json=data)
+        response = requests.request(method, url, headers=self.headers, json=data, params=params)
         response.raise_for_status()
         encoding_type = response.headers.get("Content-Type", "application/json")
         if encoding_type.startswith("application/json"):
@@ -82,7 +96,8 @@ class BitbucketTools(Toolkit):
             str: A JSON string containing repository list.
         """
         try:
-            repo = self._make_request("GET", f"/repositories/{workspace}?page={page}&pagelen={pagelen}")
+            params = {"page": page, "pagelen": pagelen}
+            repo = self._make_request("GET", f"/repositories/{workspace}", params=params)
             return json.dumps(repo, indent=2)
         except Exception as e:
             logger.error(f"Error retrieving repository list for workspace {workspace}: {str(e)}")
@@ -212,8 +227,9 @@ class BitbucketTools(Toolkit):
             if state not in VALID_STATES:
                 raise ValueError(f"Invalid state: {state}. Valid states are: {', '.join(VALID_STATES)}")
 
+            params = {"state": state, "page": page, "pagelen": pagelen}
             pull_requests = self._make_request(
-                "GET", f"/repositories/{workspace}/{repo_slug}/pullrequests?state={state}&page={page}&pagelen={pagelen}"
+                "GET", f"/repositories/{workspace}/{repo_slug}/pullrequests", params=params
             )
             return json.dumps(pull_requests, indent=2)
         except Exception as e:
@@ -264,7 +280,7 @@ class BitbucketTools(Toolkit):
             logger.error(f"Error retrieving changes for pull request {pull_request_id} in {repo_slug}: {str(e)}")
             return json.dumps({"error": str(e)})
 
-    def list_issues(self, workspace: str, repo_slug: str) -> str:
+    def list_issues(self, workspace: str, repo_slug: str, page: int = 1, pagelen: int = 10) -> str:
         """
         Retrieves all issues for a repository.
         API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-issue-tracker/#api-repositories-workspace-repo-slug-issues-get
@@ -272,12 +288,15 @@ class BitbucketTools(Toolkit):
         Args:
             workspace (str): The slug of the workspace where the repository exists.
             repo_slug (str): The slug of the repository to retrieve issues for.
+            page (int, optional): The page number to retrieve. Defaults to 1.
+            pagelen (int, optional): The number of issues to retrieve per page. Defaults to 10.
 
         Returns:
             str: A JSON string containing all issues.
         """
         try:
-            issues = self._make_request("GET", f"/repositories/{workspace}/{repo_slug}/issues")
+            params = {"page": page, "pagelen": pagelen}
+            issues = self._make_request("GET", f"/repositories/{workspace}/{repo_slug}/issues", params=params)
             return json.dumps(issues, indent=2)
         except Exception as e:
             logger.error(f"Error retrieving issues for {repo_slug}: {str(e)}")
