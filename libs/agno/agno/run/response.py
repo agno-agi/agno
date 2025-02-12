@@ -66,7 +66,7 @@ class RunResponse:
     tools: Optional[List[Dict[str, Any]]] = None
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
-    audio: Optional[List[AudioArtifact]] = None  # AudioArtifact attached to the response
+    audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
     response_audio: Optional[AudioOutput] = None  # Model audio response
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
@@ -80,16 +80,17 @@ class RunResponse:
             _dict["extra_data"] = self.extra_data.to_dict()
 
         if self.images is not None:
-            _dict["images"] = [img.model_dump() for img in self.images]
+            _dict["images"] = [img.model_dump(exclude_none=True) for img in self.images]
 
         if self.videos is not None:
-            _dict["videos"] = [vid.model_dump() for vid in self.videos]
+            _dict["videos"] = [vid.model_dump(exclude_none=True) for vid in self.videos]
 
         if self.audio is not None:
-            _dict["audio"] = [aud.model_dump() for aud in self.audio]
+            _dict["audio"] = [aud.model_dump(exclude_none=True) for aud in self.audio]
 
         if isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
+
         return _dict
 
     def to_json(self) -> str:
