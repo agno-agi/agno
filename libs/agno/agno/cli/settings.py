@@ -64,6 +64,7 @@ class AgnoCliSettings(BaseSettings):
 
     @field_validator("api_url", mode="before")
     def update_api_url(cls, v, info: ValidationInfo):
+        print("HERE", info.data)
         api_runtime = info.data["api_runtime"]
         if api_runtime == "dev":
             from os import getenv
