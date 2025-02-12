@@ -146,35 +146,36 @@ class BitbucketTools(Toolkit):
             logger.error(f"Error creating repository {repo_slug} for {workspace}: {str(e)}")
             return json.dumps({"error": str(e)})
 
-    def get_repo_branches(self, repo_slug: str) -> str:
+    def list_repository_commits(self, workspace: str, repo_slug: str, ctx: Optional[str] = None, page: int = 1) -> str:
         """
-        Retrieves all branches for a repository.
+        Retrieves all commits in a repository.
+        API Docs: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-commits/#api-repositories-workspace-repo-slug-commits-get
 
-        :param repo_slug: The slug of the repository to retrieve branches for.
-        :return: A JSON string containing all branches.
+        Note: The underlying API uses cursor based pagination, so refrain from using the page parameter. Multiple API calls need to be made to retrieve commits of next pages.
+
+        Args:
+            workspace (str): The slug of the workspace where the repository exists.
+            repo_slug (str): The slug of the repository to retrieve commits for.
+            ctx (str, optional): The cursor to navigate between pages. Provided by Bitbucket API. Defaults to None.
+            page (int, optional): The page number to retrieve. Defaults to 1.
+
+        Returns:
+            str: A JSON string containing all commits.
         """
         try:
-            branches = self.bitbucket.get_branches(repo_slug)
-            logger.debug(f"Branches: {branches}")
-            return json.dumps(branches)
+            if ctx:
+                commits = self._make_request(
+                    "GET", f"/repositories/{workspace}/{repo_slug}/commits?ctx={ctx}&page={page}"
+                )
+            else:
+                commits = self._make_request("GET", f"/repositories/{workspace}/{repo_slug}/commits")
+                for i in range(2, page + 1):
+                    next_url = commits["next"]
+                    query_param = next_url.split("?")[1]
+                    commits = self._make_request("GET", f"/repositories/{workspace}/{repo_slug}/commits?{query_param}")
+            return json.dumps(commits, indent=2)
         except Exception as e:
-            logger.error(f"Error retrieving branches: {str(e)}")
-            return json.dumps({"error": str(e)})
-
-    def get_repo_commits(self, repo_slug: str, branch: str) -> str:
-        """
-        Retrieves all commits for a specific branch in a repository.
-
-        :param repo_slug: The slug of the repository to retrieve commits for.
-        :param branch: The branch to retrieve commits for.
-        :return: A JSON string containing all commits.
-        """
-        try:
-            commits = self.bitbucket.get_commits(repo_slug, branch)
-            logger.debug(f"Commits: {commits}")
-            return json.dumps(commits)
-        except Exception as e:
-            logger.error(f"Error retrieving commits: {str(e)}")
+            logger.error(f"Error retrieving commits for {repo_slug}: {str(e)}")
             return json.dumps({"error": str(e)})
 
     def get_repo_pull_requests(self, repo_slug: str) -> str:
