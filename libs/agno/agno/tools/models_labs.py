@@ -83,7 +83,7 @@ class ModelsLabTools(Toolkit):
 
         return base_payload
 
-    def _add_media_artifact(self, agent: Agent, media_id: str, media_url: str, eta: str = None) -> None:
+    def _add_media_artifact(self, agent: Agent, media_id: str, media_url: str, eta: Optional[str] = None) -> None:
         """Add appropriate media artifact based on file type."""
         if self.file_type == FileType.MP4:
             agent.add_video(VideoArtifact(id=str(media_id), url=media_url, eta=str(eta)))
