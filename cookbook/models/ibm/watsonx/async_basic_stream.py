@@ -4,9 +4,7 @@ from agno.agent import Agent, RunResponse  # noqa
 from agno.models.ibm.watsonx import WatsonX
 
 agent = Agent(
-    model=WatsonX(id="ibm/granite-20b-code-instruct"), 
-    debug_mode=True,
-    markdown=True
+    model=WatsonX(id="ibm/granite-20b-code-instruct"), debug_mode=True, markdown=True
 )
 
 # Get the response in a variable

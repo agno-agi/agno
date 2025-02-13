@@ -964,15 +964,15 @@ class Model(ABC):
 
         if isinstance(response_usage, dict):
             if "input_tokens" in response_usage:
-                assistant_message.metrics.input_tokens = response_usage.get("input_tokens")
+                assistant_message.metrics.input_tokens = response_usage.get("input_tokens", 0)
             if "output_tokens" in response_usage:
-                assistant_message.metrics.output_tokens = response_usage.get("output_tokens")
+                assistant_message.metrics.output_tokens = response_usage.get("output_tokens", 0)
             if "prompt_tokens" in response_usage:
-                assistant_message.metrics.input_tokens = response_usage.get("prompt_tokens")
+                assistant_message.metrics.input_tokens = response_usage.get("prompt_tokens", 0)
             if "completion_tokens" in response_usage:
-                assistant_message.metrics.output_tokens = response_usage.get("completion_tokens")
+                assistant_message.metrics.output_tokens = response_usage.get("completion_tokens", 0)
             if "total_tokens" in response_usage:
-                assistant_message.metrics.total_tokens = response_usage.get("total_tokens")
+                assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
             else:
                 assistant_message.metrics.total_tokens = (
                     assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens

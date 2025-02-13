@@ -6,7 +6,7 @@ from agno.models.ibm.watsonx import WatsonX
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=WatsonX(id="meta-llama/llama-3-2-11b-vision-instruct"),   
+    model=WatsonX(id="meta-llama/llama-3-2-11b-vision-instruct"),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )

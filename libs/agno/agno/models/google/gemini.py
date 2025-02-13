@@ -638,8 +638,6 @@ class Gemini(Model):
 
                         model_response.tool_calls.append(tool_call)
 
-
-
         # Extract usage metadata if present
         if hasattr(response, "usage_metadata"):
             usage: GenerateContentResponseUsageMetadata = response.usage_metadata

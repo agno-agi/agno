@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, AsyncGenerator
+from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional
 
 from pydantic import BaseModel
 
@@ -19,7 +19,7 @@ except ImportError:
     raise ImportError("`ibm-watsonx-ai` is not installed. Please install it using `pip install ibm-watsonx-ai`.")
 
 
-def _format_images_for_message(message: Message, images: List[Image]) -> List[Dict[str, Any]]:
+def _format_images_for_message(message: Message, images: List[Image]) -> Message:
     """
     Format an image into the format expected by WatsonX.
     """
@@ -36,16 +36,16 @@ def _format_images_for_message(message: Message, images: List[Image]) -> List[Di
                 base64_image = base64.b64encode(image.content).decode("utf-8")
                 image_url = f"data:image/jpeg;base64,{base64_image}"
                 image_payload = {"type": "image_url", "image_url": {"url": image_url}}
+                message_content_with_image.append(image_payload)
             else:
                 logger.warning(f"Unsupported image format: {image}")
-                return None
-            
-            message_content_with_image.append(image_payload)
+
         except Exception as e:
             logger.error(f"Failed to process image: {str(e)}")
 
     # Update the message content with the images
-    message.content = message_content_with_image
+    if len(message_content_with_image) > 1:
+        message.content = message_content_with_image
     return message
 
 
@@ -113,11 +113,7 @@ class WatsonX(Model):
             raise ValueError("IBM_WATSONX_PROJECT_ID environment variable not set")
 
         # Create credentials object
-        credentials = Credentials(
-            url=self.url,
-            api_key=self.api_key,
-            verify=self.verify
-        )
+        credentials = Credentials(url=self.url, api_key=self.api_key, verify=self.verify)
 
         return {
             "credentials": credentials,
@@ -138,15 +134,11 @@ class WatsonX(Model):
         client_params = self._get_client_params()
 
         # Initialize model inference client
-        self.model_client = ModelInference(
-            model_id=self.id,
-            **client_params
-        )
+        self.model_client = ModelInference(model_id=self.id, **client_params)
 
         return self.model_client
 
     def _get_request_params(self) -> Dict[str, Any]:
-        
         params = {
             "frequency_penalty": self.frequency_penalty,
             "presence_penalty": self.presence_penalty,
@@ -155,13 +147,11 @@ class WatsonX(Model):
             "top_p": self.top_p,
             "logprobs": self.logprobs,
             "top_logprobs": self.top_logprobs,
-            "response_format": self.response_format
+            "response_format": self.response_format,
         }
-        params = {k:v for k,v in params.items() if v is not None}
+        params = {k: v for k, v in params.items() if v is not None}
 
-        request_params = {
-            "params": params
-        }
+        request_params: Dict[str, Any] = {"params": params}
 
         # Add tools
         if self._tools is not None and len(self._tools) > 0:
@@ -177,7 +167,7 @@ class WatsonX(Model):
         if self.request_params:
             request_params.update(self.request_params)
 
-        request_params = {k:v for k,v in request_params.items() if v is not None}
+        request_params = {k: v for k, v in request_params.items() if v is not None}
 
         return request_params
 
@@ -196,14 +186,11 @@ class WatsonX(Model):
 
             formatted_messages = [_format_message(m) for m in messages]
             request_params = self._get_request_params()
-            
+
             # Call chat method
-            response = client.chat(
-                messages=formatted_messages,
-                **request_params
-            )
+            response = client.chat(messages=formatted_messages, **request_params)
             return response
-            
+
         except Exception as e:
             logger.error(f"Error calling WatsonX API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
@@ -221,14 +208,11 @@ class WatsonX(Model):
         try:
             client = self.get_client()
             formatted_messages = [_format_message(m) for m in messages]
-            
+
             request_params = self._get_request_params()
-            
-            return await client.achat(
-                messages=formatted_messages,
-                **request_params
-            )
-            
+
+            return await client.achat(messages=formatted_messages, **request_params)
+
         except Exception as e:
             logger.error(f"Error calling WatsonX API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
@@ -246,14 +230,11 @@ class WatsonX(Model):
         try:
             client = self.get_client()
             formatted_messages = [_format_message(m) for m in messages]
-            
+
             request_params = self._get_request_params()
-            
-            yield from client.chat_stream(
-                messages=formatted_messages,
-                **request_params
-            )
-                
+
+            yield from client.chat_stream(messages=formatted_messages, **request_params)
+
         except Exception as e:
             logger.error(f"Error calling WatsonX API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
@@ -271,17 +252,14 @@ class WatsonX(Model):
         try:
             client = self.get_client()
             formatted_messages = [_format_message(m) for m in messages]
-            
+
             # Get parameters for chat
             request_params = self._get_request_params()
-            
-            async_stream = await client.achat_stream(
-                messages=formatted_messages,
-                **request_params
-            )
+
+            async_stream = await client.achat_stream(messages=formatted_messages, **request_params)
             async for chunk in async_stream:
                 yield chunk
-                
+
         except Exception as e:
             logger.error(f"Error in async streaming from WatsonX API: {str(e)}")
             raise ModelProviderError(e, self.name, self.id) from e
@@ -326,7 +304,7 @@ class WatsonX(Model):
                 if _tool_call_type:
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
-    
+
     def parse_provider_response(self, response: Dict[str, Any]) -> ModelResponse:
         """
         Parse the WatsonX response into a ModelResponse.
