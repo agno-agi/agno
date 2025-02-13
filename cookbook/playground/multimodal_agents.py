@@ -57,25 +57,29 @@ ml_gif_agent = Agent(
     ),
 )
 
-ml_song_agent = Agent(
-    name="ModelsLab Song Generator Agent",
-    agent_id="ml_song_agent",
+ml_music_agent = Agent(
+    name="ModelsLab Music Agent",
+    agent_id="ml_music_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[ModelsLabTools(wait_for_completion=True,file_type=FileType.MP3)],
-    description="You are an AI agent that can generate songs using the ModelsLabs API.",
+    description="You are an AI agent that can generate music using the ModelsLabs API.",
     instructions=[
-        "When the user asks you to generate audio, use the `generate_audio` tool to generate the audio.",
-        # "You'll generate the appropriate prompt to send to the tool to generate audio.",
-        # "You don't need to find the appropriate voice first, I already specified the voice to user."
-        "Don't return file name or file url in your response or markdown just tell the audio was created successfully.",
-        "The audio should be long and detailed.",
+        "When generating music, use the `generate_media` tool with detailed prompts that specify:",
+        "- The genre and style of music (e.g., classical, jazz, electronic)",
+        "- The instruments and sounds to include",  
+        "- The tempo, mood and emotional qualities",
+        "- The structure (intro, verses, chorus, bridge, etc.)",
+        "Create rich, descriptive prompts that capture the desired musical elements.",
+        "Focus on generating high-quality, complete instrumental pieces.",
+        "Keep responses simple and only confirm when music is generated successfully.",
+        "Do not include any file names, URLs or technical details in responses.",
     ],
     markdown=True,
     debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     storage=SqliteAgentStorage(
-        table_name="ml_song_agent", db_file=image_agent_storage_file
+        table_name="ml_music_agent", db_file=image_agent_storage_file
     ),
 )
 
@@ -186,7 +190,7 @@ app = Playground(
     agents=[
         image_agent,
         ml_gif_agent,
-        ml_song_agent,
+        ml_music_agent,
         ml_video_agent,
         fal_agent,
         gif_agent,
