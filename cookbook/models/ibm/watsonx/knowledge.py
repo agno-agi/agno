@@ -1,8 +1,8 @@
-"""Run `pip install duckduckgo-search sqlalchemy pgvector pypdf openai anthropic` to install dependencies."""
+"""Run `pip install duckduckgo-search sqlalchemy pgvector pypdf openai ibm-watsonx-ai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.models.aws import Claude
+from agno.models.ibm.watsonx import WatsonX
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -14,7 +14,7 @@ knowledge_base = PDFUrlKnowledgeBase(
 knowledge_base.load(recreate=True)  # Comment out after first run
 
 agent = Agent(
-    model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0"),
+    model=WatsonX(id="ibm/granite-20b-code-instruct"),
     knowledge=knowledge_base,
     show_tool_calls=True,
 )
