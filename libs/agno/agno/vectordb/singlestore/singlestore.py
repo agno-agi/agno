@@ -196,7 +196,7 @@ class SingleStore(VectorDb):
                     name=document.name,
                     meta_data=meta_data_json,
                     content=cleaned_content,
-                    embedding=embeddings,  # Now properly formatted for VECTOR type
+                    embedding=embeddings,
                     usage=usage_json,
                     content_hash=content_hash,
                 )
@@ -237,7 +237,7 @@ class SingleStore(VectorDb):
                         name=document.name,
                         meta_data=meta_data_json,
                         content=cleaned_content,
-                        embedding=embeddings,  # Now properly formatted for VECTOR type
+                        embedding=embeddings,
                         usage=usage_json,
                         content_hash=content_hash,
                     )
