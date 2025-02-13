@@ -188,15 +188,15 @@ class SingleStore(VectorDb):
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
 
-                # Convert embedding to a JSON array string
-                embedding_json = json.dumps(document.embedding)
+                # Convert embedding list to SingleStore VECTOR format
+                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
 
                 stmt = mysql.insert(self.table).values(
                     id=_id,
                     name=document.name,
                     meta_data=meta_data_json,
                     content=cleaned_content,
-                    embedding=embedding_json,  # Properly formatted embedding as a JSON array string
+                    embedding=embeddings,  # Now properly formatted for VECTOR type
                     usage=usage_json,
                     content_hash=content_hash,
                 )
@@ -227,8 +227,8 @@ class SingleStore(VectorDb):
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
 
-                # Convert embedding to a JSON array string
-                embedding_json = json.dumps(document.embedding)
+                # Convert embedding list to SingleStore VECTOR format
+                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
 
                 stmt = (
                     mysql.insert(self.table)
@@ -237,7 +237,7 @@ class SingleStore(VectorDb):
                         name=document.name,
                         meta_data=meta_data_json,
                         content=cleaned_content,
-                        embedding=embedding_json,
+                        embedding=embeddings,  # Now properly formatted for VECTOR type
                         usage=usage_json,
                         content_hash=content_hash,
                     )
@@ -245,7 +245,7 @@ class SingleStore(VectorDb):
                         name=document.name,
                         meta_data=meta_data_json,
                         content=cleaned_content,
-                        embedding=embedding_json,
+                        embedding=embeddings,
                         usage=usage_json,
                         content_hash=content_hash,
                     )
@@ -292,10 +292,10 @@ class SingleStore(VectorDb):
         if self.distance == Distance.l2:
             stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
         if self.distance == Distance.cosine:
-            embedding_json = json.dumps(query_embedding)
+            embeddings = json.dumps(query_embedding)
             dot_product_expr = func.dot_product(self.table.c.embedding, text(":embedding"))
             stmt = stmt.order_by(dot_product_expr.desc())
-            stmt = stmt.params(embedding=embedding_json)
+            stmt = stmt.params(embedding=embeddings)
             # stmt = stmt.order_by(self.table.c.embedding.cosine_distance(query_embedding))
         if self.distance == Distance.max_inner_product:
             stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
@@ -306,6 +306,7 @@ class SingleStore(VectorDb):
         # Get neighbors
         # This will only work if embedding column is created with `vector` data type.
         with self.Session.begin() as sess:
+            sess.execute(text("SET vector_type_project_format = JSON"))
             neighbors = sess.execute(stmt).fetchall() or []
             #         if self.index is not None:
             #             if isinstance(self.index, Ivfflat):
@@ -322,8 +323,15 @@ class SingleStore(VectorDb):
         for neighbor in neighbors:
             meta_data_dict = json.loads(neighbor.meta_data) if neighbor.meta_data else {}
             usage_dict = json.loads(neighbor.usage) if neighbor.usage else {}
-            # Convert the embedding mysql.TEXT back into a list
-            embedding_list = json.loads(neighbor.embedding) if neighbor.embedding else []
+            
+            # Convert SingleStore VECTOR type to list
+            embedding_list = []
+            if neighbor.embedding:
+                try:
+                    embedding_list = json.loads(neighbor.embedding)
+                except Exception as e:
+                    logger.error(f"Error extracting vector: {e}")
+                    embedding_list = []
 
             search_results.append(
                 Document(
