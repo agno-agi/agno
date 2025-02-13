@@ -56,7 +56,7 @@ class ModelsLabTools(Toolkit):
 
     def _create_payload(self, prompt: str) -> Dict[str, Any]:
         """Create payload based on file type."""
-        base_payload = {
+        base_payload: Dict[str, Any] = {
             "key": self.api_key,
             "prompt": prompt,
             "webhook": None,
@@ -71,15 +71,15 @@ class ModelsLabTools(Toolkit):
                 "negative_prompt": "low quality",
                 "model_id": "cogvideox",
                 "instant_response": False,
+                "output_type": self.file_type.value,
             }
-            base_payload.update(video_template)
-            base_payload["output_type"] = self.file_type.value
+            base_payload |= video_template  # Use |= instead of update()
         else:
             audio_template = {
                 "base64": False,
                 "temp": False,
             }
-            base_payload.update(audio_template)
+            base_payload |= audio_template  # Use |= instead of update()
 
         return base_payload
 
