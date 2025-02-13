@@ -881,7 +881,6 @@ class Agent:
                     import time
 
                     time.sleep(delay)
-
         if last_exception is not None:
             raise Exception(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}"
@@ -1424,11 +1423,13 @@ class Agent:
 
         # Update the response_format on the Model
         if self.response_model is not None:
+            # This will pass the pydantic model to the model
             if self.structured_outputs and self.model.supports_structured_outputs:
                 logger.debug("Setting Model.response_format to Agent.response_model")
                 self.model.response_format = self.response_model
                 self.model.structured_outputs = True
             else:
+                # Otherwise we just want JSON
                 self.model.response_format = {"type": "json_object"}
         else:
             self.model.response_format = None
