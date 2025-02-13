@@ -62,19 +62,19 @@ class Cassandra(VectorDb):
         """Check if a document exists by ID."""
         query = f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} WHERE row_id = %s"
         result = self.session.execute(query, (document.id,))
-        return result[0].count > 0
+        return result.one()[0] > 0
 
     def name_exists(self, name: str) -> bool:
         """Check if a document exists by name."""
-        query = f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} WHERE document_name = %s"
+        query = f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} WHERE document_name = %s ALLOW FILTERING"
         result = self.session.execute(query, (name,))
-        return result[0].count > 0
+        return result.one()[0] > 0
 
     def id_exists(self, id: str) -> bool:
         """Check if a document exists by ID."""
-        query = f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} WHERE row_id = %s"
+        query = f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} WHERE row_id = %s ALLOW FILTERING"
         result = self.session.execute(query, (id,))
-        return result[0].count > 0
+        return result.one()[0] > 0
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         logger.debug(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
