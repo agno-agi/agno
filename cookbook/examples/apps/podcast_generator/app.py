@@ -1,5 +1,5 @@
 import streamlit as st
-from podcast import generate_podcast  # type: ignore
+from agents import generate_podcast
 
 # Streamlit App Configuration
 st.set_page_config(
@@ -82,7 +82,12 @@ def generate_and_display_podcast(topic):
         st.audio(audio_path, format="audio/wav")
 
         with open(audio_path, "rb") as audio_file:
-            st.download_button("⬇️ Download Podcast", audio_file, file_name="podcast.wav", mime="audio/wav")
+            st.download_button(
+                "⬇️ Download Podcast",
+                audio_file,
+                file_name="podcast.wav",
+                mime="audio/wav",
+            )
 
     else:
         st.error("❌ Failed to generate podcast. Please try again.")

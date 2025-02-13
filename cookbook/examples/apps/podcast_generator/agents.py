@@ -1,10 +1,10 @@
 import os
-from dotenv import load_dotenv
 
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils.audio import write_audio_to_file
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
@@ -55,7 +55,9 @@ def generate_podcast(topic, voice="alloy"):
             "While AI in healthcare is promising, it also raises ethical concerns. Who takes responsibility for a wrong diagnosis? How do we ensure data privacy? These are crucial questions for the future. One thing’s for sure—AI is here to stay, and it’s reshaping medicine as we know it. Thanks for tuning in, and see you next time!"
             """,
         model=OpenAIChat(
-            id="gpt-4o-audio-preview", modalities=["text", "audio"], audio={"voice": voice, "format": "wav"}
+            id="gpt-4o-audio-preview",
+            modalities=["text", "audio"],
+            audio={"voice": voice, "format": "wav"},
         ),
         tools=[DuckDuckGoTools()],
     )
@@ -63,8 +65,14 @@ def generate_podcast(topic, voice="alloy"):
     # Generate the podcast script
     audio_agent.run(f"Write the content of podcast for the topic: {topic}")
     audio_file_path = "tmp/generated_podcast.wav"
-    if audio_agent.run_response.response_audio is not None and "data" in audio_agent.run_response.response_audio:
-        write_audio_to_file(audio=audio_agent.run_response.response_audio["data"], filename=audio_file_path)
+    if (
+        audio_agent.run_response.response_audio is not None
+        and "data" in audio_agent.run_response.response_audio
+    ):
+        write_audio_to_file(
+            audio=audio_agent.run_response.response_audio["data"],
+            filename=audio_file_path,
+        )
         return audio_file_path
 
     return None
