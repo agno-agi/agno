@@ -164,6 +164,7 @@ class ChromaDb(VectorDb):
         ids: List = []
         docs: List = []
         docs_embeddings: List = []
+        docs_metadata: List = []
 
         if not self._collection:
             self._collection = self.client.get_collection(name=self.collection_name)
@@ -175,13 +176,14 @@ class ChromaDb(VectorDb):
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
             ids.append(doc_id)
+            docs_metadata.append(document.meta_data)
             logger.debug(f"Upserted document: {document.id} | {document.name} | {document.meta_data}")
 
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs)
+                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
                 logger.debug(f"Committed {len(docs)} documents")
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:

@@ -154,4 +154,4 @@ def test_custom_embedder(test_dir):
     )
     db.create()
     assert db.embedder == custom_embedder
-    db.drop() 
+    db.drop()

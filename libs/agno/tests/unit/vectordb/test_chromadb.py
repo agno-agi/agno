@@ -14,15 +14,28 @@ TEST_PATH = "tmp/test_chromadb"
 @pytest.fixture
 def chroma_db():
     """Fixture to create and clean up a ChromaDb instance"""
+    # Ensure the test directory exists with proper permissions
+    os.makedirs(TEST_PATH, exist_ok=True)
+    
+    # Clean up any existing data before the test
+    if os.path.exists(TEST_PATH):
+        shutil.rmtree(TEST_PATH)
+        os.makedirs(TEST_PATH)
+    
     db = ChromaDb(
         collection=TEST_COLLECTION,
         path=TEST_PATH,
-        persistent_client=True
+        persistent_client=False
     )
     db.create()
     yield db
-    # Cleanup
-    db.drop()
+    
+    # Cleanup after test
+    try:
+        db.drop()
+    except Exception:
+        pass
+        
     if os.path.exists(TEST_PATH):
         shutil.rmtree(TEST_PATH)
 
@@ -91,6 +104,9 @@ def test_delete_collection(chroma_db, sample_documents):
 
 def test_distance_metrics():
     """Test different distance metrics"""
+    # Ensure the test directory exists
+    os.makedirs(TEST_PATH, exist_ok=True)
+    
     db_cosine = ChromaDb(
         collection="test_cosine",
         path=TEST_PATH,
@@ -109,8 +125,12 @@ def test_distance_metrics():
     assert db_euclidean._collection is not None
     
     # Cleanup
-    db_cosine.drop()
-    db_euclidean.drop()
+    try:
+        db_cosine.drop()
+        db_euclidean.drop()
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
 
 def test_doc_exists(chroma_db, sample_documents):
     """Test document existence check"""
@@ -136,6 +156,9 @@ async def test_error_handling(chroma_db):
 
 def test_custom_embedder():
     """Test using a custom embedder"""
+    # Ensure the test directory exists
+    os.makedirs(TEST_PATH, exist_ok=True)
+    
     custom_embedder = OpenAIEmbedder()
     db = ChromaDb(
         collection=TEST_COLLECTION,
@@ -144,4 +167,10 @@ def test_custom_embedder():
     )
     db.create()
     assert db.embedder == custom_embedder
-    db.drop() 
+    
+    # Cleanup
+    try:
+        db.drop()
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH) 
