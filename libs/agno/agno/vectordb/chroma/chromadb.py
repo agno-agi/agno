@@ -32,7 +32,7 @@ class ChromaDb(VectorDb):
         **kwargs,
     ):
         # Collection attributes
-        self.collection: str = collection
+        self.collection_name: str = collection
 
         # Embedder for embedding the document contents
         self.embedder: Embedder = embedder
@@ -74,15 +74,14 @@ class ChromaDb(VectorDb):
 
     def create(self) -> None:
         """Create the collection in ChromaDb."""
-        if not self.exists():
-            logger.debug(f"Creating collection: {self.collection}")
-            self._collection = self.client.create_collection(
-                name=self.collection, metadata={"hnsw:space": self.distance.value}
-            )
-
+        if self.exists():
+            logger.debug(f"Collection already exists: {self.collection_name}")
+            self._collection = self.client.get_collection(name=self.collection_name)
         else:
-            logger.debug(f"Collection already exists: {self.collection}")
-            self._collection = self.client.get_collection(name=self.collection)
+            logger.debug(f"Creating collection: {self.collection_name}")
+            self._collection = self.client.create_collection(
+                name=self.collection_name, metadata={"hnsw:space": self.distance.value}
+            )
 
     def doc_exists(self, document: Document) -> bool:
         """Check if a document exists in the collection.
@@ -93,7 +92,7 @@ class ChromaDb(VectorDb):
         """
         if self.client:
             try:
-                collection: Collection = self.client.get_collection(name=self.collection)
+                collection: Collection = self.client.get_collection(name=self.collection_name)
                 collection_data: GetResult = collection.get(include=[IncludeEnum.documents])
                 if collection_data.get("documents") != []:
                     return True
@@ -109,7 +108,7 @@ class ChromaDb(VectorDb):
             bool: True if document exists, False otherwise."""
         if self.client:
             try:
-                collections: Collection = self.client.get_collection(name=self.collection)
+                collections: Collection = self.client.get_collection(name=self.collection_name)
                 for collection in collections:  # type: ignore
                     if name in collection:
                         return True
@@ -130,6 +129,9 @@ class ChromaDb(VectorDb):
         docs_embeddings: List = []
         docs_metadata: List = []
 
+        if not self._collection:
+            self._collection = self.client.get_collection(name=self.collection_name)
+
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -140,11 +142,12 @@ class ChromaDb(VectorDb):
             docs_metadata.append(document.meta_data)
             logger.debug(f"Inserted document: {document.id} | {document.name} | {document.meta_data}")
 
-        if len(docs) > 0 and self._collection is not None:
-            self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
-            logger.debug(f"Committed {len(docs)} documents")
+        if self._collection is None:
+            logger.warning("Collection does not exist")
         else:
-            logger.error("Collection does not exist")
+            if len(docs) > 0:
+                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                logger.debug(f"Committed {len(docs)} documents")
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in ChromaDB."""
@@ -162,6 +165,9 @@ class ChromaDb(VectorDb):
         docs: List = []
         docs_embeddings: List = []
 
+        if not self._collection:
+            self._collection = self.client.get_collection(name=self.collection_name)
+
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -171,12 +177,12 @@ class ChromaDb(VectorDb):
             ids.append(doc_id)
             logger.debug(f"Upserted document: {document.id} | {document.name} | {document.meta_data}")
 
-        if len(docs) > 0 and self._collection is not None:
-            self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs)
-            logger.debug(f"Committed {len(docs)} documents")
-
+        if self._collection is None:
+            logger.warning("Collection does not exist")
         else:
-            logger.error("Collection does not exist")
+            if len(docs) > 0:
+                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs)
+                logger.debug(f"Committed {len(docs)} documents")
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Search the collection for a query.
@@ -194,7 +200,7 @@ class ChromaDb(VectorDb):
             return []
 
         if not self._collection:
-            self._collection = self.client.get_collection(name=self.collection)
+            self._collection = self.client.get_collection(name=self.collection_name)
 
         result: QueryResult = self._collection.query(
             query_embeddings=query_embedding,
@@ -236,13 +242,13 @@ class ChromaDb(VectorDb):
     def drop(self) -> None:
         """Delete the collection."""
         if self.exists():
-            logger.debug(f"Deleting collection: {self.collection}")
-            self.client.delete_collection(name=self.collection)
+            logger.debug(f"Deleting collection: {self.collection_name}")
+            self.client.delete_collection(name=self.collection_name)
 
     def exists(self) -> bool:
         """Check if the collection exists."""
         try:
-            self.client.get_collection(name=self.collection)
+            self.client.get_collection(name=self.collection_name)
             return True
         except Exception as e:
             logger.debug(f"Collection does not exist: {e}")
@@ -252,7 +258,7 @@ class ChromaDb(VectorDb):
         """Get the count of documents in the collection."""
         if self.exists():
             try:
-                collection: Collection = self.client.get_collection(name=self.collection)
+                collection: Collection = self.client.get_collection(name=self.collection_name)
                 return collection.count()
             except Exception as e:
                 logger.error(f"Error getting count: {e}")
@@ -263,7 +269,7 @@ class ChromaDb(VectorDb):
 
     def delete(self) -> bool:
         try:
-            self.client.delete_collection(name=self.collection)
+            self.client.delete_collection(name=self.collection_name)
             return True
         except Exception as e:
             logger.error(f"Error clearing collection: {e}")
