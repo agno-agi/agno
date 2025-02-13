@@ -882,15 +882,12 @@ class Agent:
 
                     time.sleep(delay)
 
-<<<<<<< Updated upstream
-        # If we get here, all retries failed
-        raise Exception(f"Failed after {num_attempts} attempts. Last error: {str(last_exception)}")
-=======
         if last_exception is not None:
-            raise Exception(f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}")
+            raise Exception(
+                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}"
+            )
         else:
             raise Exception(f"Failed after {num_attempts} attempts.")
->>>>>>> Stashed changes
 
     async def _arun(
         self,

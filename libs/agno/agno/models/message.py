@@ -221,8 +221,7 @@ class Message(BaseModel):
         }
         # Filter out None and empty collections
         message_dict = {
-            k: v for k, v in message_dict.items()
-            if v is not None and not (isinstance(v, (list, dict)) and len(v) == 0)
+            k: v for k, v in message_dict.items() if v is not None and not (isinstance(v, (list, dict)) and len(v) == 0)
         }
 
         # Convert media objects to dictionaries
@@ -241,7 +240,6 @@ class Message(BaseModel):
             message_dict["metrics"] = self.metrics._to_dict()
             if not message_dict["metrics"]:
                 message_dict.pop("metrics")
-
 
         message_dict["created_at"] = self.created_at
         return message_dict
