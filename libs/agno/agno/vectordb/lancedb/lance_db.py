@@ -150,11 +150,16 @@ class LanceDb(VectorDb):
         Args:
             document (Document): Document to validate
         """
-        if self.table is not None:
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
-            result = self.table.search().where(f"{self._id}='{doc_id}'").to_arrow()
-            return len(result) > 0
+        try:
+            if self.table is not None:
+                cleaned_content = document.content.replace("\x00", "\ufffd")
+                doc_id = md5(cleaned_content.encode()).hexdigest()
+                result = self.table.search().where(f"{self._id}='{doc_id}'").to_arrow()
+                return len(result) > 0
+        except Exception as e:
+            # Search sometimes fails with stale cache data, it means the doc doesn't exist
+            return False
+        
         return False
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
