@@ -536,6 +536,7 @@ class Agent:
                 if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
                     if model_response_chunk.content is not None and model_response.content is not None:
                         model_response.content += model_response_chunk.content
+
                         # Update the run_response with the content
                         self.run_response.content = model_response_chunk.content
                         self.run_response.created_at = model_response_chunk.created_at
@@ -880,9 +881,11 @@ class Agent:
                     import time
 
                     time.sleep(delay)
-
-        # If we get here, all retries failed
-        raise Exception(f"Failed after {num_attempts} attempts. Last error: {str(last_exception)}")
+        
+        if last_exception is not None:
+            raise Exception(f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}")
+        else:
+            raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _arun(
         self,
@@ -1299,8 +1302,10 @@ class Agent:
             agent_id=self.agent_id,
             content=content,
             tools=self.run_response.tools,
+            audio=self.run_response.audio,
             images=self.run_response.images,
             videos=self.run_response.videos,
+            response_audio=self.run_response.response_audio,
             model=self.run_response.model,
             messages=self.run_response.messages,
             extra_data=self.run_response.extra_data,
@@ -1417,11 +1422,13 @@ class Agent:
 
         # Update the response_format on the Model
         if self.response_model is not None:
+            # This will pass the pydantic model to the model
             if self.structured_outputs and self.model.supports_structured_outputs:
                 logger.debug("Setting Model.response_format to Agent.response_model")
                 self.model.response_format = self.response_model
                 self.model.structured_outputs = True
             else:
+                # Otherwise we just want JSON
                 self.model.response_format = {"type": "json_object"}
         else:
             self.model.response_format = None
@@ -2375,7 +2382,11 @@ class Agent:
             yield self.team_response_separator
 
         # Give a name to the member agent
-        agent_name = member_agent.name.replace(" ", "_").lower() if member_agent.name else f"agent_{index}"
+        agent_name = member_agent.name if member_agent.name else f"agent_{index}"
+        # Convert non-ascii characters to ascii equivalents and ensure only alphanumeric, underscore and hyphen
+        agent_name = "".join(c for c in agent_name if c.isalnum() or c in "_- ").strip()
+        agent_name = agent_name.lower().replace(" ", "_")
+
         if member_agent.name is None:
             member_agent.name = agent_name
 
@@ -2732,7 +2743,7 @@ class Agent:
                 reasoning_agent_messages=[ds_reasoning_message],
             )
         # Use Groq for reasoning
-        if reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
+        elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
             from agno.reasoning.groq import get_groq_reasoning, get_groq_reasoning_agent
 
             groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
@@ -2885,7 +2896,7 @@ class Agent:
                 reasoning_agent_messages=[ds_reasoning_message],
             )
         # Use Groq for reasoning
-        if reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
+        elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
             from agno.reasoning.groq import aget_groq_reasoning, get_groq_reasoning_agent
 
             groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
@@ -3321,6 +3332,7 @@ class Agent:
         if stream:
             _response_content: str = ""
             reasoning_steps: List[ReasoningStep] = []
+
             with Live(console=console) as live_log:
                 status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
                 live_log.update(status)
@@ -3343,7 +3355,6 @@ class Agent:
                     panels.append(message_panel)
                 if render:
                     live_log.update(Group(*panels))
-
                 for resp in self.run(
                     message=message, messages=messages, audio=audio, images=images, videos=videos, stream=True, **kwargs
                 ):
@@ -3352,7 +3363,6 @@ class Agent:
                             _response_content += resp.content
                         if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
                             reasoning_steps = resp.extra_data.reasoning_steps
-
                     response_content_stream: Union[str, Markdown] = _response_content
                     # Escape special tags before markdown conversion
                     if self.markdown:
