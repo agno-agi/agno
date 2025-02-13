@@ -5,16 +5,49 @@ from typing import Any, Dict, Iterator, List, Optional, AsyncGenerator
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
+from agno.utils.openai import add_images_to_message
 
 try:
     from ibm_watsonx_ai import Credentials
     from ibm_watsonx_ai.foundation_models import ModelInference
 except ImportError:
     raise ImportError("`ibm-watsonx-ai` is not installed. Please install it using `pip install ibm-watsonx-ai`.")
+
+
+def _format_images_for_message(message: Message, images: List[Image]) -> List[Dict[str, Any]]:
+    """
+    Format an image into the format expected by WatsonX.
+    """
+
+    # Create a default message content with text
+    message_content_with_image: List[Dict[str, Any]] = [{"type": "text", "text": message.content}]
+
+    # Add images to the message content
+    for image in images:
+        try:
+            if image.content is not None:
+                import base64
+
+                base64_image = base64.b64encode(image.content).decode("utf-8")
+                image_url = f"data:image/jpeg;base64,{base64_image}"
+                image_payload = {"type": "image_url", "image_url": {"url": image_url}}
+            else:
+                logger.warning(f"Unsupported image format: {image}")
+                return None
+            
+            message_content_with_image.append(image_payload)
+        except Exception as e:
+            logger.error(f"Failed to process image: {str(e)}")
+
+    # Update the message content with the images
+    message.content = message_content_with_image
+    return message
+
 
 def _format_message(message: Message) -> Dict[str, Any]:
     """
@@ -26,6 +59,8 @@ def _format_message(message: Message) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: The formatted message.
     """
+    if message.images is not None and not isinstance(message.content, str):
+        message = add_images_to_message(message=message, images=message.images)
     return message.serialize_for_model()
 
 

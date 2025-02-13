@@ -22,7 +22,7 @@ export AWS_REGION=***
 ### 3. Install libraries
 
 ```shell
-pip install -U boto3 duckduckgo-search agno
+pip install -U anthropic duckduckgo-search agno
 ```
 
 ### 4. Run basic agent
