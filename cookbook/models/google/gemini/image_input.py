@@ -16,5 +16,4 @@ agent.print_response(
             url="https://upload.wikimedia.org/wikipedia/commons/b/bf/Krakow_-_Kosciol_Mariacki.jpg"
         ),
     ],
-    stream=True,
 )

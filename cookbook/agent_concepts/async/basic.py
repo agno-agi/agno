@@ -10,4 +10,4 @@ agent = Agent(
     markdown=True,
 )
 # -*- Print a response to the cli
-asyncio.run(agent.aprint_response("Share a breakfast recipe.", stream=True))
+asyncio.run(agent.aprint_response("Share a breakfast recipe."))
