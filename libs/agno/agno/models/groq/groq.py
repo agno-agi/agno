@@ -21,7 +21,6 @@ except (ModuleNotFoundError, ImportError):
     raise ImportError("`groq` not installed. Please install using `pip install groq`")
 
 
-
 @dataclass
 class Groq(Model):
     """
@@ -207,7 +206,12 @@ class Groq(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        if message.role == "system" and self.response_format is not None and self.response_format.get("type") == "json_object":
+        if (
+            message.role == "system"
+            and isinstance(message.content, str)
+            and self.response_format is not None
+            and self.response_format.get("type") == "json_object"
+        ):
             # This is required by Groq to ensure the model outputs in the correct format
             message.content += "\n\nYour output should be in JSON format."
 
