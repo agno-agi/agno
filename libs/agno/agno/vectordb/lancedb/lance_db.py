@@ -357,7 +357,17 @@ class LanceDb(VectorDb):
         return False
 
     def name_exists(self, name: str) -> bool:
+        """Check if a document with the given name exists in the database"""
         if self.table is None:
             return False
-        result = self.table.search().select(["payload"]).to_pandas()
-        return any(row["payload"].get("name") == name for _, row in result.iterrows())
+        
+        try:
+            result = self.table.search().select(["payload"]).to_pandas()
+            # Convert the JSON strings in payload column to dictionaries
+            payloads = result["payload"].apply(json.loads)
+
+            # Check if the name exists in any of the payloads
+            return any(payload.get("name") == name for payload in payloads)
+        except Exception as e:
+            logger.error(f"Error checking name existence: {e}")
+            return False

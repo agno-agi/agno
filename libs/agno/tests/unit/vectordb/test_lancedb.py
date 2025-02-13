@@ -6,7 +6,6 @@ import shutil
 from agno.vectordb.lancedb import LanceDb
 from agno.document import Document
 from agno.embedder.openai import OpenAIEmbedder
-from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
 TEST_TABLE = "test_table"
@@ -134,8 +133,7 @@ def test_get_count(lance_db, sample_documents):
     lance_db.insert(sample_documents)
     assert lance_db.get_count() == 3
 
-@pytest.mark.asyncio
-async def test_error_handling(lance_db):
+def test_error_handling(lance_db):
     """Test error handling scenarios"""
     # Test search with empty query
     results = lance_db.search("")
