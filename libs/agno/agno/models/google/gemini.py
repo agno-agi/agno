@@ -123,7 +123,12 @@ def _format_function_definitions(tools_list):
             description = func_info.get("description", "")
             parameters_dict = func_info.get("parameters", {})
 
-            parameters_schema = _convert_schema(parameters_dict)
+            # To filter out the function without parameters ({'properties': {}, 'required': [], 'type': 'object'}).
+            # Gemini API would raise 400 if parameters.properties is empty.
+            if parameters_dict and (parameters_dict["properties"] or parameters_dict["required"]):
+                parameters_schema = _convert_schema(parameters_dict)
+            else:
+                parameters_schema = None
 
             # Create a FunctionDeclaration instance
             function_decl = FunctionDeclaration(
