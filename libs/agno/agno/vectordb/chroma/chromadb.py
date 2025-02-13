@@ -128,6 +128,7 @@ class ChromaDb(VectorDb):
         ids: List = []
         docs: List = []
         docs_embeddings: List = []
+        docs_metadata: List = []
 
         for document in documents:
             document.embed(embedder=self.embedder)
@@ -136,10 +137,11 @@ class ChromaDb(VectorDb):
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
             ids.append(doc_id)
+            docs_metadata.append(document.meta_data)
             logger.debug(f"Inserted document: {document.id} | {document.name} | {document.meta_data}")
 
         if len(docs) > 0 and self._collection is not None:
-            self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs)
+            self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
             logger.debug(f"Committed {len(docs)} documents")
         else:
             logger.error("Collection does not exist")
@@ -197,31 +199,30 @@ class ChromaDb(VectorDb):
         result: QueryResult = self._collection.query(
             query_embeddings=query_embedding,
             n_results=limit,
+            include=["metadatas", "documents", "embeddings", "distances", "uris"],
         )
 
         # Build search results
         search_results: List[Document] = []
 
         ids = result.get("ids", [[]])[0]
-        metadata = result.get("metadatas", [[]])[0]  # type: ignore
+        metadata = result.get("metadatas", [{}])[0]  # type: ignore
         documents = result.get("documents", [[]])[0]  # type: ignore
-        embeddings = result.get("embeddings")
+        embeddings = result.get("embeddings")[0]
+        embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]
         distances = result.get("distances", [[]])[0]  # type: ignore
-        uris = result.get("uris")
-        data = result.get("data")
-        metadata["distances"] = distances  # type: ignore
-        metadata["uris"] = uris  # type: ignore
-        metadata["data"] = data  # type: ignore
+        for idx, meta in enumerate(metadata):
+            meta["distances"] = distances[idx]  # type: ignore
 
         try:
             # Use zip to iterate over multiple lists simultaneously
-            for id_, distance, metadata, document in zip(ids, distances, metadata, documents):
+            for idx, (id_, metadata, document) in enumerate(zip(ids, metadata, documents)):
                 search_results.append(
                     Document(
                         id=id_,
                         meta_data=metadata,
                         content=document,
-                        embedding=embeddings,  # type: ignore
+                        embedding=embeddings[idx],  # type: ignore
                     )
                 )
         except Exception as e:
