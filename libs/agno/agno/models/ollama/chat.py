@@ -115,8 +115,6 @@ class Ollama(Model):
         # Add tools
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
-            if self.tool_choice is not None:
-                request_params["tool_choice"] = self.tool_choice
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
@@ -140,10 +138,6 @@ class Ollama(Model):
         )
         if self._tools is not None:
             model_dict["tools"] = self._tools
-            if self.tool_choice is not None:
-                model_dict["tool_choice"] = self.tool_choice
-            else:
-                model_dict["tool_choice"] = "auto"
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
