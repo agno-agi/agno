@@ -10,6 +10,8 @@ from agno.utils.log import logger
 
 
 class BitbucketTools(Toolkit):
+    """A class that provides tools for interacting with the Bitbucket API."""
+
     def __init__(
         self,
         server_url: Optional[str] = "api.bitbucket.org",
@@ -18,7 +20,28 @@ class BitbucketTools(Toolkit):
         token: Optional[str] = None,
         api_version: Optional[str] = "2.0",
     ):
-        """Initializes Bitbucket Tools."""
+        """Initializes Bitbucket Tools.
+
+        Args:
+            server_url (str, optional): The Bitbucket server URL. Defaults to "api.bitbucket.org".
+            username (str, optional): The username to authenticate with. If not provided, it will take the value of `BITBUCKET_USERNAME` env variable.
+            password (str, optional): The password to authenticate with. If not provided, it will take the value of `BITBUCKET_PASSWORD` env variable..
+            token (str, optional): The token to authenticate with. If not provided, it will take the value of `BITBUCKET_TOKEN` env variable..
+            api_version (str, optional): The version of the Bitbucket API to use. Defaults to "2.0".
+
+        Raises:
+            ValueError: If username and password or token are not provided.
+
+        Example:
+            ```python
+            bitbucket = BitbucketTools(
+                username="your-username",
+                password="your-password",
+                server_url="your-server-url",
+                api_version="2.0"
+            )
+            ```
+        """
         super().__init__(name="bitbucket")
 
         self.server_url = server_url or os.getenv("BITBUCKET_SERVER_URL")
@@ -29,8 +52,8 @@ class BitbucketTools(Toolkit):
         self.base_url = f"https://{self.server_url}/{api_version}"
 
         if not (self.username and self.auth_password):
-            logger.error("Username and assword or token are required")
-            raise ValueError("Username and assword or token are required")
+            logger.error("Username and password or token are required")
+            raise ValueError("Username and password or token are required")
 
         self.headers = {"Accept": "application/json", "Authorization": f"Basic {self._generate_access_token()}"}
 
@@ -46,7 +69,11 @@ class BitbucketTools(Toolkit):
         self.register(self.list_repository_pipelines)
 
     def _generate_access_token(self) -> str:
-        """Generate an access token for Bitbucket API using Basic Auth."""
+        """Generate an access token for Bitbucket API using Basic Auth.
+
+        Returns:
+            str: The access token.
+        """
         auth_str = f"{self.username}:{self.auth_password}"
         auth_bytes = auth_str.encode("ascii")
         auth_base64 = base64.b64encode(auth_bytes).decode("ascii")
