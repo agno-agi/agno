@@ -323,7 +323,7 @@ class SingleStore(VectorDb):
         for neighbor in neighbors:
             meta_data_dict = json.loads(neighbor.meta_data) if neighbor.meta_data else {}
             usage_dict = json.loads(neighbor.usage) if neighbor.usage else {}
-            
+
             # Convert SingleStore VECTOR type to list
             embedding_list = []
             if neighbor.embedding:
