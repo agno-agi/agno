@@ -22,7 +22,7 @@ def cassandra_session() -> Generator[Session, None, None]:
             session = cluster.connect()
             print(f"Successfully connected to Cassandra on attempt {attempt + 1}")
             break
-        except Exception as e:
+        except Exception:
             if attempt == max_retries - 1:
                 raise
             time.sleep(retry_delay)

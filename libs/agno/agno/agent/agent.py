@@ -881,9 +881,11 @@ class Agent:
                     import time
 
                     time.sleep(delay)
-        
+
         if last_exception is not None:
-            raise Exception(f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}")
+            raise Exception(
+                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}"
+            )
         else:
             raise Exception(f"Failed after {num_attempts} attempts.")
 
