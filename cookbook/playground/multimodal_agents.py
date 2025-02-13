@@ -142,23 +142,6 @@ audio_agent = Agent(
     ),
 )
 
-image_to_image_agent = Agent(
-    name="Image to Image Agent",
-    agent_id="image_to_image_agent",
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[FalTools()],
-    markdown=True,
-    debug_mode=True,
-    instructions=[
-        "You have to use the `image_to_image` tool to generate the image.",
-        "You are an AI agent that can generate images using the Fal AI API.",
-        "You will be given a prompt and an image URL.",
-        "Don't provide the URL of the image in the response. Only describe what image was generated.",
-    ],
-    storage=SqliteAgentStorage(
-        table_name="image_to_image_agent", db_file=image_agent_storage_file
-    ),
-)
 
 app = Playground(
     agents=[
@@ -168,7 +151,6 @@ app = Playground(
         fal_agent,
         gif_agent,
         audio_agent,
-        image_to_image_agent,
     ]
 ).get_app(use_async=False)
 
