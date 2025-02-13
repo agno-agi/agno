@@ -76,11 +76,11 @@ class AgentKnowledge(BaseModel):
             return
 
         if recreate:
-            logger.info("Dropping collection")
+            logger.info("Dropping Vector DB")
             self.vector_db.drop()
 
         if not self.vector_db.exists():
-            logger.info("Creating collection")
+            logger.info("Creating Vector DB")
             self.vector_db.create()
 
         logger.info("Loading knowledge base")

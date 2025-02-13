@@ -219,8 +219,9 @@ class ChromaDb(VectorDb):
         embeddings = result.get("embeddings")[0]
         embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]
         distances = result.get("distances", [[]])[0]  # type: ignore
-        for idx, meta in enumerate(metadata):
-            meta["distances"] = distances[idx]  # type: ignore
+
+        for idx, distance in enumerate(distances):
+            metadata[idx]["distances"] = distance
 
         try:
             # Use zip to iterate over multiple lists simultaneously
