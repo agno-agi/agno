@@ -1,11 +1,11 @@
 import json
 import time
 from os import getenv
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import ImageArtifact, VideoArtifact, AudioArtifact
+from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.models.response import FileType
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -28,6 +28,7 @@ MODELS_LAB_FETCH_URLS = {
     "GIF": "https://modelslab.com/api/v6/video/fetch",
 }
 
+
 class ModelsLabTools(Toolkit):
     def __init__(
         self,
@@ -38,7 +39,7 @@ class ModelsLabTools(Toolkit):
         file_type: FileType = FileType.MP4,
     ):
         super().__init__(name="models_labs")
-        
+
         file_type_str = file_type.value.upper()
         self.url = MODELS_LAB_URLS[file_type_str]
         self.fetch_url = MODELS_LAB_FETCH_URLS[file_type_str]
@@ -47,7 +48,7 @@ class ModelsLabTools(Toolkit):
         self.max_wait_time = max_wait_time
         self.file_type = file_type
         self.api_key = api_key or getenv("MODELS_LAB_API_KEY")
-        
+
         if not self.api_key:
             logger.error("MODELS_LAB_API_KEY not set. Please set the MODELS_LAB_API_KEY environment variable.")
 
@@ -91,29 +92,28 @@ class ModelsLabTools(Toolkit):
         elif self.file_type == FileType.MP3:
             agent.add_audio(AudioArtifact(id=str(media_id), url=media_url))
 
-
     def _wait_for_media(self, media_id: str, eta: int) -> bool:
         """Wait for media generation to complete."""
         time_to_wait = min(eta + self.add_to_eta, self.max_wait_time)
         logger.info(f"Waiting for {time_to_wait} seconds for {self.file_type.value} to be ready")
-        
+
         for seconds_waited in range(time_to_wait):
             try:
                 fetch_response = requests.post(
                     f"{self.fetch_url}/{media_id}",
                     json={"key": self.api_key},
-                    headers={"Content-Type": "application/json"}
+                    headers={"Content-Type": "application/json"},
                 )
                 fetch_result = fetch_response.json()
-                
+
                 if fetch_result.get("status") == "success":
                     return True
-                    
+
                 time.sleep(1)
-                
+
             except RequestException as e:
                 logger.warning(f"Error during fetch attempt {seconds_waited}: {e}")
-                
+
         return False
 
     def generate_media(self, agent: Agent, prompt: str) -> str:
@@ -124,13 +124,13 @@ class ModelsLabTools(Toolkit):
         try:
             payload = json.dumps(self._create_payload(prompt))
             headers = {"Content-Type": "application/json"}
-            
+
             logger.debug(f"Generating {self.file_type.value} for prompt: {prompt}")
             response = requests.post(self.url, data=payload, headers=headers)
             response.raise_for_status()
 
             result = response.json()
-            
+
             if "error" in result:
                 error_msg = f"Failed to generate {self.file_type.value}: {result['error']}"
                 logger.error(error_msg)
@@ -150,7 +150,7 @@ class ModelsLabTools(Toolkit):
                     logger.warning("Media generation timed out")
 
             return f"{self.file_type.value.capitalize()} has been generated successfully and will be ready in {eta} seconds"
-            
+
         except RequestException as e:
             error_msg = f"Network error while generating {self.file_type.value}: {e}"
             logger.error(error_msg)
