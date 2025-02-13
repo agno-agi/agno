@@ -12,6 +12,7 @@ from agno.utils.log import logger
 try:
     from mistralai import CompletionEvent
     from mistralai import Mistral as MistralClient
+    from mistralai.extra.struct_chat import ParsedChatCompletionResponse
     from mistralai.models import (
         AssistantMessage,
         HTTPValidationError,
@@ -233,7 +234,7 @@ class MistralChat(Model):
         cleaned_dict = {k: v for k, v in _dict.items() if v is not None}
         return cleaned_dict
 
-    def invoke(self, messages: List[Message]) -> ChatCompletionResponse:
+    def invoke(self, messages: List[Message]) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
         """
         Send a chat completion request to the Mistral model.
 
@@ -245,11 +246,12 @@ class MistralChat(Model):
         """
         mistral_messages = _format_messages(messages)
         try:
+            response: Union[ChatCompletionResponse, ParsedChatCompletionResponse]
             if self.response_format is not None and self.structured_outputs:
                 response = self.get_client().chat.parse(
                     model=self.id,
                     messages=mistral_messages,
-                    response_format=self.response_format,
+                    response_format=self.response_format,  # type: ignore
                     **self.request_kwargs,
                 )
             else:
@@ -258,8 +260,6 @@ class MistralChat(Model):
                     messages=mistral_messages,
                     **self.request_kwargs,
                 )
-            if response is None:
-                raise ValueError("Chat completion returned None")
             return response
 
         except HTTPValidationError as e:
@@ -286,8 +286,6 @@ class MistralChat(Model):
                 messages=mistral_messages,
                 **self.request_kwargs,
             )
-            if stream is None:
-                raise ValueError("Chat stream returned None")
             return stream
         except HTTPValidationError as e:
             logger.error(f"HTTPValidationError from Mistral: {e}")
@@ -296,7 +294,7 @@ class MistralChat(Model):
             logger.error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(e, self.name, self.id) from e
 
-    async def ainvoke(self, messages: List[Message]) -> ChatCompletionResponse:
+    async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
         """
         Send an asynchronous chat completion request to the Mistral API.
 
@@ -308,11 +306,12 @@ class MistralChat(Model):
         """
         mistral_messages = _format_messages(messages)
         try:
+            response: Union[ChatCompletionResponse, ParsedChatCompletionResponse]
             if self.response_format is not None and self.structured_outputs:
                 response = await self.get_client().chat.parse_async(
                     model=self.id,
                     messages=mistral_messages,
-                    response_format=self.response_format,
+                    response_format=self.response_format,  # type: ignore
                     **self.request_kwargs,
                 )
             else:
