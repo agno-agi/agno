@@ -18,6 +18,24 @@ from agno.vectordb.search import SearchType
 
 
 class LanceDb(VectorDb):
+    """
+    LanceDB is a vector database that uses LanceDB as the underlying database.
+
+    Args:
+        uri: The URI of the LanceDB database.
+        table: The LanceDB table instance to use.
+        table_name: The name of the LanceDB table to use.
+        connection: The LanceDB connection to use.
+        api_key: The API key to use for the LanceDB connection.
+        embedder: The embedder to use when embedding the document contents.
+        search_type: The search type to use when searching for documents.
+        distance: The distance metric to use when searching for documents.
+        nprobes: The number of probes to use when searching for documents.
+        reranker: The reranker to use when reranking documents.
+        use_tantivy: Whether to use Tantivy for full text search.
+        on_bad_vectors: What to do if the vector is bad. One of "error", "drop", "fill", "null".
+        fill_value: The value to fill the vector with if on_bad_vectors is "fill".
+    """
     def __init__(
         self,
         uri: lancedb.URI = "/tmp/lancedb",
@@ -31,6 +49,8 @@ class LanceDb(VectorDb):
         nprobes: Optional[int] = None,
         reranker: Optional[Reranker] = None,
         use_tantivy: bool = True,
+        on_bad_vectors: Optional[str] = None,  # One of "error", "drop", "fill", "null".
+        fill_value: Optional[float] = None,  # Only used if on_bad_vectors is "fill"
     ):
         # Embedder for embedding the document contents
         if embedder is None:
@@ -84,6 +104,8 @@ class LanceDb(VectorDb):
 
         self.reranker: Optional[Reranker] = reranker
         self.nprobes: Optional[int] = nprobes
+        self.on_bad_vectors: Optional[str] = on_bad_vectors
+        self.fill_value: Optional[float] = fill_value
         self.fts_index_exists = False
         self.use_tantivy = use_tantivy
 
@@ -176,7 +198,11 @@ class LanceDb(VectorDb):
             logger.debug("No new data to insert")
             return
 
-        self.table.add(data)
+        if self.on_bad_vectors is not None:
+            self.table.add(data, on_bad_vectors=self.on_bad_vectors, fill_value=self.fill_value)
+        else:
+            self.table.add(data)
+
         logger.debug(f"Inserted {len(data)} documents")
 
     def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
