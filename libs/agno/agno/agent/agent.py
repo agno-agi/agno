@@ -493,7 +493,7 @@ class Agent:
 
         logger.debug(f"*********** Agent Run Start: {self.run_response.run_id} ***********")
 
-        # 2. Update the Model and resolve context
+        # 2. raise the error to provide the model instead of defaulting any model and resolve context
         self.update_model()
         self.run_response.model = self.model.id if self.model is not None else None
         if self.context is not None and self.resolve_context:
@@ -927,7 +927,7 @@ class Agent:
 
         logger.debug(f"*********** Async Agent Run Start: {self.run_response.run_id} ***********")
 
-        # 2. Update the Model and resolve context
+        # 2. raise the error to provide the model instead of defaulting any model and resolve context
         self.update_model()
         self.run_response.model = self.model.id if self.model is not None else None
         if self.context is not None and self.resolve_context:
@@ -1405,18 +1405,13 @@ class Agent:
                 model.set_functions(functions=self._functions_for_model)
 
     def update_model(self) -> None:
-        # Use the default Model (OpenAIChat) if no model is provided
+        #raise the error to provide the model instead of defaulting any model
         if self.model is None:
-            try:
-                from agno.models.openai import OpenAIChat
-            except ModuleNotFoundError as e:
-                logger.exception(e)
-                logger.error(
-                    "Agno agents use `openai` as the default model provider. "
-                    "Please provide a `model` or install `openai`."
-                )
-                exit(1)
-            self.model = OpenAIChat(id="gpt-4o")
+            logger.error(
+                "No model provided. Please specify a model when initializing the agent.\n"
+                "Example: YourAgent(model=YourModelClass(id='your-model-id'))"
+            )
+            exit(1)
 
         # Update the response_format on the Model
         if self.response_model is not None:
