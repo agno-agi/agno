@@ -541,8 +541,7 @@ class Agent:
                         self.run_response.content = model_response_chunk.content
                         self.run_response.created_at = model_response_chunk.created_at
                         yield self.create_run_response(
-                            content=model_response_chunk.content,
-                            created_at=model_response_chunk.created_at
+                            content=model_response_chunk.content, created_at=model_response_chunk.created_at
                         )
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
@@ -882,9 +881,11 @@ class Agent:
                     import time
 
                     time.sleep(delay)
-
-        # If we get here, all retries failed
-        raise Exception(f"Failed after {num_attempts} attempts. Last error: {str(last_exception)}")
+        
+        if last_exception is not None:
+            raise Exception(f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}")
+        else:
+            raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _arun(
         self,
@@ -1421,11 +1422,13 @@ class Agent:
 
         # Update the response_format on the Model
         if self.response_model is not None:
+            # This will pass the pydantic model to the model
             if self.structured_outputs and self.model.supports_structured_outputs:
                 logger.debug("Setting Model.response_format to Agent.response_model")
                 self.model.response_format = self.response_model
                 self.model.structured_outputs = True
             else:
+                # Otherwise we just want JSON
                 self.model.response_format = {"type": "json_object"}
         else:
             self.model.response_format = None
@@ -2740,7 +2743,7 @@ class Agent:
                 reasoning_agent_messages=[ds_reasoning_message],
             )
         # Use Groq for reasoning
-        if reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
+        elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
             from agno.reasoning.groq import get_groq_reasoning, get_groq_reasoning_agent
 
             groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
@@ -2893,7 +2896,7 @@ class Agent:
                 reasoning_agent_messages=[ds_reasoning_message],
             )
         # Use Groq for reasoning
-        if reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
+        elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
             from agno.reasoning.groq import aget_groq_reasoning, get_groq_reasoning_agent
 
             groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(

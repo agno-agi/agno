@@ -19,6 +19,7 @@ class FirecrawlTools(Toolkit):
         limit: int = 10,
         scrape: bool = True,
         crawl: bool = False,
+        api_url: Optional[str] = "https://api.firecrawl.dev",
     ):
         super().__init__(name="firecrawl_tools")
 
@@ -28,7 +29,7 @@ class FirecrawlTools(Toolkit):
 
         self.formats: Optional[List[str]] = formats
         self.limit: int = limit
-        self.app: FirecrawlApp = FirecrawlApp(api_key=self.api_key)
+        self.app: FirecrawlApp = FirecrawlApp(api_key=self.api_key, api_url=api_url)
 
         # Start with scrape by default. But if crawl is set, then set scrape to False.
         if crawl:
