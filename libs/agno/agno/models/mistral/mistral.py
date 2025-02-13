@@ -119,6 +119,8 @@ class MistralChat(Model):
     name: str = "MistralChat"
     provider: str = "Mistral"
 
+    supports_structured_outputs: bool = True
+
     # -*- Request parameters
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
@@ -243,11 +245,19 @@ class MistralChat(Model):
         """
         mistral_messages = _format_messages(messages)
         try:
-            response = self.get_client().chat.complete(
-                model=self.id,
-                messages=mistral_messages,
-                **self.request_kwargs,
-            )
+            if self.response_format is not None and self.structured_outputs:
+                response = self.get_client().chat.parse(
+                    model=self.id,
+                    messages=mistral_messages,
+                    response_format=self.response_format,
+                    **self.request_kwargs,
+                )
+            else:
+                response = self.get_client().chat.complete(
+                    model=self.id,
+                    messages=mistral_messages,
+                    **self.request_kwargs,
+                )
             if response is None:
                 raise ValueError("Chat completion returned None")
             return response
@@ -298,13 +308,19 @@ class MistralChat(Model):
         """
         mistral_messages = _format_messages(messages)
         try:
-            response = await self.get_client().chat.complete_async(
-                model=self.id,
-                messages=mistral_messages,
-                **self.request_kwargs,
-            )
-            if response is None:
-                raise ValueError("Chat completion returned None")
+            if self.response_format is not None and self.structured_outputs:
+                response = await self.get_client().chat.parse_async(
+                    model=self.id,
+                    messages=mistral_messages,
+                    response_format=self.response_format,
+                    **self.request_kwargs,
+                )
+            else:
+                response = await self.get_client().chat.complete_async(
+                    model=self.id,
+                    messages=mistral_messages,
+                    **self.request_kwargs,
+                )
             return response
         except HTTPValidationError as e:
             logger.error(f"HTTPValidationError from Mistral: {e}")

@@ -1,14 +1,16 @@
-import os
+import asyncio
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
-from agno.models.mistral import MistralChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.agent import Agent
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
+from agno.models.xai.xai import xAI
+from agno.run.response import RunResponse
+
 
 class MovieScript(BaseModel):
+    name: str = Field(..., description="Give a name to this movie")
     setting: str = Field(
         ..., description="Provide a nice setting for a blockbuster movie."
     )
@@ -20,27 +22,21 @@ class MovieScript(BaseModel):
         ...,
         description="Genre of the movie. If not available, select action, thriller or romantic comedy.",
     )
-    name: str = Field(..., description="Give a name to this movie")
     characters: List[str] = Field(..., description="Name of characters for this movie.")
     storyline: str = Field(
         ..., description="3 sentence storyline for the movie. Make it exciting!"
     )
 
 
+# Agent that returns a structured output
 structured_output_agent = Agent(
-    model=MistralChat(
-        id="mistral-large-latest",
-    ),
-    tools=[DuckDuckGoTools()],
-    description="You help people write movie scripts.",
+    model=xAI(id="grok-2-latest"),
+    description="You write movie scripts.",
     response_model=MovieScript,
     structured_outputs=True,
-    show_tool_calls=True,
-    # debug_mode=True,
 )
 
-# Get the response in a variable
-structured_output_response: RunResponse = structured_output_agent.run("New York")
+# Run the agent synchronously
+structured_output_response: RunResponse = structured_output_agent.run("Llamas ruling the world")
 pprint(structured_output_response.content)
 
-# json_mode_agent.print_response("Find a cool movie idea about London and write it.")
