@@ -48,11 +48,11 @@ def generate_podcast(topic, voice="alloy"):
 
             ### **Example Output:**
             #### **Today we will be covering the topic The Future of AI in Healthcare**
-            "Imagine walking into a hospital where AI instantly diagnoses your illness, prescribes treatment, and even assists in surgery. Sounds like science fiction? Well, it’s closer to reality than you think! Welcome to today’s episode, where we explore how AI is revolutionizing healthcare."
+            "Imagine walking into a hospital where AI instantly diagnoses your illness, prescribes treatment, and even assists in surgery. Sounds like science fiction? Well, it's closer to reality than you think! Welcome to today's episode, where we explore how AI is revolutionizing healthcare."
 
-            "AI is making waves in medical research, diagnostics, and patient care. For instance, Google’s DeepMind developed an AI that can detect over 50 eye diseases with a single scan—just as accurately as top doctors! Meanwhile, robotic surgeries assisted by AI are reducing complications and recovery time for patients. But it's not just about tech—AI is also addressing healthcare accessibility. In rural areas, AI-powered chatbots provide medical advice where doctors are scarce."
+            "AI is making waves in medical research, diagnostics, and patient care. For instance, Google's DeepMind developed an AI that can detect over 50 eye diseases with a single scan—just as accurately as top doctors! Meanwhile, robotic surgeries assisted by AI are reducing complications and recovery time for patients. But it's not just about tech—AI is also addressing healthcare accessibility. In rural areas, AI-powered chatbots provide medical advice where doctors are scarce."
 
-            "While AI in healthcare is promising, it also raises ethical concerns. Who takes responsibility for a wrong diagnosis? How do we ensure data privacy? These are crucial questions for the future. One thing’s for sure—AI is here to stay, and it’s reshaping medicine as we know it. Thanks for tuning in, and see you next time!"
+            "While AI in healthcare is promising, it also raises ethical concerns. Who takes responsibility for a wrong diagnosis? How do we ensure data privacy? These are crucial questions for the future. One thing's for sure—AI is here to stay, and it's reshaping medicine as we know it. Thanks for tuning in, and see you next time!"
             """,
         model=OpenAIChat(
             id="gpt-4o-audio-preview",
@@ -65,14 +65,15 @@ def generate_podcast(topic, voice="alloy"):
     # Generate the podcast script
     audio_agent.run(f"Write the content of podcast for the topic: {topic}")
     audio_file_path = "tmp/generated_podcast.wav"
-    if (
-        audio_agent.run_response.response_audio is not None
-        and "data" in audio_agent.run_response.response_audio
-    ):
-        write_audio_to_file(
-            audio=audio_agent.run_response.response_audio["data"],
-            filename=audio_file_path,
-        )
-        return audio_file_path
 
+    if audio_agent.run_response.response_audio is not None:
+        # Access content directly from AudioOutput model
+        audio_content = audio_agent.run_response.response_audio.content
+
+        if audio_content:
+            write_audio_to_file(
+                audio=audio_content,
+                filename=audio_file_path,
+            )
+            return audio_file_path
     return None
