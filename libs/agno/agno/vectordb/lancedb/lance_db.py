@@ -36,6 +36,7 @@ class LanceDb(VectorDb):
         on_bad_vectors: What to do if the vector is bad. One of "error", "drop", "fill", "null".
         fill_value: The value to fill the vector with if on_bad_vectors is "fill".
     """
+
     def __init__(
         self,
         uri: lancedb.URI = "/tmp/lancedb",
@@ -156,10 +157,10 @@ class LanceDb(VectorDb):
                 doc_id = md5(cleaned_content.encode()).hexdigest()
                 result = self.table.search().where(f"{self._id}='{doc_id}'").to_arrow()
                 return len(result) > 0
-        except Exception as e:
+        except Exception:
             # Search sometimes fails with stale cache data, it means the doc doesn't exist
             return False
-        
+
         return False
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
@@ -360,7 +361,7 @@ class LanceDb(VectorDb):
         """Check if a document with the given name exists in the database"""
         if self.table is None:
             return False
-        
+
         try:
             result = self.table.search().select(["payload"]).to_pandas()
             # Convert the JSON strings in payload column to dictionaries

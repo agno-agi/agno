@@ -45,11 +45,7 @@ class GeminiEmbedder(Embedder):
         return self.gemini_client
 
     def _response(self, text: str) -> EmbedContentResponse:
-        _request_params: Dict[str, Any] = {
-            "contents": text,
-            "model": self.id,
-            "config": {}
-        }
+        _request_params: Dict[str, Any] = {"contents": text, "model": self.id, "config": {}}
         if self.dimensions:
             _request_params["config"]["output_dimensionality"] = self.dimensions
         if self.task_type:
