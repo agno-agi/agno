@@ -67,7 +67,6 @@ def generate_podcast(topic, voice="alloy"):
     audio_file_path = "tmp/generated_podcast.wav"
 
     if audio_agent.run_response.response_audio is not None:
-        # Access content directly from AudioOutput model
         audio_content = audio_agent.run_response.response_audio.content
 
         if audio_content:
