@@ -8,7 +8,7 @@ agent = Agent(
     markdown=True,
 )
 
-url = "https://storage.googleapis.com/github-repo/generative-ai/gemini/use-cases/multimodal-sentiment-analysis/sample_conversation.wav"
+url = "https://agno-public.s3.amazonaws.com/demo_data/sample_conversation.wav"
 
 response = requests.get(url)
 audio_content = response.content
