@@ -165,6 +165,8 @@ class Gemini(Model):
     name: str = "Gemini"
     provider: str = "Google"
 
+    supports_structured_outputs: bool = True
+
     assistant_message_role: str = "model"
 
     # Request parameters
@@ -608,32 +610,35 @@ class Gemini(Model):
         model_response = ModelResponse()
 
         # Get response message
-        response_message: Content = response.candidates[0].content
+        if response.candidates is not None:
+            response_message: Content = response.candidates[0].content
 
-        # Add role
-        if response_message.role is not None:
-            model_response.role = response_message.role
+            # Add role
+            if response_message.role is not None:
+                model_response.role = response_message.role
 
-        # Add content
-        if response_message.parts is not None:
-            for part in response_message.parts:
-                # Extract text if present
-                if hasattr(part, "text") and part.text is not None:
-                    model_response.content = part.text
+            # Add content
+            if response_message.parts is not None:
+                for part in response_message.parts:
+                    # Extract text if present
+                    if hasattr(part, "text") and part.text is not None:
+                        model_response.content = part.text
 
-                # Extract function call if present
-                if hasattr(part, "function_call") and part.function_call is not None:
-                    tool_call = {
-                        "type": "function",
-                        "function": {
-                            "name": part.function_call.name,
-                            "arguments": json.dumps(part.function_call.args)
-                            if part.function_call.args is not None
-                            else "",
-                        },
-                    }
+                    # Extract function call if present
+                    if hasattr(part, "function_call") and part.function_call is not None:
+                        tool_call = {
+                            "type": "function",
+                            "function": {
+                                "name": part.function_call.name,
+                                "arguments": json.dumps(part.function_call.args)
+                                if part.function_call.args is not None
+                                else "",
+                            },
+                        }
 
-                    model_response.tool_calls.append(tool_call)
+                        model_response.tool_calls.append(tool_call)
+
+
 
         # Extract usage metadata if present
         if hasattr(response, "usage_metadata"):
