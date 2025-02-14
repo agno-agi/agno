@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Any, Dict, List, Optional
 
 from agno.document import Document
@@ -27,10 +28,10 @@ class BedrockReranker(Reranker):
             return self.bedrock_session
 
         _client_params: Dict[str, Any] = {}
-        _client_params["aws_access_key_id"] = self.aws_access_key_id
-        _client_params["aws_secret_access_key"] = self.aws_secret_access_key
-        _client_params["region_name"] = self.region_name
-        _client_params["profile_name"] = self.profile_name
+        _client_params["aws_access_key_id"] = self.aws_access_key_id or os.getenv("AWS_ACCESS_KEY_ID")
+        _client_params["aws_secret_access_key"] = self.aws_secret_access_key or os.getenv("AWS_SECRET_ACCESS_KEY")
+        _client_params["region_name"] = self.region_name or os.getenv("AWS_REGION")
+        _client_params["profile_name"] = self.profile_name or os.getenv("AWS_PROFILE")
         return boto3.Session(**_client_params)
 
     def _rerank(self, query: str, documents: List[Document]) -> List[Document]:
