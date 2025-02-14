@@ -19,7 +19,7 @@ from agno.vectordb.search import SearchType
 
 class LanceDb(VectorDb):
     """
-    LanceDB is a vector database that uses LanceDB as the underlying database.
+    LanceDb class for managing vector operations with LanceDb
 
     Args:
         uri: The URI of the LanceDB database.
