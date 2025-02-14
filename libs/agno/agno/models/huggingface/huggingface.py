@@ -1,28 +1,28 @@
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from dataclasses import asdict, dataclass
 from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Union
 
 import httpx
 from pydantic import BaseModel
 
-from agno.models.base import Metrics, Model
+from agno.exceptions import ModelProviderError
+from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.tools.function import FunctionCall
 from agno.utils.log import logger
-from agno.utils.tools import get_function_call_for_tool_call
 
 try:
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionOutput,
         ChatCompletionOutputMessage,
-        ChatCompletionOutputUsage,
         ChatCompletionStreamOutput,
         ChatCompletionStreamOutputDelta,
         ChatCompletionStreamOutputDeltaToolCall,
         InferenceClient,
     )
+    from huggingface_hub.errors import InferenceTimeoutError
 except (ModuleNotFoundError, ImportError):
     raise ImportError("`huggingface_hub` not installed. Please install using `pip install huggingface_hub`")
 
@@ -93,7 +93,6 @@ class HuggingFace(Model):
     max_retries: Optional[int] = None
     default_headers: Optional[Any] = None
     default_query: Optional[Any] = None
-    http_client: Optional[httpx.Client] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # HuggingFace Hub Inference clients
@@ -133,8 +132,6 @@ class HuggingFace(Model):
             return self.client
 
         _client_params: Dict[str, Any] = self.get_client_params()
-        if self.http_client is not None:
-            _client_params["http_client"] = self.http_client
         self.client = InferenceClient(**_client_params)
         return self.client
 
@@ -149,15 +146,8 @@ class HuggingFace(Model):
             return self.async_client
 
         _client_params: Dict[str, Any] = self.get_client_params()
-
-        if self.http_client:
-            _client_params["http_client"] = self.http_client
-        else:
-            # Create a new async HTTP client with custom limits
-            _client_params["http_client"] = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
-            )
-        return AsyncInferenceClient(**_client_params)
+        self.async_client = AsyncInferenceClient(**_client_params)
+        return self.async_client
 
     @property
     def request_kwargs(self) -> Dict[str, Any]:
@@ -192,8 +182,8 @@ class HuggingFace(Model):
             _request_params["top_logprobs"] = self.top_logprobs
         if self.top_p is not None:
             _request_params["top_p"] = self.top_p
-        if self.tools is not None:
-            _request_params["tools"] = self.tools
+        if self._tools is not None:
+            _request_params["tools"] = self._tools
             if self.tool_choice is None:
                 _request_params["tool_choice"] = "auto"
             else:
@@ -224,9 +214,9 @@ class HuggingFace(Model):
                 "temperature": self.temperature,
                 "top_logprobs": self.top_logprobs,
                 "top_p": self.top_p,
-                "tools": self.tools,
+                "tools": self._tools,
                 "tool_choice": self.tool_choice
-                if (self.tools is not None and self.tool_choice is not None)
+                if (self._tools is not None and self.tool_choice is not None)
                 else "auto",
             }
         )
@@ -243,11 +233,15 @@ class HuggingFace(Model):
         Returns:
             ChatCompletionOutput: The chat completion response from the Inference Client.
         """
-        return self.get_client().chat.completions.create(
-            model=self.id,
-            messages=[m.to_dict() for m in messages],
-            **self.request_kwargs,
-        )
+        try:
+            return self.get_client().chat.completions.create(
+                model=self.id,
+                messages=[m.serialize_for_model() for m in messages],
+                **self.request_kwargs,
+            )
+        except InferenceTimeoutError as e:
+            logger.error(f"Error invoking HuggingFace model: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletionOutput]:
         """
@@ -259,11 +253,16 @@ class HuggingFace(Model):
         Returns:
             ChatCompletionOutput: The chat completion response from the Inference Client.
         """
-        return await self.get_async_client().chat.completions.create(
-            model=self.id,
-            messages=[m.to_dict() for m in messages],
-            **self.request_kwargs,
-        )
+        try:
+            async with self.get_async_client() as client:
+                return await client.chat.completions.create(
+                    model=self.id,
+                    messages=[m.serialize_for_model() for m in messages],
+                    **self.request_kwargs,
+                )
+        except InferenceTimeoutError as e:
+            logger.error(f"Error invoking HuggingFace model: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionStreamOutput]:
         """
@@ -275,15 +274,19 @@ class HuggingFace(Model):
         Returns:
             Iterator[ChatCompletionStreamOutput]: An iterator of chat completion delta.
         """
-        yield from self.get_client().chat.completions.create(
-            model=self.id,
-            messages=[m.to_dict() for m in messages],  # type: ignore
-            stream=True,
-            stream_options={"include_usage": True},
-            **self.request_kwargs,
-        )  # type: ignore
+        try:
+            yield from self.get_client().chat.completions.create(
+                model=self.id,
+                messages=[m.serialize_for_model() for m in messages],  # type: ignore
+                stream=True,
+                stream_options={"include_usage": True},
+                **self.request_kwargs,
+            )  # type: ignore
+        except InferenceTimeoutError as e:
+            logger.error(f"Error invoking HuggingFace model: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> Any:
+    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """
         Sends an asynchronous streaming chat completion request to the HuggingFace API.
 
@@ -291,238 +294,79 @@ class HuggingFace(Model):
             messages (List[Message]): A list of messages to send to the model.
 
         Returns:
-            Any: An asynchronous iterator of chat completion chunks.
+            AsyncIterator[Any]: An asynchronous iterator of chat completion chunks.
         """
-        async_stream = await self.get_async_client().chat.completions.create(
-            model=self.id,
-            messages=[m.to_dict() for m in messages],
-            stream=True,
-            stream_options={"include_usage": True},
-            **self.request_kwargs,
-        )
-        async for chunk in async_stream:  # type: ignore
-            yield chunk
+        try:
+            async with self.get_async_client() as client:
+                stream = await client.chat.completions.create(
+                    model=self.id,
+                    messages=[m.serialize_for_model() for m in messages],
+                    stream=True,
+                    stream_options={"include_usage": True},
+                    **self.request_kwargs,
+                )
+                async for chunk in stream:
+                    yield chunk
+        except InferenceTimeoutError as e:
+            logger.error(f"Error invoking HuggingFace model: {e}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
-    def _handle_tool_calls(
-        self, assistant_message: Message, messages: List[Message], model_response: ModelResponse
-    ) -> Optional[ModelResponse]:
+    # Override base method
+    @staticmethod
+    def parse_tool_calls(tool_calls_data: List[ChatCompletionStreamOutputDeltaToolCall]) -> List[Dict[str, Any]]:
         """
-        Handle tool calls in the assistant message.
+        Build tool calls from streamed tool call data.
 
         Args:
-            assistant_message (Message): The assistant message.
-            messages (List[Message]): The list of messages.
-            model_response (ModelResponse): The model response.
+            tool_calls_data (List[ChatCompletionStreamOutputDeltaToolCall]): The tool call data to build from.
 
         Returns:
-            Optional[ModelResponse]: The model response after handling tool calls.
+            List[Dict[str, Any]]: The built tool calls.
         """
-        if assistant_message.tool_calls is not None and len(assistant_message.tool_calls) > 0:
-            model_response.content = ""
-            tool_role: str = "tool"
-            function_calls_to_run: List[FunctionCall] = []
-            function_call_results: List[Message] = []
-            for tool_call in assistant_message.tool_calls:
-                _tool_call_id = tool_call.get("id")
-                _function_call = get_function_call_for_tool_call(tool_call, self._functions)
-                if _function_call is None:
-                    messages.append(
-                        Message(
-                            role="tool",
-                            tool_call_id=_tool_call_id,
-                            content="Could not find function to call.",
-                        )
-                    )
-                    continue
-                if _function_call.error is not None:
-                    messages.append(
-                        Message(
-                            role="tool",
-                            tool_call_id=_tool_call_id,
-                            content=_function_call.error,
-                        )
-                    )
-                    continue
-                function_calls_to_run.append(_function_call)
+        tool_calls: List[Dict[str, Any]] = []
+        for _tool_call in tool_calls_data:
+            _index = _tool_call.index
+            _tool_call_id = _tool_call.id
+            _tool_call_type = _tool_call.type
+            _function_name = _tool_call.function.name if _tool_call.function else None
+            _function_arguments = _tool_call.function.arguments if _tool_call.function else None
 
-            if self.show_tool_calls:
-                model_response.content += "\nRunning:"
-                for _f in function_calls_to_run:
-                    model_response.content += f"\n - {_f.get_call_str()}"
-                model_response.content += "\n\n"
+            if len(tool_calls) <= _index:
+                tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
+            tool_call_entry = tool_calls[_index]
+            if not tool_call_entry:
+                tool_call_entry["id"] = _tool_call_id
+                tool_call_entry["type"] = _tool_call_type
+                tool_call_entry["function"] = {
+                    "name": _function_name or "",
+                    "arguments": _function_arguments or "",
+                }
+            else:
+                if _function_name:
+                    tool_call_entry["function"]["name"] += _function_name
+                if _function_arguments:
+                    tool_call_entry["function"]["arguments"] += _function_arguments
+                if _tool_call_id:
+                    tool_call_entry["id"] = _tool_call_id
+                if _tool_call_type:
+                    tool_call_entry["type"] = _tool_call_type
+        return tool_calls
 
-            for _ in self.run_function_calls(
-                function_calls=function_calls_to_run, function_call_results=function_call_results, tool_role=tool_role
-            ):
-                pass
-
-            if len(function_call_results) > 0:
-                messages.extend(function_call_results)
-
-            return model_response
-        return None
-
-    def _update_usage_metrics(
-        self, assistant_message: Message, metrics: Metrics, response_usage: Optional[ChatCompletionOutputUsage]
-    ) -> None:
+    def parse_provider_response(self, response: ChatCompletionOutput) -> ModelResponse:
         """
-        Update the usage metrics for the assistant message and the model.
-
-        Args:
-            assistant_message (Message): The assistant message.
-            metrics (Metrics): The metrics.
-            response_usage (Optional[CompletionUsage]): The response usage.
+        Parse the provider response into a ModelResponse.
         """
-        # Update time taken to generate response
-        assistant_message.metrics["time"] = metrics.response_timer.elapsed
-        self.metrics.setdefault("response_times", []).append(metrics.response_timer.elapsed)
-        if response_usage:
-            prompt_tokens = response_usage.prompt_tokens
-            completion_tokens = response_usage.completion_tokens
-            total_tokens = response_usage.total_tokens
+        model_response = ModelResponse()
 
-            if prompt_tokens is not None:
-                metrics.input_tokens = prompt_tokens
-                metrics.prompt_tokens = prompt_tokens
-                assistant_message.metrics["input_tokens"] = prompt_tokens
-                assistant_message.metrics["prompt_tokens"] = prompt_tokens
-                self.metrics["input_tokens"] = self.metrics.get("input_tokens", 0) + prompt_tokens
-                self.metrics["prompt_tokens"] = self.metrics.get("prompt_tokens", 0) + prompt_tokens
-            if completion_tokens is not None:
-                metrics.output_tokens = completion_tokens
-                metrics.completion_tokens = completion_tokens
-                assistant_message.metrics["output_tokens"] = completion_tokens
-                assistant_message.metrics["completion_tokens"] = completion_tokens
-                self.metrics["output_tokens"] = self.metrics.get("output_tokens", 0) + completion_tokens
-                self.metrics["completion_tokens"] = self.metrics.get("completion_tokens", 0) + completion_tokens
-            if total_tokens is not None:
-                metrics.total_tokens = total_tokens
-                assistant_message.metrics["total_tokens"] = total_tokens
-                self.metrics["total_tokens"] = self.metrics.get("total_tokens", 0) + total_tokens
-            if response_usage.prompt_tokens_details is not None:
-                if isinstance(response_usage.prompt_tokens_details, dict):
-                    metrics.prompt_tokens_details = response_usage.prompt_tokens_details
-                elif isinstance(response_usage.prompt_tokens_details, BaseModel):
-                    metrics.prompt_tokens_details = response_usage.prompt_tokens_details.model_dump(exclude_none=True)
-                assistant_message.metrics["prompt_tokens_details"] = metrics.prompt_tokens_details
-                if metrics.prompt_tokens_details is not None:
-                    for k, v in metrics.prompt_tokens_details.items():
-                        self.metrics.get("prompt_tokens_details", {}).get(k, 0) + v
-            if response_usage.completion_tokens_details is not None:
-                if isinstance(response_usage.completion_tokens_details, dict):
-                    metrics.completion_tokens_details = response_usage.completion_tokens_details
-                elif isinstance(response_usage.completion_tokens_details, BaseModel):
-                    metrics.completion_tokens_details = response_usage.completion_tokens_details.model_dump(
-                        exclude_none=True
-                    )
-                assistant_message.metrics["completion_tokens_details"] = metrics.completion_tokens_details
-                if metrics.completion_tokens_details is not None:
-                    for k, v in metrics.completion_tokens_details.items():
-                        self.metrics.get("completion_tokens_details", {}).get(k, 0) + v
+        response_message: ChatCompletionOutputMessage = response.choices[0].message
 
-    def _create_assistant_message(
-        self,
-        response_message: ChatCompletionOutputMessage,
-        metrics: Metrics,
-        response_usage: Optional[ChatCompletionOutputUsage],
-    ) -> Message:
-        """
-        Create an assistant message from the response.
+        model_response.role = response_message.role
+        if response_message.content is not None:
+            model_response.content = response_message.content
 
-        Args:
-            response_message (ChatCompletionMessage): The response message.
-            metrics (Metrics): The metrics.
-            response_usage (Optional[CompletionUsage]): The response usage.
-
-        Returns:
-            Message: The assistant message.
-        """
-        assistant_message = Message(
-            role=response_message.role or "assistant",
-            content=response_message.content,
-        )
         if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
-            assistant_message.tool_calls = [t.model_dump() for t in response_message.tool_calls]
+            model_response.tool_calls = [asdict(t) for t in response_message.tool_calls]
 
-        return assistant_message
-
-    def response(self, messages: List[Message]) -> ModelResponse:
-        """
-        Generate a response from HuggingFace Hub.
-
-        Args:
-            messages (List[Message]): A list of messages.
-
-        Returns:
-            ModelResponse: The model response.
-        """
-        logger.debug("---------- HuggingFace Response Start ----------")
-        self._log_messages(messages)
-        model_response = ModelResponse()
-        metrics = Metrics()
-
-        # -*- Generate response
-        metrics.start_response_timer()
-        response: Union[ChatCompletionOutput] = self.invoke(messages=messages)
-        metrics.stop_response_timer()
-
-        # -*- Parse response
-        response_message: ChatCompletionOutputMessage = response.choices[0].message
-        response_usage: Optional[ChatCompletionOutputUsage] = response.usage
-
-        # -*- Create assistant message
-        assistant_message = self._create_assistant_message(
-            response_message=response_message, metrics=metrics, response_usage=response_usage
-        )
-
-        # -*- Add assistant message to messages
-        messages.append(assistant_message)
-
-        # -*- Log response and metrics
-        assistant_message.log()
-        metrics.log()
-
-        # -*- Handle tool calls
-        if self._handle_tool_calls(assistant_message, messages, model_response):
-            response_after_tool_calls = self.response(messages=messages)
-            if response_after_tool_calls.content is not None:
-                if model_response.content is None:
-                    model_response.content = ""
-                model_response.content += response_after_tool_calls.content
-            return model_response
-
-        # -*- Update model response
-        if assistant_message.content is not None:
-            model_response.content = assistant_message.get_content_string()
-
-        logger.debug("---------- HuggingFace Response End ----------")
-        return model_response
-
-    async def aresponse(self, messages: List[Message]) -> ModelResponse:
-        """
-        Generate an asynchronous response from HuggingFace.
-
-        Args:
-            messages (List[Message]): A list of messages.
-
-        Returns:
-            ModelResponse: The model response from the API.
-        """
-        logger.debug("---------- HuggingFace Async Response Start ----------")
-        self._log_messages(messages)
-        model_response = ModelResponse()
-        metrics = Metrics()
-
-        # -*- Generate response
-        metrics.start_response_timer()
-        response: Union[ChatCompletionOutput] = await self.ainvoke(messages=messages)
-        metrics.stop_response_timer()
-
-        # -*- Parse response
-        response_message: ChatCompletionOutputMessage = response.choices[0].message
-        response_usage: Optional[ChatCompletionOutputUsage] = response.usage
-
-        # -*- Parse structured outputs
         try:
             if (
                 self.response_format is not None
@@ -535,241 +379,24 @@ class HuggingFace(Model):
         except Exception as e:
             logger.warning(f"Error retrieving structured outputs: {e}")
 
-        # -*- Create assistant message
-        assistant_message = self._create_assistant_message(
-            response_message=response_message, metrics=metrics, response_usage=response_usage
-        )
+        if response.usage is not None:
+            model_response.response_usage = response.usage
 
-        # -*- Add assistant message to messages
-        messages.append(assistant_message)
-
-        # -*- Log response and metrics
-        assistant_message.log()
-        metrics.log()
-
-        # -*- Handle tool calls
-        if self._handle_tool_calls(assistant_message, messages, model_response):
-            response_after_tool_calls = await self.aresponse(messages=messages)
-            if response_after_tool_calls.content is not None:
-                if model_response.content is None:
-                    model_response.content = ""
-                model_response.content += response_after_tool_calls.content
-            return model_response
-
-        # -*- Update model response
-        if assistant_message.content is not None:
-            model_response.content = assistant_message.get_content_string()
-
-        logger.debug("---------- HuggingFace Async Response End ----------")
         return model_response
 
-    def _update_stream_metrics(self, assistant_message: Message, metrics: Metrics):
+    def parse_provider_response_delta(self, response_delta: ChatCompletionStreamOutput) -> ModelResponse:
         """
-        Update the usage metrics for the assistant message and the model.
-
-        Args:
-            assistant_message (Message): The assistant message.
-            metrics (Metrics): The metrics.
+        Parse the provider response delta into a ModelResponse.
         """
-        # Update time taken to generate response
-        assistant_message.metrics["time"] = metrics.response_timer.elapsed
-        self.metrics.setdefault("response_times", []).append(metrics.response_timer.elapsed)
+        model_response = ModelResponse()
+        if response_delta.choices and len(response_delta.choices) > 0:
+            response_delta_message: ChatCompletionStreamOutputDelta = response_delta.choices[0].delta
 
-        if metrics.time_to_first_token is not None:
-            assistant_message.metrics["time_to_first_token"] = metrics.time_to_first_token
-            self.metrics.setdefault("time_to_first_token", []).append(metrics.time_to_first_token)
+            model_response.role = response_delta_message.role
 
-        if metrics.input_tokens is not None:
-            assistant_message.metrics["input_tokens"] = metrics.input_tokens
-            self.metrics["input_tokens"] = self.metrics.get("input_tokens", 0) + metrics.input_tokens
-        if metrics.output_tokens is not None:
-            assistant_message.metrics["output_tokens"] = metrics.output_tokens
-            self.metrics["output_tokens"] = self.metrics.get("output_tokens", 0) + metrics.output_tokens
-        if metrics.prompt_tokens is not None:
-            assistant_message.metrics["prompt_tokens"] = metrics.prompt_tokens
-            self.metrics["prompt_tokens"] = self.metrics.get("prompt_tokens", 0) + metrics.prompt_tokens
-        if metrics.completion_tokens is not None:
-            assistant_message.metrics["completion_tokens"] = metrics.completion_tokens
-            self.metrics["completion_tokens"] = self.metrics.get("completion_tokens", 0) + metrics.completion_tokens
-        if metrics.total_tokens is not None:
-            assistant_message.metrics["total_tokens"] = metrics.total_tokens
-            self.metrics["total_tokens"] = self.metrics.get("total_tokens", 0) + metrics.total_tokens
-        if metrics.prompt_tokens_details is not None:
-            assistant_message.metrics["prompt_tokens_details"] = metrics.prompt_tokens_details
-            for k, v in metrics.prompt_tokens_details.items():
-                self.metrics.get("prompt_tokens_details", {}).get(k, 0) + v
-        if metrics.completion_tokens_details is not None:
-            assistant_message.metrics["completion_tokens_details"] = metrics.completion_tokens_details
-            for k, v in metrics.completion_tokens_details.items():
-                self.metrics.get("completion_tokens_details", {}).get(k, 0) + v
+            if response_delta_message.content is not None:
+                model_response.content = response_delta_message.content
+            if response_delta_message.tool_calls is not None and len(response_delta_message.tool_calls) > 0:
+                model_response.tool_calls = response_delta_message.tool_calls  # type: ignore
 
-    def _handle_stream_tool_calls(
-        self,
-        assistant_message: Message,
-        messages: List[Message],
-    ) -> Iterator[ModelResponse]:
-        """
-        Handle tool calls for response stream.
-
-        Args:
-            assistant_message (Message): The assistant message.
-            messages (List[Message]): The list of messages.
-
-        Returns:
-            Iterator[ModelResponse]: An iterator of the model response.
-        """
-        if assistant_message.tool_calls is not None and len(assistant_message.tool_calls) > 0:
-            tool_role: str = "tool"
-            function_calls_to_run: List[FunctionCall] = []
-            function_call_results: List[Message] = []
-            for tool_call in assistant_message.tool_calls:
-                _tool_call_id = tool_call.get("id")
-                _function_call = get_function_call_for_tool_call(tool_call, self._functions)
-                if _function_call is None:
-                    messages.append(
-                        Message(
-                            role=tool_role,
-                            tool_call_id=_tool_call_id,
-                            content="Could not find function to call.",
-                        )
-                    )
-                    continue
-                if _function_call.error is not None:
-                    messages.append(
-                        Message(
-                            role=tool_role,
-                            tool_call_id=_tool_call_id,
-                            content=_function_call.error,
-                        )
-                    )
-                    continue
-                function_calls_to_run.append(_function_call)
-
-            if self.show_tool_calls:
-                yield ModelResponse(content="\nRunning:")
-                for _f in function_calls_to_run:
-                    yield ModelResponse(content=f"\n - {_f.get_call_str()}")
-                yield ModelResponse(content="\n\n")
-
-            for intermediate_model_response in self.run_function_calls(
-                function_calls=function_calls_to_run, function_call_results=function_call_results, tool_role=tool_role
-            ):
-                yield intermediate_model_response
-
-            if len(function_call_results) > 0:
-                messages.extend(function_call_results)
-
-    def response_stream(self, messages: List[Message]) -> Iterator[ModelResponse]:
-        """
-        Generate a streaming response from HuggingFace Hub.
-
-        Args:
-            messages (List[Message]): A list of messages.
-
-        Returns:
-            Iterator[ModelResponse]: An iterator of model responses.
-        """
-        logger.debug("---------- HuggingFace Response Start ----------")
-        self._log_messages(messages)
-        stream_data: StreamData = StreamData()
-
-        # -*- Generate response
-        for response in self.invoke_stream(messages=messages):
-            if len(response.choices) > 0:
-                # metrics.completion_tokens += 1
-
-                response_delta: ChatCompletionStreamOutputDelta = response.choices[0].delta
-                response_content: Optional[str] = response_delta.content
-                response_tool_calls: Optional[List[ChatCompletionStreamOutputDeltaToolCall]] = response_delta.tool_calls
-
-                if response_content is not None:
-                    stream_data.response_content += response_content
-                    yield ModelResponse(content=response_content)
-
-                if response_tool_calls is not None:
-                    if stream_data.response_tool_calls is None:
-                        stream_data.response_tool_calls = []
-                    stream_data.response_tool_calls.extend(response_tool_calls)
-
-        # -*- Create assistant message
-        assistant_message = Message(role="assistant")
-        if stream_data.response_content != "":
-            assistant_message.content = stream_data.response_content
-
-        if stream_data.response_tool_calls is not None:
-            _tool_calls = self._build_tool_calls(stream_data.response_tool_calls)
-            if len(_tool_calls) > 0:
-                assistant_message.tool_calls = _tool_calls
-
-        # -*- Add assistant message to messages
-        messages.append(assistant_message)
-
-        # -*- Handle tool calls
-        if assistant_message.tool_calls is not None and len(assistant_message.tool_calls) > 0:
-            yield from self._handle_stream_tool_calls(assistant_message, messages)
-            yield from self.response_stream(messages=messages)
-        logger.debug("---------- HuggingFace Response End ----------")
-
-    async def aresponse_stream(self, messages: List[Message]) -> Any:
-        """
-        Generate an asynchronous streaming response from HuggingFace Hub.
-
-        Args:
-            messages (List[Message]): A list of messages.
-
-        Returns:
-            Any: An asynchronous iterator of model responses.
-        """
-        logger.debug("---------- HuggingFace Hub Async Response Start ----------")
-        self._log_messages(messages)
-        stream_data: StreamData = StreamData()
-        metrics: Metrics = Metrics()
-
-        # -*- Generate response
-        metrics.start_response_timer()
-        async for response in self.ainvoke_stream(messages=messages):
-            if len(response.choices) > 0:
-                metrics.completion_tokens += 1
-                if metrics.completion_tokens == 1:
-                    metrics.time_to_first_token = metrics.response_timer.elapsed
-
-                response_delta: ChatCompletionStreamOutputDelta = response.choices[0].delta
-                response_content = response_delta.content
-                response_tool_calls = response_delta.tool_calls
-
-                if response_content is not None:
-                    stream_data.response_content += response_content
-                    yield ModelResponse(content=response_content)
-
-                if response_tool_calls is not None:
-                    if stream_data.response_tool_calls is None:
-                        stream_data.response_tool_calls = []
-                    stream_data.response_tool_calls.extend(response_tool_calls)
-        metrics.stop_response_timer()
-
-        # -*- Create assistant message
-        assistant_message = Message(role="assistant")
-        if stream_data.response_content != "":
-            assistant_message.content = stream_data.response_content
-
-        if stream_data.response_tool_calls is not None:
-            _tool_calls = self._build_tool_calls(stream_data.response_tool_calls)
-            if len(_tool_calls) > 0:
-                assistant_message.tool_calls = _tool_calls
-
-        self._update_stream_metrics(assistant_message=assistant_message, metrics=metrics)
-
-        # -*- Add assistant message to messages
-        messages.append(assistant_message)
-
-        # -*- Log response and metrics
-        assistant_message.log()
-        metrics.log()
-
-        # -*- Handle tool calls
-        if assistant_message.tool_calls is not None and len(assistant_message.tool_calls) > 0:
-            for model_response in self._handle_stream_tool_calls(assistant_message, messages):
-                yield model_response
-            async for model_response in self.aresponse_stream(messages=messages):
-                yield model_response
-        logger.debug("---------- HuggingFace Hub Async Response End ----------")
+        return model_response

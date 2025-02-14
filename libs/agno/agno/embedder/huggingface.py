@@ -7,7 +7,7 @@ from agno.embedder.base import Embedder
 from agno.utils.log import logger
 
 try:
-    from huggingface_hub import InferenceClient, SentenceSimilarityInput
+    from huggingface_hub import InferenceClient
 except ImportError:
     logger.error("`huggingface-hub` not installed, please run `pip install huggingface-hub`")
     raise
@@ -34,11 +34,7 @@ class HuggingfaceCustomEmbedder(Embedder):
         return InferenceClient(**_client_params)
 
     def _response(self, text: str):
-        _request_params: SentenceSimilarityInput = {
-            "json": {"inputs": text},
-            "model": self.id,
-        }
-        return self.client.post(**_request_params)
+        return self.client.post(json={"inputs": text}, model=self.id)
 
     def get_embedding(self, text: str) -> List[float]:
         response = self._response(text=text)

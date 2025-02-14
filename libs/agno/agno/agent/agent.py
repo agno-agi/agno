@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import ChainMap, defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from os import getenv
 from textwrap import dedent
 from typing import (
@@ -14,6 +14,7 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    Set,
     Type,
     Union,
     cast,
@@ -23,7 +24,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agno.exceptions import AgentRunException, StopAgentRun
+from agno.agent.metrics import SessionMetrics
+from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
@@ -64,7 +66,7 @@ class Agent:
     session_id: Optional[str] = None
     # Session name
     session_name: Optional[str] = None
-    # Session state stored in the database
+    # Session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
 
     # --- Agent Context ---
@@ -102,8 +104,7 @@ class Agent:
     # --- Agent Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
-    # If you provide a dict, it is not called by the model.
-    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
+    tools: Optional[List[Union[Toolkit, Callable, Function]]] = None
     # Show tool calls in Agent response.
     show_tool_calls: bool = False
     # Maximum number of tool calls allowed.
@@ -227,22 +228,6 @@ class Agent:
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
 
-    # --- Run Info: DO NOT SET ---
-    run_id: Optional[str] = None
-    run_input: Optional[Union[str, List, Dict, Message]] = None
-    run_messages: Optional[RunMessages] = None
-    run_response: Optional[RunResponse] = None
-    # Images generated during this session
-    images: Optional[List[ImageArtifact]] = None
-    # Videos generated during this session
-    videos: Optional[List[VideoArtifact]] = None
-    # Audio generated during this session
-    audio: Optional[List[AudioArtifact]] = None
-    # Agent session
-    agent_session: Optional[AgentSession] = None
-
-    _formatter: Optional[SafeFormatter] = None
-
     def __init__(
         self,
         *,
@@ -266,7 +251,7 @@ class Agent:
         references_format: Literal["json", "yaml"] = "json",
         storage: Optional[AgentStorage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
+        tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
         show_tool_calls: bool = False,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -398,16 +383,27 @@ class Agent:
         self.monitoring = monitoring
         self.telemetry = telemetry
 
-        self.run_id = None
-        self.run_input = None
-        self.run_messages = None
-        self.run_response = None
-        self.images = None
-        self.videos = None
-        self.audio = None
+        # --- Params not to be set by user ---
+        self.session_metrics: Optional[SessionMetrics] = None
 
-        self.agent_session = None
-        self._formatter = None
+        self.run_id: Optional[str] = None
+        self.run_input: Optional[Union[str, List, Dict, Message]] = None
+        self.run_messages: Optional[RunMessages] = None
+        self.run_response: Optional[RunResponse] = None
+
+        # Images generated during this session
+        self.images: Optional[List[ImageArtifact]] = None
+        # Videos generated during this session
+        self.videos: Optional[List[VideoArtifact]] = None
+        # Audio generated during this session
+        self.audio: Optional[List[AudioArtifact]] = None
+        # Agent session
+        self.agent_session: Optional[AgentSession] = None
+
+        self._tools_for_model: Optional[List[Dict]] = None
+        self._functions_for_model: Optional[Dict[str, Function]] = None
+
+        self._formatter: Optional[SafeFormatter] = None
 
     def set_agent_id(self) -> str:
         if self.agent_id is None:
@@ -443,10 +439,10 @@ class Agent:
         self.set_debug()
         self.set_agent_id()
         self.set_session_id()
-        if self._formatter is None:
-            self._formatter = SafeFormatter()
         if self.memory is None:
             self.memory = AgentMemory()
+        if self._formatter is None:
+            self._formatter = SafeFormatter()
 
     @property
     def is_streamable(self) -> bool:
@@ -475,13 +471,14 @@ class Agent:
         2. Update the Model and resolve context
         3. Read existing session from storage
         4. Prepare run messages
-        5. Prepare run steps
+        5. Reason about the task if reasoning is enabled
         6. Start the Run by yielding a RunStarted event
-        7. Run Agent Steps
+        7. Generate a response from the Model (includes running function calls)
         8. Update RunResponse
         9. Update Agent Memory
-        10. Save session to storage
-        11. Save output to file if save_response_to_file is set
+        10. Calculate session metrics
+        11. Save session to storage
+        12. Save output to file if save_response_to_file is set
         """
         # 1. Prepare the Agent for the run
         # 1.1 Initialize the Agent
@@ -511,7 +508,7 @@ class Agent:
         )
         self.run_messages = run_messages
 
-        # 4. Reason about the task if reasoning is enabled
+        # 5. Reason about the task if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self.reason(run_messages=run_messages)
 
@@ -529,7 +526,7 @@ class Agent:
         if self.stream_intermediate_steps:
             yield self.create_run_response("Run started", event=RunEvent.run_started)
 
-        # 5. Generate a response from the Model (includes running function calls)
+        # 7. Generate a response from the Model (includes running function calls)
         model_response: ModelResponse
         self.model = cast(Model, self.model)
         if self.stream:
@@ -539,6 +536,7 @@ class Agent:
                 if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
                     if model_response_chunk.content is not None and model_response.content is not None:
                         model_response.content += model_response_chunk.content
+
                         # Update the run_response with the content
                         self.run_response.content = model_response_chunk.content
                         self.run_response.created_at = model_response_chunk.created_at
@@ -571,11 +569,13 @@ class Agent:
                         if self.run_response.tools:
                             # Create a mapping of tool_call_id to index
                             tool_call_index_map = {
-                                tc["tool_call_id"]: i for i, tc in enumerate(self.run_response.tools)
+                                tc["tool_call_id"]: i
+                                for i, tc in enumerate(self.run_response.tools)
+                                if tc.get("tool_call_id") is not None
                             }
                             # Process tool calls
                             for tool_call_dict in tool_calls_list:
-                                tool_call_id = tool_call_dict["tool_call_id"]
+                                tool_call_id = tool_call_dict.get("tool_call_id")
                                 index = tool_call_index_map.get(tool_call_id)
                                 if index is not None:
                                     self.run_response.tools[index] = tool_call_dict
@@ -633,9 +633,7 @@ class Agent:
         # 9. Update Agent Memory
         # Add the system message to the memory
         if run_messages.system_message is not None:
-            self.memory.add_system_message(
-                run_messages.system_message, system_message_role=self.get_system_message_role()
-            )
+            self.memory.add_system_message(run_messages.system_message, system_message_role=self.system_message_role)
 
         # Build a list of messages that should be added to the AgentMemory
         messages_for_memory: List[Message] = (
@@ -695,10 +693,13 @@ class Agent:
         if self.memory.create_session_summary and self.memory.update_session_summary_after_run:
             self.memory.update_summary()
 
-        # 10. Save session to storage
+        # 10. Calculate session metrics
+        self.session_metrics = self.calculate_session_metrics(self.memory.messages)
+
+        # 11. Save session to storage
         self.write_to_storage()
 
-        # 11. Save output to file if save_response_to_file is set
+        # 12. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=message)
 
         # Set run_input
@@ -867,7 +868,7 @@ class Agent:
                             **kwargs,
                         )
                         return next(resp)
-            except AgentRunException as e:
+            except ModelProviderError as e:
                 logger.warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
                     raise e
@@ -881,8 +882,12 @@ class Agent:
 
                     time.sleep(delay)
 
-        # If we get here, all retries failed
-        raise Exception(f"Failed after {num_attempts} attempts. Last error: {str(last_exception)}")
+        if last_exception is not None:
+            raise Exception(
+                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}"
+            )
+        else:
+            raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _arun(
         self,
@@ -903,13 +908,14 @@ class Agent:
         2. Update the Model and resolve context
         3. Read existing session from storage
         4. Prepare run messages
-        5. Prepare run steps
+        5. Reason about the task if reasoning is enabled
         6. Start the Run by yielding a RunStarted event
-        7. Run Agent Steps
+        7. Generate a response from the Model (includes running function calls)
         8. Update RunResponse
         9. Update Agent Memory
-        10. Save session to storage
-        11. Save output to file if save_response_to_file is set
+        10. Calculate session metrics
+        11. Save session to storage
+        12. Save output to file if save_response_to_file is set
         """
 
         # 1. Prepare the Agent for the run
@@ -940,7 +946,7 @@ class Agent:
         )
         self.run_messages = run_messages
 
-        # 4. Reason about the task if reasoning is enabled
+        # 5. Reason about the task if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
             areason_generator = self.areason(run_messages=run_messages)
             if self.stream:
@@ -959,7 +965,7 @@ class Agent:
         if self.stream_intermediate_steps:
             yield self.create_run_response("Run started", event=RunEvent.run_started)
 
-        # 5. Generate a response from the Model (includes running function calls)
+        # 7. Generate a response from the Model (includes running function calls)
         model_response: ModelResponse
         self.model = cast(Model, self.model)
         if stream and self.is_streamable:
@@ -1005,7 +1011,9 @@ class Agent:
                             }
                             # Process tool calls
                             for tool_call_dict in tool_calls_list:
-                                tool_call_id = tool_call_dict["tool_call_id"]
+                                tool_call_id = (
+                                    tool_call_dict["tool_call_id"] if "tool_call_id" in tool_call_dict else None
+                                )
                                 index = tool_call_index_map.get(tool_call_id)
                                 if index is not None:
                                     self.run_response.tools[index] = tool_call_dict
@@ -1061,9 +1069,7 @@ class Agent:
         # 9. Update Agent Memory
         # Add the system message to the memory
         if run_messages.system_message is not None:
-            self.memory.add_system_message(
-                run_messages.system_message, system_message_role=self.get_system_message_role()
-            )
+            self.memory.add_system_message(run_messages.system_message, system_message_role=self.system_message_role)
 
         # Build a list of messages that should be added to the AgentMemory
         messages_for_memory: List[Message] = (
@@ -1123,10 +1129,13 @@ class Agent:
         if self.memory.create_session_summary and self.memory.update_session_summary_after_run:
             await self.memory.aupdate_summary()
 
-        # 10. Save session to storage
+        # 10. Calculate session metrics
+        self.session_metrics = self.calculate_session_metrics(self.memory.messages)
+
+        # 11. Save session to storage
         self.write_to_storage()
 
-        # 11. Save output to file if save_response_to_file is set
+        # 12. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=message)
 
         # Set run_input
@@ -1263,7 +1272,7 @@ class Agent:
                             **kwargs,
                         )
                         return await resp.__anext__()
-            except AgentRunException as e:
+            except ModelProviderError as e:
                 logger.warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
                     raise e
@@ -1295,8 +1304,10 @@ class Agent:
             agent_id=self.agent_id,
             content=content,
             tools=self.run_response.tools,
+            audio=self.run_response.audio,
             images=self.run_response.images,
             videos=self.run_response.videos,
+            response_audio=self.run_response.response_audio,
             model=self.run_response.model,
             messages=self.run_response.messages,
             extra_data=self.run_response.extra_data,
@@ -1308,36 +1319,94 @@ class Agent:
             rr.created_at = created_at
         return rr
 
-    def get_tools(self) -> Optional[List[Union[Toolkit, Callable, Dict, Function]]]:
+    def get_tools(self) -> Optional[List[Union[Toolkit, Callable, Function]]]:
         self.memory = cast(AgentMemory, self.memory)
-        tools: List[Union[Toolkit, Callable, Dict, Function]] = []
+        agent_tools: List[Union[Toolkit, Callable, Function]] = []
 
         # Add provided tools
         if self.tools is not None:
             for tool in self.tools:
-                tools.append(tool)
+                agent_tools.append(tool)
 
         # Add tools for accessing memory
         if self.read_chat_history:
-            tools.append(self.get_chat_history)
+            agent_tools.append(self.get_chat_history)
         if self.read_tool_call_history:
-            tools.append(self.get_tool_call_history)
+            agent_tools.append(self.get_tool_call_history)
         if self.memory and self.memory.create_user_memories:
-            tools.append(self.update_memory)
+            agent_tools.append(self.update_memory)
 
         # Add tools for accessing knowledge
         if self.knowledge is not None or self.retriever is not None:
             if self.search_knowledge:
-                tools.append(self.search_knowledge_base)
+                agent_tools.append(self.search_knowledge_base)
             if self.update_knowledge:
-                tools.append(self.add_to_knowledge)
+                agent_tools.append(self.add_to_knowledge)
 
         # Add transfer tools
         if self.team is not None and len(self.team) > 0:
             for agent_index, agent in enumerate(self.team):
-                tools.append(self.get_transfer_function(agent, agent_index))
+                agent_tools.append(self.get_transfer_function(agent, agent_index))
 
-        return tools
+        return agent_tools
+
+    def add_tools_to_model(self, model: Model) -> None:
+        # Skip if functions_for_model is not None
+        if self._functions_for_model is None or self._tools_for_model is None:
+            # Get Agent tools
+            agent_tools = self.get_tools()
+            if agent_tools is not None:
+                logger.debug("Processing tools for model")
+                # Check if we need strict mode for the model
+                strict = False
+                if self.response_model is not None and self.structured_outputs and model.supports_structured_outputs:
+                    strict = True
+
+                self._tools_for_model = []
+                self._functions_for_model = {}
+
+                for tool in agent_tools:
+                    if isinstance(tool, Toolkit):
+                        # For each function in the toolkit and process entrypoint
+                        for name, func in tool.functions.items():
+                            # If the function does not exist in self.functions
+                            if name not in self._functions_for_model:
+                                func._agent = self
+                                func.process_entrypoint(strict=strict)
+                                if strict:
+                                    func.strict = True
+                                self._functions_for_model[name] = func
+                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                logger.debug(f"Included function {name} from {tool.name}")
+
+                    elif isinstance(tool, Function):
+                        if tool.name not in self._functions_for_model:
+                            tool._agent = self
+                            tool.process_entrypoint(strict=strict)
+                            if strict:
+                                tool.strict = True
+                            self._functions_for_model[tool.name] = tool
+                            self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
+                            logger.debug(f"Included function {tool.name}")
+
+                    elif callable(tool):
+                        try:
+                            function_name = tool.__name__
+                            if function_name not in self._functions_for_model:
+                                func = Function.from_callable(tool, strict=strict)
+                                func._agent = self
+                                if strict:
+                                    func.strict = True
+                                self._functions_for_model[func.name] = func
+                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                logger.debug(f"Included function {func.name}")
+                        except Exception as e:
+                            logger.warning(f"Could not add function {tool}: {e}")
+
+                # Set tools on the model
+                model.set_tools(tools=self._tools_for_model)
+                # Set functions on the model
+                model.set_functions(functions=self._functions_for_model)
 
     def update_model(self) -> None:
         # Use the default Model (OpenAIChat) if no model is provided
@@ -1353,43 +1422,33 @@ class Agent:
                 exit(1)
             self.model = OpenAIChat(id="gpt-4o")
 
-        # Set response_format if it is not set on the Model
-        if self.response_model is not None and self.model.response_format is None:
+        # Update the response_format on the Model
+        if self.response_model is not None:
+            # This will pass the pydantic model to the model
             if self.structured_outputs and self.model.supports_structured_outputs:
                 logger.debug("Setting Model.response_format to Agent.response_model")
                 self.model.response_format = self.response_model
                 self.model.structured_outputs = True
             else:
+                # Otherwise we just want JSON
                 self.model.response_format = {"type": "json_object"}
+        else:
+            self.model.response_format = None
 
         # Add tools to the Model
-        agent_tools = self.get_tools()
-        if agent_tools is not None:
-            for tool in agent_tools:
-                if (
-                    self.response_model is not None
-                    and self.structured_outputs
-                    and self.model.supports_structured_outputs
-                ):
-                    self.model.add_tool(tool=tool, strict=True, agent=self)
-                else:
-                    self.model.add_tool(tool=tool, agent=self)
+        self.add_tools_to_model(model=self.model)
 
-        # Set show_tool_calls if it is not set on the Model
-        if self.model.show_tool_calls is None and self.show_tool_calls is not None:
+        # Set show_tool_calls on the Model
+        if self.show_tool_calls is not None:
             self.model.show_tool_calls = self.show_tool_calls
 
-        # Set tool_choice to auto if it is not set on the Model
-        if self.model.tool_choice is None and self.tool_choice is not None:
+        # Set tool_choice on the Model
+        if self.tool_choice is not None:
             self.model.tool_choice = self.tool_choice
 
-        # Set tool_call_limit if set on the agent
+        # Set tool_call_limit on the Model
         if self.tool_call_limit is not None:
             self.model.tool_call_limit = self.tool_call_limit
-
-        # Add session_id to the Model
-        if self.session_id is not None:
-            self.model.session_id = self.session_id
 
     def resolve_run_context(self) -> None:
         from inspect import signature
@@ -1440,6 +1499,8 @@ class Agent:
             session_data["session_name"] = self.session_name
         if self.session_state is not None and len(self.session_state) > 0:
             session_data["session_state"] = self.session_state
+        if self.session_metrics is not None:
+            session_data["session_metrics"] = asdict(self.session_metrics) if self.session_metrics is not None else None
         if self.team_data is not None:
             session_data["team_data"] = self.team_data
         if self.images is not None:
@@ -1451,6 +1512,8 @@ class Agent:
         return session_data
 
     def get_agent_session(self) -> AgentSession:
+        from time import time
+
         """Get an AgentSession object, which can be saved to the database"""
         self.memory = cast(AgentMemory, self.memory)
         self.session_id = cast(str, self.session_id)
@@ -1463,6 +1526,7 @@ class Agent:
             agent_data=self.get_agent_data(),
             session_data=self.get_session_data(),
             extra_data=self.extra_data,
+            created_at=int(time()),
         )
 
     def load_agent_session(self, session: AgentSession):
@@ -1485,25 +1549,13 @@ class Agent:
             if self.name is None and "name" in session.agent_data:
                 self.name = session.agent_data.get("name")
 
-            # Get model data from the database and update the model
-            if "model" in session.agent_data:
-                model_data = session.agent_data.get("model")
-                # Update model metrics from the database
-                if model_data is not None and isinstance(model_data, dict):
-                    model_metrics_from_db = model_data.get("metrics")
-                    if model_metrics_from_db is not None and isinstance(model_metrics_from_db, dict) and self.model:
-                        try:
-                            self.model.metrics = model_metrics_from_db
-                        except Exception as e:
-                            logger.warning(f"Failed to load model from AgentSession: {e}")
-
         # Read session_data from the database
         if session.session_data is not None:
             # Get the session_name from database and update the current session_name if not set
             if self.session_name is None and "session_name" in session.session_data:
                 self.session_name = session.session_data.get("session_name")
 
-            # Get the session_state from database and update the current session_state
+            # Get the session_state from the database and update the current session_state
             if "session_state" in session.session_data:
                 session_state_from_db = session.session_data.get("session_state")
                 if (
@@ -1517,6 +1569,12 @@ class Agent:
                         merge_dictionaries(session_state_from_db, self.session_state)
                     # Update the current session_state
                     self.session_state = session_state_from_db
+
+            # Get the session_metrics from the database
+            if "session_metrics" in session.session_data:
+                session_metrics_from_db = session.session_data.get("session_metrics")
+                if session_metrics_from_db is not None and isinstance(session_metrics_from_db, dict):
+                    self.session_metrics = SessionMetrics(**session_metrics_from_db)
 
             # Get images, videos, and audios from the database
             if "images" in session.session_data:
@@ -1753,15 +1811,6 @@ class Agent:
         )
         return self._formatter.format(msg, **format_variables)  # type: ignore
 
-    def get_system_message_role(self) -> str:
-        """Return the role for the system message
-        The role may be updated by the model if override_system_role is True.
-        """
-        self.model = cast(Model, self.model)
-        if self.model.override_system_role and self.system_message_role == "system":
-            return self.model.system_message_role
-        return self.system_message_role
-
     def get_system_message(self) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -1792,7 +1841,7 @@ class Agent:
             if self.response_model is not None and not self.structured_outputs:
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
-            return Message(role=self.get_system_message_role(), content=sys_message_content)
+            return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
 
         # 2. If create_default_system_message is False, return None.
         if not self.create_default_system_message:
@@ -1934,7 +1983,7 @@ class Agent:
 
         # Return the system message
         return (
-            Message(role=self.get_system_message_role(), content=system_message_content.strip())
+            Message(role=self.system_message_role, content=system_message_content.strip())  # type: ignore
             if system_message_content
             else None
         )
@@ -2127,7 +2176,7 @@ class Agent:
             from copy import deepcopy
 
             history: List[Message] = self.memory.get_messages_from_last_n_runs(
-                last_n=self.num_history_responses, skip_role=self.get_system_message_role()
+                last_n=self.num_history_responses, skip_role=self.system_message_role
             )
             if len(history) > 0:
                 # Create a deep copy of the history messages to avoid modifying the original messages
@@ -2335,7 +2384,11 @@ class Agent:
             yield self.team_response_separator
 
         # Give a name to the member agent
-        agent_name = member_agent.name.replace(" ", "_").lower() if member_agent.name else f"agent_{index}"
+        agent_name = member_agent.name if member_agent.name else f"agent_{index}"
+        # Convert non-ascii characters to ascii equivalents and ensure only alphanumeric, underscore and hyphen
+        agent_name = "".join(c for c in agent_name if c.isalnum() or c in "_- ").strip()
+        agent_name = agent_name.lower().replace(" ", "_")
+
         if member_agent.name is None:
             member_agent.name = agent_name
 
@@ -2510,15 +2563,25 @@ class Agent:
 
     def aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
         aggregated_metrics: Dict[str, Any] = defaultdict(list)
-
-        # Use a defaultdict(list) to collect all values for each assistant message
+        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:
-            if m.role == "assistant" and m.metrics is not None:
-                for k, v in m.metrics.items():
-                    aggregated_metrics[k].append(v)
+            if m.role == assistant_message_role and m.metrics is not None:
+                for k, v in asdict(m.metrics).items():
+                    if k == "timer":
+                        continue
+                    if v is not None:
+                        aggregated_metrics[k].append(v)
         if aggregated_metrics is not None:
             aggregated_metrics = dict(aggregated_metrics)
         return aggregated_metrics
+
+    def calculate_session_metrics(self, messages: List[Message]) -> SessionMetrics:
+        session_metrics = SessionMetrics()
+        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
+        for m in messages:
+            if m.role == assistant_message_role and m.metrics is not None:
+                session_metrics += m.metrics
+        return session_metrics
 
     def rename(self, name: str) -> None:
         """Rename the Agent and save to storage"""
@@ -2567,7 +2630,7 @@ class Agent:
         gen_session_name_prompt += "\n\nConversation Name: "
 
         system_message = Message(
-            role=self.get_system_message_role(),
+            role=self.system_message_role,
             content="Please provide a suitable name for this conversation in maximum 5 words. "
             "Remember, do not exceed 5 words.",
         )
@@ -2682,7 +2745,7 @@ class Agent:
                 reasoning_agent_messages=[ds_reasoning_message],
             )
         # Use Groq for reasoning
-        if reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
+        elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
             from agno.reasoning.groq import get_groq_reasoning, get_groq_reasoning_agent
 
             groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
@@ -2835,7 +2898,7 @@ class Agent:
                 reasoning_agent_messages=[ds_reasoning_message],
             )
         # Use Groq for reasoning
-        if reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
+        elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
             from agno.reasoning.groq import aget_groq_reasoning, get_groq_reasoning_agent
 
             groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
@@ -3223,6 +3286,16 @@ class Agent:
             content, title=title, title_align="left", border_style=border_style, box=HEAVY, expand=True, padding=(1, 1)
         )
 
+    def escape_markdown_tags(self, content: str, tags: Set[str]) -> str:
+        """Escape special tags in markdown content."""
+        escaped_content = content
+        for tag in tags:
+            # Escape opening tag
+            escaped_content = escaped_content.replace(f"<{tag}>", f"&lt;{tag}&gt;")
+            # Escape closing tag
+            escaped_content = escaped_content.replace(f"</{tag}>", f"&lt;/{tag}&gt;")
+        return escaped_content
+
     def print_response(
         self,
         message: Optional[Union[List, Dict, str, Message]] = None,
@@ -3237,6 +3310,8 @@ class Agent:
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
         console: Optional[Any] = None,
+        # Add tags to include in markdown content
+        tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
         **kwargs: Any,
     ) -> None:
         import json
@@ -3259,6 +3334,7 @@ class Agent:
         if stream:
             _response_content: str = ""
             reasoning_steps: List[ReasoningStep] = []
+
             with Live(console=console) as live_log:
                 status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
                 live_log.update(status)
@@ -3281,7 +3357,6 @@ class Agent:
                     panels.append(message_panel)
                 if render:
                     live_log.update(Group(*panels))
-
                 for resp in self.run(
                     message=message, messages=messages, audio=audio, images=images, videos=videos, stream=True, **kwargs
                 ):
@@ -3290,8 +3365,11 @@ class Agent:
                             _response_content += resp.content
                         if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
                             reasoning_steps = resp.extra_data.reasoning_steps
-
-                    response_content_stream = Markdown(_response_content) if self.markdown else _response_content
+                    response_content_stream: Union[str, Markdown] = _response_content
+                    # Escape special tags before markdown conversion
+                    if self.markdown:
+                        escaped_content = self.escape_markdown_tags(_response_content, tags_to_include_in_markdown)
+                        response_content_stream = Markdown(escaped_content)
 
                     panels = [status]
 
@@ -3430,11 +3508,13 @@ class Agent:
                 response_content_batch: Union[str, JSON, Markdown] = ""
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
-                        response_content_batch = (
-                            Markdown(run_response.content)
-                            if self.markdown
-                            else run_response.get_content_as_string(indent=4)
-                        )
+                        if self.markdown:
+                            escaped_content = self.escape_markdown_tags(
+                                run_response.content, tags_to_include_in_markdown
+                            )
+                            response_content_batch = Markdown(escaped_content)
+                        else:
+                            response_content_batch = run_response.get_content_as_string(indent=4)
                     elif self.response_model is not None and isinstance(run_response.content, BaseModel):
                         try:
                             response_content_batch = JSON(
@@ -3474,6 +3554,8 @@ class Agent:
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
         console: Optional[Any] = None,
+        # Add tags to include in markdown content
+        tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
         **kwargs: Any,
     ) -> None:
         import json
@@ -3528,7 +3610,12 @@ class Agent:
                             _response_content += resp.content
                         if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
                             reasoning_steps = resp.extra_data.reasoning_steps
-                    response_content_stream = Markdown(_response_content) if self.markdown else _response_content
+
+                    response_content_stream: Union[str, Markdown] = _response_content
+                    # Escape special tags before markdown conversion
+                    if self.markdown:
+                        escaped_content = self.escape_markdown_tags(_response_content, tags_to_include_in_markdown)
+                        response_content_stream = Markdown(escaped_content)
 
                     panels = [status]
 
@@ -3667,11 +3754,13 @@ class Agent:
                 response_content_batch: Union[str, JSON, Markdown] = ""
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
-                        response_content_batch = (
-                            Markdown(run_response.content)
-                            if self.markdown
-                            else run_response.get_content_as_string(indent=4)
-                        )
+                        if self.markdown:
+                            escaped_content = self.escape_markdown_tags(
+                                run_response.content, tags_to_include_in_markdown
+                            )
+                            response_content_batch = Markdown(escaped_content)
+                        else:
+                            response_content_batch = run_response.get_content_as_string(indent=4)
                     elif self.response_model is not None and isinstance(run_response.content, BaseModel):
                         try:
                             response_content_batch = JSON(

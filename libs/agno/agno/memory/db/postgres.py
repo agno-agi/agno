@@ -9,7 +9,7 @@ try:
     from sqlalchemy.sql.expression import delete, select, text
     from sqlalchemy.types import DateTime, String
 except ImportError:
-    raise ImportError("`sqlalchemy` not installed")
+    raise ImportError("`sqlalchemy` not installed.  Please install using `pip install sqlalchemy 'psycopg[binary]'`")
 
 from agno.memory.db import MemoryDb
 from agno.memory.row import MemoryRow
