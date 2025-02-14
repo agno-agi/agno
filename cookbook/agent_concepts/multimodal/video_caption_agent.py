@@ -11,7 +11,6 @@ video_tools = MoviePyVideoTools(
     process_video=True, generate_captions=True, embed_captions=True
 )
 
-
 openai_tools = OpenAITools()
 
 video_caption_agent = Agent(

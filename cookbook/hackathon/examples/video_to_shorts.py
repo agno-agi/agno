@@ -12,6 +12,7 @@ from agno.media import Video
 from agno.models.google import Gemini
 from agno.utils.log import logger
 
+# Get sample videos from https://www.pexels.com/search/videos/sample/
 video_path = Path(__file__).parent.joinpath("sample_video.mp4")
 output_dir = Path("tmp/shorts")
 
