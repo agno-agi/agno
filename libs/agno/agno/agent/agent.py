@@ -2785,6 +2785,10 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)],
                     reasoning_agent_messages=[openai_reasoning_message],
                 )
+            else:
+                logger.info(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, adding manual CoT"
+                )
         # If no reasoning model is provided, use the default reasoning approach
         else:
             from agno.reasoning.default import get_default_reasoning_agent
@@ -2959,6 +2963,10 @@ class Agent:
                 self.update_run_response_with_reasoning(
                     reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)],
                     reasoning_agent_messages=[openai_reasoning_message],
+                )
+            else:
+                logger.info(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, adding manual CoT"
                 )
         # If no reasoning model is provided, use the default reasoning approach
         else:
