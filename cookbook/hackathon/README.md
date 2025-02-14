@@ -13,7 +13,6 @@ source .venv/bin/activate
 
 ```shell
 export OPENAI_API_KEY=***
-...
 ```
 
 ### Install libraries
@@ -105,6 +104,20 @@ The following model providers provide the most multimodal support:
 
 For more information, see the [model providers](https://docs.agno.com/models/compatibility#multimodal-support) documentation.
 
+### Use Agent UI to give an interface to your agent
+
+Run:
+
+```shell
+agno setup
+```
+
+```
+python cookbook/playground/demo.py
+```
+
+Then head to: [app.agno.com/playground](https://app.agno.com/playground) to see your agent in action!
+
 ## Model usage:
 
 ```cookbook/hackathon/models```
@@ -115,4 +128,4 @@ For more information, see the [model providers](https://docs.agno.com/models/com
 
 ## Multimodal Examples:
 
-```cookbook/hackathon/multimodal```
+```cookbook/hackathon/multimodal_examples```

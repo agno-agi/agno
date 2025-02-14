@@ -49,17 +49,18 @@ def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Message:
             import base64
 
             audio_bytes = audio_snippet.audio_url_content
-            encoded_string = base64.b64encode(audio_bytes).decode("utf-8")
+            if audio_bytes is not None:
+                encoded_string = base64.b64encode(audio_bytes).decode("utf-8")
 
-            message_content_with_audio.append(
-                {
-                    "type": "input_audio",
-                    "input_audio": {
-                        "data": encoded_string,
-                        "format": audio_snippet.format,
+                message_content_with_audio.append(
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": encoded_string,
+                            "format": audio_snippet.format,
+                        },
                     },
-                },
-            )
+                )
 
         if audio_snippet.filepath:
             # The audio is a file path

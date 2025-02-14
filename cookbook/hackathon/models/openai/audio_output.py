@@ -2,7 +2,6 @@ from agno.agent import Agent, RunResponse
 from agno.models.openai import OpenAIChat
 from agno.utils.audio import write_audio_to_file
 
-
 agent = Agent(
     model=OpenAIChat(
         id="gpt-4o-audio-preview",

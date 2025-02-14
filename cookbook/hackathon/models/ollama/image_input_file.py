@@ -13,8 +13,5 @@ image_path = Path(__file__).parent.parent.parent.joinpath("data/sample_image.jpg
 
 agent.print_response(
     "Tell me about this image",
-    images=[Image(
-        filepath=image_path
-    )
-    ],
+    images=[Image(filepath=image_path)],
 )

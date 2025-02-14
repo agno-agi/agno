@@ -9,8 +9,9 @@ agent = Agent(
 
 agent.print_response(
     "Tell me about this image",
-    images=[Image(
-        url="https://upload.wikimedia.org/wikipedia/commons/b/bf/Krakow_-_Kosciol_Mariacki.jpg"
-    )
+    images=[
+        Image(
+            url="https://upload.wikimedia.org/wikipedia/commons/b/bf/Krakow_-_Kosciol_Mariacki.jpg"
+        )
     ],
 )
