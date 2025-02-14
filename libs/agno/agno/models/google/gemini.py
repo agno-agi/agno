@@ -105,13 +105,12 @@ def _convert_schema(schema_dict) -> Optional[Schema]:
         required = schema_dict.get("required", [])
 
         if properties:
-            schema = Schema(
+            return Schema(
                 type=schema_type,
                 properties=properties,
                 required=required,
                 description=description,
             )
-            return schema
         else:
             return None
     else:
