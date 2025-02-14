@@ -9,6 +9,8 @@ on:
       - opened
       - synchronize
       - reopened
+    branches:
+      - 'main'
 
 jobs:
   format-lint:
