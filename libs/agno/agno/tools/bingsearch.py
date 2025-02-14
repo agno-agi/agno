@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Any, Dict, Optional
 
 import requests
@@ -52,6 +53,7 @@ class BingSearchTools(Toolkit):
         videos_endpoint: Optional[str] = None,
     ):
         super().__init__(name="bingsearch")
+        subscription_key = subscription_key or os.environ.get("BING_SUBSCRIPTION_KEY")
         if not subscription_key:
             raise ValueError("subscription_key is required")
         self.subscription_key = subscription_key
