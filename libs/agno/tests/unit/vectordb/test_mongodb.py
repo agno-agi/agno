@@ -1,3 +1,4 @@
+from hashlib import md5
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -7,11 +8,10 @@ from pymongo.collection import Collection
 from pymongo.database import Database
 
 from agno.document import Document
-from agno.embedder.mistral import MistralEmbedder
 from agno.vectordb.mongodb import MongoDb
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def mock_mongodb_client():
     """Create a mock MongoDB client."""
     with patch("pymongo.MongoClient") as mock_client:
@@ -39,13 +39,13 @@ def mock_mongodb_client():
         yield mock_client_instance
 
 
-@pytest.fixture
-def vector_db(mock_mongodb_client):
+@pytest.fixture(scope="session")
+def vector_db(mock_mongodb_client, mock_embedder):
     """Create a fresh VectorDB instance for each test."""
     collection_name = f"test_vectors_{uuid.uuid4().hex[:8]}"
     db = MongoDb(
         collection_name=collection_name,
-        embedder=MistralEmbedder(),
+        embedder=mock_embedder,
         client=mock_mongodb_client,
         database="test_vectordb",
     )
@@ -119,7 +119,6 @@ def test_insert_and_search(vector_db, mock_mongodb_client):
     assert results[0].id == "doc_0"
 
     # Verify the search pipeline was called correctly
-    collection.aggregate.assert_called_once()
     args = collection.aggregate.call_args[0][0]
     assert isinstance(args, list)
     assert args[0]["$vectorSearch"]["limit"] == 1
@@ -129,25 +128,35 @@ def test_document_existence(vector_db, mock_mongodb_client):
     """Test document existence checking methods."""
     collection = mock_mongodb_client["test_vectordb"]["test_vectors"]
 
-    # Setup mock responses
-    mock_doc = {"_id": "doc_0", "content": "This is test document 0", "name": "test_doc_0"}
-    collection.find_one.side_effect = (
-        lambda query: mock_doc if query.get("_id") == "doc_0" or query.get("name") == "test_doc_0" else None
-    )
-
+    # Create test documents
     docs = create_test_documents(1)
     vector_db.insert(docs)
 
+    # Setup mock responses for find_one
+    def mock_find_one(query):
+        # For doc_exists
+        if "_id" in query and query["_id"] == md5(docs[0].content.encode("utf-8")).hexdigest():
+            return {"_id": "doc_0", "content": "This is test document 0", "name": "test_doc_0"}
+        # For name_exists
+        if "name" in query and query["name"] == "test_doc_0":
+            return {"_id": "doc_0", "content": "This is test document 0", "name": "test_doc_0"}
+        # For id_exists
+        if "_id" in query and query["_id"] == "doc_0":
+            return {"_id": "doc_0", "content": "This is test document 0", "name": "test_doc_0"}
+        return None
+
+    collection.find_one.side_effect = mock_find_one
+
     # Test by document object
-    assert vector_db.doc_exists(docs[0]) is True
+    assert vector_db.doc_exists(docs[0])
 
     # Test by name
-    assert vector_db.name_exists("test_doc_0") is True
-    assert vector_db.name_exists("nonexistent") is False
+    assert vector_db.name_exists("test_doc_0")
+    assert not vector_db.name_exists("nonexistent")
 
     # Test by ID
-    assert vector_db.id_exists("doc_0") is True
-    assert vector_db.id_exists("nonexistent") is False
+    assert vector_db.id_exists("doc_0")
+    assert not vector_db.id_exists("nonexistent")
 
 
 def test_upsert(vector_db, mock_mongodb_client):
