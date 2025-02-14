@@ -14,7 +14,7 @@ agent = Agent(
 image_path = Path(__file__).parent.parent.parent.joinpath("data/sample_image.jpg")
 
 agent.print_response(
-    "Tell me about this image and search the web for more information.",
+    "Tell me about this image and give me the latest news about it.",
     images=[Image(filepath=image_path)],
     stream=True,
 )

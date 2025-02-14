@@ -10,10 +10,10 @@ agent = Agent(
 )
 
 agent.print_response(
-    "Tell me about this image and give me the latest news about it.",
+    "Tell me about this image and search the web for more information.",
     images=[
         Image(
-            url="https://upload.wikimedia.org/wikipedia/commons/b/bf/Krakow_-_Kosciol_Mariacki.jpg"
+            url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
         ),
     ],
 )

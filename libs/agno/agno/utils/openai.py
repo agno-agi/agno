@@ -48,9 +48,7 @@ def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Message:
             # The audio is a URL
             import base64
 
-            import httpx
-
-            audio_bytes = httpx.get(audio_snippet.url).content
+            audio_bytes = audio_snippet.audio_url_content
             encoded_string = base64.b64encode(audio_bytes).decode("utf-8")
 
             message_content_with_audio.append(

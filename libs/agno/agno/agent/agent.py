@@ -1355,7 +1355,7 @@ class Agent:
         if self._functions_for_model is None or self._tools_for_model is None:
             # Get Agent tools
             agent_tools = self.get_tools()
-            if agent_tools is not None:
+            if agent_tools is not None and len(agent_tools) > 0:
                 logger.debug("Processing tools for model")
                 # Check if we need strict mode for the model
                 strict = False

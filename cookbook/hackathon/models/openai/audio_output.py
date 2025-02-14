@@ -1,9 +1,8 @@
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunResponse
 from agno.models.openai import OpenAIChat
 from agno.utils.audio import write_audio_to_file
 
 
-# Provide the agent with the audio file and audio configuration and get result as text + audio
 agent = Agent(
     model=OpenAIChat(
         id="gpt-4o-audio-preview",
