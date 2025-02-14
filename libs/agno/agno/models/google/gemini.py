@@ -83,7 +83,7 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _convert_schema(schema_dict):
+def _convert_schema(schema_dict) -> Optional[Schema]:
     """
     Recursively convert a JSON-like schema dictionary to a types.Schema object.
 
@@ -103,12 +103,16 @@ def _convert_schema(schema_dict):
     if schema_type == "OBJECT" and "properties" in schema_dict:
         properties = {key: _convert_schema(prop_def) for key, prop_def in schema_dict["properties"].items()}
         required = schema_dict.get("required", [])
-        return Schema(
-            type=schema_type,
-            properties=properties,
-            required=required,
-            description=description,
-        )
+
+        if properties:
+            return Schema(
+                type=schema_type,
+                properties=properties,
+                required=required,
+                description=description,
+            )
+        else:
+            return None
     else:
         return Schema(type=schema_type, description=description)
 
