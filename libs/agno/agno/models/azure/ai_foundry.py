@@ -27,7 +27,7 @@ try:
     from azure.core.credentials import AzureKeyCredential
     from azure.core.exceptions import HttpResponseError
 except ImportError:
-    logger.error("`azure-ai-inference` not installed. Please install it via `pip install azure-ai-inference aiohttp`.")
+    raise ImportError("`azure-ai-inference` not installed. Please install it via `pip install azure-ai-inference aiohttp`.")
 
 
 @dataclass
@@ -39,7 +39,7 @@ class AzureAIFoundryResponseUsage:
 
 def _format_message(message: Message) -> Dict[str, Any]:
     """
-    Format a message into the format expected by Azure AI.
+    Format a message into the format expected by OpenAI.
 
     Args:
         message (Message): The message to format.
@@ -47,14 +47,25 @@ def _format_message(message: Message) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: The formatted message.
     """
+    message_dict = {
+        "role": message.role,
+        "content": message.content,
+        "name": message.name,
+        "tool_call_id": message.tool_call_id,
+        "tool_calls": message.tool_calls,
+    }
+    message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
     if message.images is not None:
-        message = add_images_to_message(message=message, images=message.images)
+        message_dict["content"] = add_images_to_message(message=message, images=message.images)
 
     if message.audio is not None:
-        message = add_audio_to_message(message=message, audio=message.audio)
+        logger.warning("Audio input is currently unsupported.")
 
-    return message.serialize_for_model()
+    if message.videos is not None:
+        logger.warning("Video input is currently unsupported.")
+
+    return message_dict
 
 
 @dataclass
@@ -234,7 +245,7 @@ class AzureAIFoundry(Model):
         try:
             async with self.get_async_client() as client:
                 return await client.complete(
-                    messages=[m.serialize_for_model() for m in messages],
+                    messages=[_format_message(m) for m in messages],
                     **self._get_request_kwargs(),
                 )
         except HttpResponseError as e:
@@ -278,7 +289,7 @@ class AzureAIFoundry(Model):
         try:
             async with self.get_async_client() as client:
                 stream = await client.complete(
-                    messages=[m.serialize_for_model() for m in messages],
+                    messages=[_format_message(m) for m in messages],
                     stream=True,
                     **self._get_request_kwargs(),
                 )

@@ -53,8 +53,8 @@ class OpenAIChat(Model):
     top_logprobs: Optional[int] = None
     max_tokens: Optional[int] = None
     max_completion_tokens: Optional[int] = None
-    modalities: Optional[List[str]] = None
-    audio: Optional[Dict[str, Any]] = None
+    modalities: Optional[List[str]] = None  # "text" and/or "audio"
+    audio: Optional[Dict[str, Any]] = None  # E.g. {"voice": "alloy", "format": "wav"}. `format` must be one of `wav`, `mp3`, `flac`, `opus`, or `pcm16`. `voice` must be one of `ash`, `ballad`, `coral`, `sage`, `verse`, `alloy`, `echo`, and `shimmer`.
     presence_penalty: Optional[float] = None
     response_format: Optional[Any] = None
     seed: Optional[int] = None
@@ -246,22 +246,35 @@ class OpenAIChat(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        if message.role == "user":
-            if message.images is not None:
-                message = add_images_to_message(message=message, images=message.images)
+        message_dict = {
+            "role": self.role_map[message.role],
+            "content": message.content,
+            "name": message.name,
+            "tool_call_id": message.tool_call_id,
+            "tool_calls": message.tool_calls,
+        }
+        message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-            if message.audio is not None:
-                message = add_audio_to_message(message=message, audio=message.audio)
+        if message.images is not None:
+            message_dict["content"] = add_images_to_message(message=message, images=message.images)
 
-            if message.videos is not None:
-                logger.warning("Video input is currently unsupported.")
+        if message.audio is not None:
+            message_dict["content"] = add_audio_to_message(message=message, audio=message.audio)
+
+        if message.audio_output is not None:
+            message_dict["content"] = None
+            message_dict["audio"] = {"id": message.audio_output.id}
+
+        if message.videos is not None:
+            logger.warning("Video input is currently unsupported.")
 
         # OpenAI expects the tool_calls to be None if empty, not an empty list
         if message.tool_calls is not None and len(message.tool_calls) == 0:
-            message.tool_calls = None
+            message_dict["tool_calls"] = None
 
-        message_dict = message.serialize_for_model()
-        message_dict["role"] = self.role_map[message_dict["role"]]
+        # Manually add the content field even if it is None
+        if message.content is None:
+            message_dict["content"] = None
 
         return message_dict
 

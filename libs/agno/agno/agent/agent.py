@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -656,6 +657,7 @@ class Agent:
         # Create an AgentRun object to add to memory
         agent_run = AgentRun(response=self.run_response)
         agent_run.message = run_messages.user_message
+
         # Update the memories with the user message if needed
         if (
             self.memory.create_user_memories

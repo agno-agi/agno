@@ -6,7 +6,7 @@ from agno.models.message import Message
 from agno.utils.log import logger
 
 
-def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Message:
+def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Dict[str, Any]:
     """
     Add audio to a message for the model. By default, we use the OpenAI audio format but other Models
     can override this method to use a different audio format.
@@ -40,16 +40,12 @@ def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Message:
                     "type": "input_audio",
                     "input_audio": {
                         "data": encoded_string,
-                        "format": audio_snippet.format,
+                        "format": audio_snippet.format or "wav",
                     },
                 },
             )
 
-    # Update the message content with the audio
-    message.content = message_content_with_audio
-    message.audio = None  # The message should not have an audio component after this
-
-    return message
+    return message_content_with_audio
 
 
 def _process_bytes_image(image: bytes) -> Dict[str, Any]:
@@ -109,7 +105,7 @@ def _process_image(image: Image) -> Optional[Dict[str, Any]]:
     return image_payload
 
 
-def add_images_to_message(message: Message, images: Sequence[Image]) -> Message:
+def add_images_to_message(message: Message, images: Sequence[Image]) -> Dict[str, Any]:
     """
     Add images to a message for the model. By default, we use the OpenAI image format but other Models
     can override this method to use a different image format.
@@ -146,6 +142,4 @@ def add_images_to_message(message: Message, images: Sequence[Image]) -> Message:
             logger.error(f"Failed to process image: {str(e)}")
             continue
 
-    # Update the message content with the images
-    message.content = message_content_with_image
-    return message
+    return message_content_with_image
