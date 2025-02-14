@@ -10,10 +10,12 @@ from agno.agent import Agent, AgentMemory
 from agno.memory.db.postgres import PgMemoryDb
 from agno.models.mistral.mistral import MistralChat
 from agno.storage.agent.postgres import PostgresAgentStorage
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
     model=MistralChat(id="mistral-large-latest"),
+    tools=[DuckDuckGoTools()],
     # Store the memories and summary in a database
     memory=AgentMemory(
         db=PgMemoryDb(table_name="agent_memory", db_url=db_url),
@@ -24,6 +26,7 @@ agent = Agent(
     storage=PostgresAgentStorage(
         table_name="personalized_agent_sessions", db_url=db_url
     ),
+    show_tool_calls=True,
     # Show debug logs so, you can see the memory being created
     # debug_mode=True,
 )
@@ -36,6 +39,9 @@ agent.print_response("I live in nyc?", stream=True)
 
 # -*- Share personal information
 agent.print_response("I'm going to a concert tomorrow?", stream=True)
+
+# -*- Make tool call
+agent.print_response("What is the weather in nyc?", stream=True)
 
 # Ask about the conversation
 agent.print_response(

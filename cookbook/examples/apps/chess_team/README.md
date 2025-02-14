@@ -27,7 +27,7 @@ pip install -r cookbook/examples/apps/chess_team/requirements.txt
 Create a `.envrc` file or export your API keys:
 
 ```shell
-export ANTHROPIC_API_KEY=your_api_key_here
+export OPENAI_API_KEY=your_api_key_here
 ```
 
 ### 4. Run the application

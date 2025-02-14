@@ -15,6 +15,7 @@
 # Machine specific
 .idea
 .vscode
+*.code-workspace
 
 # Ignore .env files
 .env
@@ -56,3 +57,5 @@ audio_generations
 
 # Google OAuth token
 token.json
+
+.composio.lock

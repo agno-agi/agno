@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 from pydantic import BaseModel, model_validator
 
@@ -42,6 +42,7 @@ class AudioArtifact(Media):
 class Video(BaseModel):
     filepath: Optional[Union[Path, str]] = None  # Absolute local location for video
     content: Optional[Any] = None  # Actual video bytes content
+    format: Optional[str] = None  # E.g. `mp4`, `mov`, `avi`, `mkv`, `webm`, `flv`, `mpeg`, `mpg`, `wmv`, `three_gp`
 
     @model_validator(mode="before")
     def validate_exclusive_video(cls, data: Any):
@@ -62,10 +63,22 @@ class Video(BaseModel):
 
         return data
 
+    def to_dict(self) -> Dict[str, Any]:
+        import base64
+
+        return {
+            "content": base64.b64encode(self.content).decode("utf-8")
+            if isinstance(self.content, bytes)
+            else self.content,
+            "filepath": self.filepath,
+            "format": self.format,
+        }
+
 
 class Audio(BaseModel):
     content: Optional[Any] = None  # Actual audio bytes content
     filepath: Optional[Union[Path, str]] = None  # Absolute local location for audio
+    url: Optional[str] = None  # Remote location for audio
     format: Optional[str] = None
 
     @model_validator(mode="before")
@@ -76,16 +89,37 @@ class Audio(BaseModel):
         # Extract the values from the input data
         filepath = data.get("filepath")
         content = data.get("content")
+        url = data.get("url")
 
         # Count how many fields are set (not None)
-        count = len([field for field in [filepath, content] if field is not None])
+        count = len([field for field in [filepath, content, url] if field is not None])
 
         if count == 0:
-            raise ValueError("One of `filepath` or `content` must be provided.")
+            raise ValueError("One of `filepath` or `content` or `url` must be provided.")
         elif count > 1:
-            raise ValueError("Only one of `filepath` or `content` should be provided.")
+            raise ValueError("Only one of `filepath` or `content` or `url` should be provided.")
 
         return data
+
+    @property
+    def audio_url_content(self) -> Optional[bytes]:
+        import httpx
+
+        if self.url:
+            return httpx.get(self.url).content
+        else:
+            return None
+
+    def to_dict(self) -> Dict[str, Any]:
+        import base64
+
+        return {
+            "content": base64.b64encode(self.content).decode("utf-8")
+            if isinstance(self.content, bytes)
+            else self.content,
+            "filepath": self.filepath,
+            "format": self.format,
+        }
 
 
 class AudioOutput(BaseModel):
@@ -94,11 +128,24 @@ class AudioOutput(BaseModel):
     expires_at: int
     transcript: str
 
+    def to_dict(self) -> Dict[str, Any]:
+        import base64
+
+        return {
+            "id": self.id,
+            "content": base64.b64encode(self.content).decode("utf-8")
+            if isinstance(self.content, bytes)
+            else self.content,
+            "expires_at": self.expires_at,
+            "transcript": self.transcript,
+        }
+
 
 class Image(BaseModel):
     url: Optional[str] = None  # Remote location for image
     filepath: Optional[Union[Path, str]] = None  # Absolute local location for image
     content: Optional[Any] = None  # Actual image bytes content
+    format: Optional[str] = None  # E.g. `png`, `jpeg`, `webp`, `gif`
     detail: Optional[str] = (
         None  # low, medium, high or auto (per OpenAI spec https://platform.openai.com/docs/guides/vision?lang=node#low-or-high-fidelity-image-understanding)
     )
@@ -132,3 +179,15 @@ class Image(BaseModel):
             raise ValueError("Only one of `url`, `filepath`, or `content` should be provided.")
 
         return data
+
+    def to_dict(self) -> Dict[str, Any]:
+        import base64
+
+        return {
+            "content": base64.b64encode(self.content).decode("utf-8")
+            if isinstance(self.content, bytes)
+            else self.content,
+            "filepath": self.filepath,
+            "url": self.url,
+            "detail": self.detail,
+        }

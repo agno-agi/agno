@@ -19,7 +19,7 @@ knowledge_base = PDFUrlKnowledgeBase(
 knowledge_base.load(recreate=False)  # Comment out after first run
 
 agent = Agent(
-    model=AzureOpenAI(id="gpt-4o"),
+    model=AzureOpenAI(id="gpt-4o-mini"),
     knowledge=knowledge_base,
     show_tool_calls=True,
     debug_mode=True,

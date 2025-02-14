@@ -127,8 +127,8 @@ python cookbook/vector_dbs/pinecone_db.py
 
 #### Create the database
 
-- Visit http://localhost:8080 and login with `root` and `admin`
-- Create the database with your choice of name. Default setup script requires AGNO as database name.
+- Visit http://localhost:8080 and login with username: `root` and password: `admin`
+- Create the database with your choice of name. Default setup script requires AGNO as database name. `CREATE DATABASE your_database_name;`
 
 #### Add credentials
 
@@ -164,4 +164,14 @@ docker run -p 6333:6333 -p 6334:6334 -v $(pwd)/qdrant_storage:/qdrant/storage:z 
 
 ```shell
 python cookbook/vector_dbs/qdrant_db.py
+```
+
+### Weaviate
+
+```shell
+./cookbook/scripts/run_weviate.sh
+```
+
+```shell
+python cookbook/vector_dbs/weaviate_db.py
 ```

@@ -123,7 +123,7 @@ class ElevenLabsTools(Toolkit):
 
         Args:
             prompt (str): Text to generate audio from.
-            duration_seconds (Optional[float]): Duration in seconds to generate audio from.
+            duration_seconds (Optional[float]): Duration in seconds to generate audio from. Has to be between 0.5 and 22.
         Returns:
             str: Return the path to the generated audio file.
         """
@@ -155,7 +155,6 @@ class ElevenLabsTools(Toolkit):
 
         Args:
             prompt (str): Text to generate audio from.
-            voice_id (Optional[str]): The ID of the voice to use for audio generation. Uses default if none is specified.
         Returns:
             str: Return the path to the generated audio file.
         """

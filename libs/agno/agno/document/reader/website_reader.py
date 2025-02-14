@@ -9,7 +9,7 @@ from agno.document.reader.base import Reader
 from agno.utils.log import logger
 
 try:
-    from bs4 import BeautifulSoup  # noqa: F401
+    from bs4 import BeautifulSoup, Tag  # noqa: F401
 except ImportError:
     raise ImportError("The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`.")
 
@@ -126,13 +126,25 @@ class WebsiteReader(Reader):
 
                 # Add found URLs to the global list, with incremented depth
                 for link in soup.find_all("a", href=True):
-                    full_url = urljoin(current_url, link["href"])
+                    if not isinstance(link, Tag):
+                        continue
+
+                    href_str = str(link["href"])
+                    full_url = urljoin(current_url, href_str)
+
+                    if not isinstance(full_url, str):
+                        continue
+
                     parsed_url = urlparse(full_url)
                     if parsed_url.netloc.endswith(primary_domain) and not any(
                         parsed_url.path.endswith(ext) for ext in [".pdf", ".jpg", ".png"]
                     ):
-                        if full_url not in self._visited and (full_url, current_depth + 1) not in self._urls_to_crawl:
-                            self._urls_to_crawl.append((full_url, current_depth + 1))
+                        full_url_str = str(full_url)
+                        if (
+                            full_url_str not in self._visited
+                            and (full_url_str, current_depth + 1) not in self._urls_to_crawl
+                        ):
+                            self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
             except Exception as e:
                 logger.debug(f"Failed to crawl: {current_url}: {e}")

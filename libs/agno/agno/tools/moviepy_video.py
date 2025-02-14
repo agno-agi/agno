@@ -227,6 +227,7 @@ class MoviePyVideoTools(Toolkit):
             str: Path to the extracted audio file
         """
         try:
+            logger.debug(f"Extracting audio from {video_path}")
             video = VideoFileClip(video_path)
             video.audio.write_audiofile(output_path)
             logger.info(f"Audio extracted to {output_path}")
@@ -244,6 +245,7 @@ class MoviePyVideoTools(Toolkit):
             str: Path to the created SRT file, or error message if failed
         """
         try:
+            logger.debug(f"Creating SRT file at {output_path}")
             # Since we're getting SRT format from Whisper API now,
             # we can just write it directly to file
             with open(output_path, "w", encoding="utf-8") as f:
