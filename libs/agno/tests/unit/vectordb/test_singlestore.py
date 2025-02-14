@@ -1,176 +1,196 @@
+import json
 from unittest.mock import MagicMock, patch
+from typing import List
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
 from agno.document import Document
 from agno.embedder.openai import OpenAIEmbedder
+from agno.vectordb.singlestore import SingleStore
 from agno.vectordb.distance import Distance
-from agno.vectordb.singlestore.singlestore import SingleStore
+
+TEST_COLLECTION = "test_collection"
+TEST_SCHEMA = "test_schema"
 
 
 @pytest.fixture
 def mock_engine():
-    # For testing, we'll use SQLite without schema
-    engine = create_engine("sqlite:///:memory:")
-    return engine
+    """Fixture to create a mocked database engine"""
+    mock_engine = MagicMock(spec=Engine)
+    mock_engine.connect.return_value.__enter__.return_value = MagicMock()
+    return mock_engine
+
+
+@pytest.fixture
+def mock_session():
+    """Fixture to create a mocked database session"""
+    mock_session = MagicMock()
+    # Configure session context manager behavior
+    mock_session.begin.return_value.__enter__.return_value = mock_session
+    # Configure execute result with both scalar and fetchall methods
+    mock_result = MagicMock()
+    mock_result.scalar.return_value = True
+    mock_result.fetchall.return_value = []
+    mock_session.execute.return_value = mock_result
+    # Configure first method
+    mock_result.first.return_value = True
+    return mock_session
+
+
+@pytest.fixture
+def singlestore_db(mock_engine, mock_session):
+    """Fixture to create a SingleStore instance with mocked components"""
+    with patch('agno.vectordb.singlestore.singlestore.sessionmaker') as mock_sessionmaker:
+        # Set up sessionmaker to return the mock session directly
+        mock_sessionmaker.return_value = mock_session
+        db = SingleStore(
+            collection=TEST_COLLECTION,
+            schema=TEST_SCHEMA,
+            db_engine=mock_engine
+        )
+        db.create()
+        yield db
+
+
+@pytest.fixture
+def sample_documents() -> List[Document]:
+    """Fixture to create sample documents"""
+    return [
+        Document(
+            content="Tom Kha Gai is a Thai coconut soup with chicken",
+            meta_data={"cuisine": "Thai", "type": "soup"}
+        ),
+        Document(
+            content="Pad Thai is a stir-fried rice noodle dish",
+            meta_data={"cuisine": "Thai", "type": "noodles"}
+        ),
+        Document(
+            content="Green curry is a spicy Thai curry with coconut milk",
+            meta_data={"cuisine": "Thai", "type": "curry"}
+        ),
+    ]
 
 
 @pytest.fixture
 def mock_embedder():
-    embedder = MagicMock(spec=OpenAIEmbedder)
-    embedder.dimensions = 1536
-    embedder.get_embedding.return_value = [0.1] * 1536
-    return embedder
+    """Fixture to create a mocked embedder"""
+    mock_embedder = MagicMock(spec=OpenAIEmbedder)
+    mock_embedder.dimensions = 1536
+    mock_embedder.get_embedding.return_value = [0.1] * 1536
+    return mock_embedder
+
+def test_insert_documents(singlestore_db, sample_documents, mock_session):
+    """Test inserting documents"""
+    singlestore_db.insert(sample_documents)
+    
+    # Verify insert was called for each document
+    assert mock_session.execute.call_count == len(sample_documents)
+    
+    # Verify commit was called
+    mock_session.commit.assert_called_once()
 
 
-@pytest.fixture
-def singlestore_db(mock_engine, mock_embedder):
-    db = SingleStore(
-        collection="test_collection",
-        schema=None,  # Remove schema for SQLite testing
-        db_engine=mock_engine,
-        embedder=mock_embedder,
-        distance=Distance.cosine,
-    )
-
-    # Mock the create method to work with SQLite
-    with patch.object(SingleStore, "create"):
-        db.create()
-        # Mock table_exists to return True
-        db.table_exists = MagicMock(return_value=True)
-        # Mock get_count to return expected values
-        db.get_count = MagicMock(return_value=1)
-    return db
-
-
-def test_init(mock_engine, mock_embedder):
-    db = SingleStore(
-        collection="test_collection",
-        schema=None,  # Remove schema for SQLite testing
-        db_engine=mock_engine,
-        embedder=mock_embedder,
-    )
-    assert db.collection == "test_collection"
-    assert db.schema is None  # Updated assertion
-    assert isinstance(db.db_engine, Engine)
-    assert db.dimensions == 1536
-
-
-def test_create_table(singlestore_db):
-    assert singlestore_db.table_exists()
-
-
-def test_insert_document(singlestore_db, mock_embedder):
-    doc = Document(name="test_doc", content="test content", meta_data={"key": "value"}, embedder=mock_embedder)
-
-    with patch.object(SingleStore, "insert"):
-        singlestore_db.insert([doc])
-    assert singlestore_db.get_count() == 1
-
-
-def test_search_documents(singlestore_db, mock_embedder):
-    # Insert test documents
-    docs = [
-        Document(name="doc1", content="content1", meta_data={"key": "value1"}, embedder=mock_embedder),
-        Document(name="doc2", content="content2", meta_data={"key": "value2"}, embedder=mock_embedder),
-    ]
-
-    with patch.object(SingleStore, "insert"):
-        singlestore_db.insert(docs)
-
+def test_search_documents(singlestore_db, sample_documents, mock_session, mock_embedder):
+    """Test searching documents"""
+    singlestore_db.embedder = mock_embedder
+    
     # Mock search results
-    mock_results = [
-        Document(
-            name="doc1", content="content1", meta_data={"key": "value1"}, embedder=mock_embedder, embedding=[0.1] * 1536
+    mock_result = [
+        MagicMock(
+            name="Doc1",
+            meta_data=json.dumps({"cuisine": "Thai"}),
+            content="Tom Kha Gai with coconut",
+            embedding=json.dumps([0.1] * 1536),
+            usage=json.dumps({})
         ),
-        Document(
-            name="doc2", content="content2", meta_data={"key": "value2"}, embedder=mock_embedder, embedding=[0.1] * 1536
-        ),
-    ]
-
-    with patch.object(SingleStore, "search", return_value=mock_results):
-        results = singlestore_db.search("test query", limit=2)
-        assert len(results) == 2
-        assert isinstance(results[0], Document)
-        assert results[0].embedding is not None
-
-
-def test_upsert_documents(singlestore_db, mock_embedder):
-    # Initial insert
-    doc = Document(name="test_doc", content="original content", meta_data={"key": "original"}, embedder=mock_embedder)
-
-    with patch.object(SingleStore, "insert"):
-        singlestore_db.insert([doc])
-
-    # Update same document
-    updated_doc = Document(
-        name="test_doc", content="updated content", meta_data={"key": "updated"}, embedder=mock_embedder
-    )
-
-    with patch.object(SingleStore, "upsert"):
-        singlestore_db.upsert([updated_doc])
-
-    # Mock search results
-    mock_result = Document(
-        name="test_doc",
-        content="updated content",
-        meta_data={"key": "updated"},
-        embedder=mock_embedder,
-        embedding=[0.1] * 1536,
-    )
-
-    with patch.object(SingleStore, "search", return_value=[mock_result]):
-        results = singlestore_db.search("test", limit=1)
-        assert results[0].content == "updated content"
-
-
-def test_delete_documents(singlestore_db, mock_embedder):
-    doc = Document(name="test_doc", content="test content", meta_data={"key": "value"}, embedder=mock_embedder)
-
-    with patch.object(SingleStore, "insert"):
-        singlestore_db.insert([doc])
-
-    with patch.object(SingleStore, "delete"):
-        singlestore_db.delete()
-        singlestore_db.get_count = MagicMock(return_value=0)
-        assert singlestore_db.get_count() == 0
-
-
-def test_doc_exists(singlestore_db, mock_embedder):
-    doc = Document(name="test_doc", content="test content", meta_data={"key": "value"}, embedder=mock_embedder)
-
-    with patch.object(SingleStore, "insert"):
-        singlestore_db.insert([doc])
-
-    with patch.object(SingleStore, "doc_exists") as mock_exists:
-        mock_exists.return_value = True
-        assert singlestore_db.doc_exists(doc)
-
-        new_doc = Document(
-            name="new_doc", content="new content", meta_data={"key": "new_value"}, embedder=mock_embedder
+        MagicMock(
+            name="Doc2",
+            meta_data=json.dumps({"cuisine": "Thai"}),
+            content="Green curry with coconut",
+            embedding=json.dumps([0.1] * 1536),
+            usage=json.dumps({})
         )
-        mock_exists.return_value = False
-        assert not singlestore_db.doc_exists(new_doc)
+    ]
+    mock_session.execute.return_value.fetchall.return_value = mock_result
+
+    results = singlestore_db.search("coconut dishes", limit=2)
+    assert len(results) == 2
+    assert any("coconut" in doc.content.lower() for doc in results)
 
 
-def test_name_exists(singlestore_db, mock_embedder):
-    doc = Document(name="test_doc", content="test content", meta_data={"key": "value"}, embedder=mock_embedder)
+def test_upsert_documents(singlestore_db, sample_documents, mock_session):
+    """Test upserting documents"""
+    # Test upsert operation
+    modified_doc = Document(
+        content="Tom Kha Gai is a spicy and sour Thai coconut soup",
+        meta_data={"cuisine": "Thai", "type": "soup"}
+    )
+    singlestore_db.upsert([modified_doc])
+    
+    # Verify upsert was called
+    mock_session.execute.assert_called()
+    mock_session.commit.assert_called_once()
 
-    with patch.object(SingleStore, "insert"):
-        singlestore_db.insert([doc])
 
-    with patch.object(SingleStore, "name_exists") as mock_exists:
-        mock_exists.return_value = True
-        assert singlestore_db.name_exists("test_doc")
-        mock_exists.return_value = False
-        assert not singlestore_db.name_exists("nonexistent")
+def test_delete_collection(singlestore_db, mock_session):
+    """Test deleting collection"""
+    mock_session.execute.return_value.scalar.return_value = True
+    assert singlestore_db.delete() is True
 
 
-def test_drop_table(singlestore_db):
-    assert singlestore_db.table_exists()
-    with patch.object(SingleStore, "drop"):
-        singlestore_db.drop()
-        singlestore_db.table_exists = MagicMock(return_value=False)
-        assert not singlestore_db.table_exists()
+def test_distance_metrics(mock_engine):
+    """Test different distance metrics"""
+    with patch('agno.vectordb.singlestore.singlestore.sessionmaker'):
+        db_cosine = SingleStore(
+            collection="test_cosine",
+            schema=TEST_SCHEMA,
+            db_engine=mock_engine,
+            distance=Distance.cosine
+        )
+        assert db_cosine.distance == Distance.cosine
+
+        db_l2 = SingleStore(
+            collection="test_l2",
+            schema=TEST_SCHEMA,
+            db_engine=mock_engine,
+            distance=Distance.l2
+        )
+        assert db_l2.distance == Distance.l2
+
+
+def test_doc_exists(singlestore_db, sample_documents, mock_session):
+    """Test document existence check"""
+    # Mock document exists
+    mock_session.execute.return_value.first.return_value = True
+    assert singlestore_db.doc_exists(sample_documents[0]) is True
+
+    # Mock document doesn't exist
+    mock_session.execute.return_value.first.return_value = None
+    assert singlestore_db.doc_exists(sample_documents[0]) is False
+
+
+@pytest.mark.asyncio
+async def test_error_handling(singlestore_db, mock_session):
+    """Test error handling scenarios"""
+    # Mock empty search results
+    mock_session.execute.return_value.fetchall.return_value = []
+    results = singlestore_db.search("")
+    assert len(results) == 0
+
+    # Test inserting empty document list
+    singlestore_db.insert([])
+    mock_session.execute.return_value.scalar.return_value = 0
+    assert singlestore_db.get_count() == 0
+
+
+def test_custom_embedder(mock_engine, mock_embedder):
+    """Test using a custom embedder"""
+    with patch('agno.vectordb.singlestore.singlestore.sessionmaker'):
+        db = SingleStore(
+            collection=TEST_COLLECTION,
+            schema=TEST_SCHEMA,
+            db_engine=mock_engine,
+            embedder=mock_embedder
+        )
+        assert db.embedder == mock_embedder
