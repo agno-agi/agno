@@ -881,7 +881,6 @@ class Agent:
                     import time
 
                     time.sleep(delay)
-
         if last_exception is not None:
             raise Exception(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}"
@@ -1942,40 +1941,41 @@ class Agent:
                 f"<transfer_instructions>\n{self.get_transfer_instructions().strip()}\n</transfer_instructions>\n\n"
             )
         # 3.3.11 Then add memories to the system prompt
-        if self.memory.create_user_memories:
-            if self.memory.memories and len(self.memory.memories) > 0:
+        if self.memory:
+            if self.memory.create_user_memories:
+                if self.memory.memories and len(self.memory.memories) > 0:
+                    system_message_content += (
+                        "You have access to memories from previous interactions with the user that you can use:\n\n"
+                    )
+                    system_message_content += "<memories_from_previous_interactions>"
+                    for _memory in self.memory.memories:
+                        system_message_content += f"\n- {_memory.memory}"
+                    system_message_content += "\n</memories_from_previous_interactions>\n\n"
+                    system_message_content += (
+                        "Note: this information is from previous interactions and may be updated in this conversation. "
+                        "You should always prefer information from this conversation over the past memories.\n\n"
+                    )
+                else:
+                    system_message_content += (
+                        "You have the capability to retain memories from previous interactions with the user, "
+                        "but have not had any interactions with the user yet.\n"
+                        "If the user asks about previous memories, you can let them know that you dont have any memory about the user because you haven't had any interactions yet.\n\n"
+                    )
                 system_message_content += (
-                    "You have access to memories from previous interactions with the user that you can use:\n\n"
+                    "You can add new memories using the `update_memory` tool.\n"
+                    "If you use the `update_memory` tool, remember to pass on the response to the user.\n\n"
                 )
-                system_message_content += "<memories_from_previous_interactions>"
-                for _memory in self.memory.memories:
-                    system_message_content += f"\n- {_memory.memory}"
-                system_message_content += "\n</memories_from_previous_interactions>\n\n"
-                system_message_content += (
-                    "Note: this information is from previous interactions and may be updated in this conversation. "
-                    "You should always prefer information from this conversation over the past memories.\n\n"
-                )
-            else:
-                system_message_content += (
-                    "You have the capability to retain memories from previous interactions with the user, "
-                    "but have not had any interactions with the user yet.\n"
-                    "If the user asks about previous memories, you can let them know that you dont have any memory about the user because you haven't had any interactions yet.\n\n"
-                )
-            system_message_content += (
-                "You can add new memories using the `update_memory` tool.\n"
-                "If you use the `update_memory` tool, remember to pass on the response to the user.\n\n"
-            )
-        # 3.3.12 Then add a summary of the interaction to the system prompt
-        if self.memory.create_session_summary:
-            if self.memory.summary is not None:
-                system_message_content += "Here is a brief summary of your previous interactions if it helps:\n\n"
-                system_message_content += "<summary_of_previous_interactions>\n"
-                system_message_content += str(self.memory.summary)
-                system_message_content += "\n</summary_of_previous_interactions>\n\n"
-                system_message_content += (
-                    "Note: this information is from previous interactions and may be outdated. "
-                    "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
-                )
+            # 3.3.12 Then add a summary of the interaction to the system prompt
+            if self.memory.create_session_summary:
+                if self.memory.summary is not None:
+                    system_message_content += "Here is a brief summary of your previous interactions if it helps:\n\n"
+                    system_message_content += "<summary_of_previous_interactions>\n"
+                    system_message_content += str(self.memory.summary)
+                    system_message_content += "\n</summary_of_previous_interactions>\n\n"
+                    system_message_content += (
+                        "Note: this information is from previous interactions and may be outdated. "
+                        "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
+                    )
 
         # Add the JSON output prompt if response_model is provided and structured_outputs is False
         if self.response_model is not None and not self.structured_outputs:
