@@ -1,11 +1,12 @@
 docker run -d --name singlestoredb \
   -p 3306:3306 \
   -p 8080:8080 \
+  -v /tmp:/var/lib/memsql \
   -e ROOT_PASSWORD=admin \
   -e SINGLESTORE_DB=AGNO \
   -e SINGLESTORE_USER=root \
   -e SINGLESTORE_PASSWORD=password \
-  singlestore/cluster-in-a-box
+  memsql/cluster-in-a-box
 
 docker start singlestoredb
 
