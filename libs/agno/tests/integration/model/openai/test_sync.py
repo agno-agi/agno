@@ -128,6 +128,7 @@ def test_image_input():
 
     assert "golden" in response.content.lower()
 
+
 def test_history_grows_exponentially():
     db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
     agent = Agent(
