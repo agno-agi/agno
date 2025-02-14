@@ -1,13 +1,13 @@
 from typing import Iterator, List
 
 from agno.document import Document
-from agno.document.reader.firecrawl_reader import FireCrawlReader
+from agno.document.reader.firecrawl_reader import FirecrawlReader
 from agno.knowledge.agent import AgentKnowledge
 
 
 class FireCrawlKnowledgeBase(AgentKnowledge):
     urls: List[str] = []
-    reader: FireCrawlReader = FireCrawlReader()
+    reader: FirecrawlReader = FirecrawlReader()
 
     @property
     def document_lists(self) -> Iterator[List[Document]]:
