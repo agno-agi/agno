@@ -206,7 +206,23 @@ class Message(BaseModel):
 
     def to_dict(self) -> Dict[str, Any]:
         """Returns the message as a dictionary."""
-        message_dict = self.model_dump(exclude_none=True)
+        message_dict = {
+            "content": self.content,
+            "reasoning_content": self.reasoning_content,
+            "from_history": self.from_history,
+            "stop_after_tool_call": self.stop_after_tool_call,
+            "role": self.role,
+            "name": self.name,
+            "tool_call_id": self.tool_call_id,
+            "tool_name": self.tool_name,
+            "tool_args": self.tool_args,
+            "tool_call_error": self.tool_call_error,
+            "tool_calls": self.tool_calls,
+        }
+        # Filter out None and empty collections
+        message_dict = {
+            k: v for k, v in message_dict.items() if v is not None and not (isinstance(v, (list, dict)) and len(v) == 0)
+        }
 
         # Convert media objects to dictionaries
         if self.images:
@@ -228,7 +244,7 @@ class Message(BaseModel):
         message_dict["created_at"] = self.created_at
         return message_dict
 
-    def to_fc_result(self) -> Dict[str, Any]:
+    def to_function_call_dict(self) -> Dict[str, Any]:
         return {
             "content": self.content,
             "tool_call_id": self.tool_call_id,
