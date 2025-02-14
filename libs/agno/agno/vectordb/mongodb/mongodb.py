@@ -72,11 +72,13 @@ class MongoDb(VectorDb):
         self.wait_until_index_ready = wait_until_index_ready
         self.wait_after_insert = wait_after_insert
         self.kwargs = kwargs
-        self.kwargs.update({
-            'maxPoolSize': max_pool_size,
-            'retryWrites': retry_writes,
-            'serverSelectionTimeoutMS': 5000,  # 5 second timeout
-        })
+        self.kwargs.update(
+            {
+                "maxPoolSize": max_pool_size,
+                "retryWrites": retry_writes,
+                "serverSelectionTimeoutMS": 5000,  # 5 second timeout
+            }
+        )
 
         if client:
             self._client = client
@@ -151,10 +153,10 @@ class MongoDb(VectorDb):
                     retries -= 1
 
                 logger.info(f"Creating search index '{index_name}'.")
-                
+
                 # Get embedding dimension from embedder
-                embedding_dim = getattr(self.embedder, 'embedding_dim', 1536)
-                
+                embedding_dim = getattr(self.embedder, "embedding_dim", 1536)
+
                 search_index_model = SearchIndexModel(
                     definition={
                         "fields": [
@@ -171,10 +173,10 @@ class MongoDb(VectorDb):
                 )
 
                 self._collection.create_search_index(model=search_index_model)
-                
+
                 if self.wait_until_index_ready:
                     self._wait_for_index_ready()
-                
+
                 logger.info(f"Search index '{index_name}' created successfully.")
                 return
 
@@ -300,15 +302,11 @@ class MongoDb(VectorDb):
         return True
 
     def search(
-        self, 
-        query: str, 
-        limit: int = 5, 
-        filters: Optional[Dict[str, Any]] = None,
-        min_score: float = 0.0
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None, min_score: float = 0.0
     ) -> List[Document]:
         """
         Search for documents using vector similarity.
-        
+
         Args:
             query: Search query string
             limit: Maximum number of results to return
@@ -345,21 +343,18 @@ class MongoDb(VectorDb):
             # Exclude embedding from results
             pipeline.append({"$project": {"embedding": 0}})
 
-            results = list(self._collection.aggregate(pipeline))
-            
+            results = list(self._collection.aggregate(pipeline))  # type: ignore
+
             docs = [
                 Document(
                     id=str(doc["_id"]),
                     name=doc.get("name"),
                     content=doc["content"],
-                    meta_data={
-                        **doc.get("meta_data", {}),
-                        "score": doc.get("score", 0.0)
-                    }
+                    meta_data={**doc.get("meta_data", {}), "score": doc.get("score", 0.0)},
                 )
                 for doc in results
             ]
-            
+
             logger.info(f"Search completed. Found {len(docs)} documents.")
             return docs
 
@@ -408,14 +403,14 @@ class MongoDb(VectorDb):
                 if self._search_index_exists():
                     self._collection.drop_search_index(index_name)
                     time.sleep(2)  # Wait for index deletion
-                
+
                 # Then drop the collection
                 self._collection.drop()
                 logger.info(f"Collection '{self.collection_name}' dropped successfully")
-                
+
                 # Wait to ensure cleanup
                 time.sleep(2)
-                
+
             except Exception as e:
                 logger.error(f"Error dropping collection: {e}")
                 raise
@@ -434,7 +429,7 @@ class MongoDb(VectorDb):
         """Delete all documents from the collection."""
         if self.exists():
             try:
-                result = self._collection.delete_many()
+                result = self._collection.delete_many({})
                 success = result.deleted_count >= 0  # Consider any deletion (even 0) as success
                 logger.info(f"Deleted {result.deleted_count} documents from collection.")
                 return success
@@ -474,7 +469,7 @@ class MongoDb(VectorDb):
     def __del__(self):
         """Cleanup MongoDB connection."""
         try:
-            if hasattr(self, '_client'):
+            if hasattr(self, "_client"):
                 self._client.close()
                 logger.debug("Closed MongoDB connection")
         except Exception as e:

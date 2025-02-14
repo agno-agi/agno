@@ -1,12 +1,10 @@
-import time
 import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
 from pymongo import MongoClient
-from pymongo.database import Database
 from pymongo.collection import Collection
-from pymongo.errors import InvalidName, OperationFailure
+from pymongo.database import Database
 
 from agno.document import Document
 from agno.embedder.mistral import MistralEmbedder
@@ -16,7 +14,7 @@ from agno.vectordb.mongodb import MongoDb
 @pytest.fixture
 def mock_mongodb_client():
     """Create a mock MongoDB client."""
-    with patch('pymongo.MongoClient') as mock_client:
+    with patch("pymongo.MongoClient") as mock_client:
         # Create mock instances for client, db, and collection
         mock_collection = MagicMock(spec=Collection)
         mock_db = MagicMock(spec=Database)
@@ -49,15 +47,15 @@ def vector_db(mock_mongodb_client):
         collection_name=collection_name,
         embedder=MistralEmbedder(),
         client=mock_mongodb_client,
-        database="test_vectordb"
+        database="test_vectordb",
     )
     db.create()
     yield db
     # Cleanup
     try:
         db._client.close()
-    except:
-        pass
+    except Exception as e:
+        raise Exception(f"Failed to close MongoDB client: {e}")
 
 
 def create_test_documents(num_docs: int = 3) -> list[Document]:
@@ -96,15 +94,17 @@ def test_initialization(mock_mongodb_client):
 def test_insert_and_search(vector_db, mock_mongodb_client):
     """Test document insertion and search functionality."""
     # Setup mock response for search
-    mock_search_result = [{
-        "_id": "doc_0",
-        "content": "This is test document 0",
-        "meta_data": {"type": "test", "index": "0"},
-        "name": "test_doc_0",
-        "score": 0.95,
-        "embedding": [0.1] * 384  # Add mock embedding
-    }]
-    
+    mock_search_result = [
+        {
+            "_id": "doc_0",
+            "content": "This is test document 0",
+            "meta_data": {"type": "test", "index": "0"},
+            "name": "test_doc_0",
+            "score": 0.95,
+            "embedding": [0.1] * 384,  # Add mock embedding
+        }
+    ]
+
     collection = mock_mongodb_client["test_vectordb"]["test_vectors"]
     collection.aggregate.return_value = mock_search_result
 
@@ -128,14 +128,12 @@ def test_insert_and_search(vector_db, mock_mongodb_client):
 def test_document_existence(vector_db, mock_mongodb_client):
     """Test document existence checking methods."""
     collection = mock_mongodb_client["test_vectordb"]["test_vectors"]
-    
+
     # Setup mock responses
-    mock_doc = {
-        "_id": "doc_0",
-        "content": "This is test document 0",
-        "name": "test_doc_0"
-    }
-    collection.find_one.side_effect = lambda query: mock_doc if query.get("_id") == "doc_0" or query.get("name") == "test_doc_0" else None
+    mock_doc = {"_id": "doc_0", "content": "This is test document 0", "name": "test_doc_0"}
+    collection.find_one.side_effect = (
+        lambda query: mock_doc if query.get("_id") == "doc_0" or query.get("name") == "test_doc_0" else None
+    )
 
     docs = create_test_documents(1)
     vector_db.insert(docs)
@@ -155,14 +153,9 @@ def test_document_existence(vector_db, mock_mongodb_client):
 def test_upsert(vector_db, mock_mongodb_client):
     """Test upsert functionality."""
     collection = mock_mongodb_client["test_vectordb"]["test_vectors"]
-    
+
     # Setup mock responses
-    mock_doc = {
-        "_id": "doc_0",
-        "content": "Modified content",
-        "name": "test_doc_0",
-        "meta_data": {"type": "modified"}
-    }
+    mock_doc = {"_id": "doc_0", "content": "Modified content", "name": "test_doc_0", "meta_data": {"type": "modified"}}
     collection.find_one.return_value = mock_doc
     collection.update_one = MagicMock(return_value=MagicMock(modified_count=1))
 
@@ -172,10 +165,7 @@ def test_upsert(vector_db, mock_mongodb_client):
 
     # Modify document and upsert
     modified_doc = Document(
-        id=docs[0].id,
-        content="Modified content",
-        meta_data={"type": "modified"},
-        name=docs[0].name
+        id=docs[0].id, content="Modified content", meta_data={"type": "modified"}, name=docs[0].name
     )
     vector_db.upsert([modified_doc])
 
@@ -200,15 +190,15 @@ def test_delete(vector_db, mock_mongodb_client):
 def test_exists(vector_db, mock_mongodb_client):
     """Test collection existence checking."""
     db = mock_mongodb_client["test_vectordb"]
-    
+
     # Setup mock responses for collection existence
     db.list_collection_names.return_value = ["test_vectors"]
-    
+
     # Force collection name to match mock response
     vector_db.collection_name = "test_vectors"
-    
+
     assert vector_db.exists() is True
-    
+
     # Test non-existent collection
     db.list_collection_names.return_value = []
     assert vector_db.exists() is False
@@ -217,27 +207,28 @@ def test_exists(vector_db, mock_mongodb_client):
 def test_search_with_filters(vector_db, mock_mongodb_client):
     """Test search functionality with filters."""
     collection = mock_mongodb_client["test_vectordb"]["test_vectors"]
-    
+
     # Setup mock response for filtered search
-    mock_search_result = [{
-        "_id": "doc_0",
-        "content": "This is test document 0",
-        "meta_data": {"type": "test", "index": "0"},
-        "name": "test_doc_0",
-        "score": 0.95
-    }]
+    mock_search_result = [
+        {
+            "_id": "doc_0",
+            "content": "This is test document 0",
+            "meta_data": {"type": "test", "index": "0"},
+            "name": "test_doc_0",
+            "score": 0.95,
+        }
+    ]
     collection.aggregate.return_value = mock_search_result
 
     # Test search with filters
     filters = {"meta_data.type": "test"}
     results = vector_db.search("test document", limit=1, filters=filters)
-    
+
     # Verify results
     assert len(results) == 1
     assert results[0].meta_data["type"] == "test"
-    
+
     # Verify the search pipeline included filters
     collection.aggregate.assert_called_once()
     args = collection.aggregate.call_args[0][0]
     assert any("$match" in stage for stage in args)
-
