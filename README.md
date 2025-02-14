@@ -222,8 +222,8 @@ python agent_team.py
 
 Agno is designed for high performance agentic systems:
 
-- Agent instantiation: <5μs on average (~10,000x faster than LangGraph).
-- Memory footprint: <0.01Mib on average (~50x less memory than LangGraph).
+- Agent instantiation: ~2μs on average (~10,000x faster than LangGraph).
+- Memory footprint: ~3.75Kib on average (~50x less memory than LangGraph).
 
 > Tested on an Apple M4 Mackbook Pro.
 
