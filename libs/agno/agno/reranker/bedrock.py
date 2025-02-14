@@ -40,7 +40,10 @@ class BedrockReranker(Reranker):
             return []
 
         top_n = self.top_n
-        if not top_n or not (0 < top_n) or top_n <= len(documents):
+        # Ensure top_n is a positive integer and less than the number of documents.
+        # If top_n is greater than or equal to the number of documents, set top_n to the length of documents.
+        # Note: valid top_n must be less than len(documents)
+        if not top_n or top_n <= 0 or top_n > len(documents):
             logger.warning(
                 f"top_n should be a positive integer and less than the number of documents. Setting top_n to {len(documents)}"
             )
