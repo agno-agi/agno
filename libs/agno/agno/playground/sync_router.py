@@ -87,8 +87,11 @@ def get_sync_playground_router(
 
         return agent_list
 
-    def chat_response_streamer(agent: Agent, message: str, images: Optional[List[Image]] = None) -> Generator:
-        run_response = agent.run(message=message, images=images, stream=True, stream_intermediate_steps=True)
+    def chat_response_streamer(agent: Agent,
+                               message: str,
+                               images: Optional[List[Image]] = None,
+                               audio: Optional[List[Audio]] = None) -> Generator:
+        run_response = agent.run(message=message, images=images, audio=audio, stream=True, stream_intermediate_steps=True)
         for run_response_chunk in run_response:
             run_response_chunk = cast(RunResponse, run_response_chunk)
             yield run_response_chunk.to_json()
@@ -209,13 +212,12 @@ def get_sync_playground_router(
                         raise HTTPException(status_code=400, detail="Unsupported file type")
 
         if stream:
-            if base64_audios:
-                raise HTTPException(status_code=400, detail="Audio is not supported in streaming mode")
             return StreamingResponse(
                 chat_response_streamer(
                     new_agent_instance,
                     message,
                     images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
                 ),
                 media_type="text/event-stream",
             )

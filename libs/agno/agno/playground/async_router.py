@@ -96,11 +96,13 @@ def get_async_playground_router(
         agent: Agent,
         message: str,
         images: Optional[List[Image]] = None,
+        audio: Optional[List[Audio]] = None,
         videos: Optional[List[Video]] = None,
     ) -> AsyncGenerator:
         run_response = await agent.arun(
             message,
             images=images,
+            audio=audio,
             videos=videos,
             stream=True,
             stream_intermediate_steps=True,
@@ -225,13 +227,12 @@ def get_async_playground_router(
                         raise HTTPException(status_code=400, detail="Unsupported file type")
 
         if stream:
-            if base64_audios:
-                raise HTTPException(status_code=400, detail="Audio is not supported in streaming mode")
             return StreamingResponse(
                 chat_response_streamer(
                     new_agent_instance,
                     message,
                     images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
                 ),
                 media_type="text/event-stream",
             )
