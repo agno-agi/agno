@@ -19,11 +19,12 @@
    - Select "Python" as driver
    - Copy the connection string
 
-6. Test Connection:
+7. Test Connection:
    - Use the connection string in your code
-   - Ensure pymongo is installed: pip install pymongo[srv]
+   - Ensure pymongo is installed: pip install "pymongo[srv]"
    - Test with a simple query to verify connectivity
 """
+
 
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
@@ -35,15 +36,15 @@ Example connection strings:
 "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
 "mongodb://localhost/?directConnection=true"
 """
-mdb_connection_string = "mongodb+srv://dirk:pCmhFlsth9uDfAXY@cluster0.vozwu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+mdb_connection_string = "mongodb://ai:ai@localhost:27017/ai?authSource=admin"
 
 knowledge_base = PDFUrlKnowledgeBase(
     urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
     vector_db=MongoDb(
         collection_name="recipes",
         db_url=mdb_connection_string,
-        wait_until_index_ready=0,
-        wait_after_insert=10,
+        wait_until_index_ready=60,
+        wait_after_insert=300,
     ),
 )  # adjust wait_after_insert and wait_until_index_ready to your needs
 
