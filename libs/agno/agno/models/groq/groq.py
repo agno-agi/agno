@@ -31,11 +31,25 @@ def format_message(message: Message) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: The formatted message.
     """
-    if message.role == "user":
-        if message.images is not None:
-            message = add_images_to_message(message=message, images=message.images)
+    message_dict = {
+        "role": message.role,
+        "content": message.content,
+        "name": message.name,
+        "tool_call_id": message.tool_call_id,
+        "tool_calls": message.tool_calls,
+    }
+    message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-    return message.serialize_for_model()
+    if message.images is not None:
+        message_dict["content"] = add_images_to_message(message=message, images=message.images)
+
+    if message.audio is not None:
+        logger.warning("Audio input is currently unsupported.")
+
+    if message.videos is not None:
+        logger.warning("Video input is currently unsupported.")
+
+    return message_dict
 
 
 @dataclass

@@ -180,29 +180,6 @@ class Message(BaseModel):
                 return json.dumps(self.content)
         return ""
 
-    def serialize_for_model(self) -> Dict[str, Any]:
-        _dict: Dict[str, Any] = {
-            "role": self.role,
-            "content": self.content,
-            "name": self.name,
-            "tool_call_id": self.tool_call_id,
-            "tool_calls": self.tool_calls,
-            "audio": self.audio,
-        }
-
-        # Remove None values
-        _dict = {k: v for k, v in _dict.items() if v is not None}
-
-        # Add the message's output as then input (for multi-turn audio)
-        if self.audio_output is not None:
-            _dict["content"] = None
-            _dict["audio"] = {"id": self.audio_output.id}
-
-        # Manually add the content field even if it is None
-        if self.content is None:
-            _dict["content"] = None
-
-        return _dict
 
     def to_dict(self) -> Dict[str, Any]:
         """Returns the message as a dictionary."""
@@ -238,10 +215,6 @@ class Message(BaseModel):
             "metrics": self.metrics,
             "created_at": self.created_at,
         }
-
-    @model_serializer
-    def serialize_model(self):
-        return self.serialize_for_model()
 
     def log(self, metrics: bool = True, level: Optional[str] = None):
         """Log the message to the console

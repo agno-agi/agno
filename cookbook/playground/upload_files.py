@@ -8,6 +8,7 @@ from agno.knowledge.text import TextKnowledgeBase
 from agno.models.openai import OpenAIChat
 from agno.playground.playground import Playground
 from agno.playground.serve import serve_playground_app
+from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -48,7 +49,6 @@ audio_agent = Agent(
     agent_id="simple-agent",
     model=OpenAIChat(id="gpt-4o-audio-preview"),
     add_history_to_messages=True,
-    num_history_responses=3,
     add_datetime_to_instructions=True,
     show_tool_calls=True,
     markdown=True,

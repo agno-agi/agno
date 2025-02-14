@@ -479,6 +479,7 @@ class Gemini(Model):
         return formatted_messages, system_message
 
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, File]]:
+
         # Case 1: Audio is a bytes object
         if audio.content and isinstance(audio.content, bytes):
             return Part.from_bytes(
