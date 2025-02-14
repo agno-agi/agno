@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
-from agno.media import Image
+from agno.media import Audio, Image
 from agno.playground.operator import (
     format_tools,
     get_agent_by_id,
@@ -99,6 +99,12 @@ def get_sync_playground_router(
             raise HTTPException(status_code=400, detail="Empty file")
         return Image(content=content)
 
+    def process_audio(file: UploadFile) -> Audio:
+        content = file.file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Empty file")
+        return Audio(content=content, format=file.content_type.split("/")[-1])
+
     @playground_router.post("/agents/{agent_id}/runs")
     def create_agent_run(
         agent_id: str,
@@ -132,7 +138,7 @@ def get_sync_playground_router(
             new_agent_instance.monitoring = False
 
         base64_images: List[Image] = []
-
+        base64_audios: List[Audio] = []
         if files:
             for file in files:
                 if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
@@ -141,6 +147,13 @@ def get_sync_playground_router(
                         base64_images.append(base64_image)
                     except Exception as e:
                         logger.error(f"Error processing image {file.filename}: {e}")
+                        continue
+                elif file.content_type in ["audio/wav", "audio/mp3"]:
+                    try:
+                        base64_audio = process_audio(file)
+                        base64_audios.append(base64_audio)
+                    except Exception as e:
+                        logger.error(f"Error processing audio {file.filename}: {e}")
                         continue
                 else:
                     # Check for knowledge base before processing documents
@@ -196,8 +209,14 @@ def get_sync_playground_router(
                         raise HTTPException(status_code=400, detail="Unsupported file type")
 
         if stream:
+            if base64_audios:
+                raise HTTPException(status_code=400, detail="Audio is not supported in streaming mode")
             return StreamingResponse(
-                chat_response_streamer(new_agent_instance, message, images=base64_images if base64_images else None),
+                chat_response_streamer(
+                    new_agent_instance,
+                    message,
+                    images=base64_images if base64_images else None,
+                ),
                 media_type="text/event-stream",
             )
         else:
@@ -206,6 +225,7 @@ def get_sync_playground_router(
                 new_agent_instance.run(
                     message=message,
                     images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
                     stream=False,
                 ),
             )
