@@ -84,19 +84,6 @@ class SingleStore(VectorDb):
         """
         if not self.table_exists():
             logger.info(f"Creating table: {self.collection}")
-            logger.info(f"""
-                    CREATE TABLE IF NOT EXISTS {self.schema}.{self.collection} (
-                        id TEXT,
-                        name TEXT,
-                        meta_data TEXT,
-                        content TEXT,
-                        embedding VECTOR({self.dimensions}) NOT NULL,
-                        `usage` TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                        content_hash TEXT
-                    );
-                    """)
             with self.db_engine.connect() as connection:
                 connection.execute(
                     text(f"""
@@ -207,6 +194,10 @@ class SingleStore(VectorDb):
             sess.commit()
             logger.debug(f"Committed {counter} documents")
 
+    def upsert_available(self) -> bool:
+        """Indicate that upsert functionality is available."""
+        return True
+
     def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, batch_size: int = 20) -> None:
         """
         Upsert (insert or update) documents in the table.
@@ -229,7 +220,6 @@ class SingleStore(VectorDb):
 
                 # Convert embedding list to SingleStore VECTOR format
                 embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
-
                 stmt = (
                     mysql.insert(self.table)
                     .values(
