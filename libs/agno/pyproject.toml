@@ -58,6 +58,10 @@ duckdb = ["duckdb"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 youtube = ["youtube_transcript_api"]
 firecrawl = ["firecrawl-py"]
+github = ["PyGithub"]
+gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
+googlemaps = ["googlemaps"]
+todoist = ["todoist-api-python"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -68,9 +72,11 @@ pgvector = ["pgvector"]
 chromadb = ["chromadb"]
 lancedb = ["lancedb", "tantivy"]
 qdrant = ["qdrant-client"]
+cassandra = ["cassio"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf"]
+docx = ["python-docx"]
 
 # Dependencies for Performance
 performance = ["memory_profiler"]
@@ -104,6 +110,10 @@ tools = [
   "agno[newspaper]",
   "agno[youtube]",
   "agno[firecrawl]",
+  "agno[github]",
+  "agno[gmail]",
+  "agno[googlemaps]",
+  "agno[todoist]",
 ]
 
 # All storage
@@ -118,11 +128,13 @@ vectordbs = [
   "agno[chromadb]",
   "agno[lancedb]",
   "agno[qdrant]",
+  "agno[cassandra]",
 ]
 
 # All knowledge
 knowledge = [
   "agno[pdf]",
+  "agno[docx]",
 ]
 
 # All libraries for testing

@@ -6,7 +6,7 @@ try:
     import lancedb
     import pyarrow as pa
 except ImportError:
-    raise ImportError("`lancedb` not installed.")
+    raise ImportError("`lancedb` not installed. Please install using `pip install lancedb`")
 
 from agno.document import Document
 from agno.embedder import Embedder
