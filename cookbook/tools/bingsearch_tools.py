@@ -11,11 +11,7 @@ BINGSEARCH_SUBSCRIPTION_KEY = "<YOUR_BINGSEARCH_SUBSCRIPTION_KEY>"
 agent = Agent(
     tools=[
         BingSearchTools(
-            subscription_key=BINGSEARCH_SUBSCRIPTION_KEY,
-            search=True,  # Enable webpage search
-            news=True,  # Enable news search
-            images=True,  # Enable image search
-            videos=True,  # Enable video search
+            subscription_key=BINGSEARCH_SUBSCRIPTION_KEY
         )
     ],
     show_tool_calls=True,
