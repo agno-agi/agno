@@ -5,7 +5,6 @@ from typing import List
 import pytest
 
 from agno.document import Document
-from agno.embedder.openai import OpenAIEmbedder
 from agno.vectordb.chroma import ChromaDb
 from agno.vectordb.distance import Distance
 
@@ -24,12 +23,7 @@ def chroma_db(mock_embedder):
         shutil.rmtree(TEST_PATH)
         os.makedirs(TEST_PATH)
 
-    db = ChromaDb(
-        collection=TEST_COLLECTION, 
-        path=TEST_PATH, 
-        persistent_client=False,
-        embedder=mock_embedder
-    )
+    db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, persistent_client=False, embedder=mock_embedder)
     db.create()
     yield db
 

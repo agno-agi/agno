@@ -471,6 +471,7 @@ class MongoDb(VectorDb):
         try:
             if hasattr(self, "_client"):
                 self._client.close()
+                time.sleep(1)
                 logger.debug("Closed MongoDB connection")
         except Exception as e:
             logger.error(f"Error closing MongoDB connection: {e}")

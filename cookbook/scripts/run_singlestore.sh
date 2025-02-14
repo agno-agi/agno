@@ -5,7 +5,7 @@ docker run -d --name singlestoredb \
   -e SINGLESTORE_DB=AGNO \
   -e SINGLESTORE_USER=root \
   -e SINGLESTORE_PASSWORD=password \
-  singlestore/cluster-in-a-box
+  memsql/cluster-in-a-box
 
 docker start singlestoredb
 

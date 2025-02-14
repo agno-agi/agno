@@ -5,7 +5,7 @@ from typing import Generator
 import pytest
 from cassandra.cluster import Cluster, Session
 
-from agno.document import Document  
+from agno.document import Document
 
 
 @pytest.fixture(scope="session")
@@ -47,12 +47,7 @@ def vector_db(cassandra_session, mock_embedder):
     from agno.vectordb.cassandra import Cassandra
 
     table_name = f"test_vectors_{uuid.uuid4().hex[:8]}"
-    db = Cassandra(
-        table_name=table_name, 
-        keyspace="test_vectordb", 
-        embedder=mock_embedder,
-        session=cassandra_session
-    )
+    db = Cassandra(table_name=table_name, keyspace="test_vectordb", embedder=mock_embedder, session=cassandra_session)
     db.create()
 
     assert db.exists(), "Table was not created successfully"

@@ -207,7 +207,7 @@ class ChromaDb(VectorDb):
         result: QueryResult = self._collection.query(
             query_embeddings=query_embedding,
             n_results=limit,
-            include=["metadatas", "documents", "embeddings", "distances", "uris"],
+            include=["metadatas", "documents", "embeddings", "distances", "uris"],  # type: ignore
         )
 
         # Build search results
@@ -216,12 +216,12 @@ class ChromaDb(VectorDb):
         ids = result.get("ids", [[]])[0]
         metadata = result.get("metadatas", [{}])[0]  # type: ignore
         documents = result.get("documents", [[]])[0]  # type: ignore
-        embeddings = result.get("embeddings")[0]
+        embeddings = result.get("embeddings")[0]  # type: ignore
         embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]
         distances = result.get("distances", [[]])[0]  # type: ignore
 
         for idx, distance in enumerate(distances):
-            metadata[idx]["distances"] = distance
+            metadata[idx]["distances"] = distance  # type: ignore
 
         try:
             # Use zip to iterate over multiple lists simultaneously

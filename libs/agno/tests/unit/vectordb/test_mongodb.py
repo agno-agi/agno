@@ -1,5 +1,5 @@
-from hashlib import md5
 import uuid
+from hashlib import md5
 from unittest.mock import MagicMock, patch
 
 import pytest
