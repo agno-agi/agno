@@ -1,4 +1,4 @@
-import requests
+import httpx
 from agno.agent import Agent
 from agno.media import Audio
 from agno.models.google import Gemini
@@ -10,7 +10,7 @@ agent = Agent(
 
 url = "https://agno-public.s3.amazonaws.com/demo_data/sample_conversation.wav"
 
-response = requests.get(url)
+response = httpx.get(url)
 audio_content = response.content
 
 # Give a sentiment analysis of this audio conversation. Use speaker A, speaker B to identify speakers.

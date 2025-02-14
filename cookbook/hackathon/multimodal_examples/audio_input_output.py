@@ -1,6 +1,4 @@
-import base64
-
-import requests
+import httpx
 from agno.agent import Agent
 from agno.media import Audio
 from agno.models.openai import OpenAIChat
@@ -8,7 +6,7 @@ from agno.utils.audio import write_audio_to_file
 
 # Fetch the audio file and convert it to a base64 encoded string
 url = "https://openaiassets.blob.core.windows.net/$web/API/docs/audio/alloy.wav"
-response = requests.get(url)
+response = httpx.get(url)
 response.raise_for_status()
 wav_data = response.content
 
