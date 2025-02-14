@@ -2,13 +2,13 @@ name: test
 
 on:
   push:
+    branches:
+      - 'main'
   pull_request:
     types:
       - opened
-      - edited
+      - synchronize
       - reopened
-    branches:
-      - 'main'
 
 jobs:
   format-lint:
@@ -44,6 +44,27 @@ jobs:
       - name: Mypy
         run: |
           mypy .
-#      - name: Test
-#        run: |
-#          pytest
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9"]
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      - name: Run dev setup
+        run: |
+          ./scripts/dev_setup.sh
+          source .venv/bin/activate
+      - name: Run tests for Agno
+        run: pytest ./libs/agno/tests
+      - name: Run tests for Agno Docker
+        run: pytest ./libs/agno_docker/tests
+      - name: Run tests for Agno AWS
+        run: pytest ./libs/agno_aws/tests
