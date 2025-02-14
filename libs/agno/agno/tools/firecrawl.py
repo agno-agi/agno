@@ -1,7 +1,9 @@
 import json
+from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
+from agno.utils.log import logger
 
 try:
     from firecrawl import FirecrawlApp
@@ -17,13 +19,17 @@ class FirecrawlTools(Toolkit):
         limit: int = 10,
         scrape: bool = True,
         crawl: bool = False,
+        api_url: Optional[str] = "https://api.firecrawl.dev",
     ):
         super().__init__(name="firecrawl_tools")
 
-        self.api_key: Optional[str] = api_key
+        self.api_key: Optional[str] = api_key or getenv("FIRECRAWL_API_KEY")
+        if not self.api_key:
+            logger.error("FIRECRAWL_API_KEY not set. Please set the FIRECRAWL_API_KEY environment variable.")
+
         self.formats: Optional[List[str]] = formats
         self.limit: int = limit
-        self.app: FirecrawlApp = FirecrawlApp(api_key=self.api_key)
+        self.app: FirecrawlApp = FirecrawlApp(api_key=self.api_key, api_url=api_url)
 
         # Start with scrape by default. But if crawl is set, then set scrape to False.
         if crawl:

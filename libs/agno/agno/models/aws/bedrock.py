@@ -1,22 +1,27 @@
 import json
 from dataclasses import dataclass
+from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from agno.aws.api_client import AwsApiClient  # type: ignore
-from agno.models.base import Model, StreamData
+from agno.exceptions import ModelProviderError
+from agno.models.base import MessageData, Model
 from agno.models.message import Message
-from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.models.response import ModelResponse
 from agno.utils.log import logger
-from agno.utils.timer import Timer
-from agno.utils.tools import (
-    get_function_call_for_tool_call,
-)
 
 try:
-    from boto3 import session  # noqa: F401
+    from boto3 import client as AwsClient
+    from botocore.exceptions import ClientError
 except ImportError:
-    logger.error("`boto3` not installed")
+    logger.error("`boto3` not installed. Please install it via `pip install boto3`.")
     raise
+
+
+@dataclass
+class AwsBedrockResponseUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
 
 
 @dataclass
@@ -24,454 +29,352 @@ class AwsBedrock(Model):
     """
     AWS Bedrock model.
 
+    To use this model, you need to set the following environment variables:
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+    - AWS_REGION
+
+    Not all Bedrock models support all features. See this documentation for more information: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html
+
     Args:
         aws_region (Optional[str]): The AWS region to use.
-        aws_profile (Optional[str]): The AWS profile to use.
-        aws_client (Optional[AwsApiClient]): The AWS client to use.
-        _bedrock_client (Optional[Any]): The Bedrock client to use.
-        _bedrock_runtime_client (Optional[Any]): The Bedrock runtime client to use.
+        aws_access_key_id (Optional[str]): The AWS access key ID to use.
+        aws_secret_access_key (Optional[str]): The AWS secret access key to use.
     """
 
+    id: str = "mistral.mistral-small-2402-v1:0"
+    name: str = "AwsBedrock"
+    provider: str = "AwsBedrock"
+
     aws_region: Optional[str] = None
-    aws_profile: Optional[str] = None
-    aws_client: Optional[AwsApiClient] = None
+    aws_access_key_id: Optional[str] = None
+    aws_secret_access_key: Optional[str] = None
 
-    _bedrock_client: Optional[Any] = None
-    _bedrock_runtime_client: Optional[Any] = None
+    # Request parameters
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    stop_sequences: Optional[List[str]] = None
+    request_params: Optional[Dict[str, Any]] = None
 
-    def get_aws_region(self) -> Optional[str]:
-        # Priority 1: Use aws_region from model
-        if self.aws_region is not None:
-            return self.aws_region
+    client: Optional[AwsClient] = None
 
-        # Priority 2: Get aws_region from env
-        from os import getenv
+    def get_client(self) -> AwsClient:
+        if self.client is not None:
+            return self.client
 
-        from agno.constants import AWS_REGION_ENV_VAR
+        self.aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
+        self.aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
+        self.aws_region = self.aws_region or getenv("AWS_REGION")
 
-        aws_region_env = getenv(AWS_REGION_ENV_VAR)
-        if aws_region_env is not None:
-            self.aws_region = aws_region_env
-        return self.aws_region
+        if not self.aws_access_key_id or not self.aws_secret_access_key:
+            raise ModelProviderError(
+                "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.",
+                model_name=self.name,
+                model_id=self.id,
+            )
 
-    def get_aws_profile(self) -> Optional[str]:
-        # Priority 1: Use aws_region from resource
-        if self.aws_profile is not None:
-            return self.aws_profile
+        self.client = AwsClient(
+            service_name="bedrock-runtime",
+            region_name=self.aws_region,
+            aws_access_key_id=self.aws_access_key_id,
+            aws_secret_access_key=self.aws_secret_access_key,
+        )
+        return self.client
 
-        # Priority 2: Get aws_profile from env
-        from os import getenv
+    def _format_tools_for_request(self) -> List[Dict[str, Any]]:
+        tools = []
+        if self._functions is not None:
+            for f_name, function in self._functions.items():
+                properties = {}
+                required = []
 
-        from agno.constants import AWS_PROFILE_ENV_VAR
+                for param_name, param_info in function.parameters.get("properties", {}).items():
+                    param_type = param_info.get("type")
+                    if isinstance(param_type, list):
+                        param_type = [t for t in param_type if t != "null"][0]
 
-        aws_profile_env = getenv(AWS_PROFILE_ENV_VAR)
-        if aws_profile_env is not None:
-            self.aws_profile = aws_profile_env
-        return self.aws_profile
+                    properties[param_name] = {
+                        "type": param_type or "string",
+                        "description": param_info.get("description") or "",
+                    }
 
-    def get_aws_client(self) -> AwsApiClient:
-        if self.aws_client is not None:
-            return self.aws_client
+                    if "null" not in (
+                        param_info.get("type") if isinstance(param_info.get("type"), list) else [param_info.get("type")]
+                    ):
+                        required.append(param_name)
 
-        self.aws_client = AwsApiClient(aws_region=self.get_aws_region(), aws_profile=self.get_aws_profile())
-        return self.aws_client
+                tools.append(
+                    {
+                        "toolSpec": {
+                            "name": f_name,
+                            "description": function.description or "",
+                            "inputSchema": {"json": {"type": "object", "properties": properties, "required": required}},
+                        }
+                    }
+                )
 
-    @property
-    def bedrock_runtime_client(self):
-        if self._bedrock_runtime_client is not None:
-            return self._bedrock_runtime_client
+        return tools
 
-        boto3_session: session = self.get_aws_client().boto3_session
-        self._bedrock_runtime_client = boto3_session.client(service_name="bedrock-runtime")
-        return self._bedrock_runtime_client
+    def _get_inference_config(self) -> Dict[str, Any]:
+        request_kwargs = {
+            "maxTokens": self.max_tokens,
+            "temperature": self.temperature,
+            "topP": self.top_p,
+            "stopSequences": self.stop_sequences,
+        }
 
-    def invoke(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        request_kwargs = {k: v for k, v in request_kwargs.items() if v is not None}
+        return request_kwargs
+
+    def _format_messages(self, messages: List[Message]) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+        formatted_messages: List[Dict[str, Any]] = []
+        system_message = None
+        for message in messages:
+            if message.role == "system":
+                system_message = [{"text": message.content}]
+            else:
+                formatted_message: Dict[str, Any] = {"role": message.role}
+                formatted_message["content"] = []
+                # Handle tool results
+                if isinstance(message.content, list):
+                    formatted_message["content"].extend(message.content)
+                elif message.tool_calls:
+                    formatted_message["content"].extend(
+                        [
+                            {
+                                "toolUse": {
+                                    "toolUseId": tool_call["id"],
+                                    "name": tool_call["function"]["name"],
+                                    "input": json.loads(tool_call["function"]["arguments"]),
+                                }
+                            }
+                            for tool_call in message.tool_calls
+                        ]
+                    )
+                else:
+                    formatted_message["content"].append({"text": message.content})
+
+                if message.images:
+                    for image in message.images:
+                        # Only supported via bytes for now
+                        if image.content and image.format:
+                            if image.format not in ["png", "jpeg", "webp", "gif"]:
+                                raise ValueError(f"Unsupported image format: {image.format}")
+
+                            formatted_message["content"].append(
+                                {
+                                    "image": {
+                                        "format": image.format,
+                                        "source": {
+                                            "bytes": image.content,
+                                        },
+                                    }
+                                }
+                            )
+                        else:
+                            raise ValueError("Image content and format are required.")
+
+                if message.audio:
+                    logger.warning("Audio input is currently unsupported.")
+
+                if message.videos:
+                    for video in message.videos:
+                        if video.content and video.format:
+                            if video.format not in [
+                                "mp4",
+                                "mov",
+                                "mkv",
+                                "webm",
+                                "flv",
+                                "mpeg",
+                                "mpg",
+                                "wmv",
+                                "three_gp",
+                            ]:
+                                raise ValueError(f"Unsupported video format: {video.format}")
+
+                            formatted_message["content"].append(
+                                {
+                                    "video": {
+                                        "format": video.format,
+                                        "source": {
+                                            "bytes": video.content,
+                                        },
+                                    }
+                                }
+                            )
+                        else:
+                            raise ValueError("Video content and format are required.")
+                formatted_messages.append(formatted_message)
+        # TODO: Add caching: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-call.html
+        return formatted_messages, system_message
+
+    def invoke(self, messages: List[Message]) -> Dict[str, Any]:
         """
         Invoke the Bedrock API.
 
         Args:
-            body (Dict[str, Any]): The request body.
+            messages (List[Message]): The messages to include in the request.
 
         Returns:
             Dict[str, Any]: The response from the Bedrock API.
         """
-        return self.bedrock_runtime_client.converse(**body)
+        try:
+            formatted_messages, system_message = self._format_messages(messages)
+            inference_config = self._get_inference_config()
 
-    def invoke_stream(self, body: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+            tool_config = None
+            if self._functions is not None:
+                tool_config = {"tools": self._format_tools_for_request()}
+
+            body = {
+                "system": system_message,
+                "toolConfig": tool_config,
+                "inferenceConfig": inference_config,
+            }
+            body = {k: v for k, v in body.items() if v is not None}
+
+            return self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
+        except ClientError as e:
+            logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except Exception as e:
+            logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
+
+    def invoke_stream(self, messages: List[Message]) -> Iterator[Dict[str, Any]]:
         """
         Invoke the Bedrock API with streaming.
 
         Args:
-            body (Dict[str, Any]): The request body.
+            messages (List[Message]): The messages to include in the request.
 
         Returns:
             Iterator[Dict[str, Any]]: The streamed response.
         """
-        response = self.bedrock_runtime_client.converse_stream(**body)
-        stream = response.get("stream")
-        if stream:
-            for event in stream:
-                yield event
+        try:
+            formatted_messages, system_message = self._format_messages(messages)
+            inference_config = self._get_inference_config()
 
-    def create_assistant_message(self, request_body: Dict[str, Any]) -> Message:
-        raise NotImplementedError("Please use a subclass of AwsBedrock")
+            tool_config = None
+            if self._functions is not None:
+                tool_config = {"tools": self._format_tools_for_request()}
 
-    def get_request_body(self, messages: List[Message]) -> Dict[str, Any]:
-        raise NotImplementedError("Please use a subclass of AwsBedrock")
+            body = {
+                "system": system_message,
+                "toolConfig": tool_config,
+                "inferenceConfig": inference_config,
+            }
+            body = {k: v for k, v in body.items() if v is not None}
 
-    def parse_response_message(self, response: Dict[str, Any]) -> Dict[str, Any]:
-        raise NotImplementedError("Please use a subclass of AwsBedrock")
+            return self.get_client().converse_stream(modelId=self.id, messages=formatted_messages, **body)["stream"]
+        except ClientError as e:
+            logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
+        except Exception as e:
+            logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(e, self.name, self.id) from e
 
-    def _create_tool_calls(
-        self, stop_reason: str, parsed_response: Dict[str, Any]
-    ) -> Tuple[List[str], List[Dict[str, Any]]]:
-        tool_ids: List[str] = []
-        tool_calls: List[Dict[str, Any]] = []
-
-        if stop_reason == "tool_use":
-            tool_requests = parsed_response.get("tool_requests")
-            if tool_requests:
-                for tool in tool_requests:
-                    if "toolUse" in tool:
-                        tool_use = tool["toolUse"]
-                        tool_id = tool_use["toolUseId"]
-                        tool_name = tool_use["name"]
-                        tool_args = tool_use["input"]
-
-                        tool_ids.append(tool_id)
-                        tool_calls.append(
-                            {
-                                "type": "function",
-                                "function": {
-                                    "name": tool_name,
-                                    "arguments": json.dumps(tool_args),
-                                },
-                            }
-                        )
-
-        return tool_ids, tool_calls
-
-    def _handle_tool_calls(
-        self, assistant_message: Message, messages: List[Message], model_response: ModelResponse, tool_ids
-    ) -> Optional[ModelResponse]:
+    # Overwrite the default from the base model
+    def format_function_call_results(
+        self, messages: List[Message], function_call_results: List[Message], tool_ids: List[str]
+    ) -> None:
         """
-        Handle tool calls in the assistant message.
+        Handle the results of function calls.
 
         Args:
-            assistant_message (Message): The assistant message.
-            messages (List[Message]): The list of messages.
-            model_response (ModelResponse): The model response.
-
-        Returns:
-            Optional[ModelResponse]: The model response after handling tool calls.
+            messages (List[Message]): The list of conversation messages.
+            function_call_results (List[Message]): The results of the function calls.
+            tool_ids (List[str]): The tool ids.
         """
-        # -*- Parse and run function call
-        if assistant_message.tool_calls is not None:
-            if model_response.tool_calls is None:
-                model_response.tool_calls = []
-
-            # Remove the tool call from the response content
-            model_response.content = ""
-            tool_role: str = "tool"
-            function_calls_to_run: List[Any] = []
-            function_call_results: List[Message] = []
-            for tool_call in assistant_message.tool_calls:
-                _tool_call_id = tool_call.get("id")
-                _function_call = get_function_call_for_tool_call(tool_call, self._functions)
-                if _function_call is None:
-                    messages.append(
-                        Message(
-                            role="tool",
-                            tool_call_id=_tool_call_id,
-                            content="Could not find function to call.",
-                        )
-                    )
-                    continue
-                if _function_call.error is not None:
-                    messages.append(
-                        Message(
-                            role="tool",
-                            tool_call_id=_tool_call_id,
-                            content=_function_call.error,
-                        )
-                    )
-                    continue
-                function_calls_to_run.append(_function_call)
-
-            if self.show_tool_calls:
-                model_response.content += "\nRunning:"
-                for _f in function_calls_to_run:
-                    model_response.content += f"\n - {_f.get_call_str()}"
-                model_response.content += "\n\n"
-
-            for function_call_response in self.run_function_calls(
-                function_calls=function_calls_to_run, function_call_results=function_call_results, tool_role=tool_role
-            ):
-                if (
-                    function_call_response.event == ModelResponseEvent.tool_call_completed.value
-                    and function_call_response.tool_calls is not None
-                ):
-                    model_response.tool_calls.extend(function_call_response.tool_calls)
-
-            if len(function_call_results) > 0:
-                fc_responses: List = []
-
-                for _fc_message_index, _fc_message in enumerate(function_call_results):
-                    tool_result = {
-                        "toolUseId": tool_ids[_fc_message_index],
-                        "content": [{"json": json.dumps(_fc_message.content)}],
-                    }
-                    tool_result_message = {"role": "user", "content": json.dumps([{"toolResult": tool_result}])}
-                    fc_responses.append(tool_result_message)
-
-                logger.debug(f"Tool call responses: {fc_responses}")
-                messages.append(Message(role="user", content=json.dumps(fc_responses)))
-
-            return model_response
-        return None
-
-    def _update_metrics(self, assistant_message, parsed_response, response_timer):
-        """
-        Update usage metrics in assistant_message and self.metrics based on the parsed_response.
-
-        Args:
-            assistant_message: The assistant's message object where individual metrics are stored.
-            parsed_response: The parsed response containing usage metrics.
-            response_timer: Timer object that has the elapsed time of the response.
-        """
-        # Add response time to metrics
-        assistant_message.metrics["time"] = response_timer.elapsed
-        if "response_times" not in self.metrics:
-            self.metrics["response_times"] = []
-        self.metrics["response_times"].append(response_timer.elapsed)
-
-        # Add token usage to metrics
-        usage = parsed_response.get("usage", {})
-        prompt_tokens = usage.get("inputTokens")
-        completion_tokens = usage.get("outputTokens")
-        total_tokens = usage.get("totalTokens")
-
-        if prompt_tokens is not None:
-            assistant_message.metrics["prompt_tokens"] = prompt_tokens
-            self.metrics["prompt_tokens"] = self.metrics.get("prompt_tokens", 0) + prompt_tokens
-
-        if completion_tokens is not None:
-            assistant_message.metrics["completion_tokens"] = completion_tokens
-            self.metrics["completion_tokens"] = self.metrics.get("completion_tokens", 0) + completion_tokens
-
-        if total_tokens is not None:
-            assistant_message.metrics["total_tokens"] = total_tokens
-            self.metrics["total_tokens"] = self.metrics.get("total_tokens", 0) + total_tokens
-
-    def response(self, messages: List[Message]) -> ModelResponse:
-        """
-        Generate a response from the Bedrock API.
-
-        Args:
-            messages (List[Message]): The messages to include in the request.
-
-        Returns:
-            ModelResponse: The response from the Bedrock API.
-        """
-        logger.debug("---------- Bedrock Response Start ----------")
-        self._log_messages(messages)
-        model_response = ModelResponse()
-
-        # Invoke the Bedrock API
-        response_timer = Timer()
-        response_timer.start()
-        body = self.get_request_body(messages)
-        response: Dict[str, Any] = self.invoke(body=body)
-        response_timer.stop()
-
-        # Parse response
-        parsed_response = self.parse_response_message(response)
-        logger.debug(f"Parsed response: {parsed_response}")
-        stop_reason = parsed_response["stop_reason"]
-
-        # Create assistant message
-        assistant_message = self.create_assistant_message(parsed_response)
-
-        # Update usage metrics using the new function
-        self._update_metrics(assistant_message, parsed_response, response_timer)
-
-        # Add assistant message to messages
-        messages.append(assistant_message)
-        assistant_message.log()
-
-        # Create tool calls if needed
-        tool_ids, tool_calls = self._create_tool_calls(stop_reason, parsed_response)
-
-        # Handle tool calls
-        if stop_reason == "tool_use" and tool_calls:
-            assistant_message.content = parsed_response["tool_requests"][0]["text"]
-            assistant_message.tool_calls = tool_calls
-
-        # Run tool calls
-        if self._handle_tool_calls(assistant_message, messages, model_response, tool_ids):
-            response_after_tool_calls = self.response(messages=messages)
-            if response_after_tool_calls.content is not None:
-                if model_response.content is None:
-                    model_response.content = ""
-                model_response.content += response_after_tool_calls.content
-            return model_response
-
-        # Add assistant message content to model response
-        if assistant_message.content is not None:
-            model_response.content = assistant_message.get_content_string()
-
-        logger.debug("---------- AWS Response End ----------")
-        return model_response
-
-    def _handle_stream_tool_calls(self, assistant_message: Message, messages: List[Message], tool_ids: List[str]):
-        """
-        Handle tool calls in the assistant message.
-
-        Args:
-            assistant_message (Message): The assistant message.
-            messages (List[Message]): The list of messages.
-            tool_ids (List[str]): The list of tool IDs.
-        """
-        tool_role: str = "tool"
-        function_calls_to_run: List[Any] = []
-        function_call_results: List[Message] = []
-        for tool_call in assistant_message.tool_calls or []:
-            _tool_call_id = tool_call.get("id")
-            _function_call = get_function_call_for_tool_call(tool_call, self._functions)
-            if _function_call is None:
-                messages.append(
-                    Message(
-                        role="tool",
-                        tool_call_id=_tool_call_id,
-                        content="Could not find function to call.",
-                    )
-                )
-                continue
-            if _function_call.error is not None:
-                messages.append(
-                    Message(
-                        role="tool",
-                        tool_call_id=_tool_call_id,
-                        content=_function_call.error,
-                    )
-                )
-                continue
-            function_calls_to_run.append(_function_call)
-
-        if self.show_tool_calls:
-            yield ModelResponse(content="\nRunning:")
-            for _f in function_calls_to_run:
-                yield ModelResponse(content=f"\n - {_f.get_call_str()}")
-            yield ModelResponse(content="\n\n")
-
-        for _ in self.run_function_calls(
-            function_calls=function_calls_to_run, function_call_results=function_call_results, tool_role=tool_role
-        ):
-            pass
-
         if len(function_call_results) > 0:
-            fc_responses: List = []
+            tool_result_content: List = []
 
             for _fc_message_index, _fc_message in enumerate(function_call_results):
                 tool_result = {
                     "toolUseId": tool_ids[_fc_message_index],
-                    "content": [{"json": json.dumps(_fc_message.content)}],
+                    "content": [{"json": {"result": _fc_message.content}}],
                 }
-                tool_result_message = {"role": "user", "content": json.dumps([{"toolResult": tool_result}])}
-                fc_responses.append(tool_result_message)
+                tool_result_content.append({"toolResult": tool_result})
 
-            logger.debug(f"Tool call responses: {fc_responses}")
-            messages.append(Message(role="user", content=json.dumps(fc_responses)))
+            messages.append(Message(role="user", content=tool_result_content))
 
-    def _update_stream_metrics(self, stream_data: StreamData, assistant_message: Message):
-        """
-        Update the metrics for the streaming response.
+    def parse_provider_response(self, response: Dict[str, Any]) -> ModelResponse:
+        model_response = ModelResponse()
 
-        Args:
-            stream_data (StreamData): The streaming data
-            assistant_message (Message): The assistant message.
-        """
-        assistant_message.metrics["time"] = stream_data.response_timer.elapsed
-        if stream_data.time_to_first_token is not None:
-            assistant_message.metrics["time_to_first_token"] = stream_data.time_to_first_token
+        if "output" in response and "message" in response["output"]:
+            message = response["output"]["message"]
+            # Set the role of the message
+            model_response.role = message["role"]
 
-        if "response_times" not in self.metrics:
-            self.metrics["response_times"] = []
-        self.metrics["response_times"].append(stream_data.response_timer.elapsed)
-        if stream_data.time_to_first_token is not None:
-            if "time_to_first_token" not in self.metrics:
-                self.metrics["time_to_first_token"] = []
-            self.metrics["time_to_first_token"].append(stream_data.time_to_first_token)
-        if stream_data.completion_tokens > 0:
-            if "tokens_per_second" not in self.metrics:
-                self.metrics["tokens_per_second"] = []
-            self.metrics["tokens_per_second"].append(
-                f"{stream_data.completion_tokens / stream_data.response_timer.elapsed:.4f}"
+            # Get the content of the message
+            content = message["content"]
+
+            # Tools
+            if "stopReason" in response and response["stopReason"] == "tool_use":
+                model_response.tool_calls = []
+                model_response.extra = model_response.extra or {}
+                model_response.extra["tool_ids"] = []
+                for tool in content:
+                    if "toolUse" in tool:
+                        model_response.extra["tool_ids"].append(tool["toolUse"]["toolUseId"])
+                        model_response.tool_calls.append(
+                            {
+                                "id": tool["toolUse"]["toolUseId"],
+                                "type": "function",
+                                "function": {
+                                    "name": tool["toolUse"]["name"],
+                                    "arguments": json.dumps(tool["toolUse"]["input"]),
+                                },
+                            }
+                        )
+
+            # Extract text content if it's a list of dictionaries
+            if isinstance(content, list) and content and isinstance(content[0], dict):
+                content = [item.get("text", "") for item in content if "text" in item]
+                content = "\n".join(content)  # Join multiple text items if present
+
+            model_response.content = content
+
+        if "usage" in response:
+            model_response.response_usage = AwsBedrockResponseUsage(
+                input_tokens=response["usage"]["inputTokens"],
+                output_tokens=response["usage"]["outputTokens"],
+                total_tokens=response["usage"]["totalTokens"],
             )
 
-        assistant_message.metrics["prompt_tokens"] = stream_data.response_prompt_tokens
-        assistant_message.metrics["input_tokens"] = stream_data.response_prompt_tokens
-        self.metrics["prompt_tokens"] = self.metrics.get("prompt_tokens", 0) + stream_data.response_prompt_tokens
-        self.metrics["input_tokens"] = self.metrics.get("input_tokens", 0) + stream_data.response_prompt_tokens
+        return model_response
 
-        assistant_message.metrics["completion_tokens"] = stream_data.response_completion_tokens
-        assistant_message.metrics["output_tokens"] = stream_data.response_completion_tokens
-        self.metrics["completion_tokens"] = (
-            self.metrics.get("completion_tokens", 0) + stream_data.response_completion_tokens
-        )
-        self.metrics["output_tokens"] = self.metrics.get("output_tokens", 0) + stream_data.response_completion_tokens
-
-        assistant_message.metrics["total_tokens"] = stream_data.response_total_tokens
-        self.metrics["total_tokens"] = self.metrics.get("total_tokens", 0) + stream_data.response_total_tokens
-
-    def response_stream(self, messages: List[Message]) -> Iterator[ModelResponse]:
-        """
-        Stream the response from the Bedrock API.
-
-        Args:
-            messages (List[Message]): The messages to include in the request.
-
-        Returns:
-            Iterator[str]: The streamed response.
-        """
-        logger.debug("---------- Bedrock Response Start ----------")
-        self._log_messages(messages)
-
-        stream_data: StreamData = StreamData()
-        stream_data.response_timer.start()
-
+    def process_response_stream(
+        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
+    ) -> Iterator[ModelResponse]:
+        """Process the synchronous response stream."""
         tool_use: Dict[str, Any] = {}
-        tool_ids: List[str] = []
-        tool_calls: List[Dict[str, Any]] = []
-        stop_reason: Optional[str] = None
-        content: List[Dict[str, Any]] = []
+        content = []
+        tool_ids = []
 
-        request_body = self.get_request_body(messages)
-        response = self.invoke_stream(body=request_body)
+        for response_delta in self.invoke_stream(messages=messages):
+            model_response = ModelResponse(role="assistant")
+            should_yield = False
 
-        # Process the streaming response
-        for chunk in response:
-            if "contentBlockStart" in chunk:
-                tool = chunk["contentBlockStart"]["start"].get("toolUse")
+            if "contentBlockStart" in response_delta:
+                # Handle tool use requests
+                tool = response_delta["contentBlockStart"]["start"].get("toolUse")
                 if tool:
                     tool_use["toolUseId"] = tool["toolUseId"]
                     tool_use["name"] = tool["name"]
 
-            elif "contentBlockDelta" in chunk:
-                delta = chunk["contentBlockDelta"]["delta"]
+            elif "contentBlockDelta" in response_delta:
+                delta = response_delta["contentBlockDelta"]["delta"]
                 if "toolUse" in delta:
                     if "input" not in tool_use:
                         tool_use["input"] = ""
                     tool_use["input"] += delta["toolUse"]["input"]
                 elif "text" in delta:
-                    stream_data.response_content += delta["text"]
-                    stream_data.completion_tokens += 1
-                    if stream_data.completion_tokens == 1:
-                        stream_data.time_to_first_token = stream_data.response_timer.elapsed
-                        logger.debug(f"Time to first token: {stream_data.time_to_first_token:.4f}s")
-                    yield ModelResponse(content=delta["text"])  # Yield text content as it's received
+                    model_response.content = delta["text"]
 
-            elif "contentBlockStop" in chunk:
+            elif "contentBlockStop" in response_delta:
                 if "input" in tool_use:
                     # Finish collecting tool use input
                     try:
@@ -483,65 +386,61 @@ class AwsBedrock(Model):
                     tool_ids.append(tool_use["toolUseId"])
                     # Prepare the tool call
                     tool_call = {
+                        "id": tool_use["toolUseId"],
                         "type": "function",
                         "function": {
                             "name": tool_use["name"],
                             "arguments": json.dumps(tool_use["input"]),
                         },
                     }
-                    tool_calls.append(tool_call)
+                    # Append the tool call to the list of "done" tool calls
+                    model_response.tool_calls.append(tool_call)
+                    # Reset the tool use
                     tool_use = {}
                 else:
                     # Finish collecting text content
                     content.append({"text": stream_data.response_content})
 
-            elif "messageStop" in chunk:
-                stop_reason = chunk["messageStop"]["stopReason"]
-                logger.debug(f"Stop reason: {stop_reason}")
+            elif "messageStop" in response_delta:
+                if "usage" in response_delta["messageStop"]:
+                    usage = response_delta["messageStop"]["usage"]
+                    model_response.response_usage = AwsBedrockResponseUsage(
+                        input_tokens=usage.get("inputTokens", 0),
+                        output_tokens=usage.get("outputTokens", 0),
+                        total_tokens=usage.get("totalTokens", 0),
+                    )
 
-            elif "metadata" in chunk:
-                metadata = chunk["metadata"]
-                if "usage" in metadata:
-                    stream_data.response_prompt_tokens = metadata["usage"]["inputTokens"]
-                    stream_data.response_total_tokens = metadata["usage"]["totalTokens"]
-                    stream_data.completion_tokens = metadata["usage"]["outputTokens"]
+            # Update metrics
+            assistant_message.metrics.completion_tokens += 1
+            if not assistant_message.metrics.time_to_first_token:
+                assistant_message.metrics.set_time_to_first_token()
 
-        stream_data.response_timer.stop()
+            if model_response.content:
+                stream_data.response_content += model_response.content
+                should_yield = True
 
-        # Create assistant message
-        if stream_data.response_content != "":
-            assistant_message = Message(role="assistant", content=stream_data.response_content, tool_calls=tool_calls)
+            if model_response.tool_calls:
+                if stream_data.response_tool_calls is None:
+                    stream_data.response_tool_calls = []
+                stream_data.response_tool_calls.extend(model_response.tool_calls)
+                should_yield = True
 
-        if stream_data.completion_tokens > 0:
-            logger.debug(
-                f"Time per output token: {stream_data.response_timer.elapsed / stream_data.completion_tokens:.4f}s"
-            )
-            logger.debug(
-                f"Throughput: {stream_data.completion_tokens / stream_data.response_timer.elapsed:.4f} tokens/s"
-            )
+            if model_response.response_usage is not None:
+                self._add_usage_metrics_to_assistant_message(
+                    assistant_message=assistant_message, response_usage=model_response.response_usage
+                )
 
-        # Update metrics
-        self._update_stream_metrics(stream_data, assistant_message)
+            if should_yield:
+                yield model_response
 
-        # Add assistant message to messages
-        messages.append(assistant_message)
-        assistant_message.log()
+        if tool_ids:
+            stream_data.extra["tool_ids"] = tool_ids
 
-        # Handle tool calls if any
-        if tool_calls:
-            yield from self._handle_stream_tool_calls(assistant_message, messages, tool_ids)
-            yield from self.response_stream(messages=messages)
-
-        logger.debug("---------- Bedrock Response End ----------")
+    def parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:  # type: ignore
+        pass
 
     async def ainvoke(self, *args, **kwargs) -> Any:
         raise NotImplementedError(f"Async not supported on {self.name}.")
 
     async def ainvoke_stream(self, *args, **kwargs) -> Any:
-        raise NotImplementedError(f"Async not supported on {self.name}.")
-
-    async def aresponse(self, messages: List[Message]) -> ModelResponse:
-        raise NotImplementedError(f"Async not supported on {self.name}.")
-
-    async def aresponse_stream(self, messages: List[Message]) -> ModelResponse:
         raise NotImplementedError(f"Async not supported on {self.name}.")

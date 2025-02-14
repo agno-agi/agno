@@ -1,3 +1,4 @@
+from time import sleep
 from typing import List
 from urllib.parse import urlparse
 
@@ -19,7 +20,18 @@ class URLReader(Reader):
             raise ImportError("`httpx` not installed. Please install it via `pip install httpx`.")
 
         logger.info(f"Reading: {url}")
-        response = httpx.get(url)
+        # Retry the request up to 3 times with exponential backoff
+        for attempt in range(3):
+            try:
+                response = httpx.get(url)
+                break
+            except httpx.RequestError as e:
+                if attempt == 2:  # Last attempt
+                    logger.error(f"Failed to fetch PDF after 3 attempts: {e}")
+                    raise
+                wait_time = 2**attempt  # Exponential backoff: 1, 2, 4 seconds
+                logger.warning(f"Request failed, retrying in {wait_time} seconds...")
+                sleep(wait_time)
 
         try:
             logger.debug(f"Status: {response.status_code}")

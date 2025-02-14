@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.0.8"
+version = "1.1.1"
 description = "Agno: a lightweight framework for building multi-modal Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -39,7 +39,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
+dev = ["mypy", "pytest", "pytest-asyncio", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
 
 # Dependencies for Models
 anthropic = ["anthropic"]
@@ -182,6 +182,8 @@ module = [
   "apify_client.*",
   "arxiv.*",
   "atlassian.*",
+  "azure.ai.inference.*",
+  "azure.core.*",
   "boto3.*",
   "botocore.*",
   "bs4.*",
