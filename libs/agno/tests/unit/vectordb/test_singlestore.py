@@ -1,14 +1,14 @@
 import json
-from unittest.mock import MagicMock, patch
 from typing import List
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy.engine import Engine
 
 from agno.document import Document
 from agno.embedder.openai import OpenAIEmbedder
-from agno.vectordb.singlestore import SingleStore
 from agno.vectordb.distance import Distance
+from agno.vectordb.singlestore import SingleStore
 
 TEST_COLLECTION = "test_collection"
 TEST_SCHEMA = "test_schema"
@@ -41,14 +41,10 @@ def mock_session():
 @pytest.fixture
 def singlestore_db(mock_engine, mock_session):
     """Fixture to create a SingleStore instance with mocked components"""
-    with patch('agno.vectordb.singlestore.singlestore.sessionmaker') as mock_sessionmaker:
+    with patch("agno.vectordb.singlestore.singlestore.sessionmaker") as mock_sessionmaker:
         # Set up sessionmaker to return the mock session directly
         mock_sessionmaker.return_value = mock_session
-        db = SingleStore(
-            collection=TEST_COLLECTION,
-            schema=TEST_SCHEMA,
-            db_engine=mock_engine
-        )
+        db = SingleStore(collection=TEST_COLLECTION, schema=TEST_SCHEMA, db_engine=mock_engine)
         db.create()
         yield db
 
@@ -58,16 +54,12 @@ def sample_documents() -> List[Document]:
     """Fixture to create sample documents"""
     return [
         Document(
-            content="Tom Kha Gai is a Thai coconut soup with chicken",
-            meta_data={"cuisine": "Thai", "type": "soup"}
+            content="Tom Kha Gai is a Thai coconut soup with chicken", meta_data={"cuisine": "Thai", "type": "soup"}
         ),
-        Document(
-            content="Pad Thai is a stir-fried rice noodle dish",
-            meta_data={"cuisine": "Thai", "type": "noodles"}
-        ),
+        Document(content="Pad Thai is a stir-fried rice noodle dish", meta_data={"cuisine": "Thai", "type": "noodles"}),
         Document(
             content="Green curry is a spicy Thai curry with coconut milk",
-            meta_data={"cuisine": "Thai", "type": "curry"}
+            meta_data={"cuisine": "Thai", "type": "curry"},
         ),
     ]
 
@@ -80,13 +72,14 @@ def mock_embedder():
     mock_embedder.get_embedding.return_value = [0.1] * 1536
     return mock_embedder
 
+
 def test_insert_documents(singlestore_db, sample_documents, mock_session):
     """Test inserting documents"""
     singlestore_db.insert(sample_documents)
-    
+
     # Verify insert was called for each document
     assert mock_session.execute.call_count == len(sample_documents)
-    
+
     # Verify commit was called
     mock_session.commit.assert_called_once()
 
@@ -94,7 +87,7 @@ def test_insert_documents(singlestore_db, sample_documents, mock_session):
 def test_search_documents(singlestore_db, sample_documents, mock_session, mock_embedder):
     """Test searching documents"""
     singlestore_db.embedder = mock_embedder
-    
+
     # Mock search results
     mock_result = [
         MagicMock(
@@ -102,15 +95,15 @@ def test_search_documents(singlestore_db, sample_documents, mock_session, mock_e
             meta_data=json.dumps({"cuisine": "Thai"}),
             content="Tom Kha Gai with coconut",
             embedding=json.dumps([0.1] * 1536),
-            usage=json.dumps({})
+            usage=json.dumps({}),
         ),
         MagicMock(
             name="Doc2",
             meta_data=json.dumps({"cuisine": "Thai"}),
             content="Green curry with coconut",
             embedding=json.dumps([0.1] * 1536),
-            usage=json.dumps({})
-        )
+            usage=json.dumps({}),
+        ),
     ]
     mock_session.execute.return_value.fetchall.return_value = mock_result
 
@@ -123,11 +116,10 @@ def test_upsert_documents(singlestore_db, sample_documents, mock_session):
     """Test upserting documents"""
     # Test upsert operation
     modified_doc = Document(
-        content="Tom Kha Gai is a spicy and sour Thai coconut soup",
-        meta_data={"cuisine": "Thai", "type": "soup"}
+        content="Tom Kha Gai is a spicy and sour Thai coconut soup", meta_data={"cuisine": "Thai", "type": "soup"}
     )
     singlestore_db.upsert([modified_doc])
-    
+
     # Verify upsert was called
     mock_session.execute.assert_called()
     mock_session.commit.assert_called_once()
@@ -141,21 +133,13 @@ def test_delete_collection(singlestore_db, mock_session):
 
 def test_distance_metrics(mock_engine):
     """Test different distance metrics"""
-    with patch('agno.vectordb.singlestore.singlestore.sessionmaker'):
+    with patch("agno.vectordb.singlestore.singlestore.sessionmaker"):
         db_cosine = SingleStore(
-            collection="test_cosine",
-            schema=TEST_SCHEMA,
-            db_engine=mock_engine,
-            distance=Distance.cosine
+            collection="test_cosine", schema=TEST_SCHEMA, db_engine=mock_engine, distance=Distance.cosine
         )
         assert db_cosine.distance == Distance.cosine
 
-        db_l2 = SingleStore(
-            collection="test_l2",
-            schema=TEST_SCHEMA,
-            db_engine=mock_engine,
-            distance=Distance.l2
-        )
+        db_l2 = SingleStore(collection="test_l2", schema=TEST_SCHEMA, db_engine=mock_engine, distance=Distance.l2)
         assert db_l2.distance == Distance.l2
 
 
@@ -186,11 +170,6 @@ async def test_error_handling(singlestore_db, mock_session):
 
 def test_custom_embedder(mock_engine, mock_embedder):
     """Test using a custom embedder"""
-    with patch('agno.vectordb.singlestore.singlestore.sessionmaker'):
-        db = SingleStore(
-            collection=TEST_COLLECTION,
-            schema=TEST_SCHEMA,
-            db_engine=mock_engine,
-            embedder=mock_embedder
-        )
+    with patch("agno.vectordb.singlestore.singlestore.sessionmaker"):
+        db = SingleStore(collection=TEST_COLLECTION, schema=TEST_SCHEMA, db_engine=mock_engine, embedder=mock_embedder)
         assert db.embedder == mock_embedder
