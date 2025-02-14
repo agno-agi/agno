@@ -38,6 +38,7 @@ file_agent = Agent(
     name="File Upload Agent",
     role="Answer questions about the uploaded files",
     model=OpenAIChat(id="gpt-4o-mini"),
+    storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
     knowledge=knowledge_base,
     show_tool_calls=True,
     markdown=True,)
@@ -48,6 +49,7 @@ audio_agent = Agent(
     role="Answer questions about audio files",
     agent_id="simple-agent",
     model=OpenAIChat(id="gpt-4o-audio-preview"),
+    storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     show_tool_calls=True,
