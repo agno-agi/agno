@@ -12,9 +12,9 @@ from agno.utils.log import logger
 from agno.utils.openai import add_images_to_message
 
 try:
+    from groq import APIConnectionError, APIError, APIStatusError, APITimeoutError
     from groq import AsyncGroq as AsyncGroqClient
     from groq import Groq as GroqClient
-    from groq import APIError, APIConnectionError, APITimeoutError, APIStatusError
     from groq.types.chat import ChatCompletion
     from groq.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDelta, ChoiceDeltaToolCall
 except (ModuleNotFoundError, ImportError):

@@ -38,3 +38,4 @@ class ModelResponse:
 class FileType(str, Enum):
     MP4 = "mp4"
     GIF = "gif"
+    MP3 = "mp3"
