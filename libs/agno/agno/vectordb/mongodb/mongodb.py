@@ -31,7 +31,7 @@ class MongoDb(VectorDb):
         self,
         collection_name: str,
         db_url: Optional[str] = "mongodb://localhost:27017/",
-        database: str = "ai",
+        database: str = "agno",
         embedder: Embedder = OpenAIEmbedder(),
         distance_metric: str = Distance.cosine,
         overwrite: bool = False,
@@ -39,6 +39,7 @@ class MongoDb(VectorDb):
         wait_after_insert: Optional[float] = None,
         max_pool_size: int = 100,
         retry_writes: bool = True,
+        client: Optional[MongoClient] = None,
         **kwargs,
     ):
         """
@@ -55,10 +56,13 @@ class MongoDb(VectorDb):
             wait_after_insert (float): Time in seconds to wait after inserting documents.
             max_pool_size (int): Maximum number of connections in the connection pool
             retry_writes (bool): Whether to retry write operations
+            client (Optional[MongoClient]): An existing MongoClient instance.
             **kwargs: Additional arguments for MongoClient.
         """
         if not collection_name:
             raise ValueError("Collection name must not be empty.")
+        if not database:
+            raise ValueError("Database name must not be empty.")
         self.collection_name = collection_name
         self.database = database
         self.embedder = embedder
@@ -74,7 +78,11 @@ class MongoDb(VectorDb):
             'serverSelectionTimeoutMS': 5000,  # 5 second timeout
         })
 
-        self._client = self._get_client()
+        if client:
+            self._client = client
+            logger.info("Using provided MongoDB client.")
+        else:
+            self._client = self._get_client()
         self._db = self._client[self.database]
         self._collection = self._db[self.collection_name]
 
@@ -217,9 +225,11 @@ class MongoDb(VectorDb):
 
     def doc_exists(self, document: Document) -> bool:
         """Check if a document exists in the MongoDB collection based on its content."""
-        doc_id = md5(document.content.encode("utf-8")).hexdigest()
         try:
-            exists = self._collection.find_one({"_id": doc_id}) is not None
+            # Use content hash as document ID
+            doc_id = md5(document.content.encode("utf-8")).hexdigest()
+            result = self._collection.find_one({"_id": doc_id})
+            exists = result is not None
             logger.debug(f"Document {'exists' if exists else 'does not exist'}: {doc_id}")
             return exists
         except Exception as e:
@@ -421,18 +431,17 @@ class MongoDb(VectorDb):
         pass
 
     def delete(self) -> bool:
-        """Delete the entire collection from the database."""
+        """Delete all documents from the collection."""
         if self.exists():
             try:
-                self._collection.drop()
-                logger.info(f"Collection '{self.collection_name}' deleted successfully.")
-                return True
+                result = self._collection.delete_many()
+                success = result.deleted_count >= 0  # Consider any deletion (even 0) as success
+                logger.info(f"Deleted {result.deleted_count} documents from collection.")
+                return success
             except Exception as e:
-                logger.error(f"Error deleting collection '{self.collection_name}': {e}")
+                logger.error(f"Error deleting documents: {e}")
                 return False
-        else:
-            logger.warning(f"Collection '{self.collection_name}' does not exist.")
-            return False
+        return True  # Return True if collection doesn't exist (nothing to delete)
 
     def prepare_doc(self, document: Document) -> Dict[str, Any]:
         """Prepare a document for insertion or upsertion into MongoDB."""
@@ -466,14 +475,7 @@ class MongoDb(VectorDb):
         """Cleanup MongoDB connection."""
         try:
             if hasattr(self, '_client'):
-                # Check if Python is not shutting down
-                import sys
-                if sys and sys.meta_path is not None:
-                    self._client.close()
-                    logger.debug("Closed MongoDB connection")
-                else:
-                    # If Python is shutting down, just close without logging
-                    self._client.close()
-        except Exception:
-            # Suppress all errors during cleanup
-            pass
+                self._client.close()
+                logger.debug("Closed MongoDB connection")
+        except Exception as e:
+            logger.error(f"Error closing MongoDB connection: {e}")
