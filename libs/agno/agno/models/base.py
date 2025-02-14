@@ -768,7 +768,7 @@ class Model(ABC):
             )
             yield ModelResponse(
                 content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
-                tool_calls=[function_call_result.to_fc_result()],
+                tool_calls=[function_call_result.to_function_call_dict()],
                 event=ModelResponseEvent.tool_call_completed.value,
             )
 
@@ -871,7 +871,7 @@ class Model(ABC):
             )
             yield ModelResponse(
                 content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
-                tool_calls=[function_call_result.to_fc_result()],
+                tool_calls=[function_call_result.to_function_call_dict()],
                 event=ModelResponseEvent.tool_call_completed.value,
             )
 

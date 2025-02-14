@@ -57,6 +57,32 @@ ml_gif_agent = Agent(
     ),
 )
 
+ml_music_agent = Agent(
+    name="ModelsLab Music Agent",
+    agent_id="ml_music_agent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[ModelsLabTools(wait_for_completion=True, file_type=FileType.MP3)],
+    description="You are an AI agent that can generate music using the ModelsLabs API.",
+    instructions=[
+        "When generating music, use the `generate_media` tool with detailed prompts that specify:",
+        "- The genre and style of music (e.g., classical, jazz, electronic)",
+        "- The instruments and sounds to include",
+        "- The tempo, mood and emotional qualities",
+        "- The structure (intro, verses, chorus, bridge, etc.)",
+        "Create rich, descriptive prompts that capture the desired musical elements.",
+        "Focus on generating high-quality, complete instrumental pieces.",
+        "Keep responses simple and only confirm when music is generated successfully.",
+        "Do not include any file names, URLs or technical details in responses.",
+    ],
+    markdown=True,
+    debug_mode=True,
+    add_history_to_messages=True,
+    add_datetime_to_instructions=True,
+    storage=SqliteAgentStorage(
+        table_name="ml_music_agent", db_file=image_agent_storage_file
+    ),
+)
+
 ml_video_agent = Agent(
     name="ModelsLab Video Agent",
     agent_id="ml_video_agent",
@@ -142,33 +168,16 @@ audio_agent = Agent(
     ),
 )
 
-image_to_image_agent = Agent(
-    name="Image to Image Agent",
-    agent_id="image_to_image_agent",
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[FalTools()],
-    markdown=True,
-    debug_mode=True,
-    instructions=[
-        "You have to use the `image_to_image` tool to generate the image.",
-        "You are an AI agent that can generate images using the Fal AI API.",
-        "You will be given a prompt and an image URL.",
-        "Don't provide the URL of the image in the response. Only describe what image was generated.",
-    ],
-    storage=SqliteAgentStorage(
-        table_name="image_to_image_agent", db_file=image_agent_storage_file
-    ),
-)
 
 app = Playground(
     agents=[
         image_agent,
         ml_gif_agent,
+        ml_music_agent,
         ml_video_agent,
         fal_agent,
         gif_agent,
         audio_agent,
-        image_to_image_agent,
     ]
 ).get_app(use_async=False)
 
