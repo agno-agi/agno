@@ -59,3 +59,7 @@ audio_generations
 token.json
 
 .composio.lock
+
+# Coverage
+coverage_report
+.coverage
