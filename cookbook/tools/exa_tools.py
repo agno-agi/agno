@@ -21,3 +21,8 @@ agent.print_response(
     "Find me similar papers to https://arxiv.org/pdf/2307.06435 and provide a summary of what they contain",
     markdown=True,
 )
+
+agent.print_response(
+    "What is the latest valuation of SpaceX?",
+    markdown=True,
+)

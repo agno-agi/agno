@@ -23,6 +23,14 @@ class AgentRun(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    def to_dict(self) -> Dict[str, Any]:
+        response = {
+            "message": self.message.to_dict() if self.message else None,
+            "messages": [message.to_dict() for message in self.messages] if self.messages else None,
+            "response": self.response.to_dict() if self.response else None,
+        }
+        return {k: v for k, v in response.items() if v is not None}
+
 
 class MemoryRetrieval(str, Enum):
     last_n = "last_n"
@@ -87,6 +95,12 @@ class AgentMemory(BaseModel):
         # Add memories if they exist
         if self.memories is not None:
             _memory_dict["memories"] = [memory.to_dict() for memory in self.memories]
+        # Add messages if they exist
+        if self.messages is not None:
+            _memory_dict["messages"] = [message.to_dict() for message in self.messages]
+        # Add runs if they exist
+        if self.runs is not None:
+            _memory_dict["runs"] = [run.to_dict() for run in self.runs]
         return _memory_dict
 
     def add_run(self, agent_run: AgentRun) -> None:

@@ -1,9 +1,9 @@
 <div align="center" id="top">
   <a href="https://docs.agno.com">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset=".assets/logo-dark.svg">
-      <source media="(prefers-color-scheme: light)" srcset=".assets/logo-light.svg">
-      <img src=".assets/logo-light.svg" alt="Agno">
+      <source media="(prefers-color-scheme: dark)" srcset="https://agno-public.s3.us-east-1.amazonaws.com/assets/logo-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="https://agno-public.s3.us-east-1.amazonaws.com/assets/logo-light.svg">
+      <img src="https://agno-public.s3.us-east-1.amazonaws.com/assets/logo-light.svg" alt="Agno">
     </picture>
   </a>
 </div>
@@ -222,8 +222,8 @@ python agent_team.py
 
 Agno is designed for high performance agentic systems:
 
-- Agent instantiation: <5μs on average (~10,000x faster than LangGraph).
-- Memory footprint: <0.01Mib on average (~50x less memory than LangGraph).
+- Agent instantiation: ~2μs on average (~10,000x faster than LangGraph).
+- Memory footprint: ~3.75Kib on average (~50x less memory than LangGraph).
 
 > Tested on an Apple M4 Mackbook Pro.
 
