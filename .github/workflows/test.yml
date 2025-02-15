@@ -61,21 +61,27 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
       - name: Run dev setup
+        working-directory: .
         run: |
           ./scripts/dev_setup.sh
-          source .venv/bin/activate
       - name: Run tests for Agno
+        working-directory: .
         run: |
+          source .venv/bin/activate
           python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests
           echo "AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
       - name: Run tests for Agno Docker
+        working-directory: .
         run: |
+          source .venv/bin/activate
           python -m pytest --cov=agno_docker --cov-report=json:coverage-docker.json ./libs/agno_docker/tests
-          echo "AGNO_DOCKER_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-docker.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
+          echo "DOCKER_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-docker.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
       - name: Run tests for Agno AWS
+        working-directory: .
         run: |
+          source .venv/bin/activate
           python -m pytest --cov=agno_aws --cov-report=json:coverage-aws.json ./libs/agno_aws/tests
-          echo "AGNO_AWS_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-aws.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
+          echo "AWS_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-aws.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
       - name: Create Coverage Badge
         uses: schneegans/dynamic-badges-action@v1.6.0
         with:
@@ -83,5 +89,5 @@ jobs:
           gistID: 9ba6033402f8be8ae2a63323a114211a
           filename: agno-coverage.json
           label: Coverage
-          message: Agno ${{ env.AGNO_COVERAGE }}% | Docker ${{ env.AGNO_DOCKER_COVERAGE }}% | AWS ${{ env.AGNO_AWS_COVERAGE }}%
+          message: Agno ${{ env.AGNO_COVERAGE }}% | Docker ${{ env.DOCKER_COVERAGE }}% | AWS ${{ env.AWS_COVERAGE }}%
           color: green
