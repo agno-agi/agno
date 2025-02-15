@@ -409,10 +409,10 @@ class Gemini(Model):
                     )
             # Function results
             elif message.role == "tool":
-                message_parts = [
-                    Part.from_function_response(name=message.tool_name, response={"result": message.content})
-                ]
-            # Normal text content
+                for tool_call in message.tool_calls:
+                    message_parts.append(
+                        Part.from_function_response(name=tool_call["tool_name"], response={"result": tool_call["content"]})
+                    )
             else:
                 if isinstance(content, str):
                     message_parts = [Part.from_text(text=content)]
@@ -582,6 +582,23 @@ class Gemini(Model):
         else:
             logger.warning(f"Unknown video type: {type(video.content)}")
             return None
+
+    def format_function_call_results(
+        self, messages: List[Message], function_call_results: List[Message], **kwargs
+    ) -> None:
+        """
+        Format function call results.
+        """
+        combined_content: List = []
+        combined_function_result: List = []
+        if len(function_call_results) > 0:
+            for result in function_call_results:
+                combined_content.append(result.content)
+                combined_function_result.append({"tool_name": result.tool_name, "content": result.content})
+
+        messages.append(
+            Message(role="tool", content=combined_content, tool_calls=combined_function_result)
+        )
 
     def parse_provider_response(self, response: GenerateContentResponse) -> ModelResponse:
         """

@@ -14,8 +14,9 @@ agent = Agent(
     show_tool_calls=True,
     markdown=True,
 )
-agent.print_response("What is the price of TSLA?", stream=True)
+agent.print_response("What is the price of TSLA and of NVDA?", stream=True)
 
-agent.print_response("What is the price of NVDA?", stream=True)
+agent.print_response("What is the price of AAPL?", stream=True)
 
-agent.print_response("What did I ask so far?", stream=True)
+agent.print_response("Summarize the conversation so far.", stream=True)
+
