@@ -19,7 +19,9 @@ async def get_agent(delay, provider):
         tools=[DuckDuckGoTools()],
     )
     await asyncio.sleep(delay)
-    response: RunResponse = await agent.arun(f"Write a report on the following AI provider: {provider}")
+    response: RunResponse = await agent.arun(
+        f"Write a report on the following AI provider: {provider}"
+    )
     return response
 
 
@@ -27,12 +29,11 @@ async def get_reports():
     tasks = []
     for delay, provider in enumerate(providers):
         delay = delay * 2
-        tasks.append(
-            get_agent(delay, provider)
-        )
+        tasks.append(get_agent(delay, provider))
 
     results = await asyncio.gather(*tasks)
     return results
+
 
 async def main():
     results = await get_reports()
