@@ -408,10 +408,12 @@ class Gemini(Model):
                         )
                     )
             # Function results
-            elif message.role == "tool":
+            elif message.role == "tool" and message.tool_calls:
                 for tool_call in message.tool_calls:
                     message_parts.append(
-                        Part.from_function_response(name=tool_call["tool_name"], response={"result": tool_call["content"]})
+                        Part.from_function_response(
+                            name=tool_call["tool_name"], response={"result": tool_call["content"]}
+                        )
                     )
             else:
                 if isinstance(content, str):
@@ -596,9 +598,7 @@ class Gemini(Model):
                 combined_content.append(result.content)
                 combined_function_result.append({"tool_name": result.tool_name, "content": result.content})
 
-        messages.append(
-            Message(role="tool", content=combined_content, tool_calls=combined_function_result)
-        )
+        messages.append(Message(role="tool", content=combined_content, tool_calls=combined_function_result))
 
     def parse_provider_response(self, response: GenerateContentResponse) -> ModelResponse:
         """
