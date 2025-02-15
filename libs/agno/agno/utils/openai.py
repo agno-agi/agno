@@ -28,13 +28,49 @@ def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Message:
     message_content_with_audio: List[Dict[str, Any]] = [{"type": "text", "text": message.content}]
 
     for audio_snippet in audio:
-        # This means the audio is raw data
+        # The audio is raw data
         if audio_snippet.content:
             import base64
 
             encoded_string = base64.b64encode(audio_snippet.content).decode("utf-8")
 
             # Create a message with audio
+            message_content_with_audio.append(
+                {
+                    "type": "input_audio",
+                    "input_audio": {
+                        "data": encoded_string,
+                        "format": audio_snippet.format,
+                    },
+                },
+            )
+        if audio_snippet.url:
+            # The audio is a URL
+            import base64
+
+            audio_bytes = audio_snippet.audio_url_content
+            if audio_bytes is not None:
+                encoded_string = base64.b64encode(audio_bytes).decode("utf-8")
+
+                message_content_with_audio.append(
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": encoded_string,
+                            "format": audio_snippet.format,
+                        },
+                    },
+                )
+
+        if audio_snippet.filepath:
+            # The audio is a file path
+            import base64
+
+            path = Path(audio_snippet.filepath) if isinstance(audio_snippet.filepath, str) else audio_snippet.filepath
+            if path.exists() and path.is_file():
+                with open(audio_snippet.filepath, "rb") as audio_file:
+                    encoded_string = base64.b64encode(audio_file.read()).decode("utf-8")
+
             message_content_with_audio.append(
                 {
                     "type": "input_audio",

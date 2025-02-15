@@ -5,7 +5,6 @@ from typing import List
 import pytest
 
 from agno.document import Document
-from agno.embedder.openai import OpenAIEmbedder
 from agno.vectordb.chroma import ChromaDb
 from agno.vectordb.distance import Distance
 
@@ -14,7 +13,7 @@ TEST_PATH = "tmp/test_chromadb"
 
 
 @pytest.fixture
-def chroma_db():
+def chroma_db(mock_embedder):
     """Fixture to create and clean up a ChromaDb instance"""
     # Ensure the test directory exists with proper permissions
     os.makedirs(TEST_PATH, exist_ok=True)
@@ -24,7 +23,7 @@ def chroma_db():
         shutil.rmtree(TEST_PATH)
         os.makedirs(TEST_PATH)
 
-    db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, persistent_client=False)
+    db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, persistent_client=False, embedder=mock_embedder)
     db.create()
     yield db
 
@@ -150,15 +149,14 @@ async def test_error_handling(chroma_db):
     assert chroma_db.get_count() == 0
 
 
-def test_custom_embedder():
+def test_custom_embedder(mock_embedder):
     """Test using a custom embedder"""
     # Ensure the test directory exists
     os.makedirs(TEST_PATH, exist_ok=True)
 
-    custom_embedder = OpenAIEmbedder()
-    db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, embedder=custom_embedder)
+    db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, embedder=mock_embedder)
     db.create()
-    assert db.embedder == custom_embedder
+    assert db.embedder == mock_embedder
 
     # Cleanup
     try:
