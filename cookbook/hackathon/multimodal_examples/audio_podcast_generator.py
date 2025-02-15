@@ -4,7 +4,6 @@ from agno.tools.eleven_labs import ElevenLabsTools
 from agno.tools.firecrawl import FirecrawlTools
 from agno.utils.audio import write_audio_to_file
 
-
 blog_to_podcast_agent = Agent(
     name="Blog to Podcast Agent",
     agent_id="blog_to_podcast_agent",
@@ -33,7 +32,9 @@ blog_to_podcast_agent = Agent(
     add_history_to_messages=True,
 )
 
-blog_to_podcast_agent.run("Please convert this blog into a podcast: https://www.agno.com/blog/introducing-agno")
+blog_to_podcast_agent.run(
+    "Please convert this blog into a podcast: https://www.agno.com/blog/introducing-agno"
+)
 
 if blog_to_podcast_agent.run_response.audio is not None:
     for audio in blog_to_podcast_agent.run_response.audio:
