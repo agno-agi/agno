@@ -67,17 +67,29 @@ Here are some examples of Text Agents built with Agno:
 
 ## Image Agents
 
-- [Image Input + Tools](cookbook/hackathon/examples/image_input_with_tools.py)
-- [Generate Image](cookbook/hackathon/examples/generate_image.py)
-- [Image to Structured Output](cookbook/hackathon/examples/image_to_structured_output.py)
+- [Image Input + Tools](cookbook/hackathon/multimodal_examples/image_input_with_tools.py)
+- [Generate Image](cookbook/hackathon/multimodal_examples/image_generate.py)
+- [Image to Structured Output](cookbook/hackathon/multimodal_examples/image_to_structured_output.py)
+- [Image to Audio](cookbook/hackathon/multimodal_examples/image_to_audio.py)
+- [Image to Image](cookbook/hackathon/multimodal_examples/image_to_image.py)
+- [Image Transcription](cookbook/hackathon/multimodal_examples/image_transcription.py)
+- [Image Generation with Steps](cookbook/hackathon/multimodal_examples/image_generate_with_intermediate_steps.py)
 
 ## Audio Agents
 
-- [Audio Input](cookbook/hackathon/examples/audio_input.py)
+- [Audio Input](cookbook/hackathon/multimodal_examples/audio_input.py)
+- [Audio Input Output](cookbook/hackathon/multimodal_examples/audio_input_output.py)
+- [Audio Multiturn](cookbook/hackathon/multimodal_examples/audio_multi_turn.py)
+- [Audio Sentiment Analysis](cookbook/hackathon/multimodal_examples/audio_sentiment_analysis.py)
+- [Audio Transcription](cookbook/hackathon/multimodal_examples/audio_transcription.py)
 
 ## Video Agents
 
-- [Video Input](cookbook/hackathon/examples/video_input.py)
+- [Video Input](cookbook/hackathon/multimodal_examples/video_input.py)
+- [Video to Shorts](cookbook/hackathon/multimodal_examples/video_to_shorts.py)
+- [Video Caption](cookbook/hackathon/multimodal_examples/video_caption.py)
+- [Video Generation using Replicate](cookbook/hackathon/multimodal_examples/video_generate_using_replicate.py)
+- [Video Generation using Models Lab](cookbook/hackathon/multimodal_examples/video_generate_using_models_lab.py)
 
 ### Use Agent UI to give an interface to your agent
 
@@ -95,12 +107,12 @@ Then head to: [app.agno.com/playground](https://app.agno.com/playground) to see 
 
 ## Model usage:
 
-```cookbook/hackathon/models```
+`cookbook/hackathon/models`
 
-##  Examples:
+## Examples:
 
-```cookbook/hackathon/examples```
+`cookbook/hackathon/examples`
 
 ## Multimodal Examples:
 
-```cookbook/hackathon/multimodal_examples```
+`cookbook/hackathon/multimodal_examples`
