@@ -412,6 +412,7 @@ class Gemini(Model):
                 message_parts = [
                     Part.from_function_response(name=message.tool_name, response={"result": message.content})
                 ]
+            # Normal text content
             else:
                 if isinstance(content, str):
                     message_parts = [Part.from_text(text=content)]
