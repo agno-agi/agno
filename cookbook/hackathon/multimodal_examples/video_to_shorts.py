@@ -1,5 +1,5 @@
 """
-1. Install dependencies using: `pip install opencv-python google-geneai sqlalchemy`
+1. Install dependencies using: `pip install opencv-python google-genai sqlalchemy`
 2. Install ffmpeg `brew install ffmpeg`
 2. Run the script using: `python cookbook/agent_concepts/video_to_shorts.py`
 """
