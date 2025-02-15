@@ -90,11 +90,29 @@ jobs:
 #          python -m pytest --cov=agno_aws --cov-report=json:coverage-aws.json ./libs/infra/agno_aws/tests
 #          echo "AWS_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-aws.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
       - name: Create Coverage Badge
-        uses: schneegans/dynamic-badges-action@v1.6.0
+        uses: schneegans/dynamic-badges-action@v1.7.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: 9ba6033402f8be8ae2a63323a114211a
           filename: agno-coverage.json
           label: Coverage
-          message: Agno ${{ env.AGNO_COVERAGE }}% | Docker ${{ env.DOCKER_COVERAGE }}% | AWS ${{ env.AWS_COVERAGE }}%
-          color: green
+          message: ${{ env.AGNO_COVERAGE }}%
+          color: |
+            [
+              {
+                "value": 100,
+                "color": "brightgreen"
+              },
+              {
+                "value": 80,
+                "color": "green"
+              },
+              {
+                "value": 60,
+                "color": "yellow"
+              },
+              {
+                "value": 0,
+                "color": "red"
+              }
+            ]
