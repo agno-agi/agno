@@ -137,8 +137,7 @@ def test_get_count(chroma_db, sample_documents):
     assert chroma_db.get_count() == 3
 
 
-@pytest.mark.asyncio
-async def test_error_handling(chroma_db):
+def test_error_handling(chroma_db):
     """Test error handling scenarios"""
     # Test search with invalid query
     results = chroma_db.search("")

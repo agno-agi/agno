@@ -70,12 +70,13 @@ Here are some examples of Text Agents built with Agno:
 ## Image Agents
 
 - [Image Input + Tools](cookbook/hackathon/multimodal_examples/image_input_with_tools.py)
-- [Generate Image](cookbook/hackathon/multimodal_examples/image_generate.py)
+- [Image Generation](cookbook/hackathon/multimodal_examples/image_generate.py)
 - [Image to Structured Output](cookbook/hackathon/multimodal_examples/image_to_structured_output.py)
 - [Image to Audio](cookbook/hackathon/multimodal_examples/image_to_audio.py)
 - [Image to Image](cookbook/hackathon/multimodal_examples/image_to_image.py)
 - [Image Transcription](cookbook/hackathon/multimodal_examples/image_transcription.py)
 - [Image Generation with Steps](cookbook/hackathon/multimodal_examples/image_generate_with_intermediate_steps.py)
+- [Image Search with Giphy](cookbook/hackathon/multimodal_examples/image_gif_search.py)
 
 ## Audio Agents
 
@@ -84,6 +85,7 @@ Here are some examples of Text Agents built with Agno:
 - [Audio Multiturn](cookbook/hackathon/multimodal_examples/audio_multi_turn.py)
 - [Audio Sentiment Analysis](cookbook/hackathon/multimodal_examples/audio_sentiment_analysis.py)
 - [Audio Transcription](cookbook/hackathon/multimodal_examples/audio_transcription.py)
+- [Audio Podcast](cookbook/hackathon/multimodal_examples/audio_podcast_generator.py)
 
 ## Video Agents
 

@@ -24,3 +24,5 @@ video_agent = Agent(
 )
 
 video_agent.print_response("Generate a video of a horse in the dessert.")
+for video in video_agent.run_response.videos:
+    print("Video File URL:", video.url)

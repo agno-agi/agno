@@ -16,6 +16,6 @@ video_agent = Agent(
     show_tool_calls=True,
 )
 
-video_agent.print_response("Generate a video of a cat playing with a ball")
-# print(video_agent.run_response.videos)
-# print(video_agent.get_videos())
+video_agent.run("Generate a video of a cat playing with a ball")
+for video in video_agent.run_response.videos:
+    print("Video File URL:", video.url)
