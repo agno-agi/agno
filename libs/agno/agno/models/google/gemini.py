@@ -50,23 +50,21 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"Failed to download image from {image}: {e}")
             return None
-    # Case 2: Image is a local path
-    # Open the image file and add it as base64 encoded data
-    elif image.filepath is not None:
-        try:
-            import PIL.Image
-        except ImportError:
-            logger.error("`PIL.Image not installed. Please install it using 'pip install pillow'`")
-            raise
 
+    # Case 2: Image is a local path
+    elif image.filepath is not None:
         try:
             image_path = Path(image.filepath)
             if image_path.exists() and image_path.is_file():
-                image_data = PIL.Image.open(image_path)  # type: ignore
+                with open(image_path, "rb") as f:
+                    content_bytes = f.read()
             else:
                 logger.error(f"Image file {image_path} does not exist.")
                 raise
-            return image_data  # type: ignore
+            return {
+                "mime_type": "image/jpeg",
+                "data": content_bytes,
+            }
         except Exception as e:
             logger.warning(f"Failed to load image from {image.filepath}: {e}")
             return None
@@ -83,7 +81,7 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _convert_schema(schema_dict):
+def _convert_schema(schema_dict) -> Optional[Schema]:
     """
     Recursively convert a JSON-like schema dictionary to a types.Schema object.
 
@@ -103,12 +101,16 @@ def _convert_schema(schema_dict):
     if schema_type == "OBJECT" and "properties" in schema_dict:
         properties = {key: _convert_schema(prop_def) for key, prop_def in schema_dict["properties"].items()}
         required = schema_dict.get("required", [])
-        return Schema(
-            type=schema_type,
-            properties=properties,
-            required=required,
-            description=description,
-        )
+
+        if properties:
+            return Schema(
+                type=schema_type,
+                properties=properties,
+                required=required,
+                description=description,
+            )
+        else:
+            return None
     else:
         return Schema(type=schema_type, description=description)
 
@@ -485,7 +487,13 @@ class Gemini(Model):
                 mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3", data=audio.content
             )
 
-        # Case 2: Audio is a local file path
+        # Case 2: Audio is an url
+        elif audio.url is not None:
+            return Part.from_bytes(
+                mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3", data=audio.audio_url_content
+            )
+
+        # Case 3: Audio is a local file path
         elif audio.filepath is not None:
             audio_path = audio.filepath if isinstance(audio.filepath, Path) else Path(audio.filepath)
 

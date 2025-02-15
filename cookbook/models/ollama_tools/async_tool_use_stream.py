@@ -1,9 +1,10 @@
 """Run `pip install duckduckgo-search` to install dependencies."""
 
+import asyncio
+
 from agno.agent import Agent
 from agno.models.ollama import OllamaTools
 from agno.tools.duckduckgo import DuckDuckGoTools
-import asyncio
 
 agent = Agent(
     model=OllamaTools(id="llama3.1:8b"),

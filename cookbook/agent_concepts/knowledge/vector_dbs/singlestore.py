@@ -1,3 +1,15 @@
+"""
+# Run the setup script
+```shell
+./cookbook/scripts/run_singlestore.sh
+```
+
+# Create the database
+
+- Visit http://localhost:8080 and login with `root` and `admin`
+- Create the database with your choice of name. Default setup script requires AGNO as database name. `CREATE DATABASE your_database_name;`
+"""
+
 from os import getenv
 
 from agno.agent import Agent
