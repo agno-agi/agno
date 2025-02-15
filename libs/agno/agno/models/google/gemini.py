@@ -409,15 +409,9 @@ class Gemini(Model):
                     )
             # Function results
             elif message.role == "tool":
-                if hasattr(message, "combined_function_details"):
-                    for result in message.combined_function_details:
-                        message_parts.append(
-                            Part.from_function_response(name=result[0], response={"result": result[1]})
-                        )
-                else:
-                    message_parts = [
-                        Part.from_function_response(name=message.tool_name, response={"result": message.content})
-                    ]
+                message_parts = [
+                    Part.from_function_response(name=message.tool_name, response={"result": message.content})
+                ]
             else:
                 if isinstance(content, str):
                     message_parts = [Part.from_text(text=content)]
