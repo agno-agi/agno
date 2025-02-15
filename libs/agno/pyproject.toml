@@ -214,6 +214,7 @@ module = [
   "googlesearch.*",
   "groq.*",
   "huggingface_hub.*",
+  "ibm_watsonx_ai.*",
   "imghdr.*",
   "jira.*",
   "kubernetes.*",
