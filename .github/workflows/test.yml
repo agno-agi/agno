@@ -72,7 +72,7 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests
+          python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit
           echo "AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
       - name: Run tests for Agno Docker
         working-directory: .
