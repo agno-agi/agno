@@ -44,7 +44,7 @@ dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "timeout-decora
 # Dependencies for Models
 anthropic = ["anthropic"]
 cohere = ["cohere"]
-google = ["google-generativeai"]
+google = ["google-genai"]
 groq = ["groq"]
 mistral = ["mistralai"]
 openai = ["openai"]
@@ -62,6 +62,8 @@ github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 googlemaps = ["googlemaps"]
 todoist = ["todoist-api-python"]
+elevenlabs = ["elevenlabs"]
+fal = ["fal_client"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -116,6 +118,8 @@ tools = [
   "agno[gmail]",
   "agno[googlemaps]",
   "agno[todoist]",
+  "agno[elevenlabs]",
+  "agno[fal]",
 ]
 
 # All storage

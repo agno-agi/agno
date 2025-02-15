@@ -1,0 +1,14 @@
+agno
+anthropic
+dataclasses
+google-genai
+nest-asyncio
+ollama
+openai
+pathlib
+Pillow
+pip-tools
+python-dotenv
+rich
+streamlit
+typing
