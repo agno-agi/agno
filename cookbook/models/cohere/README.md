@@ -60,3 +60,9 @@ python cookbook/models/cohere/storage.py
 ```shell
 python cookbook/models/cohere/knowledge.py
 ```
+
+### 9. Run Agent that uses memory
+
+```shell
+python cookbook/models/cohere/memory.py
+```

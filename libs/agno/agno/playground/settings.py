@@ -44,7 +44,7 @@ class PlaygroundSettings(BaseSettings):
                 "https://agno.com",
                 "https://www.agno.com",
                 "https://app.agno.com",
-                "https://app-stg.agno.com"
+                "https://app-stg.agno.com",
             ]
         )
 

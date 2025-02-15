@@ -49,3 +49,9 @@ python cookbook/models/mistral/tool_use.py
 ```shell
 python cookbook/models/mistral/structured_output.py
 ```
+
+### 7. Run Agent that uses memory
+
+```shell
+python cookbook/models/mistral/memory.py
+```

@@ -2,7 +2,7 @@ from agno.agent import AgentKnowledge
 from agno.embedder.azure_openai import AzureOpenAIEmbedder
 from agno.vectordb.pgvector import PgVector
 
-embeddings = AzureOpenAIEmbedder().get_embedding(
+embeddings = AzureOpenAIEmbedder(id="text-embedding-3-small").get_embedding(
     "The quick brown fox jumps over the lazy dog."
 )
 

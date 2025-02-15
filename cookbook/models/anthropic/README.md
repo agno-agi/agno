@@ -68,7 +68,13 @@ export OPENAI_API_KEY=***
 python cookbook/models/anthropic/knowledge.py
 ```
 
-### 9. Run Agent that analyzes an image
+### 9. Run Agent that uses memory   
+
+```shell
+python cookbook/models/anthropic/memory.py
+```
+
+### 10. Run Agent that analyzes an image
 
 ```shell
 python cookbook/models/anthropic/image_agent.py

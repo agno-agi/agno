@@ -69,6 +69,7 @@ class SQLTools(Toolkit):
             return json.dumps(self.tables)
 
         try:
+            logger.debug("listing tables in the database")
             table_names = inspect(self.db_engine).get_table_names()
             logger.debug(f"table_names: {table_names}")
             return json.dumps(table_names)
@@ -87,6 +88,7 @@ class SQLTools(Toolkit):
         """
 
         try:
+            logger.debug(f"Describing table: {table_name}")
             table_names = inspect(self.db_engine)
             table_schema = table_names.get_columns(table_name)
             return json.dumps([str(column) for column in table_schema])

@@ -15,14 +15,17 @@ Please follow the [fork and pull request](https://docs.github.com/en/get-started
 ## Development setup
 
 1. Clone the repository.
-2. Create a virtual environment:
+2. Check if you have `uv` installed by running `uv --version`.
+   - If you have `uv` installed, you can skip this step.
+   - If you don't have `uv` installed, you can install it by running `pip install uv`.
+3. Create a virtual environment:
    - For Unix, use `./scripts/dev_setup.sh`.
    - For Windows, use `.\scripts\dev_setup.bat`.
    - This setup will:
      - Create a `.venv` virtual environment in the current directory.
      - Install the required packages.
      - Install the `agno` package in editable mode.
-3. Activate the virtual environment:
+4. Activate the virtual environment:
    - On Unix: `source .venv/bin/activate`
    - On Windows: `.venv\Scripts\activate`
 
@@ -50,7 +53,7 @@ These scripts will perform code formatting with `ruff` and static type checks wi
    - The `VectorDb` interface is defined in `libs/agno/agno/vectordb/base
    - Import your `VectorDb` Class in `libs/agno/agno/vectordb/<your_db>/__init__.py`.
    - Checkout the [`libs/agno/agno/vectordb/pgvector/pgvector`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/vectordb/pgvector/pgvector.py) file for an example.
-4. Add a recipe for using your `VectorDb` under `cookbook/agent_concepts/knowledge/vector_dbs//<your_db>`.
+4. Add a recipe for using your `VectorDb` under `cookbook/agent_concepts/knowledge/vector_dbs/<your_db>`.
    - Checkout [`cookbook/agent_concepts/knowledge/vector_dbs/pg_vector`](https://github.com/agno-agi/agno/blob/main/cookbook/agent_concepts/knowledge/vector_dbs/pg_vector.py) for an example.
 5. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
 6. Submit a pull request.

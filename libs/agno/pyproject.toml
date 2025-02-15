@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.0.0"
+version = "1.1.1"
 description = "Agno: a lightweight framework for building multi-modal Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -39,12 +39,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
+dev = ["mypy", "pytest", "pytest-asyncio", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
 
 # Dependencies for Models
 anthropic = ["anthropic"]
 cohere = ["cohere"]
-google = ["google-generativeai"]
+google = ["google-genai"]
 groq = ["groq"]
 mistral = ["mistralai"]
 openai = ["openai"]
@@ -58,10 +58,12 @@ duckdb = ["duckdb"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 youtube = ["youtube_transcript_api"]
 firecrawl = ["firecrawl-py"]
+elevenlabs = ["elevenlabs"]
+fal = ["fal_client"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
-postgres = ["psycopg"]
+postgres = ["psycopg-binary"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
@@ -77,6 +79,12 @@ performance = ["memory_profiler"]
 
 # Dependencies for Running cookbook
 cookbooks = ["inquirer", "email_validator"]
+
+# Dependencies for Docker
+docker = ["agno-docker"]
+
+# Dependencies for AWS
+aws = ["agno-aws", "agno-docker"]
 
 # All models
 models = [
@@ -98,6 +106,8 @@ tools = [
   "agno[newspaper]",
   "agno[youtube]",
   "agno[firecrawl]",
+  "agno[elevenlabs]",
+  "agno[fal]",
 ]
 
 # All storage
@@ -176,6 +186,8 @@ module = [
   "apify_client.*",
   "arxiv.*",
   "atlassian.*",
+  "azure.ai.inference.*",
+  "azure.core.*",
   "boto3.*",
   "botocore.*",
   "bs4.*",
@@ -196,6 +208,9 @@ module = [
   "firecrawl.*",
   "github.*",
   "google.*",
+  "googlemaps.*",
+  "google_auth_oauthlib.*",
+  "googleapiclient.*",
   "googlesearch.*",
   "groq.*",
   "huggingface_hub.*",
@@ -247,12 +262,14 @@ module = [
   "textract.*",
   "timeout_decorator.*",
   "torch.*",
+  "todoist_api_python.*",
   "tweepy.*",
   "twilio.*",
   "tzlocal.*",
   "uvicorn.*",
   "vertexai.*",
   "voyageai.*",
+  "weaviate.*",
   "wikipedia.*",
   "yfinance.*",
   "youtube_transcript_api.*",

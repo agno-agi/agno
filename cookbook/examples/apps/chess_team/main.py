@@ -1,7 +1,7 @@
 from typing import Dict
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
 from chess_board import ChessBoard
 
@@ -25,7 +25,7 @@ class ChessGame:
                        Return the moves as a comma-separated list, for example:
                        'e2e4, d2d4, g1f3, b1c3'
                        Include all possible pawn moves, piece moves, castling if available.""",
-                model=Claude(id="claude-3-5-sonnet-20241022"),
+                model=OpenAIChat(id="o3-mini"),
             )
 
             white_piece_agent = Agent(
@@ -34,7 +34,7 @@ class ChessGame:
                        analyze them and choose the best one based on standard chess strategy.
                        Consider piece development, center control, and king safety.
                        Respond ONLY with your chosen move in algebraic notation (e.g., 'e2e4').""",
-                model=Claude(id="claude-3-5-sonnet-20241022"),
+                model=OpenAIChat(id="o3-mini"),
             )
 
             black_piece_agent = Agent(
@@ -43,7 +43,7 @@ class ChessGame:
                        analyze them and choose the best one based on standard chess strategy.
                        Consider piece development, center control, and king safety.
                        Respond ONLY with your chosen move in algebraic notation (e.g., 'e7e5').""",
-                model=Claude(id="claude-3-5-sonnet-20241022"),
+                model=OpenAIChat(id="o3-mini"),
             )
 
             master_agent = Agent(
@@ -68,7 +68,7 @@ class ChessGame:
                     "4. Update and maintain the board state after each valid move",
                     "5. Check for game-ending conditions after each move",
                 ],
-                model=Claude(id="claude-3-5-sonnet-20241022"),
+                model=OpenAIChat(id="o3-mini"),
                 markdown=True,
                 team=[white_piece_agent, black_piece_agent, legal_move_agent],
                 show_tool_calls=True,

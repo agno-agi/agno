@@ -3,12 +3,9 @@ import os
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.mistral import MistralChat
 
-mistral_api_key = os.getenv("MISTRAL_API_KEY")
-
 agent = Agent(
     model=MistralChat(
         id="mistral-large-latest",
-        api_key=mistral_api_key,
     ),
     markdown=True,
 )

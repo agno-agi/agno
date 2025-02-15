@@ -32,7 +32,7 @@ knowledge_base = CombinedKnowledgeBase(
     vector_db=PgVector(table_name="recipes_combined", db_url=db_url),
 )
 
-agent = Agent(knowledge=knowledge_base, use_tools=True, show_tool_calls=True)
+agent = Agent(knowledge=knowledge_base, show_tool_calls=True)
 
 app = Playground(agents=[agent]).get_app()
 

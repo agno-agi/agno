@@ -42,7 +42,7 @@ python cookbook/models/ollama/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/ollama/web_search.py
+python cookbook/models/ollama/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
@@ -63,7 +63,13 @@ python cookbook/models/ollama/storage.py
 python cookbook/models/ollama/knowledge.py
 ```
 
-### 9. Run Agent that interprets an image
+### 9. Run Agent that uses memory
+
+```shell
+python cookbook/models/ollama/memory.py
+```
+
+### 10. Run Agent that interprets an image
 
 Pull the llama3.2 vision model
 
@@ -75,14 +81,13 @@ ollama pull llama3.2-vision
 python cookbook/models/ollama/image_agent.py
 ```
 
-### 10. Run Agent that manually sets the Ollama client
+### 11. Run Agent that manually sets the Ollama client
 
 ```shell
 python cookbook/models/ollama/set_client.py
 ```
 
-
-### 11. See demos of some well-known Ollama models
+### 12. See demos of some well-known Ollama models
 
 ```shell
 python cookbook/models/ollama/demo_deepseek_r1.py

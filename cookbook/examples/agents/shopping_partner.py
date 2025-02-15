@@ -1,7 +1,6 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.exa import ExaTools
-from agno.tools.firecrawl import FirecrawlTools
 
 agent = Agent(
     name="shopping partner",

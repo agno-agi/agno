@@ -67,23 +67,32 @@ class GithubTools(Toolkit):
             logger.debug("Authenticating with public GitHub")
             return Github(auth=auth)
 
-    def search_repositories(self, query: str, sort: str = "stars", order: str = "desc", per_page: int = 5) -> str:
+    def search_repositories(
+        self, query: str, sort: str = "stars", order: str = "desc", page: int = 1, per_page: int = 30
+    ) -> str:
         """Search for repositories on GitHub.
 
         Args:
             query (str): The search query keywords.
             sort (str, optional): The field to sort results by. Can be 'stars', 'forks', or 'updated'. Defaults to 'stars'.
             order (str, optional): The order of results. Can be 'asc' or 'desc'. Defaults to 'desc'.
-            per_page (int, optional): Number of results per page. Defaults to 5.
+            page (int, optional): Page number of results to return, counting from 1. Defaults to 1.
+            per_page (int, optional): Number of results per page. Max 100. Defaults to 30.
+            Note: GitHub's Search API has a maximum limit of 1000 results per query.
 
         Returns:
             A JSON-formatted string containing a list of repositories matching the search query.
         """
-        logger.debug(f"Searching repositories with query: '{query}'")
+        logger.debug(f"Searching repositories with query: '{query}', page: {page}, per_page: {per_page}")
         try:
+            # Ensure per_page doesn't exceed GitHub's max of 100
+            per_page = min(per_page, 100)
+
             repositories = self.g.search_repositories(query=query, sort=sort, order=order)
+
+            # Get the specified page of results
             repo_list = []
-            for repo in repositories[:per_page]:
+            for repo in repositories.get_page(page - 1):
                 repo_info = {
                     "full_name": repo.full_name,
                     "description": repo.description,
@@ -93,7 +102,12 @@ class GithubTools(Toolkit):
                     "language": repo.language,
                 }
                 repo_list.append(repo_info)
+
+                if len(repo_list) >= per_page:
+                    break
+
             return json.dumps(repo_list, indent=2)
+
         except GithubException as e:
             logger.error(f"Error searching repositories: {e}")
             return json.dumps({"error": str(e)})

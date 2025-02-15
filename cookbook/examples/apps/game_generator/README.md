@@ -15,7 +15,7 @@ source ~/.venvs/aienv/bin/activate
 pip install -r cookbook/examples/apps/game_generator/requirements.txt
 ```
 
-### 3. Export `OPENAI_API_KEY` 
+### 3. Export `OPENAI_API_KEY`
 
 ```shell
 export OPENAI_API_KEY=sk-***

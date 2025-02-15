@@ -79,8 +79,9 @@ class AgentKnowledge(BaseModel):
             logger.info("Dropping collection")
             self.vector_db.drop()
 
-        logger.info("Creating collection")
-        self.vector_db.create()
+        if not self.vector_db.exists():
+            logger.info("Creating collection")
+            self.vector_db.create()
 
         logger.info("Loading knowledge base")
         num_documents = 0
