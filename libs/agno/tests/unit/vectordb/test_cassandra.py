@@ -1,12 +1,8 @@
-import time
 import uuid
-from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
-from cassandra.cluster import Cluster, Session
-from cassandra.policies import RoundRobinPolicy
-from cassandra import ConsistencyLevel
+from cassandra.cluster import Session
 
 from agno.document import Document
 from agno.vectordb.cassandra import Cassandra

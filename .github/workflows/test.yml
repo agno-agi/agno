@@ -74,21 +74,18 @@ jobs:
       - name: Run tests for Agno
         working-directory: .
         run: |
-          set -e
           source .venv/bin/activate
           python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit
           echo "AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
       - name: Run tests for Agno Docker
         working-directory: .
         run: |
-          set -e
           source .venv/bin/activate
           python -m pytest --cov=agno_docker --cov-report=json:coverage-docker.json ./libs/agno_docker/tests
           echo "DOCKER_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-docker.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
       - name: Run tests for Agno AWS
         working-directory: .
         run: |
-          set -e
           source .venv/bin/activate
           python -m pytest --cov=agno_aws --cov-report=json:coverage-aws.json ./libs/agno_aws/tests
           echo "AWS_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-aws.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
