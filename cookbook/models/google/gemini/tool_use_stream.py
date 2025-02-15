@@ -9,6 +9,8 @@ agent = Agent(
     tools=[
         YFinanceTools()
     ],
+    add_history_to_messages=True,
+    num_history_responses=5,
     show_tool_calls=True,
     markdown=True,
 )
