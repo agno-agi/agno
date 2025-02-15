@@ -23,7 +23,7 @@ GitHub Authentication Setup Guide
    export GITHUB_BASE_URL="https://api.github.com"
 
    # For Enterprise GitHub
-   export GITHUB_BASE_URL="https://HOSTNAME/api/v3"
+   export GITHUB_BASE_URL="https://YOUR-ENTERPRISE-HOSTNAME/api/v3"
 '''
 
 
