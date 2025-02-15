@@ -1,4 +1,4 @@
-name: Main Tests
+name: Main Validation
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - 'main'
 
 jobs:
-  format-lint:
+  style-check:
 
     runs-on: ubuntu-latest
     strategy:

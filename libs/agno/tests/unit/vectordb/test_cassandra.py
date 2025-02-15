@@ -13,11 +13,11 @@ from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 def mock_session():
     """Create a mocked Cassandra session."""
     session = MagicMock(spec=Session)
-    
+
     # Mock common session operations
     session.execute.return_value = MagicMock()
     session.execute.return_value.one.return_value = [1]  # For count queries
-    
+
     return session
 
 
@@ -37,20 +37,15 @@ def mock_table():
 def vector_db(mock_session, mock_embedder, mock_table):
     """Create a VectorDB instance with mocked session and table."""
     table_name = f"test_vectors_{uuid.uuid4().hex[:8]}"
-    
-    with patch.object(AgnoMetadataVectorCassandraTable, '__new__', return_value=mock_table):
-        db = Cassandra(
-            table_name=table_name,
-            keyspace="test_vectordb",
-            embedder=mock_embedder,
-            session=mock_session
-        )
+
+    with patch.object(AgnoMetadataVectorCassandraTable, "__new__", return_value=mock_table):
+        db = Cassandra(table_name=table_name, keyspace="test_vectordb", embedder=mock_embedder, session=mock_session)
         db.create()
-        
+
         # Verify the mock table was properly set
-        assert hasattr(db, 'table')
+        assert hasattr(db, "table")
         assert isinstance(db.table, MagicMock)
-        
+
         yield db
 
 
@@ -88,29 +83,29 @@ def test_initialization(mock_session):
 def test_insert_and_search(vector_db, mock_table):
     """Test document insertion and search functionality."""
     docs = create_test_documents(1)
-    
+
     # Configure mock for search results
     mock_hit = {
         "row_id": "doc_0",
         "body_blob": "This is test document 0",
         "metadata": {"type": "test", "index": "0"},
         "vector": [0.1] * 1024,
-        "document_name": "test_doc_0"
+        "document_name": "test_doc_0",
     }
     mock_table.metric_ann_search.return_value = [mock_hit]
-    
+
     # Test insert
     vector_db.insert(docs)
-    
+
     # Verify insert was called
     assert mock_table.put_async.called
-    
+
     # Test search
     results = vector_db.search("test document", limit=1)
     assert len(results) == 1
     assert all(isinstance(doc, Document) for doc in results)
     assert mock_table.metric_ann_search.called
-    
+
     # Test vector search
     results = vector_db.vector_search("test document 1", limit=1)
     assert len(results) == 1
@@ -129,7 +124,7 @@ def test_document_existence(vector_db, mock_session):
 
     # Test by name
     assert vector_db.name_exists("test_doc_0") is True
-    
+
     # Configure mock for non-existent document
     mock_session.execute.return_value.one.return_value = [0]
     assert vector_db.name_exists("nonexistent") is False
@@ -137,7 +132,7 @@ def test_document_existence(vector_db, mock_session):
     # Reset mock for ID tests
     mock_session.execute.return_value.one.return_value = [1]
     assert vector_db.id_exists("doc_0") is True
-    
+
     mock_session.execute.return_value.one.return_value = [0]
     assert vector_db.id_exists("nonexistent") is False
 
@@ -145,27 +140,24 @@ def test_document_existence(vector_db, mock_session):
 def test_upsert(vector_db, mock_table):
     """Test upsert functionality."""
     docs = create_test_documents(1)
-    
+
     # Mock search result for verification
     mock_hit = {
         "row_id": "doc_0",
         "body_blob": "Modified content",
         "metadata": {"type": "modified"},
         "vector": [0.1] * 1024,
-        "document_name": "test_doc_0"
+        "document_name": "test_doc_0",
     }
     mock_table.metric_ann_search.return_value = [mock_hit]
-    
+
     # Initial insert
     vector_db.insert(docs)
     assert mock_table.put_async.called
 
     # Modify document and upsert
     modified_doc = Document(
-        id=docs[0].id,
-        content="Modified content",
-        meta_data={"type": "modified"},
-        name=docs[0].name
+        id=docs[0].id, content="Modified content", meta_data={"type": "modified"}, name=docs[0].name
     )
     vector_db.upsert([modified_doc])
 
@@ -185,7 +177,7 @@ def test_delete_and_drop(vector_db, mock_table, mock_session):
     # Test drop
     vector_db.drop()
     mock_session.execute.assert_called_with(
-        "DROP TABLE IF EXISTS test_vectordb.test_vectors_" + vector_db.table_name.split('_')[-1]
+        "DROP TABLE IF EXISTS test_vectordb.test_vectors_" + vector_db.table_name.split("_")[-1]
     )
 
 
@@ -193,6 +185,6 @@ def test_exists(vector_db, mock_session):
     """Test table existence checking."""
     mock_session.execute.return_value.one.return_value = True
     assert vector_db.exists() is True
-    
+
     mock_session.execute.return_value.one.return_value = None
     assert vector_db.exists() is False

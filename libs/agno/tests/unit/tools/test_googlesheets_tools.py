@@ -124,15 +124,12 @@ def test_update_sheet(sheets_tools, mock_sheets_service):
 def test_create_duplicate_sheet(sheets_tools, mock_sheets_service, mock_drive_service):
     """Test duplicating a sheet."""
     # Setup mock data
-    mock_source = {
-        "properties": {"title": "Source Sheet"},
-        "sheets": [{"properties": {"title": "Sheet1"}}]
-    }
+    mock_source = {"properties": {"title": "Source Sheet"}, "sheets": [{"properties": {"title": "Sheet1"}}]}
     mock_new_file = {"id": "new_id"}
     mock_permissions = {
         "permissions": [
             {"emailAddress": "user@example.com", "role": "writer", "type": "user"},
-            {"emailAddress": "owner@example.com", "role": "owner", "type": "user"}
+            {"emailAddress": "owner@example.com", "role": "owner", "type": "user"},
         ]
     }
 
@@ -142,60 +139,47 @@ def test_create_duplicate_sheet(sheets_tools, mock_sheets_service, mock_drive_se
     # Setup mock for drive service with proper chaining
     files_mock = MagicMock()
     permissions_mock = MagicMock()
-    
+
     # Configure the mock chain for files().copy()
     copy_mock = MagicMock()
     copy_mock.execute.return_value = mock_new_file
     files_mock.copy.return_value = copy_mock
-    
+
     # Configure the mock chain for permissions().list()
     list_mock = MagicMock()
     list_mock.execute.return_value = mock_permissions
     permissions_mock.list.return_value = list_mock
-    
+
     # Configure the mock chain for permissions().create()
     create_mock = MagicMock()
     create_mock.execute.return_value = {}
     permissions_mock.create.return_value = create_mock
-    
+
     mock_drive_service.files.return_value = files_mock
     mock_drive_service.permissions.return_value = permissions_mock
 
     # Setup mock for drive service
     with patch("agno.tools.googlesheets.build") as mock_build:
         mock_build.return_value = mock_drive_service
-        
+
         # Execute test
         result = sheets_tools.create_duplicate_sheet(
-            source_id="source_id",
-            new_title="New Sheet",
-            copy_permissions=True
+            source_id="source_id", new_title="New Sheet", copy_permissions=True
         )
 
     # Verify the result
     assert "https://docs.google.com/spreadsheets/d/new_id" in result
-    
+
     # Verify drive service calls
-    files_mock.copy.assert_called_once_with(
-        fileId="source_id",
-        body={"name": "New Sheet"}
-    )
-    
+    files_mock.copy.assert_called_once_with(fileId="source_id", body={"name": "New Sheet"})
+
     # Verify permissions were listed and created (excluding owner)
-    permissions_mock.list.assert_called_once_with(
-        fileId="source_id",
-        fields="permissions(emailAddress,role,type)"
-    )
-    
+    permissions_mock.list.assert_called_once_with(fileId="source_id", fields="permissions(emailAddress,role,type)")
+
     # Verify one permission was created (excluding owner)
     assert permissions_mock.create.call_count == 1
     permissions_mock.create.assert_called_once_with(
-        fileId="new_id",
-        body={
-            "role": "writer",
-            "type": "user",
-            "emailAddress": "user@example.com"
-        }
+        fileId="new_id", body={"role": "writer", "type": "user", "emailAddress": "user@example.com"}
     )
 
 

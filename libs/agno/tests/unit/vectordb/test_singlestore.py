@@ -6,7 +6,6 @@ import pytest
 from sqlalchemy.engine import Engine
 
 from agno.document import Document
-from agno.embedder.openai import OpenAIEmbedder
 from agno.vectordb.distance import Distance
 from agno.vectordb.singlestore import SingleStore
 
@@ -44,10 +43,12 @@ def singlestore_db(mock_engine, mock_session, mock_embedder):
     with patch("agno.vectordb.singlestore.singlestore.sessionmaker") as mock_sessionmaker:
         # Set up sessionmaker to return the mock session directly
         mock_sessionmaker.return_value = mock_session
-        db = SingleStore(collection=TEST_COLLECTION, 
-                         schema=TEST_SCHEMA, 
-                         db_engine=mock_engine,
-        embedder=mock_embedder,)
+        db = SingleStore(
+            collection=TEST_COLLECTION,
+            schema=TEST_SCHEMA,
+            db_engine=mock_engine,
+            embedder=mock_embedder,
+        )
         db.create()
         yield db
 
