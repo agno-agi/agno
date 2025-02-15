@@ -588,23 +588,6 @@ class Gemini(Model):
             logger.warning(f"Unknown video type: {type(video.content)}")
             return None
 
-    def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], **kwargs
-    ) -> None:
-        """
-        Format function call results.
-        """
-        combined_content: List = []
-        combined_function_result: List = []
-        if len(function_call_results) > 0:
-            for result in function_call_results:
-                combined_content.append(result.content)
-                combined_function_result.append((result.tool_name, result.content))
-
-        messages.append(
-            Message(role="tool", content=combined_content, combined_function_details=combined_function_result)
-        )
-
     def parse_provider_response(self, response: GenerateContentResponse) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
