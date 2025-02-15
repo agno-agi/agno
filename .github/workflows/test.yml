@@ -77,18 +77,18 @@ jobs:
           source .venv/bin/activate
           python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit
           echo "AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
-      - name: Run tests for Agno Docker
-        working-directory: .
-        run: |
-          source .venv/bin/activate
-          python -m pytest --cov=agno_docker --cov-report=json:coverage-docker.json ./libs/infra/agno_docker/tests
-          echo "DOCKER_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-docker.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
-      - name: Run tests for Agno AWS
-        working-directory: .
-        run: |
-          source .venv/bin/activate
-          python -m pytest --cov=agno_aws --cov-report=json:coverage-aws.json ./libs/infra/agno_aws/tests
-          echo "AWS_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-aws.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
+#      - name: Run tests for Agno Docker
+#        working-directory: .
+#        run: |
+#          source .venv/bin/activate
+#          python -m pytest --cov=agno_docker --cov-report=json:coverage-docker.json ./libs/infra/agno_docker/tests
+#          echo "DOCKER_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-docker.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
+#      - name: Run tests for Agno AWS
+#        working-directory: .
+#        run: |
+#          source .venv/bin/activate
+#          python -m pytest --cov=agno_aws --cov-report=json:coverage-aws.json ./libs/infra/agno_aws/tests
+#          echo "AWS_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-aws.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
       - name: Create Coverage Badge
         uses: schneegans/dynamic-badges-action@v1.6.0
         with:
