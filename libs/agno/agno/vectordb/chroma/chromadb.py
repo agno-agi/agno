@@ -93,16 +93,17 @@ class ChromaDb(VectorDb):
         if not self.client:
             logger.warning("Client not initialized")
             return False
-        
+
         try:
             collection: Collection = self.client.get_collection(name=self.collection_name)
             collection_data: GetResult = collection.get(include=[IncludeEnum.documents])
             existing_documents = collection_data.get("documents", [])
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            if cleaned_content in existing_documents:
+            if cleaned_content in existing_documents:  # type: ignore
                 return True
         except Exception as e:
             logger.error(f"Document does not exist: {e}")
+            return False
 
     def name_exists(self, name: str) -> bool:
         """Check if a document with a given name exists in the collection.
@@ -221,7 +222,7 @@ class ChromaDb(VectorDb):
         metadata = result.get("metadatas", [{}])[0]  # type: ignore
         documents = result.get("documents", [[]])[0]  # type: ignore
         embeddings = result.get("embeddings")[0]  # type: ignore
-        embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]
+        embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]  # type: ignore
         distances = result.get("distances", [[]])[0]  # type: ignore
 
         for idx, distance in enumerate(distances):
