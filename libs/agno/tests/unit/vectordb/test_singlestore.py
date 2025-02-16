@@ -6,7 +6,6 @@ import pytest
 from sqlalchemy.engine import Engine
 
 from agno.document import Document
-from agno.embedder.openai import OpenAIEmbedder
 from agno.vectordb.distance import Distance
 from agno.vectordb.singlestore import SingleStore
 
@@ -39,12 +38,17 @@ def mock_session():
 
 
 @pytest.fixture
-def singlestore_db(mock_engine, mock_session):
+def singlestore_db(mock_engine, mock_session, mock_embedder):
     """Fixture to create a SingleStore instance with mocked components"""
     with patch("agno.vectordb.singlestore.singlestore.sessionmaker") as mock_sessionmaker:
         # Set up sessionmaker to return the mock session directly
         mock_sessionmaker.return_value = mock_session
-        db = SingleStore(collection=TEST_COLLECTION, schema=TEST_SCHEMA, db_engine=mock_engine)
+        db = SingleStore(
+            collection=TEST_COLLECTION,
+            schema=TEST_SCHEMA,
+            db_engine=mock_engine,
+            embedder=mock_embedder,
+        )
         db.create()
         yield db
 
@@ -64,15 +68,6 @@ def sample_documents() -> List[Document]:
     ]
 
 
-@pytest.fixture
-def mock_embedder():
-    """Fixture to create a mocked embedder"""
-    mock_embedder = MagicMock(spec=OpenAIEmbedder)
-    mock_embedder.dimensions = 1536
-    mock_embedder.get_embedding.return_value = [0.1] * 1536
-    return mock_embedder
-
-
 def test_insert_documents(singlestore_db, sample_documents, mock_session):
     """Test inserting documents"""
     singlestore_db.insert(sample_documents)
@@ -84,9 +79,8 @@ def test_insert_documents(singlestore_db, sample_documents, mock_session):
     mock_session.commit.assert_called_once()
 
 
-def test_search_documents(singlestore_db, sample_documents, mock_session, mock_embedder):
+def test_search_documents(singlestore_db, sample_documents, mock_session):
     """Test searching documents"""
-    singlestore_db.embedder = mock_embedder
 
     # Mock search results
     mock_result = [

@@ -1,17 +1,19 @@
-name: test
+name: Validation
 
 on:
   push:
+    branches:
+      - 'main'
   pull_request:
     types:
       - opened
-      - edited
+      - synchronize
       - reopened
     branches:
       - 'main'
 
 jobs:
-  format-lint:
+  style-check:
 
     runs-on: ubuntu-latest
     strategy:
@@ -44,6 +46,74 @@ jobs:
       - name: Mypy
         run: |
           mypy .
-#      - name: Test
+
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true  # Stop all matrix jobs if one fails
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          set -e
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          set -e
+          ./scripts/dev_setup.sh
+      - name: Run tests for Agno
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit
+          echo "AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
+#      - name: Run tests for Agno Docker
+#        working-directory: .
 #        run: |
-#          pytest
+#          source .venv/bin/activate
+#          python -m pytest --cov=agno_docker --cov-report=json:coverage-docker.json ./libs/infra/agno_docker/tests
+#          echo "DOCKER_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-docker.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
+#      - name: Run tests for Agno AWS
+#        working-directory: .
+#        run: |
+#          source .venv/bin/activate
+#          python -m pytest --cov=agno_aws --cov-report=json:coverage-aws.json ./libs/infra/agno_aws/tests
+#          echo "AWS_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-aws.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
+     # ![badge](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/dirkbrnd/9ba6033402f8be8ae2a63323a114211a/raw/agno-coverage.json)
+      - name: Create Coverage Badge
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_SECRET }}
+          gistID: 9ba6033402f8be8ae2a63323a114211a
+          filename: agno-coverage.json
+          label: Coverage
+          message: ${{ env.AGNO_COVERAGE }}%
+          color: |
+            [
+              {
+                "value": 100,
+                "color": "brightgreen"
+              },
+              {
+                "value": 80,
+                "color": "green"
+              },
+              {
+                "value": 60,
+                "color": "yellow"
+              },
+              {
+                "value": 0,
+                "color": "red"
+              }
+            ]
+            

@@ -1,0 +1,70 @@
+name: Main Validation
+
+on:
+  push:
+    branches:
+      - 'main'
+
+jobs:
+  style-check:
+
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9"]
+      fail-fast: true  # Stop all matrix jobs if one fails
+
+    defaults:
+      run:
+        working-directory: libs/agno
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade \
+            pip setuptools wheel \
+            ruff mypy pytest types-pyyaml
+          pip install --no-deps -r requirements.txt
+      - name: Ruff format
+        run: |
+          ruff format .
+      - name: Ruff check
+        run: |
+          ruff check .
+      - name: Mypy
+        run: |
+          mypy .
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Run tests for Agno
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/integration
+          echo "AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV

@@ -1,61 +1,52 @@
-import time
 import uuid
-from typing import Generator
+from unittest.mock import MagicMock, patch
 
 import pytest
-from cassandra.cluster import Cluster, Session
+from cassandra.cluster import Session
 
 from agno.document import Document
-
-
-@pytest.fixture(scope="session")
-def cassandra_session() -> Generator[Session, None, None]:
-    """Create a session-scoped connection to Cassandra."""
-    # Wait for Cassandra to be ready
-    max_retries = 5
-    retry_delay = 2
-
-    for attempt in range(max_retries):
-        try:
-            cluster = Cluster(["localhost"], port=9042)
-            session = cluster.connect()
-            print(f"Successfully connected to Cassandra on attempt {attempt + 1}")
-            break
-        except Exception:
-            if attempt == max_retries - 1:
-                raise
-            time.sleep(retry_delay)
-
-    # Create test keyspace
-    keyspace = "test_vectordb"
-    session.execute(f"""
-        CREATE KEYSPACE IF NOT EXISTS {keyspace}
-        WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': '1'}}
-    """)
-    session.set_keyspace(keyspace)
-
-    yield session
-
-    # Cleanup after all tests
-    session.execute(f"DROP KEYSPACE IF EXISTS {keyspace}")
-    cluster.shutdown()
+from agno.vectordb.cassandra import Cassandra
+from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 
 
 @pytest.fixture
-def vector_db(cassandra_session, mock_embedder):
-    """Create a fresh VectorDB instance for each test."""
-    from agno.vectordb.cassandra import Cassandra
+def mock_session():
+    """Create a mocked Cassandra session."""
+    session = MagicMock(spec=Session)
 
+    # Mock common session operations
+    session.execute.return_value = MagicMock()
+    session.execute.return_value.one.return_value = [1]  # For count queries
+
+    return session
+
+
+@pytest.fixture
+def mock_table():
+    """Create a mock table with all necessary methods."""
+    mock_table = MagicMock()
+    mock_table.metric_ann_search = MagicMock(return_value=[])
+    mock_table.put_async = MagicMock()
+    mock_table.put_async.return_value = MagicMock()
+    mock_table.put_async.return_value.result = MagicMock(return_value=None)
+    mock_table.clear = MagicMock()
+    return mock_table
+
+
+@pytest.fixture
+def vector_db(mock_session, mock_embedder, mock_table):
+    """Create a VectorDB instance with mocked session and table."""
     table_name = f"test_vectors_{uuid.uuid4().hex[:8]}"
-    db = Cassandra(table_name=table_name, keyspace="test_vectordb", embedder=mock_embedder, session=cassandra_session)
-    db.create()
 
-    assert db.exists(), "Table was not created successfully"
+    with patch.object(AgnoMetadataVectorCassandraTable, "__new__", return_value=mock_table):
+        db = Cassandra(table_name=table_name, keyspace="test_vectordb", embedder=mock_embedder, session=mock_session)
+        db.create()
 
-    yield db
+        # Verify the mock table was properly set
+        assert hasattr(db, "table")
+        assert isinstance(db.table, MagicMock)
 
-    # Cleanup after each test
-    db.drop()
+        yield db
 
 
 def create_test_documents(num_docs: int = 3) -> list[Document]:
@@ -71,65 +62,98 @@ def create_test_documents(num_docs: int = 3) -> list[Document]:
     ]
 
 
-def test_initialization(cassandra_session):
+def test_initialization(mock_session):
     """Test VectorDB initialization."""
-    from agno.vectordb.cassandra import Cassandra
-
     # Test successful initialization
-    db = Cassandra(table_name="test_vectors", keyspace="test_vectordb", session=cassandra_session)
+    db = Cassandra(table_name="test_vectors", keyspace="test_vectordb", session=mock_session)
     assert db.table_name == "test_vectors"
     assert db.keyspace == "test_vectordb"
 
     # Test initialization failures
     with pytest.raises(ValueError):
-        Cassandra(table_name="", keyspace="test_vectordb", session=cassandra_session)
+        Cassandra(table_name="", keyspace="test_vectordb", session=mock_session)
 
     with pytest.raises(ValueError):
-        Cassandra(table_name="test_vectors", keyspace="", session=cassandra_session)
+        Cassandra(table_name="test_vectors", keyspace="", session=mock_session)
 
     with pytest.raises(ValueError):
         Cassandra(table_name="test_vectors", keyspace="test_vectordb", session=None)
 
 
-def test_insert_and_search(vector_db):
+def test_insert_and_search(vector_db, mock_table):
     """Test document insertion and search functionality."""
-    # Insert test documents
     docs = create_test_documents(1)
+
+    # Configure mock for search results
+    mock_hit = {
+        "row_id": "doc_0",
+        "body_blob": "This is test document 0",
+        "metadata": {"type": "test", "index": "0"},
+        "vector": [0.1] * 1024,
+        "document_name": "test_doc_0",
+    }
+    mock_table.metric_ann_search.return_value = [mock_hit]
+
+    # Test insert
     vector_db.insert(docs)
 
-    time.sleep(1)
+    # Verify insert was called
+    assert mock_table.put_async.called
 
-    # Test search functionality
+    # Test search
     results = vector_db.search("test document", limit=1)
     assert len(results) == 1
     assert all(isinstance(doc, Document) for doc in results)
+    assert mock_table.metric_ann_search.called
 
     # Test vector search
-    results = vector_db.vector_search("test document 1", limit=2)
+    results = vector_db.vector_search("test document 1", limit=1)
+    assert len(results) == 1
 
 
-def test_document_existence(vector_db):
+def test_document_existence(vector_db, mock_session):
     """Test document existence checking methods."""
     docs = create_test_documents(1)
     vector_db.insert(docs)
+
+    # Configure mock responses
+    mock_session.execute.return_value.one.return_value = [1]  # Document exists
 
     # Test by document object
     assert vector_db.doc_exists(docs[0]) is True
 
     # Test by name
     assert vector_db.name_exists("test_doc_0") is True
+
+    # Configure mock for non-existent document
+    mock_session.execute.return_value.one.return_value = [0]
     assert vector_db.name_exists("nonexistent") is False
 
-    # Test by ID
+    # Reset mock for ID tests
+    mock_session.execute.return_value.one.return_value = [1]
     assert vector_db.id_exists("doc_0") is True
+
+    mock_session.execute.return_value.one.return_value = [0]
     assert vector_db.id_exists("nonexistent") is False
 
 
-def test_upsert(vector_db):
+def test_upsert(vector_db, mock_table):
     """Test upsert functionality."""
-    # Initial insert
     docs = create_test_documents(1)
+
+    # Mock search result for verification
+    mock_hit = {
+        "row_id": "doc_0",
+        "body_blob": "Modified content",
+        "metadata": {"type": "modified"},
+        "vector": [0.1] * 1024,
+        "document_name": "test_doc_0",
+    }
+    mock_table.metric_ann_search.return_value = [mock_hit]
+
+    # Initial insert
     vector_db.insert(docs)
+    assert mock_table.put_async.called
 
     # Modify document and upsert
     modified_doc = Document(
@@ -144,24 +168,23 @@ def test_upsert(vector_db):
     assert results[0].meta_data["type"] == "modified"
 
 
-def test_delete_and_drop(vector_db):
+def test_delete_and_drop(vector_db, mock_table, mock_session):
     """Test delete and drop functionality."""
-    # Insert documents
-    docs = create_test_documents()
-    vector_db.insert(docs)
-
     # Test delete
     assert vector_db.delete() is True
-    results = vector_db.search("test document", limit=5)
-    assert len(results) == 0
+    assert mock_table.clear.called
 
     # Test drop
     vector_db.drop()
-    assert vector_db.exists() is False
+    mock_session.execute.assert_called_with(
+        "DROP TABLE IF EXISTS test_vectordb.test_vectors_" + vector_db.table_name.split("_")[-1]
+    )
 
 
-def test_exists(vector_db):
+def test_exists(vector_db, mock_session):
     """Test table existence checking."""
+    mock_session.execute.return_value.one.return_value = True
     assert vector_db.exists() is True
-    vector_db.drop()
+
+    mock_session.execute.return_value.one.return_value = None
     assert vector_db.exists() is False

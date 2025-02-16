@@ -12,4 +12,4 @@ source ${CURR_DIR}/_utils.sh
 print_heading "Running tests for agno"
 
 print_heading "Running: pytest ${AGNO_DOCKER_DIR}"
-pytest ${AGNO_DOCKER_DIR}
+pytest ${AGNO_DOCKER_DIR}/tests
