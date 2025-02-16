@@ -182,6 +182,7 @@ class OpenAIChat(Model):
             "top_p": self.top_p,
             "extra_headers": self.extra_headers,
             "extra_query": self.extra_query,
+            "metadata": self.metadata
         }
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
