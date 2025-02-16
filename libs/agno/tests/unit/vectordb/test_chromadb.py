@@ -163,3 +163,21 @@ def test_custom_embedder(mock_embedder):
     finally:
         if os.path.exists(TEST_PATH):
             shutil.rmtree(TEST_PATH)
+
+
+def test_multiple_document_operations(chroma_db, sample_documents):
+    """Test multiple document operations including batch inserts"""
+    # Test batch insert
+    first_batch = sample_documents[:2]
+    chroma_db.insert(first_batch)
+    assert chroma_db.get_count() == 2
+
+    # Test adding another document
+    second_batch = [sample_documents[2]]
+    chroma_db.insert(second_batch)
+    assert chroma_db.get_count() == 3
+
+    # Verify all documents are searchable
+    curry_results = chroma_db.search("curry", limit=1)
+    assert len(curry_results) == 1
+    assert "curry" in curry_results[0].content.lower()
