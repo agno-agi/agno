@@ -90,15 +90,19 @@ class ChromaDb(VectorDb):
         Returns:
             bool: True if document exists, False otherwise.
         """
-        if self.client:
-            try:
-                collection: Collection = self.client.get_collection(name=self.collection_name)
-                collection_data: GetResult = collection.get(include=[IncludeEnum.documents])
-                if collection_data.get("documents") != []:
-                    return True
-            except Exception as e:
-                logger.error(f"Document does not exist: {e}")
-        return False
+        if not self.client:
+            logger.warning("Client not initialized")
+            return False
+        
+        try:
+            collection: Collection = self.client.get_collection(name=self.collection_name)
+            collection_data: GetResult = collection.get(include=[IncludeEnum.documents])
+            existing_documents = collection_data.get("documents", [])
+            cleaned_content = document.content.replace("\x00", "\ufffd")
+            if cleaned_content in existing_documents:
+                return True
+        except Exception as e:
+            logger.error(f"Document does not exist: {e}")
 
     def name_exists(self, name: str) -> bool:
         """Check if a document with a given name exists in the collection.
