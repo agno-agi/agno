@@ -3,11 +3,12 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent, AgentMemory, RunResponse  # noqa
 from agno.media import Image
 from agno.models.openai import OpenAIChat
+from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 
 def test_basic():
-    agent = Agent(model=OpenAIChat(id="gpt-4o"), markdown=True)
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True)
 
     # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -30,7 +31,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=OpenAIChat(id="gpt-4o"), markdown=True)
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -45,7 +46,7 @@ def test_basic_stream():
 
 def test_tool_use():
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-4o-mini"),
         tools=[DuckDuckGoTools()],
         show_tool_calls=True,
         markdown=True,
@@ -61,7 +62,7 @@ def test_tool_use():
 
 def test_with_memory():
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-4o-mini"),
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
@@ -100,7 +101,7 @@ def test_structured_output():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-4o-mini"),
         response_model=MovieScript,
     )
 
@@ -115,7 +116,7 @@ def test_structured_output():
 
 def test_image_input():
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-4o-mini"),
         tools=[DuckDuckGoTools()],
         markdown=True,
     )
@@ -126,3 +127,20 @@ def test_image_input():
     )
 
     assert "golden" in response.content.lower()
+
+
+def test_history_grows_exponentially():
+    db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
+        add_history_to_messages=True,
+    )
+    agent.run("Hello")
+    assert len(agent.run_response.messages) == 2
+    agent.run("Hello 2")
+    assert len(agent.run_response.messages) == 4
+    agent.run("Hello 3")
+    assert len(agent.run_response.messages) == 6
+    agent.run("Hello 4")
+    assert len(agent.run_response.messages) == 8

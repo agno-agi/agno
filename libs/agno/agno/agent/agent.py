@@ -881,7 +881,6 @@ class Agent:
                     import time
 
                     time.sleep(delay)
-
         if last_exception is not None:
             raise Exception(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}"
@@ -1355,7 +1354,7 @@ class Agent:
         if self._functions_for_model is None or self._tools_for_model is None:
             # Get Agent tools
             agent_tools = self.get_tools()
-            if agent_tools is not None:
+            if agent_tools is not None and len(agent_tools) > 0:
                 logger.debug("Processing tools for model")
                 # Check if we need strict mode for the model
                 strict = False
@@ -1942,40 +1941,41 @@ class Agent:
                 f"<transfer_instructions>\n{self.get_transfer_instructions().strip()}\n</transfer_instructions>\n\n"
             )
         # 3.3.11 Then add memories to the system prompt
-        if self.memory.create_user_memories:
-            if self.memory.memories and len(self.memory.memories) > 0:
+        if self.memory:
+            if self.memory.create_user_memories:
+                if self.memory.memories and len(self.memory.memories) > 0:
+                    system_message_content += (
+                        "You have access to memories from previous interactions with the user that you can use:\n\n"
+                    )
+                    system_message_content += "<memories_from_previous_interactions>"
+                    for _memory in self.memory.memories:
+                        system_message_content += f"\n- {_memory.memory}"
+                    system_message_content += "\n</memories_from_previous_interactions>\n\n"
+                    system_message_content += (
+                        "Note: this information is from previous interactions and may be updated in this conversation. "
+                        "You should always prefer information from this conversation over the past memories.\n\n"
+                    )
+                else:
+                    system_message_content += (
+                        "You have the capability to retain memories from previous interactions with the user, "
+                        "but have not had any interactions with the user yet.\n"
+                        "If the user asks about previous memories, you can let them know that you dont have any memory about the user because you haven't had any interactions yet.\n\n"
+                    )
                 system_message_content += (
-                    "You have access to memories from previous interactions with the user that you can use:\n\n"
+                    "You can add new memories using the `update_memory` tool.\n"
+                    "If you use the `update_memory` tool, remember to pass on the response to the user.\n\n"
                 )
-                system_message_content += "<memories_from_previous_interactions>"
-                for _memory in self.memory.memories:
-                    system_message_content += f"\n- {_memory.memory}"
-                system_message_content += "\n</memories_from_previous_interactions>\n\n"
-                system_message_content += (
-                    "Note: this information is from previous interactions and may be updated in this conversation. "
-                    "You should always prefer information from this conversation over the past memories.\n\n"
-                )
-            else:
-                system_message_content += (
-                    "You have the capability to retain memories from previous interactions with the user, "
-                    "but have not had any interactions with the user yet.\n"
-                    "If the user asks about previous memories, you can let them know that you dont have any memory about the user because you haven't had any interactions yet.\n\n"
-                )
-            system_message_content += (
-                "You can add new memories using the `update_memory` tool.\n"
-                "If you use the `update_memory` tool, remember to pass on the response to the user.\n\n"
-            )
-        # 3.3.12 Then add a summary of the interaction to the system prompt
-        if self.memory.create_session_summary:
-            if self.memory.summary is not None:
-                system_message_content += "Here is a brief summary of your previous interactions if it helps:\n\n"
-                system_message_content += "<summary_of_previous_interactions>\n"
-                system_message_content += str(self.memory.summary)
-                system_message_content += "\n</summary_of_previous_interactions>\n\n"
-                system_message_content += (
-                    "Note: this information is from previous interactions and may be outdated. "
-                    "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
-                )
+            # 3.3.12 Then add a summary of the interaction to the system prompt
+            if self.memory.create_session_summary:
+                if self.memory.summary is not None:
+                    system_message_content += "Here is a brief summary of your previous interactions if it helps:\n\n"
+                    system_message_content += "<summary_of_previous_interactions>\n"
+                    system_message_content += str(self.memory.summary)
+                    system_message_content += "\n</summary_of_previous_interactions>\n\n"
+                    system_message_content += (
+                        "Note: this information is from previous interactions and may be outdated. "
+                        "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
+                    )
 
         # Add the JSON output prompt if response_model is provided and structured_outputs is False
         if self.response_model is not None and not self.structured_outputs:
@@ -2719,51 +2719,77 @@ class Agent:
 
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
+        reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
             reasoning_model = self.model.__class__(id=self.model.id)
         if reasoning_model is None:
             logger.warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
 
-        # Use DeepSeek for reasoning
-        if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id == "deepseek-reasoner":
-            from agno.reasoning.deepseek import get_deepseek_reasoning, get_deepseek_reasoning_agent
+        # If a reasoning model is provided, use it to generate reasoning
+        if reasoning_model_provided:
+            # Use DeepSeek for reasoning
+            if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id == "deepseek-reasoner":
+                from agno.reasoning.deepseek import get_deepseek_reasoning, get_deepseek_reasoning_agent
 
-            ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
-                reasoning_model=reasoning_model, monitoring=self.monitoring
-            )
-            ds_reasoning_message: Optional[Message] = get_deepseek_reasoning(
-                reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages()
-            )
-            if ds_reasoning_message is None:
-                logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                return
-            run_messages.messages.append(ds_reasoning_message)
-            # Add reasoning step to the Agent's run_response
-            self.update_run_response_with_reasoning(
-                reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)],
-                reasoning_agent_messages=[ds_reasoning_message],
-            )
-        # Use Groq for reasoning
-        elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
-            from agno.reasoning.groq import get_groq_reasoning, get_groq_reasoning_agent
+                ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
+                    reasoning_model=reasoning_model, monitoring=self.monitoring
+                )
+                ds_reasoning_message: Optional[Message] = get_deepseek_reasoning(
+                    reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages()
+                )
+                if ds_reasoning_message is None:
+                    logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    return
+                run_messages.messages.append(ds_reasoning_message)
+                # Add reasoning step to the Agent's run_response
+                self.update_run_response_with_reasoning(
+                    reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)],
+                    reasoning_agent_messages=[ds_reasoning_message],
+                )
+            # Use Groq for reasoning
+            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
+                from agno.reasoning.groq import get_groq_reasoning, get_groq_reasoning_agent
 
-            groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
-                reasoning_model=reasoning_model, monitoring=self.monitoring
-            )
-            groq_reasoning_message: Optional[Message] = get_groq_reasoning(
-                reasoning_agent=groq_reasoning_agent, messages=run_messages.get_input_messages()
-            )
-            if groq_reasoning_message is None:
-                logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                return
-            run_messages.messages.append(groq_reasoning_message)
-            # Add reasoning step to the Agent's run_response
-            self.update_run_response_with_reasoning(
-                reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)],
-                reasoning_agent_messages=[groq_reasoning_message],
-            )
-        # Get default reasoning
+                groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
+                    reasoning_model=reasoning_model, monitoring=self.monitoring
+                )
+                groq_reasoning_message: Optional[Message] = get_groq_reasoning(
+                    reasoning_agent=groq_reasoning_agent, messages=run_messages.get_input_messages()
+                )
+                if groq_reasoning_message is None:
+                    logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    return
+                run_messages.messages.append(groq_reasoning_message)
+                # Add reasoning step to the Agent's run_response
+                self.update_run_response_with_reasoning(
+                    reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)],
+                    reasoning_agent_messages=[groq_reasoning_message],
+                )
+            # Use o-3 for reasoning
+            elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3"):
+                from agno.reasoning.openai import get_openai_reasoning, get_openai_reasoning_agent
+
+                openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
+                    reasoning_model=reasoning_model, monitoring=self.monitoring
+                )
+                openai_reasoning_message: Optional[Message] = get_openai_reasoning(
+                    reasoning_agent=openai_reasoning_agent, messages=run_messages.get_input_messages()
+                )
+                if openai_reasoning_message is None:
+                    logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    return
+                run_messages.messages.append(openai_reasoning_message)
+                # Add reasoning step to the Agent's run_response
+                self.update_run_response_with_reasoning(
+                    reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)],
+                    reasoning_agent_messages=[openai_reasoning_message],
+                )
+            else:
+                logger.info(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, adding manual CoT"
+                )
+        # If no reasoning model is provided, use the default reasoning approach
         else:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
@@ -2872,51 +2898,77 @@ class Agent:
 
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
+        reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
             reasoning_model = self.model.__class__(id=self.model.id)
         if reasoning_model is None:
             logger.warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
 
-        # Use DeepSeek for reasoning
-        if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id == "deepseek-reasoner":
-            from agno.reasoning.deepseek import aget_deepseek_reasoning, get_deepseek_reasoning_agent
+        # If a reasoning model is provided, use it to generate reasoning
+        if reasoning_model_provided:
+            # Use DeepSeek for reasoning
+            if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id == "deepseek-reasoner":
+                from agno.reasoning.deepseek import aget_deepseek_reasoning, get_deepseek_reasoning_agent
 
-            ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
-                reasoning_model=reasoning_model, monitoring=self.monitoring
-            )
-            ds_reasoning_message: Optional[Message] = await aget_deepseek_reasoning(
-                reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages()
-            )
-            if ds_reasoning_message is None:
-                logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                return
-            run_messages.messages.append(ds_reasoning_message)
-            # Add reasoning step to the Agent's run_response
-            self.update_run_response_with_reasoning(
-                reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)],
-                reasoning_agent_messages=[ds_reasoning_message],
-            )
-        # Use Groq for reasoning
-        elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
-            from agno.reasoning.groq import aget_groq_reasoning, get_groq_reasoning_agent
+                ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
+                    reasoning_model=reasoning_model, monitoring=self.monitoring
+                )
+                ds_reasoning_message: Optional[Message] = await aget_deepseek_reasoning(
+                    reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages()
+                )
+                if ds_reasoning_message is None:
+                    logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    return
+                run_messages.messages.append(ds_reasoning_message)
+                # Add reasoning step to the Agent's run_response
+                self.update_run_response_with_reasoning(
+                    reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)],
+                    reasoning_agent_messages=[ds_reasoning_message],
+                )
+            # Use Groq for reasoning
+            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
+                from agno.reasoning.groq import aget_groq_reasoning, get_groq_reasoning_agent
 
-            groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
-                reasoning_model=reasoning_model, monitoring=self.monitoring
-            )
-            groq_reasoning_message: Optional[Message] = await aget_groq_reasoning(
-                reasoning_agent=groq_reasoning_agent, messages=run_messages.get_input_messages()
-            )
-            if groq_reasoning_message is None:
-                logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                return
-            run_messages.messages.append(groq_reasoning_message)
-            # Add reasoning step to the Agent's run_response
-            self.update_run_response_with_reasoning(
-                reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)],
-                reasoning_agent_messages=[groq_reasoning_message],
-            )
-        # Get default reasoning
+                groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
+                    reasoning_model=reasoning_model, monitoring=self.monitoring
+                )
+                groq_reasoning_message: Optional[Message] = await aget_groq_reasoning(
+                    reasoning_agent=groq_reasoning_agent, messages=run_messages.get_input_messages()
+                )
+                if groq_reasoning_message is None:
+                    logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    return
+                run_messages.messages.append(groq_reasoning_message)
+                # Add reasoning step to the Agent's run_response
+                self.update_run_response_with_reasoning(
+                    reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)],
+                    reasoning_agent_messages=[groq_reasoning_message],
+                )
+            # Use o-3 for reasoning
+            elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o"):
+                from agno.reasoning.openai import aget_openai_reasoning, get_openai_reasoning_agent
+
+                openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
+                    reasoning_model=reasoning_model, monitoring=self.monitoring
+                )
+                openai_reasoning_message: Optional[Message] = await aget_openai_reasoning(
+                    reasoning_agent=openai_reasoning_agent, messages=run_messages.get_input_messages()
+                )
+                if openai_reasoning_message is None:
+                    logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    return
+                run_messages.messages.append(openai_reasoning_message)
+                # Add reasoning step to the Agent's run_response
+                self.update_run_response_with_reasoning(
+                    reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)],
+                    reasoning_agent_messages=[openai_reasoning_message],
+                )
+            else:
+                logger.info(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, adding manual CoT"
+                )
+        # If no reasoning model is provided, use the default reasoning approach
         else:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
