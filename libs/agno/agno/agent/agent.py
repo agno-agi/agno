@@ -1302,15 +1302,15 @@ class Agent:
             session_id=self.session_id,
             agent_id=self.agent_id,
             content=content,
-            tools=self.run_response.tools,
-            audio=self.run_response.audio,
-            images=self.run_response.images,
-            videos=self.run_response.videos,
-            response_audio=self.run_response.response_audio,
-            model=self.run_response.model,
-            messages=self.run_response.messages,
-            extra_data=self.run_response.extra_data,
-            event=event.value,
+            # tools=self.run_response.tools,
+            # audio=self.run_response.audio,
+            # images=self.run_response.images,
+            # videos=self.run_response.videos,
+            # response_audio=self.run_response.response_audio,
+            # model=self.run_response.model,
+            # messages=self.run_response.messages,
+            # extra_data=self.run_response.extra_data,
+            # event=event.value,
         )
         if content_type is not None:
             rr.content_type = content_type
@@ -3860,3 +3860,97 @@ class Agent:
                 break
 
             self.print_response(message=message, stream=stream, markdown=markdown, **kwargs)
+
+    async def acli_app(
+        self,
+        message: Optional[str] = None,
+        user: str = "User",
+        emoji: str = ":sunglasses:",
+        stream: bool = False,
+        markdown: bool = False,
+        exit_on: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        from rich.prompt import Prompt
+
+        if message:
+            await self.aprint_response(message=message, stream=stream, markdown=markdown, **kwargs)
+
+        _exit_on = exit_on or ["exit", "quit", "bye"]
+        while True:
+            message = Prompt.ask(f"[bold] {emoji} {user} [/bold]")
+            if message in _exit_on:
+                break
+
+            await self.aprint_response(message=message, stream=stream, markdown=markdown, **kwargs)
+
+
+    async def live(self, exit_on: Optional[List[str]] = None, **kwargs: Any):
+        """
+        Run the agent in live mode with a persistent connection in a single function.
+        Supports both text and audio input.
+        """
+        from rich.console import Console
+        from rich.prompt import Prompt
+        import sounddevice as sd
+        import soundfile as sf
+        import numpy as np
+        from pathlib import Path
+        import time
+
+        from agno.media import AudioPlayer
+        from agno.models.openai import OpenAIRealtime
+
+        self.model: OpenAIRealtime = cast(OpenAIRealtime, self.model)
+
+        console = Console()
+        await self.model.create_connection()
+        audio_player = AudioPlayer()
+        _exit_on = exit_on or ["exit", "quit", "bye"]
+        
+        async def record_audio(duration=5):
+            """Record audio and return base64 encoded string"""
+            import base64
+            
+            SAMPLE_RATE = 44100
+            CHANNELS = 1
+            
+            console.print("Recording... (5 seconds)")
+            recording = sd.rec(
+                int(duration * SAMPLE_RATE),
+                samplerate=SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype='int16'
+            )
+            sd.wait()
+            
+            # Convert directly to base64
+            base64_audio = base64.b64encode(recording.tobytes()).decode('utf-8')
+            console.print("Audio recorded and encoded")
+            return base64_audio
+
+        try:
+            while True:
+                input_type = Prompt.ask(
+                    "Choose input type", 
+                    choices=["text", "audio", "exit"]
+                )
+                
+                if input_type.lower() in _exit_on or input_type == "exit":
+                    console.print("Goodbye!")
+                    break
+
+                if input_type == "audio":
+                    audio_file = await record_audio()
+                    await self.model.send_audio_message(audio_file)
+                    await self.model.process_stream(console, audio_player)
+                else:
+                    message = Prompt.ask("Enter a message to send to the agent")
+                    if message.lower() in _exit_on:
+                        console.print("Goodbye!")
+                        break
+                    await self.model.send_text_message(message)
+                    await self.model.process_stream(console, audio_player)
+
+        finally:
+            await self.model.close_connection()

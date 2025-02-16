@@ -140,6 +140,92 @@ class AudioOutput(BaseModel):
             "transcript": self.transcript,
         }
 
+class AudioPlayer:
+    """
+    A class for playing audio.
+    """
+
+    def __init__(self, sample_rate=24000):
+        try:
+            import sounddevice as sd
+            import numpy as np
+            import threading
+        except ImportError:
+            raise ImportError("sounddevice, numpy, threading, and base64 are required for AudioPlayer. Please install using `pip install sounddevice numpy threading`")
+
+        self.sample_rate = sample_rate
+        self.queue = []
+        self.lock = threading.Lock()
+
+        # Create output stream with callback
+        self.stream = sd.OutputStream(
+            callback=self.callback,
+            samplerate=sample_rate,
+            channels=1,
+            dtype=np.int16,
+            blocksize=int(0.05 * sample_rate),  # 50ms chunks
+        )
+        self.playing = False
+
+        self.np = np
+
+    def callback(self, outdata, frames, time, status):
+        """Callback function for the output stream"""
+        np = self.np
+        with self.lock:
+            # Initialize empty data array
+            data = np.empty(0, dtype=np.int16)
+
+            # Get data from queue
+            while len(data) < frames and len(self.queue) > 0:
+                chunk = self.queue.pop(0)
+                frames_needed = frames - len(data)
+                data = np.concatenate((data, chunk[:frames_needed]))
+                if len(chunk) > frames_needed:
+                    # Put remaining data back in queue
+                    self.queue.insert(0, chunk[frames_needed:])
+
+            # Fill remaining space with silence if needed
+            if len(data) < frames:
+                data = np.concatenate((data, np.zeros(frames - len(data), dtype=np.int16)))
+
+            # Reshape and set output
+            outdata[:] = data.reshape(-1, 1)
+
+    def play(self, audio_string):
+        """Play base64 encoded audio data"""
+        import base64
+        np = self.np
+        try:
+            # Decode base64 string to bytes
+            audio_bytes = base64.b64decode(audio_string)
+
+            # Convert to numpy array
+            audio_data = np.frombuffer(audio_bytes, dtype=np.int16)
+
+            # Add to queue
+            with self.lock:
+                self.queue.append(audio_data)
+
+            # Start playback if not already playing
+            if not self.playing:
+                self.stream.start()
+                self.playing = True
+
+        except Exception as e:
+            print(f"Error playing audio: {e}")
+
+    def stop(self):
+        """Stop playback and clear queue"""
+        self.stream.stop()
+        self.playing = False
+        with self.lock:
+            self.queue = []
+
+    def close(self):
+        """Clean up resources"""
+        self.stop()
+        self.stream.close()
 
 class Image(BaseModel):
     url: Optional[str] = None  # Remote location for image
