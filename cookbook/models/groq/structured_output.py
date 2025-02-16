@@ -33,7 +33,7 @@ json_mode_agent = Agent(
 )
 
 # Get the response in a variable
-# run: RunResponse = json_mode_agent.run("New York")
-# pprint(run.content)
+run: RunResponse = json_mode_agent.run("New York")
+pprint(run.content)
 
-json_mode_agent.print_response("New York")
+# json_mode_agent.print_response("New York")

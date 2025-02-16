@@ -2457,6 +2457,7 @@ class Agent:
         if self.knowledge is None:
             return None
 
+        # TODO: add async support
         relevant_docs: List[Document] = self.knowledge.search(query=query, num_documents=num_documents, **kwargs)
         if len(relevant_docs) == 0:
             return None

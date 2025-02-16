@@ -2,7 +2,7 @@ import asyncio
 from typing import List
 
 from agno.agent import Agent
-from agno.models.ollama import Ollama
+from agno.models.xai.xai import xAI
 from agno.run.response import RunResponse
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -29,7 +29,7 @@ class MovieScript(BaseModel):
 
 # Agent that returns a structured output
 structured_output_agent = Agent(
-    model=Ollama(id="llama3.2"),
+    model=xAI(id="grok-2-latest"),
     description="You write movie scripts.",
     response_model=MovieScript,
     structured_outputs=True,
@@ -40,7 +40,3 @@ structured_output_response: RunResponse = structured_output_agent.run(
     "Llamas ruling the world"
 )
 pprint(structured_output_response.content)
-
-
-# Run the agent asynchronously
-asyncio.run(structured_output_agent.aprint_response("Llamas ruling the world"))
