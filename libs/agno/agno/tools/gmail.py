@@ -522,8 +522,8 @@ class GmailTools(Toolkit):
         raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
         email_data = {"raw": raw_message}
 
-        # if thread_id:
-        email_data["threadId"] = thread_id
+        if thread_id:
+            email_data["threadId"] = thread_id
 
         return email_data
 
