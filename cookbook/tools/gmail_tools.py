@@ -2,8 +2,6 @@
 Gmail Agent that can read, draft and send emails using the Gmail.
 """
 
-from datetime import datetime, timedelta
-
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.gmail import GmailTools
@@ -23,30 +21,8 @@ agent = Agent(
     debug_mode=True,
 )
 
-# agent.print_response(
-#     "summarize my last 5 emails with dates and key details, regarding ai agents",
-#     markdown=True,
-#     stream=True,
-# )
-
-tool = GmailTools(
-    credentials_path="storage/credentials.json",
+agent.print_response(
+    "summarize my last 5 emails with dates and key details, regarding ai agents",
+    markdown=True,
+    stream=True,
 )
-
-
-# print(tool.get_emails_by_context(context="Security", count=5))
-
-thread_id = "194fa616c1f1aa92"
-message_id = "CAPe88YDTC4sgdVuiVXR6y7xx8T4tRDi90JacwM9=e7WeSSGkig@mail.gmail.com"
-resp = tool.send_email_reply(
-    thread_id=thread_id,
-    message_id=message_id,
-    to="willemcarel@gmail.com",
-    subject="Re: Security",
-    body="Hello, I am a security agent. I am here to help you with your security needs.",
-    cc="",
-)
-
-
-# resp = tool.get_latest_emails(count=1)
-print(resp)
