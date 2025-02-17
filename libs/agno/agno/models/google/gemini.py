@@ -111,6 +111,10 @@ def _convert_schema(schema_dict) -> Optional[Schema]:
             )
         else:
             return None
+
+    if schema_type == "ARRAY":
+        items = _convert_schema(schema_dict["items"])
+        return Schema(type=schema_type, description=description, items=items)
     else:
         return Schema(type=schema_type, description=description)
 
@@ -126,7 +130,6 @@ def _format_function_definitions(tools_list):
             parameters_dict = func_info.get("parameters", {})
 
             parameters_schema = _convert_schema(parameters_dict)
-
             # Create a FunctionDeclaration instance
             function_decl = FunctionDeclaration(
                 name=name,
@@ -135,7 +138,6 @@ def _format_function_definitions(tools_list):
             )
 
             function_declarations.append(function_decl)
-
     if function_declarations:
         return Tool(function_declarations=function_declarations)
     else:
@@ -174,7 +176,7 @@ class Gemini(Model):
     # Request parameters
     function_declarations: Optional[List[Any]] = None
     generation_config: Optional[Any] = None
-    safety_settings: Optional[Any] = None
+    safety_settings: Optional[List[Any]] = None
     generative_model_kwargs: Optional[Dict[str, Any]] = None
 
     temperature: Optional[float] = None
@@ -236,25 +238,36 @@ class Gemini(Model):
         Returns:
             Dict[str, Any]: The request keyword arguments.
         """
-        base_params: Dict[str, Any] = {
-            "generation_config": self.generation_config,
-            "safety_settings": self.safety_settings,
-            "generative_model_kwargs": self.generative_model_kwargs,
-        }
+        request_params = {}
+        # User provides their own generation config
+        if self.generation_config is None:
+            if isinstance(self.generation_config, GenerateContentConfig):
+                config = self.generation_config.model_dump()
+            else:
+                config = self.generation_config
+        else:
+            config = {}
 
-        config = {
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "top_k": self.top_k,
-            "max_output_tokens": self.max_output_tokens,
-            "stop_sequences": self.stop_sequences,
-            "logprobs": self.logprobs,
-            "presence_penalty": self.presence_penalty,
-            "frequency_penalty": self.frequency_penalty,
-            "seed": self.seed,
-            "response_modalities": self.response_modalities,
-            "speech_config": self.speech_config,
-        }
+        if self.generative_model_kwargs:
+            config.update(self.generative_model_kwargs)
+
+        config.update(
+            {
+                "safety_settings": self.safety_settings,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "top_k": self.top_k,
+                "max_output_tokens": self.max_output_tokens,
+                "stop_sequences": self.stop_sequences,
+                "logprobs": self.logprobs,
+                "presence_penalty": self.presence_penalty,
+                "frequency_penalty": self.frequency_penalty,
+                "seed": self.seed,
+                "response_modalities": self.response_modalities,
+                "speech_config": self.speech_config,
+            }
+        )
+
         if system_message is not None:
             config["system_instruction"] = system_message  # type: ignore
 
@@ -272,10 +285,9 @@ class Gemini(Model):
         config = {k: v for k, v in config.items() if v is not None}
 
         if config:
-            base_params["config"] = GenerateContentConfig(**config)
+            request_params["config"] = GenerateContentConfig(**config)
 
         # Filter out None values
-        request_params = {k: v for k, v in base_params.items() if v is not None}
         if self.request_params:
             request_params.update(self.request_params)
         return request_params
@@ -642,7 +654,7 @@ class Gemini(Model):
                         model_response.tool_calls.append(tool_call)
 
         # Extract usage metadata if present
-        if hasattr(response, "usage_metadata"):
+        if hasattr(response, "usage_metadata") and response.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response.usage_metadata
             model_response.response_usage = GeminiResponseUsage(
                 input_tokens=usage.prompt_token_count or 0,
@@ -678,7 +690,7 @@ class Gemini(Model):
                     model_response.tool_calls.append(tool_call)
 
         # Extract usage metadata if present
-        if hasattr(response_delta, "usage_metadata"):
+        if hasattr(response_delta, "usage_metadata") and response_delta.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response_delta.usage_metadata
             model_response.response_usage = GeminiResponseUsage(
                 input_tokens=usage.prompt_token_count or 0,
