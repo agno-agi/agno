@@ -1,10 +1,10 @@
 import pytest
+from google.genai import types
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.google import Gemini
 from agno.storage.agent.postgres import PostgresAgentStorage
-from google.genai import types
 
 
 def _assert_metrics(response: RunResponse):
@@ -81,7 +81,7 @@ def test_with_memory():
         num_history_responses=5,
         markdown=True,
         telemetry=False,
-        monitoring=False
+        monitoring=False,
     )
 
     # First interaction
@@ -116,12 +116,7 @@ def test_structured_output():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"),
-        response_model=MovieScript,
-        telemetry=False,
-        monitoring=False
-    )
+    agent = Agent(model=Gemini(id="gemini-1.5-flash"), response_model=MovieScript, telemetry=False, monitoring=False)
 
     response = agent.run("Create a movie about time travel")
 
@@ -139,7 +134,7 @@ def test_history():
         storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
         add_history_to_messages=True,
         telemetry=False,
-        monitoring=False
+        monitoring=False,
     )
     agent.run("Hello")
     assert len(agent.run_response.messages) == 2
@@ -152,15 +147,14 @@ def test_history():
 
 
 def test_custom_client_params():
-
-    generation_config=types.GenerateContentConfig(
+    generation_config = types.GenerateContentConfig(
         temperature=0,
         top_p=0.1,
         top_k=1,
         max_output_tokens=4096,
     )
 
-    safety_settings=[
+    safety_settings = [
         types.SafetySetting(
             category=types.HarmCategory.HARM_CATEGORY_UNSPECIFIED,
             threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
@@ -181,19 +175,19 @@ def test_custom_client_params():
             category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
             threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
         ),
-            
     ]
 
-    #simple agent
-    agent=Agent(model=Gemini(
-                    id="gemini-1.5-flash",
-                    vertexai=True,
-                    project_id="394942673418",
-                    location="us-central1",
-                    generation_config=generation_config,
-                    safety_settings=safety_settings,
-
-                ),
-                telemetry=False,
-                monitoring=False)
-    agent.print_response("what is the best ice cream?",stream=True)
+    # simple agent
+    agent = Agent(
+        model=Gemini(
+            id="gemini-1.5-flash",
+            vertexai=True,
+            project_id="394942673418",
+            location="us-central1",
+            generation_config=generation_config,
+            safety_settings=safety_settings,
+        ),
+        telemetry=False,
+        monitoring=False,
+    )
+    agent.print_response("what is the best ice cream?", stream=True)

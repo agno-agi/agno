@@ -247,25 +247,26 @@ class Gemini(Model):
                 config = self.generation_config
         else:
             config = {}
-        
+
         if self.generative_model_kwargs:
             config.update(self.generative_model_kwargs)
 
-
-        config.update({
-            "safety_settings": self.safety_settings,
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "top_k": self.top_k,
-            "max_output_tokens": self.max_output_tokens,
-            "stop_sequences": self.stop_sequences,
-            "logprobs": self.logprobs,
-            "presence_penalty": self.presence_penalty,
-            "frequency_penalty": self.frequency_penalty,
-            "seed": self.seed,
-            "response_modalities": self.response_modalities,
-            "speech_config": self.speech_config,
-        })
+        config.update(
+            {
+                "safety_settings": self.safety_settings,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "top_k": self.top_k,
+                "max_output_tokens": self.max_output_tokens,
+                "stop_sequences": self.stop_sequences,
+                "logprobs": self.logprobs,
+                "presence_penalty": self.presence_penalty,
+                "frequency_penalty": self.frequency_penalty,
+                "seed": self.seed,
+                "response_modalities": self.response_modalities,
+                "speech_config": self.speech_config,
+            }
+        )
 
         if system_message is not None:
             config["system_instruction"] = system_message  # type: ignore

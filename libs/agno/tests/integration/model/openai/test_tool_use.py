@@ -14,7 +14,7 @@ def test_tool_use():
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
-        monitoring=False
+        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA?")
@@ -32,7 +32,7 @@ def test_tool_use_stream():
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
-        monitoring=False
+        monitoring=False,
     )
 
     response_stream = agent.run("What is the current price of TSLA?", stream=True)
@@ -60,7 +60,7 @@ async def test_async_tool_use():
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
-        monitoring=False
+        monitoring=False,
     )
 
     response = await agent.arun("What is the current price of TSLA?")
@@ -79,7 +79,7 @@ async def test_async_tool_use_stream():
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
-        monitoring=False
+        monitoring=False,
     )
 
     response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
@@ -106,7 +106,7 @@ def test_parallel_tool_calls():
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
-        monitoring=False
+        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and AAPL?")
@@ -126,7 +126,7 @@ def test_multiple_tool_calls():
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
-        monitoring=False
+        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and what is the latest news about it?")
@@ -149,7 +149,7 @@ def test_tool_call_custom_tool_no_parameters():
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
-        monitoring=False
+        monitoring=False,
     )
 
     response = agent.run("What is the weather in Tokyo?")
@@ -168,7 +168,7 @@ def test_tool_call_list_parameters():
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
-        monitoring=False
+        monitoring=False,
     )
 
     response = agent.run(
