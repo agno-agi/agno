@@ -536,7 +536,6 @@ class GmailTools(Toolkit):
         details = []
         for msg in messages:
             msg_data = self.service.users().messages().get(userId="me", id=msg["id"], format="full").execute()  # type: ignore
-            print(msg_data.get("threadId"))
             details.append(
                 {
                     "id": msg_data["id"],
