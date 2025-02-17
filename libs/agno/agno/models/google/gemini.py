@@ -111,6 +111,10 @@ def _convert_schema(schema_dict) -> Optional[Schema]:
             )
         else:
             return None
+
+    if schema_type == "ARRAY":
+        items = _convert_schema(schema_dict["items"])
+        return Schema(type=schema_type, description=description, items=items)
     else:
         return Schema(type=schema_type, description=description)
 
@@ -126,7 +130,6 @@ def _format_function_definitions(tools_list):
             parameters_dict = func_info.get("parameters", {})
 
             parameters_schema = _convert_schema(parameters_dict)
-
             # Create a FunctionDeclaration instance
             function_decl = FunctionDeclaration(
                 name=name,
@@ -135,7 +138,6 @@ def _format_function_definitions(tools_list):
             )
 
             function_declarations.append(function_decl)
-
     if function_declarations:
         return Tool(function_declarations=function_declarations)
     else:
