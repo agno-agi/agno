@@ -15,7 +15,7 @@ class AgenticChunking(ChunkingStrategy):
             try:
                 from agno.models.openai import OpenAIChat
             except Exception:
-                raise ValueError("openai isn't installed. Please install it with `pip install openai`")
+                raise ValueError("`openai` isn't installed. Please install it with `pip install openai`")
             model = OpenAIChat(DEFAULT_OPENAI_MODEL_ID)
         self.max_chunk_size = max_chunk_size
         self.model = model
