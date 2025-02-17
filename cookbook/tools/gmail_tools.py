@@ -2,10 +2,12 @@
 Gmail Agent that can read, draft and send emails using the Gmail.
 """
 
+from datetime import datetime, timedelta
+
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.gmail import GmailTools
-from datetime import datetime, timedelta
+
 agent = Agent(
     name="Gmail Agent",
     model=Gemini(id="gemini-2.0-flash-exp"),
@@ -30,7 +32,6 @@ agent = Agent(
 tool = GmailTools(
     credentials_path="storage/credentials.json",
 )
-
 
 
 # print(tool.get_emails_by_context(context="Security", count=5))

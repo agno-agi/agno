@@ -428,7 +428,9 @@ class GmailTools(Toolkit):
         return str(message)
 
     @authenticate
-    def send_email_reply(self, thread_id: str, message_id: str, to: str, subject: str, body: str, cc: Optional[str] = None) -> str:
+    def send_email_reply(
+        self, thread_id: str, message_id: str, to: str, subject: str, body: str, cc: Optional[str] = None
+    ) -> str:
         """
         Respond to an existing email thread.
 
@@ -450,10 +452,12 @@ class GmailTools(Toolkit):
             subject = f"Re: {subject}"
 
         body = body.replace("\n", "<br>")
-        message = self._create_message(to.split(","), subject, body, cc.split(",") if cc else None, thread_id, message_id)
+        message = self._create_message(
+            to.split(","), subject, body, cc.split(",") if cc else None, thread_id, message_id
+        )
         message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
         return str(message)
-    
+
     @authenticate
     def search_emails(self, query: str, count: int) -> str:
         """
@@ -492,19 +496,15 @@ class GmailTools(Toolkit):
         if body is None:
             raise ValueError("Email body cannot be None")
 
-    # def _create_message(self, to: List[str], subject: str, body: str, cc: Optional[List[str]] = None) -> dict:
-    #     """Create email message"""
-    #     body = body.replace("\\n", "\n")
-    #     message = MIMEText(body, "html")
-    #     message["to"] = ", ".join(to)
-    #     message["from"] = "me"
-    #     message["subject"] = subject
-    #     if cc:
-    #         message["cc"] = ", ".join(cc)
-    #     return {"raw": base64.urlsafe_b64encode(message.as_bytes()).decode()}
-
-    def _create_message(self, to: List[str], subject: str, body: str, cc: Optional[List[str]] = None, thread_id: Optional[str] = None, message_id: Optional[str] = None) -> dict:
-        
+    def _create_message(
+        self,
+        to: List[str],
+        subject: str,
+        body: str,
+        cc: Optional[List[str]] = None,
+        thread_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+    ) -> dict:
         body = body.replace("\\n", "\n")
         message = MIMEText(body, "html")
         message["to"] = ", ".join(to)
@@ -526,12 +526,11 @@ class GmailTools(Toolkit):
         email_data["threadId"] = thread_id
 
         return email_data
-    
+
     def _get_message_details(self, messages: List[dict]) -> List[dict]:
         """Get details for list of messages"""
         details = []
         for msg in messages:
-            print(msg)
             msg_data = self.service.users().messages().get(userId="me", id=msg["id"], format="full").execute()  # type: ignore
             details.append(
                 {

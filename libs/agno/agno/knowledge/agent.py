@@ -101,7 +101,6 @@ class AgentKnowledge(BaseModel):
                         if doc.content not in seen_content and not self.vector_db.doc_exists(doc):
                             seen_content.add(doc.content)
                             documents_to_load.append(doc)
-                logger.debug(f"OVER HERE!! {documents_to_load}")
                 self.vector_db.insert(documents=documents_to_load, filters=filters)
             num_documents += len(documents_to_load)
             logger.info(f"Added {len(documents_to_load)} documents to knowledge base")
