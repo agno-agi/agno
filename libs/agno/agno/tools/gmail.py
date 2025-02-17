@@ -223,11 +223,16 @@ class GmailTools(Toolkit):
 
         formatted_emails = []
         for email in emails:
+            print(email)
             formatted_email = (
                 f"From: {email['from']}\n"
                 f"Subject: {email['subject']}\n"
                 f"Date: {email['date']}\n"
                 f"Body: {email['body']}\n"
+                f"Message ID: {email['id']}\n"
+                f"In-Reply-To: {email['in-reply-to']}\n"
+                f"References: {email['references']}\n"
+                f"Thread ID: {email['thread_id']}\n"
                 "----------------------------------------"
             )
             formatted_emails.append(formatted_email)
@@ -532,9 +537,11 @@ class GmailTools(Toolkit):
         details = []
         for msg in messages:
             msg_data = self.service.users().messages().get(userId="me", id=msg["id"], format="full").execute()  # type: ignore
+            print(msg_data.get("threadId"))
             details.append(
                 {
                     "id": msg_data["id"],
+                    "thread_id": msg_data.get("threadId"),
                     "subject": next(
                         (header["value"] for header in msg_data["payload"]["headers"] if header["name"] == "Subject"),
                         None,
@@ -544,6 +551,14 @@ class GmailTools(Toolkit):
                     ),
                     "date": next(
                         (header["value"] for header in msg_data["payload"]["headers"] if header["name"] == "Date"), None
+                    ),
+                    "in-reply-to": next(
+                        (header["value"] for header in msg_data["payload"]["headers"] if header["name"] == "In-Reply-To"),
+                        None,
+                    ),
+                    "references": next(
+                        (header["value"] for header in msg_data["payload"]["headers"] if header["name"] == "References"),
+                        None,
                     ),
                     "body": self._get_message_body(msg_data),
                 }
