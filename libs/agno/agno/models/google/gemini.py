@@ -408,16 +408,13 @@ class Gemini(Model):
                         )
                     )
             # Function results
-            elif message.role == "tool":
-                if hasattr(message, "combined_function_details"):
-                    for result in message.combined_function_details:
-                        message_parts.append(
-                            Part.from_function_response(name=result[0], response={"result": result[1]})
+            elif message.role == "tool" and message.tool_calls:
+                for tool_call in message.tool_calls:
+                    message_parts.append(
+                        Part.from_function_response(
+                            name=tool_call["tool_name"], response={"result": tool_call["content"]}
                         )
-                else:
-                    message_parts = [
-                        Part.from_function_response(name=message.tool_name, response={"result": message.content})
-                    ]
+                    )
             else:
                 if isinstance(content, str):
                     message_parts = [Part.from_text(text=content)]
@@ -599,11 +596,9 @@ class Gemini(Model):
         if len(function_call_results) > 0:
             for result in function_call_results:
                 combined_content.append(result.content)
-                combined_function_result.append((result.tool_name, result.content))
+                combined_function_result.append({"tool_name": result.tool_name, "content": result.content})
 
-        messages.append(
-            Message(role="tool", content=combined_content, combined_function_details=combined_function_result)
-        )
+        messages.append(Message(role="tool", content=combined_content, tool_calls=combined_function_result))
 
     def parse_provider_response(self, response: GenerateContentResponse) -> ModelResponse:
         """
