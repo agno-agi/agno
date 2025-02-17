@@ -5,7 +5,7 @@ from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.chroma import ChromaDb
 
 
-def test_pdf_url_knowledge_base_chroma_db():
+def test_pdf_url_knowledge_base():
     # Initialize ChromaDB
     vector_db = ChromaDb(collection="recipes", path="tmp/chromadb", persistent_client=True)
 

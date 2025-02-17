@@ -3,7 +3,7 @@ name: Main Validation
 on:
   push:
     branches:
-      - '*'  # Run on all branches
+      - 'main'  # Run on all branches
   pull_request:
     branches:
       - 'release*'  # Run on PRs targeting release branches
@@ -50,6 +50,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
+      fail-fast: true  # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
@@ -82,6 +83,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
+      fail-fast: true  # Stop all matrix jobs if one fails
     env:
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
     steps:
@@ -114,6 +116,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
+      fail-fast: true  # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:

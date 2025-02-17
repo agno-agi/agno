@@ -123,7 +123,7 @@ class LanceDb(VectorDb):
     def create(self) -> None:
         """Create the table if it does not exist."""
         if not self.exists():
-            self.connection = self._init_table()  # Connection update is needed
+            self.table = self._init_table()
 
     def _init_table(self) -> lancedb.db.LanceTable:
         schema = pa.schema(
@@ -341,6 +341,7 @@ class LanceDb(VectorDb):
             self.connection.drop_table(self.table_name)
 
     def exists(self) -> bool:
+        print(self.connection, self.table_name, self.connection.table_names())
         if self.connection:
             if self.table_name in self.connection.table_names():
                 return True

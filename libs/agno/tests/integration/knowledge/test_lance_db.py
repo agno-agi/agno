@@ -5,7 +5,7 @@ from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.lancedb.lance_db import LanceDb
 
 
-def test_pdf_url_knowledge_base_chroma_db():
+def test_pdf_url_knowledge_base():
     vector_db = LanceDb(
         table_name="recipes",
         uri="tmp/lancedb",
@@ -24,7 +24,7 @@ def test_pdf_url_knowledge_base_chroma_db():
 
     assert vector_db.exists()
 
-    assert vector_db.get_count() == 13  # 10 from the first pdf and 3 from the second pdf
+    assert vector_db.get_count() == 13  # 3 from the first pdf and 10 from the second pdf
 
     # Create and use the agent
     agent = Agent(knowledge=knowledge_base)
