@@ -223,7 +223,6 @@ class GmailTools(Toolkit):
 
         formatted_emails = []
         for email in emails:
-            print(email)
             formatted_email = (
                 f"From: {email['from']}\n"
                 f"Subject: {email['subject']}\n"
