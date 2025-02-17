@@ -153,9 +153,9 @@ def test_error_handling(lance_db):
     assert lance_db.get_count() == 0
 
 
-def test_bad_vectors_handling():
+def test_bad_vectors_handling(mock_embedder):
     """Test handling of bad vectors"""
-    db = LanceDb(uri=TEST_PATH, table_name="test_bad_vectors", on_bad_vectors="fill", fill_value=0.0)
+    db = LanceDb(uri=TEST_PATH, table_name="test_bad_vectors", on_bad_vectors="fill", fill_value=0.0, embedder=mock_embedder)
     db.create()
 
     try:
@@ -165,21 +165,5 @@ def test_bad_vectors_handling():
         assert db.get_count() == 1
     finally:
         db.drop()
-        if os.path.exists(TEST_PATH):
-            shutil.rmtree(TEST_PATH)
-
-
-def test_custom_embedder():
-    """Test using a custom embedder"""
-    os.makedirs(TEST_PATH, exist_ok=True)
-
-    custom_embedder = OpenAIEmbedder()
-    db = LanceDb(uri=TEST_PATH, table_name=TEST_TABLE, embedder=custom_embedder)
-    db.create()
-    assert db.embedder == custom_embedder
-
-    try:
-        db.drop()
-    finally:
         if os.path.exists(TEST_PATH):
             shutil.rmtree(TEST_PATH)

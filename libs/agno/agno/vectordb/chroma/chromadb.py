@@ -222,7 +222,7 @@ class ChromaDb(VectorDb):
         metadata = result.get("metadatas", [{}])[0]  # type: ignore
         documents = result.get("documents", [[]])[0]  # type: ignore
         embeddings = result.get("embeddings")[0]  # type: ignore
-        embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]
+        embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]  # type: ignore
         distances = result.get("distances", [[]])[0]  # type: ignore
 
         for idx, distance in enumerate(distances):
