@@ -67,7 +67,7 @@ fal = ["fal_client"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
-postgres = ["psycopg-binary"]
+postgres = ["psycopg-binary", "psycopg"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
