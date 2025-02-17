@@ -27,11 +27,6 @@ except (ModuleNotFoundError, ImportError):
     raise ImportError("`huggingface_hub` not installed. Please install using `pip install huggingface_hub`")
 
 
-@dataclass
-class StreamData:
-    response_content: str = ""
-    response_tool_calls: Optional[List[ChatCompletionStreamOutputDeltaToolCall]] = None
-
 
 @dataclass
 class HuggingFace(Model):

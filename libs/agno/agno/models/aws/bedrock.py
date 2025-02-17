@@ -17,12 +17,6 @@ except ImportError:
     raise
 
 
-@dataclass
-class AwsBedrockResponseUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-
 
 @dataclass
 class AwsBedrock(Model):
@@ -338,11 +332,11 @@ class AwsBedrock(Model):
             model_response.content = content
 
         if "usage" in response:
-            model_response.response_usage = AwsBedrockResponseUsage(
-                input_tokens=response["usage"]["inputTokens"],
-                output_tokens=response["usage"]["outputTokens"],
-                total_tokens=response["usage"]["totalTokens"],
-            )
+            model_response.response_usage = {
+                "input_tokens": response["usage"]["inputTokens"],
+                "output_tokens": response["usage"]["outputTokens"],
+                "total_tokens": response["usage"]["totalTokens"],
+            }
 
         return model_response
 
@@ -404,11 +398,11 @@ class AwsBedrock(Model):
             elif "messageStop" in response_delta:
                 if "usage" in response_delta["messageStop"]:
                     usage = response_delta["messageStop"]["usage"]
-                    model_response.response_usage = AwsBedrockResponseUsage(
-                        input_tokens=usage.get("inputTokens", 0),
-                        output_tokens=usage.get("outputTokens", 0),
-                        total_tokens=usage.get("totalTokens", 0),
-                    )
+                    model_response.response_usage = {
+                        "input_tokens": usage.get("inputTokens", 0),
+                        "output_tokens": usage.get("outputTokens", 0),
+                        "total_tokens": usage.get("totalTokens", 0),
+                    }
 
             # Update metrics
             assistant_message.metrics.completion_tokens += 1

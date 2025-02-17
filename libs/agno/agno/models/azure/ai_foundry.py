@@ -30,12 +30,6 @@ except ImportError:
     logger.error("`azure-ai-inference` not installed. Please install it via `pip install azure-ai-inference aiohttp`.")
 
 
-@dataclass
-class AzureAIFoundryResponseUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-
 
 def _format_message(message: Message) -> Dict[str, Any]:
     """
@@ -332,11 +326,11 @@ class AzureAIFoundry(Model):
 
             # Add usage metrics if present
             if response.usage is not None:
-                model_response.response_usage = AzureAIFoundryResponseUsage(
-                    input_tokens=response.usage.prompt_tokens or 0,
-                    output_tokens=response.usage.completion_tokens or 0,
-                    total_tokens=response.usage.total_tokens or 0,
-                )
+                model_response.response_usage = {
+                    "input_tokens": response.usage.prompt_tokens or 0,
+                    "output_tokens": response.usage.completion_tokens or 0,
+                    "total_tokens": response.usage.total_tokens or 0,
+                }
 
         except Exception as e:
             logger.error(f"Error parsing Azure AI response: {e}")
