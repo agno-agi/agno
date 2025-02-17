@@ -1,7 +1,10 @@
 from typing import List, Optional, Set
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRouter
+from starlette.middleware.cors import CORSMiddleware
+from starlette.requests import Request
 
 from agno.agent.agent import Agent
 from agno.api.playground import PlaygroundEndpointCreate, create_playground_endpoint
@@ -38,7 +41,6 @@ class Playground:
         return get_async_playground_router(self.agents, self.workflows)
 
     def get_app(self, use_async: bool = True, prefix: str = "/v1") -> FastAPI:
-        from starlette.middleware.cors import CORSMiddleware
 
         if not self.api_app:
             self.api_app = FastAPI(
@@ -50,6 +52,26 @@ class Playground:
 
         if not self.api_app:
             raise Exception("API App could not be created.")
+
+
+        @self.api_app.exception_handler(HTTPException)
+        async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"message": str(exc.detail)},
+            )
+        
+        async def general_exception_handler(request: Request, call_next):
+            try:
+                return await call_next(request)
+            except Exception as e:
+                return JSONResponse(
+                    status_code=500,
+                    content={"message": str(e)},
+                )
+            
+        self.api_app.middleware("http")(general_exception_handler)
+
 
         if not self.router:
             self.router = APIRouter(prefix=prefix)
