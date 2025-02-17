@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.google import Gemini
 from agno.storage.agent.postgres import PostgresAgentStorage
+from google.genai import types
 
 
 def _assert_metrics(response: RunResponse):
@@ -19,7 +20,7 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), markdown=True)
+    agent = Agent(model=Gemini(id="gemini-1.5-flash"), markdown=True, telemetry=False, monitoring=False)
 
     # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -32,7 +33,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), markdown=True)
+    agent = Agent(model=Gemini(id="gemini-1.5-flash"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -50,7 +51,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), markdown=True)
+    agent = Agent(model=Gemini(id="gemini-1.5-flash"), markdown=True, telemetry=False, monitoring=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -62,7 +63,7 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), markdown=True)
+    agent = Agent(model=Gemini(id="gemini-1.5-flash"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -79,6 +80,8 @@ def test_with_memory():
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
+        telemetry=False,
+        monitoring=False
     )
 
     # First interaction
@@ -116,6 +119,8 @@ def test_structured_output():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
         response_model=MovieScript,
+        telemetry=False,
+        monitoring=False
     )
 
     response = agent.run("Create a movie about time travel")
@@ -133,6 +138,8 @@ def test_history():
         model=Gemini(id="gemini-1.5-flash"),
         storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
         add_history_to_messages=True,
+        telemetry=False,
+        monitoring=False
     )
     agent.run("Hello")
     assert len(agent.run_response.messages) == 2
@@ -142,3 +149,51 @@ def test_history():
     assert len(agent.run_response.messages) == 6
     agent.run("Hello 4")
     assert len(agent.run_response.messages) == 8
+
+
+def test_custom_client_params():
+
+    generation_config=types.GenerateContentConfig(
+        temperature=0,
+        top_p=0.1,
+        top_k=1,
+        max_output_tokens=4096,
+    )
+
+    safety_settings=[
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_UNSPECIFIED,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        ),
+            
+    ]
+
+    #simple agent
+    agent=Agent(model=Gemini(
+                    id="gemini-1.5-flash",
+                    vertexai=True,
+                    project_id="394942673418",
+                    location="us-central1",
+                    generation_config=generation_config,
+                    safety_settings=safety_settings,
+
+                ),
+                telemetry=False,
+                monitoring=False)
+    agent.print_response("what is the best ice cream?",stream=True)

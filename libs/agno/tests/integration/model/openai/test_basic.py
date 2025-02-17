@@ -1,13 +1,13 @@
-import pytest
 from pydantic import BaseModel, Field
+import pytest
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.openai import OpenAIChat
 from agno.storage.agent.postgres import PostgresAgentStorage
 
 
+
 def _assert_metrics(response: RunResponse):
-    print(response)
     input_tokens = response.metrics.get("input_tokens", [])
     output_tokens = response.metrics.get("output_tokens", [])
     total_tokens = response.metrics.get("total_tokens", [])
@@ -17,9 +17,8 @@ def _assert_metrics(response: RunResponse):
     assert sum(total_tokens) > 0
     assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
 
-
 def test_basic():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True)
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
 
     # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -32,7 +31,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True)
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -44,13 +43,13 @@ def test_basic_stream():
     for response in responses:
         assert isinstance(response, RunResponse)
         assert response.content is not None
-
+        
     _assert_metrics(agent.run_response)
 
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True)
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -62,15 +61,16 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True)
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
+
+    assert len(responses) > 0
 
     async for response in response_stream:
         assert isinstance(response, RunResponse)
         assert response.content is not None
     _assert_metrics(agent.run_response)
-
 
 def test_with_memory():
     agent = Agent(
@@ -78,6 +78,8 @@ def test_with_memory():
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
+        telemetry=False,
+        monitoring=False
     )
 
     # First interaction
@@ -115,6 +117,8 @@ def test_structured_output():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         response_model=MovieScript,
+        telemetry=False,
+        monitoring=False
     )
 
     response = agent.run("Create a movie about time travel")
@@ -132,6 +136,8 @@ def test_history():
         model=OpenAIChat(id="gpt-4o-mini"),
         storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
         add_history_to_messages=True,
+        telemetry=False,
+        monitoring=False
     )
     agent.run("Hello")
     assert len(agent.run_response.messages) == 2

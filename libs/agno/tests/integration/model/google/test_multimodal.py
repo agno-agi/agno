@@ -11,6 +11,8 @@ def test_image_input():
         model=Gemini(id="gemini-1.5-flash"),
         tools=[DuckDuckGoTools()],
         markdown=True,
+        telemetry=False,
+        monitoring=False
     )
 
     response = agent.run(
@@ -32,6 +34,8 @@ def test_audio_input_bytes():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
         markdown=True,
+        telemetry=False,
+        monitoring=False
     )
     response = agent.run("What is in this audio?", audio=[Audio(content=wav_data, format="wav")])
 
@@ -42,6 +46,8 @@ def test_audio_input_url():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
         markdown=True,
+        telemetry=False,
+        monitoring=False
     )
 
     response = agent.run(
@@ -56,6 +62,8 @@ def test_video_input_bytes():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
         markdown=True,
+        telemetry=False,
+        monitoring=False
     )
 
     url = "https://videos.pexels.com/video-files/5752729/5752729-uhd_2560_1440_30fps.mp4"
