@@ -17,7 +17,6 @@ except ImportError:
     raise
 
 
-
 @dataclass
 class AwsBedrock(Model):
     """

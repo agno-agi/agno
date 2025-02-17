@@ -30,7 +30,6 @@ except ImportError:
     logger.error("`azure-ai-inference` not installed. Please install it via `pip install azure-ai-inference aiohttp`.")
 
 
-
 def _format_message(message: Message) -> Dict[str, Any]:
     """
     Format a message into the format expected by Azure AI.

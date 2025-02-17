@@ -298,7 +298,7 @@ class Cohere(Model):
         ):
             self._add_usage_metrics_to_assistant_message(
                 assistant_message=assistant_message,
-                response_usage= {
+                response_usage={
                     "input_tokens": int(response.delta.usage.tokens.input_tokens) or 0,  # type: ignore
                     "output_tokens": int(response.delta.usage.tokens.output_tokens) or 0,  # type: ignore
                     "total_tokens": int(

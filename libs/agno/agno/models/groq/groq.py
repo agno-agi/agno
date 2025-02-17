@@ -392,7 +392,7 @@ class Groq(Model):
                     "prompt_time": response.usage.prompt_time,
                     "queue_time": response.usage.queue_time,
                     "total_time": response.usage.total_time,
-                }
+                },
             }
         return model_response
 
@@ -430,7 +430,7 @@ class Groq(Model):
                     "prompt_time": response.x_groq.usage.prompt_time,
                     "queue_time": response.x_groq.usage.queue_time,
                     "total_time": response.x_groq.usage.total_time,
-                }
+                },
             }
 
         return model_response

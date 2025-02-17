@@ -27,7 +27,6 @@ except (ModuleNotFoundError, ImportError):
     raise ImportError("`huggingface_hub` not installed. Please install using `pip install huggingface_hub`")
 
 
-
 @dataclass
 class HuggingFace(Model):
     """
