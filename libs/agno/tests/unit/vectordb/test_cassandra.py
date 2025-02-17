@@ -6,7 +6,6 @@ import pytest
 from cassandra.cluster import Cluster, Session
 
 from agno.document import Document
-from agno.embedder.mistral import MistralEmbedder
 
 
 @pytest.fixture(scope="session")
@@ -43,14 +42,12 @@ def cassandra_session() -> Generator[Session, None, None]:
 
 
 @pytest.fixture
-def vector_db(cassandra_session):
+def vector_db(cassandra_session, mock_embedder):
     """Create a fresh VectorDB instance for each test."""
     from agno.vectordb.cassandra import Cassandra
 
     table_name = f"test_vectors_{uuid.uuid4().hex[:8]}"
-    db = Cassandra(
-        table_name=table_name, keyspace="test_vectordb", embedder=MistralEmbedder(), session=cassandra_session
-    )
+    db = Cassandra(table_name=table_name, keyspace="test_vectordb", embedder=mock_embedder, session=cassandra_session)
     db.create()
 
     assert db.exists(), "Table was not created successfully"

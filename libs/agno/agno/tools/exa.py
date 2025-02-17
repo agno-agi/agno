@@ -136,7 +136,8 @@ class ExaTools(Toolkit):
             str: The search results in JSON format.
         """
         try:
-            logger.info(f"Searching exa for: {query}")
+            if self.show_results:
+                logger.info(f"Searching exa for: {query}")
             search_kwargs: Dict[str, Any] = {
                 "text": self.text,
                 "highlights": self.highlights,
@@ -183,7 +184,8 @@ class ExaTools(Toolkit):
         }
 
         try:
-            logger.info(f"Fetching contents for URLs: {urls}")
+            if self.show_results:
+                logger.info(f"Fetching contents for URLs: {urls}")
 
             exa_results = self.exa.get_contents(urls=urls, **query_kwargs)
 
@@ -222,7 +224,8 @@ class ExaTools(Toolkit):
         }
 
         try:
-            logger.info(f"Finding similar links to: {url}")
+            if self.show_results:
+                logger.info(f"Finding similar links to: {url}")
 
             exa_results = self.exa.find_similar_and_contents(url=url, **query_kwargs)
 
@@ -249,7 +252,8 @@ class ExaTools(Toolkit):
         if self.model and self.model not in ["exa", "exa-pro"]:
             raise ValueError("Model must be either 'exa' or 'exa-pro'")
         try:
-            logger.info(f"Generating answer for query: {query}")
+            if self.show_results:
+                logger.info(f"Generating answer for query: {query}")
             answer_kwargs: Dict[str, Any] = {
                 "model": self.model,
                 "text": text,
