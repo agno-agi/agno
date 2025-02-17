@@ -32,7 +32,7 @@ agent = Agent(
     response_model=FindEmailOutput,
 )
 
-email = "<replace with the email address>"
+email = "<replace_with_email_address>"
 response: FindEmailOutput = agent.run(f"Find the last email from {email} along with the message id, references and in-reply-to",
     markdown=True,
     stream=True).content
