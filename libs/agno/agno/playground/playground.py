@@ -1,7 +1,9 @@
 from typing import List, Optional, Set
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRouter
+from starlette.requests import Request
 
 from agno.agent.agent import Agent
 from agno.api.playground import PlaygroundEndpointCreate, create_playground_endpoint
@@ -50,6 +52,20 @@ class Playground:
 
         if not self.api_app:
             raise Exception("API App could not be created.")
+
+        @self.api_app.exception_handler(HTTPException)
+        async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"message": str(exc.detail)},
+            )
+
+        @self.api_app.exception_handler(Exception)
+        async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+            return JSONResponse(
+                status_code=500,
+                content={"message": str(exc)},
+            )
 
         if not self.router:
             self.router = APIRouter(prefix=prefix)
