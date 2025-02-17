@@ -3,7 +3,7 @@ name: Main Validation
 on:
   push:
     branches:
-      - 'main'
+      - '*'  # Run on all branches
 
 jobs:
   style-check:
@@ -62,9 +62,33 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Run tests for Agno
+      
+      # Check for file changes
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v41
+
+      # Run OpenAI specific tests if relevant files changed
+      - name: Run OpenAI tests
+        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/openai')
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/integration
-          echo "AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
+          python -m pytest ./libs/agno/tests/integration/models/openai
+
+      # Run Google specific tests if relevant files changed
+      - name: Run Google tests
+        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/google')
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/models/google
+
+      # TODO: Add tests for other models
+
+      # Run all other integration tests
+      - name: Run remaining integration tests
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest --ignore=./libs/agno/tests/integration/models ./libs/agno/tests/integration

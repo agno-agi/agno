@@ -14,7 +14,7 @@ TEST_PATH = "tmp/test_lancedb"
 
 
 @pytest.fixture
-def lance_db():
+def lance_db(mock_embedder):
     """Fixture to create and clean up a LanceDb instance"""
     # Ensure the test directory exists with proper permissions
     os.makedirs(TEST_PATH, exist_ok=True)
@@ -24,7 +24,7 @@ def lance_db():
         shutil.rmtree(TEST_PATH)
         os.makedirs(TEST_PATH)
 
-    db = LanceDb(uri=TEST_PATH, table_name=TEST_TABLE, embedder=OpenAIEmbedder())
+    db = LanceDb(uri=TEST_PATH, table_name=TEST_TABLE, embedder=mock_embedder)
     db.create()
     yield db
 
