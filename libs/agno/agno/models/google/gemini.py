@@ -21,11 +21,14 @@ try:
     from google.genai.errors import ClientError, ServerError
     from google.genai.types import (
         Content,
+        DynamicRetrievalConfig,
         File,
         FunctionDeclaration,
         GenerateContentConfig,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
+        GoogleSearch,
+        GoogleSearchRetrieval,
         Part,
         Schema,
         Tool,
@@ -176,6 +179,9 @@ class Gemini(Model):
     generation_config: Optional[Any] = None
     safety_settings: Optional[Any] = None
     generative_model_kwargs: Optional[Dict[str, Any]] = None
+    search: bool = False
+    grounding: bool = False
+    grounding_dynamic_threshold: Optional[float] = None
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -266,7 +272,27 @@ class Gemini(Model):
             config["response_mime_type"] = "application/json"  # type: ignore
             config["response_schema"] = self.response_format
 
-        if self._tools:
+        if self.grounding and self.search:
+            logger.info("Both grounding and search are enabled. Grounding will take precedence.")
+            self.search = False
+
+        if self.grounding:
+            logger.info("Grounding enabled. External tools will be disabled.")
+            config["tools"] = [
+                Tool(
+                    google_search=GoogleSearchRetrieval(
+                        dynamic_retrieval_config=DynamicRetrievalConfig(
+                            dynamic_threshold=self.grounding_dynamic_threshold
+                        )
+                    )
+                ),
+            ]
+
+        elif self.search:
+            logger.info("Search enabled. External tools will be disabled.")
+            config["tools"] = [Tool(google_search=GoogleSearch())]
+
+        elif self._tools:
             config["tools"] = [_format_function_definitions(self._tools)]
 
         config = {k: v for k, v in config.items() if v is not None}
