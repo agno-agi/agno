@@ -1,5 +1,3 @@
-import base64
-
 import requests
 from agno.agent import Agent, RunResponse  # noqa
 from agno.media import Audio
