@@ -31,7 +31,7 @@ audio_only_agent = Agent(
     debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
-    storage=SqliteAgentStorage(table_name="audio_agent", db_file="tmp/audio_agent.db"),
+    storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
 )
 
 
