@@ -6,7 +6,7 @@ from types import GeneratorType
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union
 
 from agno.exceptions import AgentRunException
-from agno.media import AudioOutput
+from agno.media import AudioContent
 from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.tools.function import Function, FunctionCall
@@ -20,7 +20,7 @@ class MessageData:
     response_role: Optional[Literal["system", "user", "assistant", "tool"]] = None
     response_content: Any = ""
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    response_audio: Optional[AudioOutput] = None
+    response_audio: Optional[AudioContent] = None
 
     extra: Dict[str, Any] = field(default_factory=dict)
 

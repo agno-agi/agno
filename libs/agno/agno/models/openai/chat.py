@@ -7,7 +7,7 @@ import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.media import AudioOutput
+from agno.media import AudioContent
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
@@ -501,14 +501,14 @@ class OpenAIChat(Model):
             # If the audio output modality is requested, we can extract an audio response
             try:
                 if isinstance(response_message.audio, dict):
-                    model_response.audio = AudioOutput(
+                    model_response.audio = AudioContent(
                         id=response_message.audio.get("id"),
                         content=response_message.audio.get("data"),
                         expires_at=response_message.audio.get("expires_at"),
                         transcript=response_message.audio.get("transcript"),
                     )
                 else:
-                    model_response.audio = AudioOutput(
+                    model_response.audio = AudioContent(
                         id=response_message.audio.id,
                         content=response_message.audio.data,
                         expires_at=response_message.audio.expires_at,
@@ -551,18 +551,20 @@ class OpenAIChat(Model):
             if hasattr(delta, "audio") and delta.audio is not None:
                 try:
                     if isinstance(delta.audio, dict):
-                        model_response.audio = AudioOutput(
+                        model_response.audio = AudioContent(
                             id=delta.audio.get("id"),
                             content=delta.audio.get("data"),
                             expires_at=delta.audio.get("expires_at"),
                             transcript=delta.audio.get("transcript"),
+                            sample_rate=24000,
                         )
                     else:
-                        model_response.audio = AudioOutput(
+                        model_response.audio = AudioContent(
                             id=delta.audio.id,
                             content=delta.audio.data,
                             expires_at=delta.audio.expires_at,
                             transcript=delta.audio.transcript,
+                            sample_rate=24000,
                         )
                 except Exception as e:
                     logger.warning(f"Error processing audio: {e}")

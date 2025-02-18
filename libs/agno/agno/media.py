@@ -53,6 +53,17 @@ class Video(BaseModel):
         filepath = data.get("filepath")
         content = data.get("content")
 
+        # Convert and decompress content to bytes if it's a string
+        if content and isinstance(content, str):
+            import base64
+            try:
+                import zlib
+                decoded_content = base64.b64decode(content)
+                content = zlib.decompress(decoded_content)
+            except:
+                content = base64.b64decode(content).decode("utf-8")
+        data["content"] = content
+
         # Count how many fields are set (not None)
         count = len([field for field in [filepath, content] if field is not None])
 
@@ -124,11 +135,14 @@ class Audio(BaseModel):
         return {k: v for k, v in response_dict.items() if v is not None}
 
 
-class AudioOutput(BaseModel):
+class AudioContent(BaseModel):
     id: Optional[str] = None
     content: Optional[str] = None  # Base64 encoded
     expires_at: Optional[int] = None
     transcript: Optional[str] = None
+
+    sample_rate: Optional[int] = 24000
+    channels: Optional[int] = 1
 
     def to_dict(self) -> Dict[str, Any]:
         import base64
@@ -140,6 +154,8 @@ class AudioOutput(BaseModel):
             else self.content,
             "expires_at": self.expires_at,
             "transcript": self.transcript,
+            "sample_rate": self.sample_rate,
+            "channels": self.channels,
         }
         return {k: v for k, v in response_dict.items() if v is not None}
 
