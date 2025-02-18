@@ -18,15 +18,15 @@ class AWSSESTool(Toolkit):
     ):
         super().__init__(name="aws_ses_tool")
         self.client = boto3.client("ses", region_name=region_name)
-        self.receiver_email = receiver_email
         self.sender_email = sender_email
         self.sender_name = sender_name
-        self.register(self.email)
+        self.register(self.send_email)
 
-    def email(self, subject: str, body: str) -> str:
+    def send_email(self, subject: str, body: str, receiver_email: str) -> str:
         """
         Args: subject: The subject of the email
                 body: The body of the email
+                receiver_email: The email address of the receiver
         """
         if not self.client:
             raise Exception("AWS SES client not initialized. Please check the configuration.")
@@ -37,7 +37,7 @@ class AWSSESTool(Toolkit):
         try:
             response = self.client.send_email(
                 Destination={
-                    "ToAddresses": [self.receiver_email],
+                    "ToAddresses": [receiver_email],
                 },
                 Message={
                     "Body": {
