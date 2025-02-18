@@ -36,18 +36,20 @@ knowledge_base = CombinedKnowledgeBase(
 
 file_agent = Agent(
     name="File Upload Agent",
+    agent_id="file-upload-agent",
     role="Answer questions about the uploaded files",
     model=OpenAIChat(id="gpt-4o-mini"),
     storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
     knowledge=knowledge_base,
     show_tool_calls=True,
-    markdown=True,)
+    markdown=True,
+)
 
 
 audio_agent = Agent(
     name="Audio Understanding Agent",
+    agent_id="audio-understanding-agent",
     role="Answer questions about audio files",
-    agent_id="simple-agent",
     model=OpenAIChat(id="gpt-4o-audio-preview"),
     storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
     add_history_to_messages=True,
