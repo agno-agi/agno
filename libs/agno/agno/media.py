@@ -143,6 +143,7 @@ class AudioContent(BaseModel):
     expires_at: Optional[int] = None
     transcript: Optional[str] = None
 
+    mime_type: Optional[str] = None
     sample_rate: Optional[int] = 24000
     channels: Optional[int] = 1
 
@@ -156,6 +157,7 @@ class AudioContent(BaseModel):
             else self.content,
             "expires_at": self.expires_at,
             "transcript": self.transcript,
+            "mime_type": self.mime_type,
             "sample_rate": self.sample_rate,
             "channels": self.channels,
         }

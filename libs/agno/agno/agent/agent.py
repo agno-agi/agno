@@ -553,6 +553,10 @@ class Agent:
                             model_response.audio.content += model_response_chunk.audio.content  # type: ignore
                         if model_response_chunk.audio.transcript is not None:
                             model_response.audio.transcript += model_response_chunk.audio.transcript  # type: ignore
+                        if model_response_chunk.audio.expires_at is not None:
+                            model_response.audio.expires_at = model_response_chunk.audio.expires_at  # type: ignore
+                        if model_response_chunk.audio.mime_type is not None:
+                            model_response.audio.mime_type = model_response_chunk.audio.mime_type  # type: ignore
                         model_response.audio.sample_rate = model_response_chunk.audio.sample_rate
                         model_response.audio.channels = model_response_chunk.audio.channels
 
@@ -1015,6 +1019,10 @@ class Agent:
                             model_response.audio.content += model_response_chunk.audio.content  # type: ignore
                         if model_response_chunk.audio.transcript is not None:
                             model_response.audio.transcript += model_response_chunk.audio.transcript  # type: ignore
+                        if model_response_chunk.audio.expires_at is not None:
+                            model_response.audio.expires_at = model_response_chunk.audio.expires_at  # type: ignore
+                        if model_response_chunk.audio.mime_type is not None:
+                            model_response.audio.mime_type = model_response_chunk.audio.mime_type  # type: ignore
                         model_response.audio.sample_rate = model_response_chunk.audio.sample_rate
                         model_response.audio.channels = model_response_chunk.audio.channels
 

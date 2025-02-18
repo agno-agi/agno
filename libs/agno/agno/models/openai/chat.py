@@ -557,6 +557,7 @@ class OpenAIChat(Model):
                             expires_at=delta.audio.get("expires_at"),
                             transcript=delta.audio.get("transcript"),
                             sample_rate=24000,
+                            mime_type="pcm16",
                         )
                     else:
                         model_response.audio = AudioContent(
@@ -565,6 +566,7 @@ class OpenAIChat(Model):
                             expires_at=delta.audio.expires_at,
                             transcript=delta.audio.transcript,
                             sample_rate=24000,
+                            mime_type="pcm16",
                         )
                 except Exception as e:
                     logger.warning(f"Error processing audio: {e}")
