@@ -66,13 +66,14 @@ class Video(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         import base64
 
-        return {
+        response_dict = {
             "content": base64.b64encode(self.content).decode("utf-8")
             if isinstance(self.content, bytes)
             else self.content,
             "filepath": self.filepath,
             "format": self.format,
         }
+        return {k: v for k, v in response_dict.items() if v is not None}
 
 
 class Audio(BaseModel):
@@ -113,13 +114,14 @@ class Audio(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         import base64
 
-        return {
+        response_dict = {
             "content": base64.b64encode(self.content).decode("utf-8")
             if isinstance(self.content, bytes)
             else self.content,
             "filepath": self.filepath,
             "format": self.format,
         }
+        return {k: v for k, v in response_dict.items() if v is not None}
 
 
 class AudioOutput(BaseModel):
@@ -131,7 +133,7 @@ class AudioOutput(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         import base64
 
-        return {
+        response_dict = {
             "id": self.id,
             "content": base64.b64encode(self.content).decode("utf-8")
             if isinstance(self.content, bytes)
@@ -139,6 +141,7 @@ class AudioOutput(BaseModel):
             "expires_at": self.expires_at,
             "transcript": self.transcript,
         }
+        return {k: v for k, v in response_dict.items() if v is not None}
 
 
 class Image(BaseModel):
@@ -183,7 +186,7 @@ class Image(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         import base64
 
-        return {
+        response_dict = {
             "content": base64.b64encode(self.content).decode("utf-8")
             if isinstance(self.content, bytes)
             else self.content,
@@ -191,3 +194,4 @@ class Image(BaseModel):
             "url": self.url,
             "detail": self.detail,
         }
+        return {k: v for k, v in response_dict.items() if v is not None}
