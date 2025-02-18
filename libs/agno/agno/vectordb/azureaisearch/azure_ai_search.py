@@ -3,30 +3,35 @@ from hashlib import md5
 from typing import Any, Optional
 
 # Azure AI Search SDK imports
-from azure.core.credentials import AzureKeyCredential
-from azure.core.exceptions import ResourceNotFoundError
-from azure.search.documents import SearchClient
-from azure.search.documents.indexes import SearchIndexClient
-from azure.search.documents.indexes.models import (
-    ExhaustiveKnnAlgorithmConfiguration,
-    ExhaustiveKnnParameters,
-    HnswAlgorithmConfiguration,
-    HnswParameters,
-    SearchableField,
-    SearchField,
-    SearchFieldDataType,
-    SearchIndex,
-    SemanticConfiguration,
-    SemanticField,
-    SemanticPrioritizedFields,
-    SemanticSearch,
-    SimpleField,
-    VectorSearch,
-    VectorSearchAlgorithmKind,
-    VectorSearchAlgorithmMetric,
-    VectorSearchProfile,
-)
-from azure.search.documents.models import VectorizedQuery
+try:
+    from azure.core.credentials import AzureKeyCredential
+    from azure.core.exceptions import ResourceNotFoundError
+    from azure.search.documents import SearchClient
+    from azure.search.documents.indexes import SearchIndexClient
+    from azure.search.documents.indexes.models import (
+        ExhaustiveKnnAlgorithmConfiguration,
+        ExhaustiveKnnParameters,
+        HnswAlgorithmConfiguration,
+        HnswParameters,
+        SearchableField,
+        SearchField,
+        SearchFieldDataType,
+        SearchIndex,
+        SemanticConfiguration,
+        SemanticField,
+        SemanticPrioritizedFields,
+        SemanticSearch,
+        SimpleField,
+        VectorSearch,
+        VectorSearchAlgorithmKind,
+        VectorSearchAlgorithmMetric,
+        VectorSearchProfile,
+    )
+    from azure.search.documents.models import VectorizedQuery
+except ImportError:
+    raise ImportError(
+        "`azure-identity` or `azure-search-documents` package is not installed. Please install them via `pip install azure-identity` and `pip install azure-search-documents`."
+    )
 
 from agno.document.base import Document
 from agno.embedder.base import Embedder
