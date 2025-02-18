@@ -242,9 +242,9 @@ class Gemini(Model):
         # User provides their own generation config
         if self.generation_config is None:
             if isinstance(self.generation_config, GenerateContentConfig):
-                config = self.generation_config.model_dump()
+                config = self.generation_config.model_dump() or {}
             else:
-                config = self.generation_config
+                config = self.generation_config or {}
         else:
             config = {}
 
