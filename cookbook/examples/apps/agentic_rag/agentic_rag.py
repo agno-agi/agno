@@ -38,6 +38,7 @@ from agno.memory.db.postgres import PgMemoryDb
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
+from agno.models.groq import Groq
 from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.pgvector import PgVector
@@ -62,6 +63,8 @@ def get_agentic_rag_agent(
         model = Gemini(id=model_name)
     elif provider == "anthropic":
         model = Claude(id=model_name)
+    elif provider == "groq":
+        model = Groq(id=model_name)
     else:
         raise ValueError(f"Unsupported model provider: {provider}")
     # Define persistent memory for chat history

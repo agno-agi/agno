@@ -33,6 +33,9 @@ def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Message:
             import base64
 
             encoded_string = base64.b64encode(audio_snippet.content).decode("utf-8")
+            audio_format = audio_snippet.format
+            if not audio_format:
+                audio_format = "wav"
 
             # Create a message with audio
             message_content_with_audio.append(
@@ -40,7 +43,7 @@ def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Message:
                     "type": "input_audio",
                     "input_audio": {
                         "data": encoded_string,
-                        "format": audio_snippet.format,
+                        "format": audio_format,
                     },
                 },
             )
@@ -51,13 +54,15 @@ def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Message:
             audio_bytes = audio_snippet.audio_url_content
             if audio_bytes is not None:
                 encoded_string = base64.b64encode(audio_bytes).decode("utf-8")
-
+                audio_format = audio_snippet.format
+                if not audio_format:
+                    audio_format = audio_snippet.url.split(".")[-1]
                 message_content_with_audio.append(
                     {
                         "type": "input_audio",
                         "input_audio": {
                             "data": encoded_string,
-                            "format": audio_snippet.format,
+                            "format": audio_format,
                         },
                     },
                 )

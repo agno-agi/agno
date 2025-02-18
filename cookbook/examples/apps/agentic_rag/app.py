@@ -30,9 +30,11 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 # Add custom CSS
+
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
 
 
 def restart_agent():
@@ -84,9 +86,12 @@ def main():
     # Model selector
     ####################################################################
     model_options = {
+        "o3-mini": "openai:o3-mini",
         "gpt-4o": "openai:gpt-4o",
         "gemini-2.0-flash-exp": "google:gemini-2.0-flash-exp",
         "claude-3-5-sonnet": "anthropic:claude-3-5-sonnet-20241022",
+        "llama-3.3-70b": "groq:llama-3.3-70b-versatile",
+
     }
     selected_model = st.sidebar.selectbox(
         "Select a model",
@@ -222,7 +227,7 @@ def main():
         st.session_state.knowledge_base_initialized = False  # Reset initialization flag
         st.sidebar.success("Knowledge base cleared")
     ###############################################################
-    # Sample Questions
+    # Sample Question
     ###############################################################
     st.sidebar.markdown("#### ❓ Sample Questions")
     if st.sidebar.button("📝 Summarize"):
@@ -298,6 +303,8 @@ def main():
                     error_message = f"Sorry, I encountered an error: {str(e)}"
                     add_message("assistant", error_message)
                     st.error(error_message)
+
+
 
     ####################################################################
     # Session selector
