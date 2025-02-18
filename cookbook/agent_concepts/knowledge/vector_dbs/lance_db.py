@@ -8,7 +8,7 @@ from agno.vectordb.lancedb import LanceDb
 # By default, it stores data in /tmp/lancedb
 vector_db = LanceDb(
     table_name="recipes",
-    uri="/tmp/lancedb",  # You can change this path to store data elsewhere
+    uri="tmp/lancedb",  # You can change this path to store data elsewhere
 )
 
 # Create knowledge base

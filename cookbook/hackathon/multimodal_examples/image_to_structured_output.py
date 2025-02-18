@@ -27,5 +27,9 @@ agent = Agent(
 
 agent.print_response(
     "Extract the items and prices from the invoice",
-    images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/c/cf/Receipt_California_restaurant_2006.jpg")],
+    images=[
+        Image(
+            url="https://upload.wikimedia.org/wikipedia/commons/c/cf/Receipt_California_restaurant_2006.jpg"
+        )
+    ],
 )
