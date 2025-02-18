@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
-from agno.media import Image
+from agno.media import Audio, Image, Video
 from agno.playground.operator import (
     format_tools,
     get_agent_by_id,
@@ -87,11 +87,28 @@ def get_sync_playground_router(
 
         return agent_list
 
-    def chat_response_streamer(agent: Agent, message: str, images: Optional[List[Image]] = None) -> Generator:
-        run_response = agent.run(message=message, images=images, stream=True, stream_intermediate_steps=True)
-        for run_response_chunk in run_response:
-            run_response_chunk = cast(RunResponse, run_response_chunk)
-            yield run_response_chunk.to_json()
+    
+    def chat_response_streamer(
+        agent: Agent,
+        message: str,
+        images: Optional[List[Image]] = None,
+        audio: Optional[List[Audio]] = None,
+        videos: Optional[List[Video]] = None,
+    ) -> Generator:
+        try:
+            run_response = agent.run(
+                message,
+                images=images,
+                audio=audio,
+                videos=videos,
+                stream=True,
+                stream_intermediate_steps=True,
+            )
+            for run_response_chunk in run_response:
+                run_response_chunk = cast(RunResponse, run_response_chunk)
+                yield run_response_chunk.to_json()
+        except Exception as e:
+            yield json.dumps({"message": str(e)})
 
     def process_image(file: UploadFile) -> Image:
         content = file.file.read()
