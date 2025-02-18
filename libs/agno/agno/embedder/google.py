@@ -45,7 +45,12 @@ class GeminiEmbedder(Embedder):
         return self.gemini_client
 
     def _response(self, text: str) -> EmbedContentResponse:
-        _request_params: Dict[str, Any] = {"contents": text, "model": self.id, "config": {}}
+        # If a user provides a model id with the `models/` prefix, we need to remove it
+        _id = self.id
+        if _id.startswith("models/"):
+            _id = _id.split("/")[-1]
+
+        _request_params: Dict[str, Any] = {"contents": text, "model": _id, "config": {}}
         if self.dimensions:
             _request_params["config"]["output_dimensionality"] = self.dimensions
         if self.task_type:
