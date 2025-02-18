@@ -8,6 +8,7 @@ from agno.models.openai import OpenAIChat
 from agno.tools.gmail import GmailTools
 from pydantic import BaseModel, Field
 
+
 class FindEmailOutput(BaseModel):
     message_id: str = Field(..., description="The message id of the email")
     thread_id: str = Field(..., description="The thread id of the email")
@@ -15,6 +16,7 @@ class FindEmailOutput(BaseModel):
     in_reply_to: str = Field(..., description="The in-reply-to of the email")
     subject: str = Field(..., description="The subject of the email")
     body: str = Field(..., description="The body of the email")
+
 
 agent = Agent(
     name="Gmail Agent",
@@ -33,9 +35,11 @@ agent = Agent(
 )
 
 email = "<replace_with_email_address>"
-response: FindEmailOutput = agent.run(f"Find the last email from {email} along with the message id, references and in-reply-to",
+response: FindEmailOutput = agent.run(
+    f"Find the last email from {email} along with the message id, references and in-reply-to",
     markdown=True,
-    stream=True).content
+    stream=True,
+).content
 
 
 agent.print_response(

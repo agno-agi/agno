@@ -56,11 +56,13 @@ class Video(BaseModel):
         # Convert and decompress content to bytes if it's a string
         if content and isinstance(content, str):
             import base64
+
             try:
                 import zlib
+
                 decoded_content = base64.b64decode(content)
                 content = zlib.decompress(decoded_content)
-            except:
+            except Exception:
                 content = base64.b64decode(content).decode("utf-8")
         data["content"] = content
 

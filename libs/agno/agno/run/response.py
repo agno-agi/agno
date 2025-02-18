@@ -72,12 +72,11 @@ class RunResponse:
     created_at: int = field(default_factory=lambda: int(time()))
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {k: v for k, v in asdict(self).items() if v is not None and k not in ["messages",
-                                                                                      "extra_data",
-                                                                                      "images",
-                                                                                      "videos",
-                                                                                      "audio",
-                                                                                      "response_audio"]}
+        _dict = {
+            k: v
+            for k, v in asdict(self).items()
+            if v is not None and k not in ["messages", "extra_data", "images", "videos", "audio", "response_audio"]
+        }
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
 

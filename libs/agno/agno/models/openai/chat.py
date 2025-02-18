@@ -574,4 +574,3 @@ class OpenAIChat(Model):
             model_response.response_usage = response_delta.usage
 
         return model_response
-
