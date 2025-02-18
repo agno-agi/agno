@@ -547,8 +547,10 @@ class Agent:
                         if model_response.audio is None:
                             model_response.audio = AudioOutput(id=str(uuid4()), content="", transcript="")
 
-                        model_response.audio.content += model_response_chunk.audio.content
-                        model_response.audio.transcript += model_response_chunk.audio.transcript
+                        if model_response_chunk.audio.content is not None:
+                            model_response.audio.content += model_response_chunk.audio.content
+                        if model_response_chunk.audio.transcript is not None:
+                            model_response.audio.transcript += model_response_chunk.audio.transcript
 
                         # Yield the audio and transcript bit by bit
                         self.run_response.response_audio = AudioOutput(

@@ -17,7 +17,7 @@ agent = Agent(
         id="gpt-4o-audio-preview",
         modalities=["text", "audio"],
         audio={
-            "voice": "alloy",
+            "voice": "onyx",
             "format": "pcm16",
         },  # Only pcm16 is supported with streaming
     ),
@@ -39,13 +39,12 @@ with wave.open(str(filename), "wb") as wav_file:
     # Iterate over generated audio
     for response in output_stream:
         if response.response_audio:
-            print(response.response_audio.transcript, end="", flush=True)
-            if hasattr(response, "response_audio") and response.response_audio:
+            if response.response_audio.transcript:
+                print(response.response_audio.transcript, end="", flush=True)
+            if response.response_audio.content:
                 try:
-                    pcm_bytes = base64.b64decode(response.response_audio.base64_audio)
+                    pcm_bytes = base64.b64decode(response.response_audio.content)
                     wav_file.writeframes(pcm_bytes)
                 except Exception as e:
                     print(f"Error decoding audio: {e}")
-            else:
-                print("No audio found in the response.")
 print()

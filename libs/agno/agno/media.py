@@ -123,10 +123,10 @@ class Audio(BaseModel):
 
 
 class AudioOutput(BaseModel):
-    id: str
-    content: str  # Base64 encoded
+    id: Optional[str] = None
+    content: Optional[str] = None  # Base64 encoded
     expires_at: Optional[int] = None
-    transcript: str
+    transcript: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         import base64
