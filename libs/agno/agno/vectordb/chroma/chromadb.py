@@ -90,14 +90,20 @@ class ChromaDb(VectorDb):
         Returns:
             bool: True if document exists, False otherwise.
         """
-        if self.client:
-            try:
-                collection: Collection = self.client.get_collection(name=self.collection_name)
-                collection_data: GetResult = collection.get(include=[IncludeEnum.documents])
-                if collection_data.get("documents") != []:
-                    return True
-            except Exception as e:
-                logger.error(f"Document does not exist: {e}")
+        if not self.client:
+            logger.warning("Client not initialized")
+            return False
+
+        try:
+            collection: Collection = self.client.get_collection(name=self.collection_name)
+            collection_data: GetResult = collection.get(include=[IncludeEnum.documents])
+            existing_documents = collection_data.get("documents", [])
+            cleaned_content = document.content.replace("\x00", "\ufffd")
+            if cleaned_content in existing_documents:  # type: ignore
+                return True
+        except Exception as e:
+            logger.error(f"Document does not exist: {e}")
+            
         return False
 
     def name_exists(self, name: str) -> bool:
@@ -217,7 +223,7 @@ class ChromaDb(VectorDb):
         metadata = result.get("metadatas", [{}])[0]  # type: ignore
         documents = result.get("documents", [[]])[0]  # type: ignore
         embeddings = result.get("embeddings")[0]  # type: ignore
-        embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]
+        embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]  # type: ignore
         distances = result.get("distances", [[]])[0]  # type: ignore
 
         for idx, distance in enumerate(distances):
