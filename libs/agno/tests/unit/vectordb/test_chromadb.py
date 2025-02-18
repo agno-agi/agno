@@ -5,7 +5,6 @@ from typing import List
 import pytest
 
 from agno.document import Document
-from agno.embedder.openai import OpenAIEmbedder
 from agno.vectordb.chroma import ChromaDb
 from agno.vectordb.distance import Distance
 
@@ -14,7 +13,7 @@ TEST_PATH = "tmp/test_chromadb"
 
 
 @pytest.fixture
-def chroma_db():
+def chroma_db(mock_embedder):
     """Fixture to create and clean up a ChromaDb instance"""
     # Ensure the test directory exists with proper permissions
     os.makedirs(TEST_PATH, exist_ok=True)
@@ -24,7 +23,7 @@ def chroma_db():
         shutil.rmtree(TEST_PATH)
         os.makedirs(TEST_PATH)
 
-    db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, persistent_client=False)
+    db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, persistent_client=False, embedder=mock_embedder)
     db.create()
     yield db
 
@@ -138,8 +137,7 @@ def test_get_count(chroma_db, sample_documents):
     assert chroma_db.get_count() == 3
 
 
-@pytest.mark.asyncio
-async def test_error_handling(chroma_db):
+def test_error_handling(chroma_db):
     """Test error handling scenarios"""
     # Test search with invalid query
     results = chroma_db.search("")
@@ -150,15 +148,14 @@ async def test_error_handling(chroma_db):
     assert chroma_db.get_count() == 0
 
 
-def test_custom_embedder():
+def test_custom_embedder(mock_embedder):
     """Test using a custom embedder"""
     # Ensure the test directory exists
     os.makedirs(TEST_PATH, exist_ok=True)
 
-    custom_embedder = OpenAIEmbedder()
-    db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, embedder=custom_embedder)
+    db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, embedder=mock_embedder)
     db.create()
-    assert db.embedder == custom_embedder
+    assert db.embedder == mock_embedder
 
     # Cleanup
     try:
@@ -166,3 +163,21 @@ def test_custom_embedder():
     finally:
         if os.path.exists(TEST_PATH):
             shutil.rmtree(TEST_PATH)
+
+
+def test_multiple_document_operations(chroma_db, sample_documents):
+    """Test multiple document operations including batch inserts"""
+    # Test batch insert
+    first_batch = sample_documents[:2]
+    chroma_db.insert(first_batch)
+    assert chroma_db.get_count() == 2
+
+    # Test adding another document
+    second_batch = [sample_documents[2]]
+    chroma_db.insert(second_batch)
+    assert chroma_db.get_count() == 3
+
+    # Verify all documents are searchable
+    curry_results = chroma_db.search("curry", limit=1)
+    assert len(curry_results) == 1
+    assert "curry" in curry_results[0].content.lower()

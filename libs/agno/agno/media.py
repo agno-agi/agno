@@ -90,7 +90,8 @@ class Video(BaseModel):
 
 class Audio(BaseModel):
     content: Optional[Any] = None  # Actual audio bytes content
-    filepath: Optional[Union[Path, str]] = None  # Absolute local location for audio 
+    filepath: Optional[Union[Path, str]] = None  # Absolute local location for audio
+    url: Optional[str] = None  # Remote location for audio
     format: Optional[str] = None
 
     @model_validator(mode="before")
@@ -102,6 +103,7 @@ class Audio(BaseModel):
         # Extract the values from the input data
         filepath = data.get("filepath")
         content = data.get("content")
+        url = data.get("url")
 
         # Convert and decompress content to bytes if it's a string
         if content and isinstance(content, str):
@@ -115,14 +117,23 @@ class Audio(BaseModel):
         data["content"] = content
 
         # Count how many fields are set (not None)
-        count = len([field for field in [filepath, content] if field is not None])
+        count = len([field for field in [filepath, content, url] if field is not None])
 
         if count == 0:
-            raise ValueError("One of `filepath` or `content` must be provided.")
+            raise ValueError("One of `filepath` or `content` or `url` must be provided.")
         elif count > 1:
-            raise ValueError("Only one of `filepath` or `content` should be provided.")
+            raise ValueError("Only one of `filepath` or `content` or `url` should be provided.")
 
         return data
+
+    @property
+    def audio_url_content(self) -> Optional[bytes]:
+        import httpx
+
+        if self.url:
+            return httpx.get(self.url).content
+        else:
+            return None
 
     def to_dict(self) -> Dict[str, Any]:
         import base64

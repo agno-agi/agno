@@ -131,13 +131,18 @@ class ModelsLabTools(Toolkit):
 
             result = response.json()
 
+            status = result.get("status")
+            if status == "error":
+                logger.error(f"Error in response: {result.get('message')}")
+                return f"Error: {result.get('message')}"
+
             if "error" in result:
                 error_msg = f"Failed to generate {self.file_type.value}: {result['error']}"
                 logger.error(error_msg)
                 return f"Error: {result['error']}"
 
-            eta = result["eta"]
-            url_links = result["future_links"]
+            eta = result.get("eta")
+            url_links = result.get("future_links")
             media_id = str(uuid4())
 
             for media_url in url_links:
