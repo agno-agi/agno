@@ -1,7 +1,7 @@
-from phi.agent import Agent
-from phi.model.openai import OpenAIChat
-from phi.playground import Playground, serve_playground_app
-from phi.storage.agent.sqlite import SqlAgentStorage
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.playground import Playground, serve_playground_app
+from agno.storage.agent.sqlite import SqliteAgentStorage
 
 audio_agent = Agent(
     name="Audio Chat Agent",
@@ -13,7 +13,7 @@ audio_agent = Agent(
     debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
-    storage=SqlAgentStorage(table_name="audio_agent", db_file="tmp/audio_agent.db"),
+    storage=SqliteAgentStorage(table_name="audio_agent", db_file="tmp/audio_agent.db"),
 )
 
 
