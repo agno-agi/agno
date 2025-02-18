@@ -10,7 +10,6 @@ from agno.memory.manager import MemoryManager
 from agno.memory.summarizer import MemorySummarizer
 from agno.models.google import Gemini
 from agno.storage.agent.sqlite import SqliteAgentStorage
-from agno.tools.csv_toolkit import CsvTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 
@@ -118,7 +117,6 @@ def test_with_memory():
 
 
 def test_persistent_memory():
-
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
         tools=[DuckDuckGoTools()],
@@ -145,10 +143,10 @@ def test_persistent_memory():
             classifier=MemoryClassifier(model=Gemini(id="gemini-1.5-flash")),
             summarizer=MemorySummarizer(model=Gemini(id="gemini-1.5-flash")),
             manager=MemoryManager(model=Gemini(id="gemini-1.5-flash")),
-        )
+        ),
     )
 
-    response = agent.run("What is current news in France?")  
+    response = agent.run("What is current news in France?")
     assert response.content is not None
 
 

@@ -882,7 +882,9 @@ class Agent:
 
                     time.sleep(delay)
         if last_exception is not None:
-            logger.error(f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})")
+            logger.error(
+                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
+            )
             raise last_exception
         else:
             raise Exception(f"Failed after {num_attempts} attempts.")

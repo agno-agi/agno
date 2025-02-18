@@ -37,8 +37,8 @@ from agno.knowledge import AgentKnowledge
 from agno.memory.db.postgres import PgMemoryDb
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
-from agno.models.openai import OpenAIChat
 from agno.models.groq import Groq
+from agno.models.openai import OpenAIChat
 from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.pgvector import PgVector
