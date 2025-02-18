@@ -174,7 +174,6 @@ class CalComTools(Toolkit):
             querystring = {"status": "upcoming"}
             if email:
                 querystring["attendeeEmail"] = email
-            
 
             response = requests.get(url, headers=self._get_headers(), params=querystring)
             if response.status_code == 200:

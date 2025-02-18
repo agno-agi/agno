@@ -21,6 +21,7 @@ class ExaTools(Toolkit):
         text (bool): Retrieve text content from results. Default is True.
         text_length_limit (int): Max length of text content per result. Default is 1000.
         highlights (bool): Include highlighted snippets. Default is True.
+        answer (bool): Enable answer generation. Default is True.
         api_key (Optional[str]): Exa API key. Retrieved from `EXA_API_KEY` env variable if not provided.
         num_results (Optional[int]): Default number of search results. Overrides individual searches if set.
         start_crawl_date (Optional[str]): Include results crawled on/after this date (`YYYY-MM-DD`).
@@ -33,6 +34,7 @@ class ExaTools(Toolkit):
         include_domains (Optional[List[str]]): Restrict results to these domains.
         exclude_domains (Optional[List[str]]): Exclude results from these domains.
         show_results (bool): Log search results for debugging. Default is False.
+        model (Optional[str]): The search model to use. Options are 'exa' or 'exa-pro'.
     """
 
     def __init__(
@@ -40,6 +42,7 @@ class ExaTools(Toolkit):
         search: bool = True,
         get_contents: bool = True,
         find_similar: bool = True,
+        answer: bool = True,
         text: bool = True,
         text_length_limit: int = 1000,
         highlights: bool = True,
@@ -57,6 +60,7 @@ class ExaTools(Toolkit):
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
         show_results: bool = False,
+        model: Optional[str] = None,
     ):
         super().__init__(name="exa")
 
@@ -82,6 +86,7 @@ class ExaTools(Toolkit):
         self.category: Optional[str] = category
         self.include_domains: Optional[List[str]] = include_domains
         self.exclude_domains: Optional[List[str]] = exclude_domains
+        self.model: Optional[str] = model
 
         if search:
             self.register(self.search_exa)
@@ -89,6 +94,8 @@ class ExaTools(Toolkit):
             self.register(self.get_contents)
         if find_similar:
             self.register(self.find_similar)
+        if answer:
+            self.register(self.exa_answer)
 
     def _parse_results(self, exa_results: SearchResponse) -> str:
         exa_results_parsed = []
@@ -129,7 +136,8 @@ class ExaTools(Toolkit):
             str: The search results in JSON format.
         """
         try:
-            logger.info(f"Searching exa for: {query}")
+            if self.show_results:
+                logger.info(f"Searching exa for: {query}")
             search_kwargs: Dict[str, Any] = {
                 "text": self.text,
                 "highlights": self.highlights,
@@ -176,7 +184,8 @@ class ExaTools(Toolkit):
         }
 
         try:
-            logger.info(f"Fetching contents for URLs: {urls}")
+            if self.show_results:
+                logger.info(f"Fetching contents for URLs: {urls}")
 
             exa_results = self.exa.get_contents(urls=urls, **query_kwargs)
 
@@ -215,7 +224,8 @@ class ExaTools(Toolkit):
         }
 
         try:
-            logger.info(f"Finding similar links to: {url}")
+            if self.show_results:
+                logger.info(f"Finding similar links to: {url}")
 
             exa_results = self.exa.find_similar_and_contents(url=url, **query_kwargs)
 
@@ -226,4 +236,49 @@ class ExaTools(Toolkit):
             return parsed_results
         except Exception as e:
             logger.error(f"Failed to get similar links from Exa: {e}")
+            return f"Error: {e}"
+
+    def exa_answer(self, query: str, text: bool = False) -> str:
+        """
+        Get an LLM answer to a question informed by Exa search results.
+
+        Args:
+            query (str): The question or query to answer.
+            text (bool): Include full text from citation. Default is False.
+        Returns:
+            str: The answer results in JSON format with both generated answer and sources.
+        """
+
+        if self.model and self.model not in ["exa", "exa-pro"]:
+            raise ValueError("Model must be either 'exa' or 'exa-pro'")
+        try:
+            if self.show_results:
+                logger.info(f"Generating answer for query: {query}")
+            answer_kwargs: Dict[str, Any] = {
+                "model": self.model,
+                "text": text,
+            }
+            answer_kwargs = {k: v for k, v in answer_kwargs.items() if v is not None}
+            answer = self.exa.answer(query=query, **answer_kwargs)
+            result = {
+                "answer": answer.answer,  # type: ignore
+                "citations": [
+                    {
+                        "id": citation.id,
+                        "url": citation.url,
+                        "title": citation.title,
+                        "published_date": citation.published_date,
+                        "author": citation.author,
+                        "text": citation.text if text else None,
+                    }
+                    for citation in answer.citations  # type: ignore
+                ],
+            }
+            if self.show_results:
+                logger.info(json.dumps(result))
+
+            return json.dumps(result, indent=4)
+
+        except Exception as e:
+            logger.error(f"Failed to get answer from Exa: {e}")
             return f"Error: {e}"

@@ -141,11 +141,16 @@ class RedditTools(Toolkit):
             posts = self.reddit.subreddit(subreddit).top(time_filter=time_filter, limit=limit)
             top_posts: List[Dict[str, Union[str, int, float]]] = [
                 {
+                    "id": post.id,
                     "title": post.title,
                     "score": post.score,
                     "url": post.url,
+                    "selftext": post.selftext,
                     "author": str(post.author),
+                    "permalink": post.permalink,
                     "created_utc": post.created_utc,
+                    "subreddit": str(post.subreddit),
+                    "subreddit_name_prefixed": post.subreddit_name_prefixed,
                 }
                 for post in posts
             ]
