@@ -547,6 +547,8 @@ class Agent:
                         if model_response.audio is None:
                             model_response.audio = AudioContent(id=str(uuid4()), content="", transcript="")
 
+                        if model_response_chunk.audio.id is not None:
+                            model_response.audio.id = model_response_chunk.audio.id  # type: ignore
                         if model_response_chunk.audio.content is not None:
                             model_response.audio.content += model_response_chunk.audio.content  # type: ignore
                         if model_response_chunk.audio.transcript is not None:
@@ -904,9 +906,8 @@ class Agent:
 
                     time.sleep(delay)
         if last_exception is not None:
-            raise Exception(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}"
-            )
+            logger.error(f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}")
+            raise last_exception
         else:
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -1008,6 +1009,8 @@ class Agent:
                         if model_response.audio is None:
                             model_response.audio = AudioContent(id=str(uuid4()), content="", transcript="")
 
+                        if model_response_chunk.audio.id is not None:
+                            model_response.audio.id = model_response_chunk.audio.id  # type: ignore
                         if model_response_chunk.audio.content is not None:
                             model_response.audio.content += model_response_chunk.audio.content  # type: ignore
                         if model_response_chunk.audio.transcript is not None:
@@ -1331,8 +1334,11 @@ class Agent:
 
                     time.sleep(delay)
 
-        # If we get here, all retries failed
-        raise Exception(f"Failed after {num_attempts} attempts. Last error: {str(last_exception)}")
+        if last_exception is not None:
+            logger.error(f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}")
+            raise last_exception
+        else:
+            raise Exception(f"Failed after {num_attempts} attempts.")
 
     def create_run_response(
         self,

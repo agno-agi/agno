@@ -17,7 +17,7 @@ agent = Agent(
         id="gpt-4o-audio-preview",
         modalities=["text", "audio"],
         audio={
-            "voice": "onyx",
+            "voice": "alloy",
             "format": "pcm16",
         },  # Only pcm16 is supported with streaming
     ),
@@ -26,9 +26,7 @@ output_stream: Iterator[RunResponse] = agent.run(
     "Tell me a 10 second story", stream=True
 )
 
-filename = Path(__file__).parent.joinpath("tmp/response_stream.wav")
-filename.unlink(missing_ok=True)
-filename.parent.mkdir(parents=True, exist_ok=True)
+filename = "tmp/response_stream.wav"
 
 # Open the file once in append-binary mode
 with wave.open(str(filename), "wb") as wav_file:
