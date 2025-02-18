@@ -11,7 +11,6 @@ except ImportError:
 class AWSSESTool(Toolkit):
     def __init__(
         self,
-        receiver_email: Optional[str] = None,
         sender_email: Optional[str] = None,
         sender_name: Optional[str] = None,
         region_name: str = "us-east-1",
