@@ -113,11 +113,6 @@ def get_async_playground_router(
             async for run_response_chunk in run_response:
                 run_response_chunk = cast(RunResponse, run_response_chunk)
                 yield run_response_chunk.to_json()
-        except AgnoError as e:
-            yield RunResponse(
-                content=str(e),
-                event=RunEvent.run_error,
-            ).to_json()
         except Exception as e:
             yield RunResponse(
                 content=str(e),
