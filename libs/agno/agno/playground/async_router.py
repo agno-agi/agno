@@ -27,6 +27,7 @@ from agno.playground.schemas import (
     WorkflowSessionResponse,
     WorkflowsGetResponse,
 )
+from agno.run.response import RunEvent
 from agno.storage.agent.session import AgentSession
 from agno.storage.workflow.session import WorkflowSession
 from agno.utils.log import logger
@@ -113,9 +114,15 @@ def get_async_playground_router(
                 run_response_chunk = cast(RunResponse, run_response_chunk)
                 yield run_response_chunk.to_json()
         except AgnoError as e:
-            yield json.dumps({"status_code": e.status_code, "message": str(e)})
+            yield RunResponse(
+                content=str(e),
+                event=RunEvent.run_error,
+            ).to_json()
         except Exception as e:
-            yield json.dumps({"status_code": 500, "message": str(e)})
+            yield RunResponse(
+                content=str(e),
+                event=RunEvent.run_error,
+            ).to_json()
 
     async def process_image(file: UploadFile) -> Image:
         content = file.file.read()

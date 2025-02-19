@@ -2,9 +2,9 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
+from agno.exceptions import ModelProviderError
 from agno.models.openai import OpenAIChat
 from agno.storage.agent.postgres import PostgresAgentStorage
-from agno.exceptions import ModelProviderError
 
 
 def _assert_metrics(response: RunResponse):
@@ -71,6 +71,7 @@ async def test_async_basic_stream():
         assert response.content is not None
     _assert_metrics(agent.run_response)
 
+
 def test_exception_handling():
     agent = Agent(model=OpenAIChat(id="gpt-100"), markdown=True, telemetry=False, monitoring=False)
 
@@ -81,6 +82,7 @@ def test_exception_handling():
     assert exc.value.model_name == "OpenAIChat"
     assert exc.value.model_id == "gpt-100"
     assert exc.value.status_code == 404
+
 
 def test_with_memory():
     agent = Agent(

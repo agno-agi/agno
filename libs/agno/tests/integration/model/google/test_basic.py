@@ -3,9 +3,9 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
+from agno.exceptions import ModelProviderError
 from agno.models.google import Gemini
 from agno.storage.agent.postgres import PostgresAgentStorage
-from agno.exceptions import ModelProviderError
 
 
 def _assert_metrics(response: RunResponse):
@@ -85,6 +85,7 @@ def test_exception_handling():
     assert exc.value.model_name == "Gemini"
     assert exc.value.model_id == "gemini-1.5-flash-made-up-id"
     assert exc.value.status_code == 404
+
 
 def test_with_memory():
     agent = Agent(
