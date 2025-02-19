@@ -549,8 +549,6 @@ class Model(ABC):
 
             # Handle tool calls if present
             if assistant_message.tool_calls is not None:
-                yield ModelResponse(content="\n\n")
-
                 # Prepare function calls
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(assistant_message, messages)
                 function_call_results: List[Message] = []
