@@ -39,7 +39,6 @@ class BasePdfReader(Reader):
         return chunked_documents
 
 
-
 class PDFReader(BasePdfReader):
     """Reader for PDF files"""
 
@@ -76,9 +75,13 @@ class PDFReader(BasePdfReader):
         doc_reader = DocumentReader(pdf)
 
         # Process pages in parallel using asyncio.gather
-        documents = [
-            _build_document(doc_name, page_number, page) for page_number, page in enumerate(doc_reader.pages, start=1)
-        ]
+
+        async def process_page(doc_name: str, page_number: int, page: Any):
+            return _build_document(doc_name, page_number, page)
+
+        documents = asyncio.gather(
+            *[process_page(doc_name, page_number, page) for page_number, page in enumerate(doc_reader.pages, start=1)]
+        )
 
         if self.chunk:
             return self._build_chunked_documents(documents)
@@ -142,6 +145,9 @@ class PDFUrlReader(BasePdfReader):
 
         logger.info(f"Reading: {url}")
 
+        async def process_page(page_number: int, page: Any) -> Document:
+            return _build_document(doc_name, page_number, page)
+
         async with httpx.AsyncClient() as client:
             # Retry the request up to 3 times with exponential backoff
             for attempt in range(3):
@@ -165,9 +171,9 @@ class PDFUrlReader(BasePdfReader):
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
 
-        documents = [
-            _build_document(doc_name, page_number, page) for page_number, page in enumerate(doc_reader.pages, start=1)
-        ]
+        documents = await asyncio.gather(
+            *[process_page(doc_name, page_number, page) for page_number, page in enumerate(doc_reader.pages, start=1)]
+        )
 
         if self.chunk:
             return self._build_chunked_documents(documents)

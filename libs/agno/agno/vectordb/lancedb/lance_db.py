@@ -145,9 +145,7 @@ class LanceDb(VectorDb):
             schema = self._base_schema()
 
             logger.debug(f"Creating table asynchronously: {self.table_name}")
-            self.async_table = await conn.create_table(
-                self.table_name, schema=schema, mode="overwrite", exist_ok=True
-            )
+            self.async_table = await conn.create_table(self.table_name, schema=schema, mode="overwrite", exist_ok=True)
 
     def _base_schema(self) -> pa.Schema:
         return pa.schema(
