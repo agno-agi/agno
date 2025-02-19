@@ -130,7 +130,7 @@ _instructions = dedent("""\
 # Create the agent
 agno_support = Agent(
     agent_id="agno-assist",
-    name="AgnoAssist",
+    name="Agno Assist",
     model=OpenAIChat(id="gpt-4o"),
     description=_description,
     instructions=_instructions,
@@ -153,7 +153,7 @@ agno_support = Agent(
 
 agno_support_voice = Agent(
     agent_id="agno-assist-voice",
-    name="AgnoAssistVoice",
+    name="Agno Assist Voice",
     model=OpenAIChat(
         id="gpt-4o-audio-preview",
         modalities=["text", "audio"],
