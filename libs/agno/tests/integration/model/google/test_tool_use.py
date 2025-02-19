@@ -1,7 +1,6 @@
 from typing import Optional
 
 import pytest
-
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
@@ -118,7 +117,7 @@ def test_tool_use_with_native_structured_outputs():
     )
     # Gemini does not support structured outputs for tool calls at this time
     with pytest.raises(Exception):
-        response = agent.run("What is the current price of TSLA?")
+        agent.run("What is the current price of TSLA?")
     # assert isinstance(response.content, StockPrice)
     # assert response.content is not None
     # assert response.content.price is not None
