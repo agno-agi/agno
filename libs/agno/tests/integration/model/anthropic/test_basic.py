@@ -115,7 +115,9 @@ def test_structured_output():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=Claude(id="claude-3-opus-20240229"), response_model=MovieScript, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Claude(id="claude-3-opus-20240229"), response_model=MovieScript, telemetry=False, monitoring=False
+    )
 
     response = agent.run("Create a movie about time travel")
 

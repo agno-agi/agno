@@ -5,10 +5,7 @@ from agno.models.aws import Claude
 
 def test_image_input():
     agent = Agent(
-        model=Claude(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        markdown=True,
-        telemetry=False,
-        monitoring=False
+        model=Claude(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False, monitoring=False
     )
 
     response = agent.run(

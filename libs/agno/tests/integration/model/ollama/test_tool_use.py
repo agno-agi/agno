@@ -201,4 +201,4 @@ def test_tool_call_list_parameters():
     for call in tool_calls:
         if call.get("type", "") == "function":
             assert call["function"]["name"] == "get_contents"
-    assert response.content is not None 
+    assert response.content is not None
