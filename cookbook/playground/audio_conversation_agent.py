@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
-from agno.storage.agent.postgres import PostgresAgentStorage
+from agno.storage.agent.sqlite import SqliteAgentStorage
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 audio_and_text_agent = Agent(
@@ -15,8 +15,7 @@ audio_and_text_agent = Agent(
     debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
-    storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
-    # storage=SqliteAgentStorage(table_name="audio_agent", db_file="tmp/audio_agent.db"),
+    storage=SqliteAgentStorage(table_name="audio_agent", db_file="tmp/audio_agent.db"),
 )
 
 app = Playground(agents=[audio_and_text_agent]).get_app()
