@@ -305,7 +305,6 @@ class Gemini(Model):
         formatted_messages, system_message = self._format_messages(messages)
 
         request_kwargs = self._get_request_kwargs(system_message)
-
         try:
             return self.get_client().models.generate_content(
                 model=self.id,
