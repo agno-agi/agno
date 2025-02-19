@@ -240,7 +240,7 @@ class Gemini(Model):
         """
         request_params = {}
         # User provides their own generation config
-        if self.generation_config is None:
+        if self.generation_config is not None:
             if isinstance(self.generation_config, GenerateContentConfig):
                 config = self.generation_config.model_dump()
             else:
