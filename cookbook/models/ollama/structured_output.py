@@ -37,10 +37,10 @@ structured_output_agent = Agent(
 
 # Run the agent synchronously
 structured_output_response: RunResponse = structured_output_agent.run(
-    "Llamas ruling the world"
+    "New York"
 )
 pprint(structured_output_response.content)
 
 
 # Run the agent asynchronously
-asyncio.run(structured_output_agent.aprint_response("Llamas ruling the world"))
+asyncio.run(structured_output_agent.aprint_response("New York"))
