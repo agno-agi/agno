@@ -341,7 +341,6 @@ class LanceDb(VectorDb):
             self.connection.drop_table(self.table_name)
 
     def exists(self) -> bool:
-        print(self.connection, self.table_name, self.connection.table_names())
         if self.connection:
             if self.table_name in self.connection.table_names():
                 return True
