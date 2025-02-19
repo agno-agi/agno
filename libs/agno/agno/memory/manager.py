@@ -178,6 +178,7 @@ class MemoryManager(BaseModel):
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [self.get_system_message()]
+
         # Add the user prompt message
         user_prompt_message = Message(role="user", content=message, **kwargs) if message else None
         if user_prompt_message is not None:
