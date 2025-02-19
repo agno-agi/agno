@@ -32,7 +32,11 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=Claude(id="anthropic.claude-instant-v1"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Claude(id="anthropic.claude-instant-v1"),
+                  instructions="You tell ghost stories",
+                  markdown=True,
+                  telemetry=False,
+                  monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -139,6 +143,7 @@ def test_history():
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,
+        markdown=True,
     )
     agent.run("Hello")
     assert len(agent.run_response.messages) == 2
