@@ -839,7 +839,9 @@ class Agent:
                                     return f'"{key}": "{escaped_value}"'
 
                                 # Find and escape quotes in field values
-                                cleaned_content = re.sub(r'"([^"]+)"\s*:\s*"([^"]*)"', escape_quotes_in_values, cleaned_content)
+                                cleaned_content = re.sub(
+                                    r'"([^"]+)"\s*:\s*"([^"]*)"', escape_quotes_in_values, cleaned_content
+                                )
 
                                 try:
                                     structured_output = self.response_model.model_validate_json(cleaned_content)
@@ -1257,7 +1259,9 @@ class Agent:
                                     return f'"{key}": "{escaped_value}"'
 
                                 # Find and escape quotes in field values
-                                cleaned_content = re.sub(r'"([^"]+)"\s*:\s*"([^"]*)"', escape_quotes_in_values, cleaned_content)
+                                cleaned_content = re.sub(
+                                    r'"([^"]+)"\s*:\s*"([^"]*)"', escape_quotes_in_values, cleaned_content
+                                )
 
                                 try:
                                     structured_output = self.response_model.model_validate_json(cleaned_content)
@@ -2520,6 +2524,7 @@ class Agent:
             return ""
 
         import json
+
         try:
             return json.dumps(context, indent=2, default=str)
         except (TypeError, ValueError, OverflowError) as e:
