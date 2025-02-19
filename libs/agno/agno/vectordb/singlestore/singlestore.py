@@ -84,19 +84,6 @@ class SingleStore(VectorDb):
         """
         if not self.table_exists():
             logger.info(f"Creating table: {self.collection}")
-            logger.info(f"""
-                    CREATE TABLE IF NOT EXISTS {self.schema}.{self.collection} (
-                        id TEXT,
-                        name TEXT,
-                        meta_data TEXT,
-                        content TEXT,
-                        embedding VECTOR({self.dimensions}) NOT NULL,
-                        `usage` TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                        content_hash TEXT
-                    );
-                    """)
             with self.db_engine.connect() as connection:
                 connection.execute(
                     text(f"""
@@ -188,15 +175,15 @@ class SingleStore(VectorDb):
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
 
-                # Convert embedding to a JSON array string
-                embedding_json = json.dumps(document.embedding)
+                # Convert embedding list to SingleStore VECTOR format
+                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
 
                 stmt = mysql.insert(self.table).values(
                     id=_id,
                     name=document.name,
                     meta_data=meta_data_json,
                     content=cleaned_content,
-                    embedding=embedding_json,  # Properly formatted embedding as a JSON array string
+                    embedding=embeddings,
                     usage=usage_json,
                     content_hash=content_hash,
                 )
@@ -206,6 +193,10 @@ class SingleStore(VectorDb):
 
             sess.commit()
             logger.debug(f"Committed {counter} documents")
+
+    def upsert_available(self) -> bool:
+        """Indicate that upsert functionality is available."""
+        return True
 
     def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, batch_size: int = 20) -> None:
         """
@@ -227,9 +218,8 @@ class SingleStore(VectorDb):
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
 
-                # Convert embedding to a JSON array string
-                embedding_json = json.dumps(document.embedding)
-
+                # Convert embedding list to SingleStore VECTOR format
+                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
                 stmt = (
                     mysql.insert(self.table)
                     .values(
@@ -237,7 +227,7 @@ class SingleStore(VectorDb):
                         name=document.name,
                         meta_data=meta_data_json,
                         content=cleaned_content,
-                        embedding=embedding_json,
+                        embedding=embeddings,
                         usage=usage_json,
                         content_hash=content_hash,
                     )
@@ -245,7 +235,7 @@ class SingleStore(VectorDb):
                         name=document.name,
                         meta_data=meta_data_json,
                         content=cleaned_content,
-                        embedding=embedding_json,
+                        embedding=embeddings,
                         usage=usage_json,
                         content_hash=content_hash,
                     )
@@ -292,10 +282,10 @@ class SingleStore(VectorDb):
         if self.distance == Distance.l2:
             stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
         if self.distance == Distance.cosine:
-            embedding_json = json.dumps(query_embedding)
+            embeddings = json.dumps(query_embedding)
             dot_product_expr = func.dot_product(self.table.c.embedding, text(":embedding"))
             stmt = stmt.order_by(dot_product_expr.desc())
-            stmt = stmt.params(embedding=embedding_json)
+            stmt = stmt.params(embedding=embeddings)
             # stmt = stmt.order_by(self.table.c.embedding.cosine_distance(query_embedding))
         if self.distance == Distance.max_inner_product:
             stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
@@ -306,6 +296,7 @@ class SingleStore(VectorDb):
         # Get neighbors
         # This will only work if embedding column is created with `vector` data type.
         with self.Session.begin() as sess:
+            sess.execute(text("SET vector_type_project_format = JSON"))
             neighbors = sess.execute(stmt).fetchall() or []
             #         if self.index is not None:
             #             if isinstance(self.index, Ivfflat):
@@ -322,8 +313,15 @@ class SingleStore(VectorDb):
         for neighbor in neighbors:
             meta_data_dict = json.loads(neighbor.meta_data) if neighbor.meta_data else {}
             usage_dict = json.loads(neighbor.usage) if neighbor.usage else {}
-            # Convert the embedding mysql.TEXT back into a list
-            embedding_list = json.loads(neighbor.embedding) if neighbor.embedding else []
+
+            # Convert SingleStore VECTOR type to list
+            embedding_list = []
+            if neighbor.embedding:
+                try:
+                    embedding_list = json.loads(neighbor.embedding)
+                except Exception as e:
+                    logger.error(f"Error extracting vector: {e}")
+                    embedding_list = []
 
             search_results.append(
                 Document(
