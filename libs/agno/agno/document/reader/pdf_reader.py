@@ -79,7 +79,7 @@ class PDFReader(BasePdfReader):
         async def process_page(doc_name: str, page_number: int, page: Any):
             return _build_document(doc_name, page_number, page)
 
-        documents = asyncio.gather(
+        documents = await asyncio.gather(
             *[process_page(doc_name, page_number, page) for page_number, page in enumerate(doc_reader.pages, start=1)]
         )
 
@@ -145,7 +145,7 @@ class PDFUrlReader(BasePdfReader):
 
         logger.info(f"Reading: {url}")
 
-        async def process_page(page_number: int, page: Any) -> Document:
+        async def process_page(doc_name: str, page_number: int, page: Any) -> Document:
             return _build_document(doc_name, page_number, page)
 
         async with httpx.AsyncClient() as client:
