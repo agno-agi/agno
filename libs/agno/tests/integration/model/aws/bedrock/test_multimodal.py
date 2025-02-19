@@ -5,7 +5,7 @@ from agno.models.aws import AwsBedrock
 
 def test_image_input():
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-5-sonnet-20241022"),
+        model=AwsBedrock(id="amazon.nova-pro-v1:0"),
         markdown=True,
         telemetry=False,
         monitoring=False

@@ -19,7 +19,7 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(model=Claude(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Claude(id="anthropic.claude-instant-v1"), markdown=True, telemetry=False, monitoring=False)
 
     # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -32,7 +32,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=Claude(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Claude(id="anthropic.claude-instant-v1"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -50,7 +50,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=Claude(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Claude(id="anthropic.claude-instant-v1"), markdown=True, telemetry=False, monitoring=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -62,7 +62,7 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=Claude(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Claude(id="anthropic.claude-instant-v1"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -75,7 +75,7 @@ async def test_async_basic_stream():
 
 def test_with_memory():
     agent = Agent(
-        model=Claude(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        model=Claude(id="anthropic.claude-instant-v1"),
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,

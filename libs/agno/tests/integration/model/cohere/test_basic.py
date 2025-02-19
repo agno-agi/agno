@@ -19,7 +19,7 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(model=Cohere(id="command"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Cohere(id="command-light"), markdown=True, telemetry=False, monitoring=False)
 
     # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -32,7 +32,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=Cohere(id="command"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Cohere(id="command-light"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -50,7 +50,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=Cohere(id="command"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Cohere(id="command-light"), markdown=True, telemetry=False, monitoring=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -62,7 +62,7 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=Cohere(id="command"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Cohere(id="command-light"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -75,7 +75,7 @@ async def test_async_basic_stream():
 
 def test_with_memory():
     agent = Agent(
-        model=Cohere(id="command"),
+        model=Cohere(id="command-light"),
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
@@ -115,7 +115,7 @@ def test_structured_output():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=Cohere(id="command"), response_model=MovieScript, telemetry=False, monitoring=False)
+    agent = Agent(model=Cohere(id="command-light"), response_model=MovieScript, telemetry=False, monitoring=False)
 
     response = agent.run("Create a movie about time travel")
 
