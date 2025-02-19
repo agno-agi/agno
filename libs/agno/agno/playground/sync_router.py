@@ -109,10 +109,12 @@ def get_sync_playground_router(
                 run_response_chunk = cast(RunResponse, run_response_chunk)
                 yield run_response_chunk.to_json()
         except Exception as e:
-            yield RunResponse(
+            error_response = RunResponse(
                 content=str(e),
                 event=RunEvent.run_error,
-            ).to_json()
+            )
+            yield error_response.to_json()
+            return
 
     def process_image(file: UploadFile) -> Image:
         content = file.file.read()
