@@ -41,7 +41,6 @@ class Playground:
         return get_async_playground_router(self.agents, self.workflows)
 
     def get_app(self, use_async: bool = True, prefix: str = "/v1") -> FastAPI:
-
         if not self.api_app:
             self.api_app = FastAPI(
                 title=self.settings.title,
@@ -53,14 +52,13 @@ class Playground:
         if not self.api_app:
             raise Exception("API App could not be created.")
 
-
         @self.api_app.exception_handler(HTTPException)
         async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
             return JSONResponse(
                 status_code=exc.status_code,
                 content={"message": str(exc.detail)},
             )
-        
+
         async def general_exception_handler(request: Request, call_next):
             try:
                 return await call_next(request)
@@ -69,9 +67,8 @@ class Playground:
                     status_code=500,
                     content={"message": str(e)},
                 )
-            
-        self.api_app.middleware("http")(general_exception_handler)
 
+        self.api_app.middleware("http")(general_exception_handler)
 
         if not self.router:
             self.router = APIRouter(prefix=prefix)
