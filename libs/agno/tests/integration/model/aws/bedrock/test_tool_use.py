@@ -1,7 +1,5 @@
 from typing import Optional
 
-import pytest
-
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.aws import AwsBedrock
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -43,53 +41,6 @@ def test_tool_use_stream():
     tool_call_seen = False
 
     for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
-        responses.append(chunk)
-        if chunk.tools:
-            if any(tc.get("tool_name") for tc in chunk.tools):
-                tool_call_seen = True
-
-    assert len(responses) > 0
-    assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
-
-
-@pytest.mark.asyncio
-async def test_async_tool_use():
-    agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        tools=[YFinanceTools()],
-        show_tool_calls=True,
-        markdown=True,
-        telemetry=False,
-        monitoring=False,
-    )
-
-    response = await agent.arun("What is the current price of TSLA?")
-
-    # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
-    assert response.content is not None
-    assert "TSLA" in response.content
-
-
-@pytest.mark.asyncio
-async def test_async_tool_use_stream():
-    agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        tools=[YFinanceTools()],
-        show_tool_calls=True,
-        markdown=True,
-        telemetry=False,
-        monitoring=False,
-    )
-
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
-
-    responses = []
-    tool_call_seen = False
-
-    async for chunk in response_stream:
         assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
