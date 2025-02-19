@@ -120,7 +120,7 @@ class Ollama(Model):
             request_params["tools"] = self._tools
             # Fix optional parameters where the "type" is [type, null]
             for tool in request_params["tools"]:
-                if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]: 
+                if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:
                     for _, obj in tool["function"]["parameters"].get("properties", {}).items():
                         if isinstance(obj["type"], list):
                             obj["type"] = obj["type"][0]
