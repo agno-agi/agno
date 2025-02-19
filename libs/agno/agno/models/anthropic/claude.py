@@ -107,6 +107,7 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
     chat_messages: List[Dict[str, str]] = []
     system_messages: List[str] = []
 
+    print()
     for idx, message in enumerate(messages):
 
         content = message.content or ""
