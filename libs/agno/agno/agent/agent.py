@@ -2396,7 +2396,16 @@ class Agent:
         if member_agent.name is None:
             member_agent.name = agent_name
 
-        strict = True if (member_agent.response_model is not None and member_agent.structured_outputs and member_agent.model.supports_structured_outputs) else False
+        strict = (
+            True
+            if (
+                member_agent.response_model is not None
+                and member_agent.structured_outputs
+                and member_agent.model is not None
+                and member_agent.model.supports_structured_outputs
+            )
+            else False
+        )
         transfer_function = Function.from_callable(_transfer_task_to_agent, strict=strict)
         transfer_function.strict = strict
         transfer_function.name = f"transfer_task_to_{agent_name}"

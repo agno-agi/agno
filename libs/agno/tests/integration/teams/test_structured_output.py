@@ -1,12 +1,10 @@
 from typing import List
 
-from agno.models.openai import OpenAIChat
-from agno.agent import Agent
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 from agno.tools.hackernews import HackerNewsTools
-from agno.tools.newspaper4k import Newspaper4kTools
 
 
 def test_structured_output():
@@ -20,14 +18,13 @@ def test_structured_output():
         summary: str
         reference_links: List[str]
 
-
     hn_researcher = Agent(
         name="HackerNews Researcher",
         model=OpenAIChat("gpt-4o-mini"),
         role="Gets top stories from hackernews.",
         tools=[HackerNewsTools()],
         response_model=HackerNewsArticle,
-        structured_outputs=True
+        structured_outputs=True,
     )
 
     hn_team = Agent(
@@ -44,9 +41,7 @@ def test_structured_output():
         markdown=True,
     )
 
-    response = hn_team.run(
-        "Write an article about the top 2 stories on hackernews", stream=True
-    )
+    response = hn_team.run("Write an article about the top 2 stories on hackernews", stream=True)
 
     assert isinstance(response.content, Article)
     assert response.content.title is not None
