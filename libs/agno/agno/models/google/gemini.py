@@ -29,6 +29,8 @@ try:
         Part,
         Schema,
         Tool,
+        ToolConfig,
+        FunctionCallingConfig,
     )
 except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
@@ -281,6 +283,10 @@ class Gemini(Model):
 
         if self._tools:
             config["tools"] = [_format_function_definitions(self._tools)]
+
+            config["tool_config"] = ToolConfig(
+                function_calling_config=FunctionCallingConfig(mode='ANY')
+            )
 
         config = {k: v for k, v in config.items() if v is not None}
 
