@@ -36,7 +36,6 @@ st.set_page_config(
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
-
 def restart_agent():
     """Reset the agent and clear chat history"""
     logger.debug("---*--- Restarting agent ---*---")
@@ -91,7 +90,6 @@ def main():
         "gemini-2.0-flash-exp": "google:gemini-2.0-flash-exp",
         "claude-3-5-sonnet": "anthropic:claude-3-5-sonnet-20241022",
         "llama-3.3-70b": "groq:llama-3.3-70b-versatile",
-
     }
     selected_model = st.sidebar.selectbox(
         "Select a model",
@@ -303,8 +301,6 @@ def main():
                     error_message = f"Sorry, I encountered an error: {str(e)}"
                     add_message("assistant", error_message)
                     st.error(error_message)
-
-
 
     ####################################################################
     # Session selector
