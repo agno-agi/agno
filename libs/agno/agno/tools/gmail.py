@@ -551,11 +551,19 @@ class GmailTools(Toolkit):
                         (header["value"] for header in msg_data["payload"]["headers"] if header["name"] == "Date"), None
                     ),
                     "in-reply-to": next(
-                        (header["value"] for header in msg_data["payload"]["headers"] if header["name"] == "In-Reply-To"),
+                        (
+                            header["value"]
+                            for header in msg_data["payload"]["headers"]
+                            if header["name"] == "In-Reply-To"
+                        ),
                         None,
                     ),
                     "references": next(
-                        (header["value"] for header in msg_data["payload"]["headers"] if header["name"] == "References"),
+                        (
+                            header["value"]
+                            for header in msg_data["payload"]["headers"]
+                            if header["name"] == "References"
+                        ),
                         None,
                     ),
                     "body": self._get_message_body(msg_data),
