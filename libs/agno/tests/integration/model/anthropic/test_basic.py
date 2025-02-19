@@ -19,7 +19,7 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(model=Claude(id="claude-3-opus-20240229"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Claude(id="claude-3-5-haiku-20241022"), markdown=True, telemetry=False, monitoring=False)
 
     # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -32,7 +32,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=Claude(id="claude-3-opus-20240229"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Claude(id="claude-3-5-haiku-20241022"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -50,7 +50,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=Claude(id="claude-3-opus-20240229"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Claude(id="claude-3-5-haiku-20241022"), markdown=True, telemetry=False, monitoring=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -62,7 +62,7 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=Claude(id="claude-3-opus-20240229"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Claude(id="claude-3-5-haiku-20241022"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -75,7 +75,7 @@ async def test_async_basic_stream():
 
 def test_with_memory():
     agent = Agent(
-        model=Claude(id="claude-3-opus-20240229"),
+        model=Claude(id="claude-3-5-haiku-20241022"),
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
@@ -115,7 +115,7 @@ def test_structured_output():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=Claude(id="claude-3-opus-20240229"), response_model=MovieScript, telemetry=False, monitoring=False)
+    agent = Agent(model=Claude(id="claude-3-5-haiku-20241022"), response_model=MovieScript, telemetry=False, monitoring=False)
 
     response = agent.run("Create a movie about time travel")
 
@@ -129,7 +129,7 @@ def test_structured_output():
 def test_history():
     db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
     agent = Agent(
-        model=Claude(id="claude-3-opus-20240229"),
+        model=Claude(id="claude-3-5-haiku-20241022"),
         storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
         add_history_to_messages=True,
         telemetry=False,
