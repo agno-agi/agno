@@ -5,15 +5,20 @@ from agno.document.chunking.strategy import ChunkingStrategy
 from agno.models.base import Model
 from agno.models.defaults import DEFAULT_OPENAI_MODEL_ID
 from agno.models.message import Message
-from agno.models.openai import OpenAIChat
 
 
 class AgenticChunking(ChunkingStrategy):
     """Chunking strategy that uses an LLM to determine natural breakpoints in the text"""
 
     def __init__(self, model: Optional[Model] = None, max_chunk_size: int = 5000):
-        self.model = model or OpenAIChat(DEFAULT_OPENAI_MODEL_ID)
+        if model is None:
+            try:
+                from agno.models.openai import OpenAIChat
+            except Exception:
+                raise ValueError("`openai` isn't installed. Please install it with `pip install openai`")
+            model = OpenAIChat(DEFAULT_OPENAI_MODEL_ID)
         self.max_chunk_size = max_chunk_size
+        self.model = model
 
     def chunk(self, document: Document) -> List[Document]:
         """Split text into chunks using LLM to determine natural breakpoints based on context"""
