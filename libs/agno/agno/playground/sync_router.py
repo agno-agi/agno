@@ -7,6 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
+from agno.exceptions import AgnoError
 from agno.media import Audio, Image, Video
 from agno.playground.operator import (
     format_tools,
@@ -87,7 +88,6 @@ def get_sync_playground_router(
 
         return agent_list
 
-    
     def chat_response_streamer(
         agent: Agent,
         message: str,
@@ -107,8 +107,10 @@ def get_sync_playground_router(
             for run_response_chunk in run_response:
                 run_response_chunk = cast(RunResponse, run_response_chunk)
                 yield run_response_chunk.to_json()
+        except AgnoError as e:
+            yield json.dumps({"status_code": e.status_code, "message": str(e)})
         except Exception as e:
-            yield json.dumps({"message": str(e)})
+            yield json.dumps({"status_code": 500, "message": str(e)})
 
     def process_image(file: UploadFile) -> Image:
         content = file.file.read()
