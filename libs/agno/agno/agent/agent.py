@@ -2493,6 +2493,7 @@ class Agent:
             return ""
 
         import json
+
         try:
             return json.dumps(context, indent=2, default=str)
         except (TypeError, ValueError, OverflowError) as e:

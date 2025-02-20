@@ -11,7 +11,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
-from agno.utils.openai import add_images_to_message
+from agno.utils.openai import images_to_message
 
 try:
     from azure.ai.inference import ChatCompletionsClient
@@ -49,7 +49,7 @@ def _format_message(message: Message) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: The formatted message.
     """
-    message_dict = {
+    message_dict: Dict[str, Any] = {
         "role": message.role,
         "content": message.content,
         "name": message.name,
@@ -58,8 +58,12 @@ def _format_message(message: Message) -> Dict[str, Any]:
     }
     message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-    if message.images is not None:
-        message_dict["content"] = add_images_to_message(message=message, images=message.images)
+    if message.images is not None and len(message.images) > 0:
+        # Ignore non-string message content
+        # because we assume that the images/audio are already added to the message
+        if isinstance(message.content, str):
+            message_dict["content"] = [{"type": "text", "text": message.content}]
+            message_dict["content"].extend(images_to_message(images=message.images))
 
     if message.audio is not None:
         logger.warning("Audio input is currently unsupported.")

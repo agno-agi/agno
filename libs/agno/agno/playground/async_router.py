@@ -118,7 +118,7 @@ def get_async_playground_router(
 
     async def process_audio(file: UploadFile) -> Audio:
         content = file.file.read()
-        return Audio(content=content, format=file.content_type.split("/")[-1])
+        return Audio(content=content, format=file.content_type.split("/")[-1] if file.content_type else None)
 
     @playground_router.post("/agents/{agent_id}/runs")
     async def create_agent_run(

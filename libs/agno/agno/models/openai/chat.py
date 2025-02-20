@@ -12,7 +12,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
-from agno.utils.openai import add_audio_to_message, add_images_to_message
+from agno.utils.openai import audio_to_message, images_to_message
 
 try:
     from openai import APIConnectionError, APIStatusError, RateLimitError
@@ -249,7 +249,7 @@ class OpenAIChat(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        message_dict = {
+        message_dict: Dict[str, Any] = {
             "role": self.role_map[message.role],
             "content": message.content,
             "name": message.name,
@@ -258,11 +258,20 @@ class OpenAIChat(Model):
         }
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-        if message.images is not None:
-            message_dict["content"] = add_images_to_message(message=message, images=message.images)
+        # Ignore non-string message content
+        # because we assume that the images/audio are already added to the message
+        if (message.images is not None and len(message.images) > 0) or (
+            message.audio is not None and len(message.audio) > 0
+        ):
+            # Ignore non-string message content
+            # because we assume that the images/audio are already added to the message
+            if isinstance(message.content, str):
+                message_dict["content"] = [{"type": "text", "text": message.content}]
+                if message.images is not None:
+                    message_dict["content"].extend(images_to_message(images=message.images))
 
-        if message.audio is not None:
-            message_dict["content"] = add_audio_to_message(message=message, audio=message.audio)
+                if message.audio is not None:
+                    message_dict["content"].extend(audio_to_message(audio=message.audio))
 
         if message.audio_output is not None:
             message_dict["content"] = None

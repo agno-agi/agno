@@ -107,7 +107,7 @@ def get_sync_playground_router(
         content = file.file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
-        return Audio(content=content, format=file.content_type.split("/")[-1])
+        return Audio(content=content, format=file.content_type.split("/")[-1] if file.content_type else None)
 
     @playground_router.post("/agents/{agent_id}/runs")
     def create_agent_run(

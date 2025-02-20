@@ -2,17 +2,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from agno.media import Audio, Image
-from agno.models.message import Message
 from agno.utils.log import logger
 
 
-def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Dict[str, Any]:
+def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
     """
     Add audio to a message for the model. By default, we use the OpenAI audio format but other Models
     can override this method to use a different audio format.
 
     Args:
-        message: The message for the Model
         audio: Pre-formatted audio data like {
                     "content": encoded_string,
                     "format": "wav"
@@ -21,12 +19,7 @@ def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Dict[str, 
     Returns:
         Message content with audio added in the format expected by the model
     """
-    if len(audio) == 0:
-        return message
-
-    # Create a default message content with text
-    message_content_with_audio: List[Dict[str, Any]] = [{"type": "text", "text": message.content}]
-
+    audio_messages = []
     for audio_snippet in audio:
         # The audio is raw data
         if audio_snippet.content:
@@ -38,7 +31,7 @@ def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Dict[str, 
                 audio_format = "wav"
 
             # Create a message with audio
-            message_content_with_audio.append(
+            audio_messages.append(
                 {
                     "type": "input_audio",
                     "input_audio": {
@@ -57,7 +50,7 @@ def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Dict[str, 
                 audio_format = audio_snippet.format
                 if not audio_format:
                     audio_format = audio_snippet.url.split(".")[-1]
-                message_content_with_audio.append(
+                audio_messages.append(
                     {
                         "type": "input_audio",
                         "input_audio": {
@@ -80,7 +73,7 @@ def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Dict[str, 
             if not audio_format:
                 audio_format = path.suffix.lstrip(".")
 
-            message_content_with_audio.append(
+            audio_messages.append(
                 {
                     "type": "input_audio",
                     "input_audio": {
@@ -90,7 +83,7 @@ def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Dict[str, 
                 },
             )
 
-    return message_content_with_audio
+    return audio_messages
 
 
 def _process_bytes_image(image: bytes) -> Dict[str, Any]:
@@ -150,13 +143,12 @@ def _process_image(image: Image) -> Optional[Dict[str, Any]]:
     return image_payload
 
 
-def add_images_to_message(message: Message, images: Sequence[Image]) -> Dict[str, Any]:
+def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
     """
     Add images to a message for the model. By default, we use the OpenAI image format but other Models
     can override this method to use a different image format.
 
     Args:
-        message: The message for the Model
         images: Sequence of images in various formats:
             - str: base64 encoded image, URL, or file path
             - Dict: pre-formatted image data
@@ -165,26 +157,18 @@ def add_images_to_message(message: Message, images: Sequence[Image]) -> Dict[str
     Returns:
         Message content with images added in the format expected by the model
     """
-    # If no images are provided, return the message as is
-    if len(images) == 0:
-        return message
-
-    # Ignore non-string message content
-    # because we assume that the images/audio are already added to the message
-    if not isinstance(message.content, str):
-        return message
 
     # Create a default message content with text
-    message_content_with_image: List[Dict[str, Any]] = [{"type": "text", "text": message.content}]
+    image_messages: List[Dict[str, Any]] = []
 
     # Add images to the message content
     for image in images:
         try:
             image_data = _process_image(image)
             if image_data:
-                message_content_with_image.append(image_data)
+                image_messages.append(image_data)
         except Exception as e:
             logger.error(f"Failed to process image: {str(e)}")
             continue
 
-    return message_content_with_image
+    return image_messages
