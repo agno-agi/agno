@@ -3283,7 +3283,7 @@ class Agent:
     def log_agent_run(self) -> None:
         self.set_monitoring()
 
-        if not (self.telemetry or self.monitoring):
+        if not self.telemetry and not self.monitoring:
             return
 
         from agno.api.agent import AgentRunCreate, create_agent_run
@@ -3307,7 +3307,7 @@ class Agent:
     async def alog_agent_run(self) -> None:
         self.set_monitoring()
 
-        if not (self.telemetry or self.monitoring):
+        if not self.telemetry and not self.monitoring:
             return
 
         from agno.api.agent import AgentRunCreate, acreate_agent_run
