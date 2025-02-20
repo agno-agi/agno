@@ -1,5 +1,4 @@
 """
-Import necessary modules
 pip install llama-index-core llama-index-readers-file llama-index-embeddings-openai agno
 """
 

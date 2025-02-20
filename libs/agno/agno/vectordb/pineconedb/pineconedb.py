@@ -1,10 +1,25 @@
 from typing import Any, Dict, List, Optional, Union
 
 try:
+    from packaging import version
+    from pinecone import __version__
+
+    if version.parse(__version__).major >= 6:
+        import warnings
+
+        warnings.warn(
+            "We do not yet support Pinecone v6.x.x. We are actively working to achieve compatibility. "
+            "In the meantime, we recommend using Pinecone v5.4.2 for the best experience. Please run `pip install pinecone==5.4.2`",
+            UserWarning,
+        )
+        raise RuntimeError("Incompatible Pinecone version detected. Execution halted.")
+
     from pinecone import Pinecone, PodSpec, ServerlessSpec
     from pinecone.config import Config
+
 except ImportError:
     raise ImportError("The `pinecone` package is not installed, please install using `pip install pinecone`.")
+
 
 from agno.document import Document
 from agno.embedder import Embedder
@@ -316,7 +331,7 @@ class PineconeDb(VectorDb):
                 vector=hdense,
                 sparse_vector=hsparse,
                 top_k=limit,
-                namespace=namespace,
+                namespace=namespace or self.namespace,
                 filter=filters,
                 include_values=include_values,
                 include_metadata=True,
@@ -325,7 +340,7 @@ class PineconeDb(VectorDb):
             response = self.index.query(
                 vector=dense_embedding,
                 top_k=limit,
-                namespace=namespace,
+                namespace=namespace or self.namespace,
                 filter=filters,
                 include_values=include_values,
                 include_metadata=True,

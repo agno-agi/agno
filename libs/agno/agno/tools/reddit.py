@@ -137,14 +137,20 @@ class RedditTools(Toolkit):
             return "Please provide Reddit API credentials"
 
         try:
+            logger.debug(f"Getting top posts from r/{subreddit}")
             posts = self.reddit.subreddit(subreddit).top(time_filter=time_filter, limit=limit)
             top_posts: List[Dict[str, Union[str, int, float]]] = [
                 {
+                    "id": post.id,
                     "title": post.title,
                     "score": post.score,
                     "url": post.url,
+                    "selftext": post.selftext,
                     "author": str(post.author),
+                    "permalink": post.permalink,
                     "created_utc": post.created_utc,
+                    "subreddit": str(post.subreddit),
+                    "subreddit_name_prefixed": post.subreddit_name_prefixed,
                 }
                 for post in posts
             ]
@@ -191,6 +197,7 @@ class RedditTools(Toolkit):
             return "Please provide Reddit API credentials"
 
         try:
+            logger.debug("Getting trending subreddits")
             popular_subreddits = self.reddit.subreddits.popular(limit=5)
             trending: List[str] = [subreddit.display_name for subreddit in popular_subreddits]
             return json.dumps({"trending_subreddits": trending})
@@ -209,6 +216,7 @@ class RedditTools(Toolkit):
             return "Please provide Reddit API credentials"
 
         try:
+            logger.debug(f"Getting stats for r/{subreddit}")
             sub = self.reddit.subreddit(subreddit)
             stats: Dict[str, Union[str, int, bool, float]] = {
                 "display_name": sub.display_name,

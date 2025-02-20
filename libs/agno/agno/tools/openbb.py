@@ -56,6 +56,7 @@ class OpenBBTools(Toolkit):
           str: The current stock prices or error message.
         """
         try:
+            logger.debug(f"Fetching current price for {symbol}")
             result = self.obb.equity.price.quote(symbol=symbol, provider=self.provider).to_polars()  # type: ignore
             clean_results = []
             for row in result.to_dicts():
@@ -109,6 +110,7 @@ class OpenBBTools(Toolkit):
             str: JSON containing consensus price target and recommendations.
         """
         try:
+            logger.debug(f"Fetching price targets for {symbol}")
             result = self.obb.equity.estimates.consensus(symbol=symbol, provider=self.provider).to_polars()  # type: ignore
             return json.dumps(result.to_dicts(), indent=2, default=str)
         except Exception as e:
@@ -126,6 +128,7 @@ class OpenBBTools(Toolkit):
             str: JSON containing company news and press releases.
         """
         try:
+            logger.debug(f"Fetching news for {symbol}")
             result = self.obb.news.company(symbol=symbol, provider=self.provider, limit=num_stories).to_polars()  # type: ignore
             clean_results = []
             if len(result) > 0:
@@ -147,6 +150,7 @@ class OpenBBTools(Toolkit):
             str: JSON containing company profile and overview.
         """
         try:
+            logger.debug(f"Fetching company profile for {symbol}")
             result = self.obb.equity.profile(symbol=symbol, provider=self.provider).to_polars()  # type: ignore
             return json.dumps(result.to_dicts(), indent=2, default=str)
         except Exception as e:

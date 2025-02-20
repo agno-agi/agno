@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Iterator, List, Union
 
+from pydantic import Field
+
 from agno.document import Document
 from agno.document.reader.pdf_reader import PDFImageReader, PDFReader
 from agno.knowledge.agent import AgentKnowledge
@@ -8,6 +10,9 @@ from agno.knowledge.agent import AgentKnowledge
 
 class PDFKnowledgeBase(AgentKnowledge):
     path: Union[str, Path]
+
+    exclude_files: List[str] = Field(default_factory=list)
+
     reader: Union[PDFReader, PDFImageReader] = PDFReader()
 
     @property
@@ -23,6 +28,10 @@ class PDFKnowledgeBase(AgentKnowledge):
 
         if _pdf_path.exists() and _pdf_path.is_dir():
             for _pdf in _pdf_path.glob("**/*.pdf"):
+                if _pdf.name in self.exclude_files:
+                    continue
                 yield self.reader.read(pdf=_pdf)
         elif _pdf_path.exists() and _pdf_path.is_file() and _pdf_path.suffix == ".pdf":
+            if _pdf_path.name in self.exclude_files:
+                return
             yield self.reader.read(pdf=_pdf_path)

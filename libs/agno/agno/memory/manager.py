@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -7,6 +7,7 @@ from agno.memory.memory import Memory
 from agno.memory.row import MemoryRow
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.tools.function import Function
 from agno.utils.log import logger
 
 
@@ -21,10 +22,13 @@ class MemoryManager(BaseModel):
 
     # Do not set the input message here, it will be set by the run method
     input_message: Optional[str] = None
+    _tools_for_model: Optional[List[Dict]] = None
+    _functions_for_model: Optional[Dict[str, Function]] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def update_model(self) -> None:
+        # Use the default Model (OpenAIChat) if no model is provided
         if self.model is None:
             try:
                 from agno.models.openai import OpenAIChat
@@ -36,10 +40,34 @@ class MemoryManager(BaseModel):
                 exit(1)
             self.model = OpenAIChat(id="gpt-4o")
 
-        self.model.add_tool(self.add_memory)
-        self.model.add_tool(self.update_memory)
-        self.model.add_tool(self.delete_memory)
-        self.model.add_tool(self.clear_memory)
+        # Add tools to the Model
+        self.add_tools_to_model(model=self.model)
+
+    def add_tools_to_model(self, model: Model) -> None:
+        if self._tools_for_model is None:
+            self._tools_for_model = []
+        if self._functions_for_model is None:
+            self._functions_for_model = {}
+
+        for tool in [
+            self.add_memory,
+            self.update_memory,
+            self.delete_memory,
+            self.clear_memory,
+        ]:
+            try:
+                function_name = tool.__name__
+                if function_name not in self._functions_for_model:
+                    func = Function.from_callable(tool)  # type: ignore
+                    self._functions_for_model[func.name] = func
+                    self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                    logger.debug(f"Included function {func.name}")
+            except Exception as e:
+                logger.warning(f"Could not add function {tool}: {e}")
+        # Set tools on the model
+        model.set_tools(tools=self._tools_for_model)
+        # Set functions on the model
+        model.set_functions(functions=self._functions_for_model)
 
     def get_existing_memories(self) -> Optional[List[MemoryRow]]:
         if self.db is None:
@@ -150,6 +178,7 @@ class MemoryManager(BaseModel):
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [self.get_system_message()]
+
         # Add the user prompt message
         user_prompt_message = Message(role="user", content=message, **kwargs) if message else None
         if user_prompt_message is not None:

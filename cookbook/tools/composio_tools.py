@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from composio_phidata import Action, ComposioToolSet  # type: ignore
+from composio_agno import Action, ComposioToolSet
 
 toolset = ComposioToolSet()
 composio_tools = toolset.get_tools(

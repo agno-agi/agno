@@ -1,10 +1,7 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Iterator, List, Optional
+from typing import Optional
 
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
-
-from agno.models.message import Message
 from agno.models.openai import OpenAILike
 
 
@@ -27,20 +24,3 @@ class Fireworks(OpenAILike):
 
     api_key: Optional[str] = getenv("FIREWORKS_API_KEY", None)
     base_url: str = "https://api.fireworks.ai/inference/v1"
-
-    def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
-        """
-        Send a streaming chat completion request to the Fireworks API.
-
-        Args:
-            messages (List[Message]): A list of message objects representing the conversation.
-
-        Returns:
-            Iterator[ChatCompletionChunk]: An iterator of chat completion chunks.
-        """
-        yield from self.get_client().chat.completions.create(
-            model=self.id,
-            messages=[m.to_dict() for m in messages],  # type: ignore
-            stream=True,
-            **self.request_kwargs,
-        )  # type: ignore

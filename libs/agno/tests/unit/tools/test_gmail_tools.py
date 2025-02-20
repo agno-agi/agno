@@ -32,10 +32,9 @@ def gmail_tools(mock_credentials, mock_gmail_service):
     """Create GmailTools instance with mocked dependencies."""
     with patch("agno.tools.gmail.build") as mock_build:
         mock_build.return_value = mock_gmail_service
-        with patch.object(GmailTools, "_authenticate") as mock_auth:
-            mock_auth.return_value = mock_credentials
-            tools = GmailTools()
-            return tools
+        tools = GmailTools(creds=mock_credentials)
+        tools.service = mock_gmail_service
+        return tools
 
 
 def create_mock_message(msg_id: str, subject: str, sender: str, date: str, body: str) -> Dict[str, Any]:
@@ -51,6 +50,90 @@ def create_mock_message(msg_id: str, subject: str, sender: str, date: str, body:
             "body": {"data": base64.urlsafe_b64encode(body.encode()).decode()},
         },
     }
+
+
+def test_init_with_default_scopes():
+    """Test initialization with default scopes."""
+    tools = GmailTools()
+    assert tools.scopes == GmailTools.DEFAULT_SCOPES
+    assert "https://www.googleapis.com/auth/gmail.readonly" in tools.scopes
+    assert "https://www.googleapis.com/auth/gmail.compose" in tools.scopes
+
+
+def test_init_with_custom_scopes():
+    """Test initialization with custom scopes."""
+    custom_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+    tools = GmailTools(scopes=custom_scopes, get_latest_emails=True, create_draft_email=False, send_email=False)
+    assert tools.scopes == custom_scopes
+
+
+def test_init_with_invalid_scopes():
+    """Test initialization with invalid scopes for requested operations."""
+    custom_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+    with pytest.raises(ValueError, match="required for email composition operations"):
+        GmailTools(
+            scopes=custom_scopes,
+            create_draft_email=True,  # This should raise error as compose scope is missing
+        )
+
+
+def test_init_with_missing_read_scope():
+    """Test initialization with missing read scope."""
+    custom_scopes = ["https://www.googleapis.com/auth/gmail.compose"]
+    with pytest.raises(ValueError, match="required for email reading operations"):
+        GmailTools(
+            scopes=custom_scopes,
+            get_latest_emails=True,  # This should raise error as readonly scope is missing
+        )
+
+
+def test_authentication_decorator():
+    """Test the authentication decorator behavior."""
+    mock_creds = Mock(spec=Credentials)
+    mock_creds.valid = False
+
+    with patch("agno.tools.gmail.build") as mock_build:
+        mock_service = MagicMock()
+        mock_build.return_value = mock_service
+
+        tools = GmailTools(creds=mock_creds)
+
+        with patch.object(tools, "_auth") as mock_auth:
+            tools.get_latest_emails(count=1)
+            mock_auth.assert_called_once()
+
+
+def test_auth_with_expired_credentials():
+    """Test authentication with expired credentials."""
+    mock_creds = Mock(spec=Credentials)
+    mock_creds.valid = False
+    mock_creds.expired = True
+    mock_creds.refresh_token = True
+
+    with patch("agno.tools.gmail.build") as mock_build:
+        mock_service = MagicMock()
+        mock_build.return_value = mock_service
+
+        tools = GmailTools(creds=mock_creds)
+
+        with patch.object(mock_creds, "refresh") as mock_refresh:
+            with patch("pathlib.Path.exists") as mock_exists:
+                mock_exists.return_value = False  # Force refresh path
+                tools._auth()
+                mock_refresh.assert_called_once()
+
+
+def test_auth_with_custom_paths():
+    """Test authentication with custom credential and token paths."""
+    custom_creds_path = "custom_creds.json"
+    custom_token_path = "custom_token.json"
+
+    with patch("pathlib.Path.exists") as mock_exists:
+        mock_exists.return_value = True
+        with patch("agno.tools.gmail.Credentials.from_authorized_user_file") as mock_from_file:
+            tools = GmailTools(credentials_path=custom_creds_path, token_path=custom_token_path)
+            tools._auth()
+            mock_from_file.assert_called_once_with(custom_token_path, tools.scopes)
 
 
 def test_get_latest_emails(gmail_tools, mock_gmail_service):
@@ -358,11 +441,50 @@ def test_multipart_complex_message(gmail_tools, mock_gmail_service):
     assert "test.pdf" in result
 
 
-def test_invalid_email_parameters(gmail_tools):
+def test_invalid_email_parameters():
     """Test handling of invalid email parameters."""
-    with pytest.raises(Exception):  # Should raise an appropriate exception
-        gmail_tools.send_email(
-            to="invalid-email",  # Invalid email format
-            subject="",  # Empty subject
-            body=None,  # None body
-        )
+    tools = GmailTools(creds=Mock(spec=Credentials, valid=True))
+
+    with patch("agno.tools.gmail.build") as mock_build:
+        mock_service = MagicMock()
+        mock_build.return_value = mock_service
+        tools.service = mock_service  # Set service to avoid authentication
+
+        with pytest.raises(ValueError, match="Invalid recipient email format"):
+            tools.send_email(
+                to="invalid-email",  # Invalid email format
+                subject="Test",
+                body="Test body",
+            )
+
+        with pytest.raises(ValueError, match="Subject cannot be empty"):
+            tools.send_email(
+                to="valid@email.com",
+                subject="",  # Empty subject
+                body="Test body",
+            )
+
+        with pytest.raises(ValueError, match="Email body cannot be None"):
+            tools.send_email(
+                to="valid@email.com",
+                subject="Test",
+                body=None,  # None body
+            )
+
+
+def test_service_initialization():
+    """Test that service is initialized only after successful authentication."""
+    mock_creds = Mock(spec=Credentials)
+    mock_creds.valid = True
+
+    with patch("agno.tools.gmail.build") as mock_build:
+        mock_service = MagicMock()
+        mock_build.return_value = mock_service
+
+        tools = GmailTools(creds=mock_creds)
+        assert tools.service is None  # Service should not be initialized in __init__
+
+        # Call a method that requires authentication
+        with patch.object(tools, "_auth"):
+            tools.get_latest_emails(count=1)
+            mock_build.assert_called_once_with("gmail", "v1", credentials=mock_creds)

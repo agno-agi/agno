@@ -29,21 +29,22 @@ class MistralEmbedder(Embedder):
 
     @property
     def client(self) -> Mistral:
-        if self.mistral_client:
-            return self.mistral_client
+        if not self.mistral_client:
+            _client_params: Dict[str, Any] = {}
+            if self.api_key:
+                _client_params["api_key"] = self.api_key
+            if self.endpoint:
+                _client_params["endpoint"] = self.endpoint
+            if self.max_retries is not None:
+                _client_params["max_retries"] = self.max_retries
+            if self.timeout is not None:
+                _client_params["timeout"] = self.timeout
+            if self.client_params:
+                _client_params.update(self.client_params)
 
-        _client_params: Dict[str, Any] = {}
-        if self.api_key:
-            _client_params["api_key"] = self.api_key
-        if self.endpoint:
-            _client_params["endpoint"] = self.endpoint
-        if self.max_retries:
-            _client_params["max_retries"] = self.max_retries
-        if self.timeout:
-            _client_params["timeout"] = self.timeout
-        if self.client_params:
-            _client_params.update(self.client_params)
-        return Mistral(**_client_params)
+            self.mistral_client = Mistral(**_client_params)
+
+        return self.mistral_client
 
     def _response(self, text: str) -> EmbeddingResponse:
         _request_params: Dict[str, Any] = {
