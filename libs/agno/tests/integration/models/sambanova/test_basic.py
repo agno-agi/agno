@@ -106,7 +106,13 @@ def test_structured_output():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=Sambanova(id="Meta-Llama-3.1-8B-Instruct"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Sambanova(id="Meta-Llama-3.1-8B-Instruct"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+        structured_outputs=True,
+    )
 
     response = agent.run("Create a movie about time travel", output_schema=MovieScript)
 

@@ -106,7 +106,13 @@ def test_structured_output():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=xAI(id="grok-beta"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=xAI(id="grok-beta"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+        structured_outputs=True,
+    )
 
     response = agent.run("Create a movie about time travel", output_schema=MovieScript)
 
@@ -115,6 +121,7 @@ def test_structured_output():
     assert response.content.title is not None
     assert response.content.genre is not None
     assert response.content.plot is not None
+
 
 
 def test_history():

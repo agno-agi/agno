@@ -103,7 +103,7 @@ async def test_async_tool_use_stream():
 
 def test_multiple_tool_calls():
     agent = Agent(
-        model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
+        model=Together(id="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"),
         tools=[YFinanceTools(), DuckDuckGoTools()],
         show_tool_calls=True,
         markdown=True,
@@ -131,7 +131,7 @@ def test_tool_call_custom_tool_no_parameters():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
+        model=Together(id="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"),
         tools=[get_the_weather_in_tokyo],
         show_tool_calls=True,
         markdown=True,
@@ -161,7 +161,7 @@ def test_tool_call_custom_tool_optional_parameters():
             return f"It is currently 70 degrees and cloudy in {city}"
 
     agent = Agent(
-        model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
+        model=Together(id="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"),
         tools=[get_the_weather],
         show_tool_calls=True,
         markdown=True,
@@ -179,7 +179,7 @@ def test_tool_call_custom_tool_optional_parameters():
 
 def test_tool_call_list_parameters():
     agent = Agent(
-        model=Together(id="togethercomputer/llama-2-70b-chat"),
+        model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
         show_tool_calls=True,

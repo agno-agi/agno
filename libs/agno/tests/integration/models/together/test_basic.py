@@ -132,10 +132,11 @@ def test_structured_output():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
+        model=Together(id="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"),
         markdown=True,
         telemetry=False,
         monitoring=False,
+        structured_outputs=True,
     )
 
     response = agent.run("Create a movie about time travel", output_schema=MovieScript)

@@ -105,6 +105,11 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=xAI(id="grok-beta"),
         tools=[YFinanceTools(), DuckDuckGoTools()],
+        instructions=[
+            "Use YFinance for stock price queries",
+            "Use DuckDuckGo for news and general information",
+            "When both price and news are requested, use both tools"
+        ],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
