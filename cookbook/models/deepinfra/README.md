@@ -11,7 +11,7 @@ python3 -m venv ~/.venvs/aienv
 source ~/.venvs/aienv/bin/activate
 ```
 
-### 2. Export your `OPENROUTER_API_KEY`
+### 2. Export your `DEEPINFRA_API_KEY`
 
 ```shell
 export DEEPINFRA_API_KEY=***
@@ -20,7 +20,7 @@ export DEEPINFRA_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U openai duckduckgo-search duckdb yfinance agno
+pip install -U openai duckduckgo-search agno
 ```
 
 ### 4. Run basic Agent
@@ -37,7 +37,21 @@ python cookbook/models/deepinfra/basic_stream.py
 python cookbook/models/deepinfra/basic.py
 ```
 
-### 5. Run Agent with Tools
+### 5. Run Async Agent
+
+- Streaming on
+
+```shell
+python cookbook/models/deepinfra/async_basic_stream.py
+```
+
+- Streaming off
+
+```shell
+python cookbook/models/deepinfra/async_basic.py
+```
+
+### 6. Run Agent with Tools
 
 - DuckDuckGo Search
 
@@ -45,7 +59,13 @@ python cookbook/models/deepinfra/basic.py
 python cookbook/models/deepinfra/tool_use.py
 ```
 
-### 6. Run Agent that returns JSON output
+- Async DuckDuckGo Search
+
+```shell
+python cookbook/models/deepinfra/async_tool_use.py
+```
+
+### 6. Run Agent that returns JSON output defined by the response model
 
 ```shell
 python cookbook/models/deepinfra/json_output.py

@@ -1,5 +1,5 @@
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.deepinfra import DeepInfra
+from agno.models.deepinfra import DeepInfra  # noqa
 
 agent = Agent(model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"), markdown=True)
 

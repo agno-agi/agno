@@ -1,7 +1,7 @@
 from typing import List
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.deepinfra import DeepInfra
+from agno.models.deepinfra import DeepInfra  # noqa
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -26,14 +26,14 @@ class MovieScript(BaseModel):
 
 
 # Agent that uses JSON mode
-json_mode_agent = Agent(
+agent = Agent(
     model=DeepInfra(id="microsoft/phi-4"),
     description="You write movie scripts.",
     response_model=MovieScript,
 )
 
 # Get the response in a variable
-json_mode_response: RunResponse = json_mode_agent.run("New York")
-pprint(json_mode_response.content)
+response: RunResponse = agent.run("New York")
+pprint(response.content)
 
-# json_mode_agent.print_response("New York")
+agent.print_response("New York")
