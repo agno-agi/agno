@@ -426,12 +426,15 @@ class Agent:
             set_log_level_to_info()
 
     def set_monitoring(self) -> None:
-        if self.monitoring or getenv("AGNO_MONITOR", "false").lower() == "true":
+        """Overwrite the monitoring and telemetry settings based on the AGNO_MONITOR and AGNO_TELEMETRY environment variables."""
+        agno_monitor_var = getenv("AGNO_MONITOR")
+        if agno_monitor_var is not None and agno_monitor_var.lower() == "true":
             self.monitoring = True
         else:
             self.monitoring = False
 
-        if self.telemetry or getenv("AGNO_TELEMETRY", "true").lower() == "true":
+        agno_telemetry_var = getenv("AGNO_TELEMETRY")
+        if agno_telemetry_var is not None and agno_telemetry_var.lower() == "true":
             self.telemetry = True
         else:
             self.telemetry = False
@@ -884,9 +887,10 @@ class Agent:
 
                     time.sleep(delay)
         if last_exception is not None:
-            raise Exception(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}"
+            logger.error(
+                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
+            raise last_exception
         else:
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -2731,7 +2735,7 @@ class Agent:
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
             # Use DeepSeek for reasoning
-            if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id == "deepseek-reasoner":
+            if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id.lower() == "deepseek-reasoner":
                 from agno.reasoning.deepseek import get_deepseek_reasoning, get_deepseek_reasoning_agent
 
                 ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
@@ -2750,7 +2754,7 @@ class Agent:
                     reasoning_agent_messages=[ds_reasoning_message],
                 )
             # Use Groq for reasoning
-            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
+            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id.lower():
                 from agno.reasoning.groq import get_groq_reasoning, get_groq_reasoning_agent
 
                 groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
@@ -3283,7 +3287,7 @@ class Agent:
     def log_agent_run(self) -> None:
         self.set_monitoring()
 
-        if not (self.telemetry or self.monitoring):
+        if not self.telemetry and not self.monitoring:
             return
 
         from agno.api.agent import AgentRunCreate, create_agent_run
@@ -3307,7 +3311,7 @@ class Agent:
     async def alog_agent_run(self) -> None:
         self.set_monitoring()
 
-        if not (self.telemetry or self.monitoring):
+        if not self.telemetry and not self.monitoring:
             return
 
         from agno.api.agent import AgentRunCreate, acreate_agent_run

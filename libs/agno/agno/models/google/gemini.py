@@ -240,7 +240,7 @@ class Gemini(Model):
         """
         request_params = {}
         # User provides their own generation config
-        if self.generation_config is None:
+        if self.generation_config is not None:
             if isinstance(self.generation_config, GenerateContentConfig):
                 config = self.generation_config.model_dump()
             else:
@@ -305,7 +305,6 @@ class Gemini(Model):
         formatted_messages, system_message = self._format_messages(messages)
 
         request_kwargs = self._get_request_kwargs(system_message)
-
         try:
             return self.get_client().models.generate_content(
                 model=self.id,
