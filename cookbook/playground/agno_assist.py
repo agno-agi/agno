@@ -1,4 +1,4 @@
-"""🤖 Agno Support Agent - Your AI Assistant for Agno Framework!
+"""🤖 Agno Assist - Your AI Assistant for Agno Framework!
 
 This example shows how to create an AI support assistant that combines iterative knowledge searching
 with Agno's documentation to provide comprehensive, well-researched answers about the Agno framework.
@@ -34,6 +34,7 @@ from agno.knowledge.url import UrlKnowledge
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
 from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.tools.dalle import DalleTools
 from agno.tools.eleven_labs import ElevenLabsTools
 from agno.tools.python import PythonTools
 from agno.vectordb.lancedb import LanceDb, SearchType
@@ -118,6 +119,10 @@ _instructions = dedent("""\
             * Use practical examples and real-world scenarios
             * Include common pitfalls to avoid
 
+    5. **Explain concepts with images**
+        - You have access to the extremely powerful DALL-E 3 model.
+        - Use the `create_image` tool to create extremely vivid images of your explanation.
+
     Key topics to cover:
     - Agent levels and capabilities
     - Knowledge base and memory management
@@ -129,8 +134,8 @@ _instructions = dedent("""\
 
 # Create the agent
 agno_support = Agent(
-    agent_id="agno-assist",
-    name="Agno Assist",
+    name="Agno_Assist",
+    agent_id="agno_assist",
     model=OpenAIChat(id="gpt-4o"),
     description=_description,
     instructions=_instructions,
@@ -142,6 +147,7 @@ agno_support = Agent(
             model_id="eleven_multilingual_v2",
             target_directory=str(tmp_dir.joinpath("audio").resolve()),
         ),
+        DalleTools(model="dall-e-3", size="1792x1024", quality="hd", style="vivid"),
     ],
     storage=SqliteAgentStorage(
         table_name="agno_assist_sessions", db_file="tmp/agents.db"
@@ -152,8 +158,8 @@ agno_support = Agent(
 )
 
 agno_support_voice = Agent(
+    name="Agno_Assist_Voice",
     agent_id="agno-assist-voice",
-    name="Agno Assist Voice",
     model=OpenAIChat(
         id="gpt-4o-audio-preview",
         modalities=["text", "audio"],
@@ -177,4 +183,7 @@ agno_support_voice = Agent(
 app = Playground(agents=[agno_support, agno_support_voice]).get_app()
 
 if __name__ == "__main__":
-    serve_playground_app("agno_support:app", reload=True)
+    load_kb = False
+    if load_kb:
+        agent_knowledge.load(recreate=True)
+    serve_playground_app("agno_assist:app", reload=True)
