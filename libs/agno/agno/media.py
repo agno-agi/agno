@@ -53,15 +53,17 @@ class Video(BaseModel):
         # Extract the values from the input data
         filepath = data.get("filepath")
         content = data.get("content")
-        
+
         # Convert and decompress content to bytes if it's a string
         if content and isinstance(content, str):
+            import base64
+
             try:
                 import zlib
-                import base64
+
                 decoded_content = base64.b64decode(content)
                 content = zlib.decompress(decoded_content)
-            except:
+            except Exception:
                 content = base64.b64decode(content).decode("utf-8")
         data["content"] = content
 
@@ -82,7 +84,9 @@ class Video(BaseModel):
         return {
             "content": base64.b64encode(
                 zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode("utf-8")
-            ).decode("utf-8") if self.content else None,
+            ).decode("utf-8")
+            if self.content
+            else None,
             "filepath": self.filepath,
             "format": self.format,
         }
@@ -107,12 +111,14 @@ class Audio(BaseModel):
 
         # Convert and decompress content to bytes if it's a string
         if content and isinstance(content, str):
+            import base64
+
             try:
                 import zlib
-                import base64
+
                 decoded_content = base64.b64decode(content)
                 content = zlib.decompress(decoded_content)
-            except:
+            except Exception:
                 content = base64.b64decode(content).decode("utf-8")
         data["content"] = content
 
@@ -142,7 +148,9 @@ class Audio(BaseModel):
         response_dict = {
             "content": base64.b64encode(
                 zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode("utf-8")
-            ).decode("utf-8") if self.content else None,
+            ).decode("utf-8")
+            if self.content
+            else None,
             "filepath": self.filepath,
             "format": self.format,
         }
@@ -150,6 +158,7 @@ class Audio(BaseModel):
         response_dict = {k: v for k, v in response_dict.items() if v is not None}
 
         return response_dict
+
 
 class AudioOutput(BaseModel):
     id: str
@@ -206,12 +215,14 @@ class Image(BaseModel):
 
         # Convert and decompress content to bytes if it's a string
         if content and isinstance(content, str):
+            import base64
+
             try:
                 import zlib
-                import base64
+
                 decoded_content = base64.b64decode(content)
                 content = zlib.decompress(decoded_content)
-            except:
+            except Exception:
                 content = base64.b64decode(content).decode("utf-8")
         data["content"] = content
 
@@ -228,10 +239,13 @@ class Image(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         import base64
         import zlib
+
         response_dict = {
             "content": base64.b64encode(
                 zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode("utf-8")
-            ).decode("utf-8") if self.content else None,
+            ).decode("utf-8")
+            if self.content
+            else None,
             "filepath": self.filepath,
             "url": self.url,
             "detail": self.detail,

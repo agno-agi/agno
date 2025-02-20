@@ -87,11 +87,12 @@ def get_sync_playground_router(
 
         return agent_list
 
-    def chat_response_streamer(agent: Agent,
-                               message: str,
-                               images: Optional[List[Image]] = None,
-                               audio: Optional[List[Audio]] = None) -> Generator:
-        run_response = agent.run(message=message, images=images, audio=audio, stream=True, stream_intermediate_steps=True)
+    def chat_response_streamer(
+        agent: Agent, message: str, images: Optional[List[Image]] = None, audio: Optional[List[Audio]] = None
+    ) -> Generator:
+        run_response = agent.run(
+            message=message, images=images, audio=audio, stream=True, stream_intermediate_steps=True
+        )
         for run_response_chunk in run_response:
             run_response_chunk = cast(RunResponse, run_response_chunk)
             yield run_response_chunk.to_json()

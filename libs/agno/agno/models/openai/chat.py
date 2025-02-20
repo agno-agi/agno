@@ -54,7 +54,9 @@ class OpenAIChat(Model):
     max_tokens: Optional[int] = None
     max_completion_tokens: Optional[int] = None
     modalities: Optional[List[str]] = None  # "text" and/or "audio"
-    audio: Optional[Dict[str, Any]] = None  # E.g. {"voice": "alloy", "format": "wav"}. `format` must be one of `wav`, `mp3`, `flac`, `opus`, or `pcm16`. `voice` must be one of `ash`, `ballad`, `coral`, `sage`, `verse`, `alloy`, `echo`, and `shimmer`.
+    audio: Optional[Dict[str, Any]] = (
+        None  # E.g. {"voice": "alloy", "format": "wav"}. `format` must be one of `wav`, `mp3`, `flac`, `opus`, or `pcm16`. `voice` must be one of `ash`, `ballad`, `coral`, `sage`, `verse`, `alloy`, `echo`, and `shimmer`.
+    )
     presence_penalty: Optional[float] = None
     response_format: Optional[Any] = None
     seed: Optional[int] = None

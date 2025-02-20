@@ -24,5 +24,6 @@ agent.print_response(
 )
 
 agent.print_response(
-    "What else can you tell me about this audio conversation?", stream=True,
+    "What else can you tell me about this audio conversation?",
+    stream=True,
 )

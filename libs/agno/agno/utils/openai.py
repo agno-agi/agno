@@ -75,7 +75,7 @@ def add_audio_to_message(message: Message, audio: Sequence[Audio]) -> Dict[str, 
             if path.exists() and path.is_file():
                 with open(audio_snippet.filepath, "rb") as audio_file:
                     encoded_string = base64.b64encode(audio_file.read()).decode("utf-8")
-            
+
             audio_format = audio_snippet.format
             if not audio_format:
                 audio_format = path.suffix.lstrip(".")

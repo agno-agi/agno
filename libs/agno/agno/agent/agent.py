@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -2493,9 +2492,8 @@ class Agent:
         if context is None:
             return ""
 
+        import json
         try:
-            import json
-
             return json.dumps(context, indent=2, default=str)
         except (TypeError, ValueError, OverflowError) as e:
             logger.warning(f"Failed to convert context to JSON: {e}")

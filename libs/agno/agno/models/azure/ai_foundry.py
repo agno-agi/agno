@@ -11,7 +11,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
-from agno.utils.openai import add_audio_to_message, add_images_to_message
+from agno.utils.openai import add_images_to_message
 
 try:
     from azure.ai.inference import ChatCompletionsClient
@@ -27,7 +27,9 @@ try:
     from azure.core.credentials import AzureKeyCredential
     from azure.core.exceptions import HttpResponseError
 except ImportError:
-    raise ImportError("`azure-ai-inference` not installed. Please install it via `pip install azure-ai-inference aiohttp`.")
+    raise ImportError(
+        "`azure-ai-inference` not installed. Please install it via `pip install azure-ai-inference aiohttp`."
+    )
 
 
 @dataclass

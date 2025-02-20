@@ -3,7 +3,7 @@ from dataclasses import asdict, dataclass
 from time import time
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field
 
 from agno.media import Audio, AudioOutput, Image, Video
 from agno.utils.log import logger
@@ -179,7 +179,6 @@ class Message(BaseModel):
             else:
                 return json.dumps(self.content)
         return ""
-
 
     def to_dict(self) -> Dict[str, Any]:
         """Returns the message as a dictionary."""

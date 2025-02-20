@@ -978,7 +978,6 @@ class Model(ABC):
                 assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
             )
 
-
         additional_metrics = [
             "prompt_time",
             "completion_time",
@@ -1006,7 +1005,6 @@ class Model(ABC):
                 assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details.model_dump(
                     exclude_none=True
                 )
-
 
         if hasattr(response_usage, "completion_tokens_details"):
             if isinstance(response_usage.completion_tokens_details, dict):

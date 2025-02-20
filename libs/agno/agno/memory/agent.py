@@ -175,7 +175,6 @@ class AgentMemory(BaseModel):
                 if hasattr(message, "from_history") and message.from_history:
                     continue
 
-
                 messages_from_history.append(message)
 
         logger.debug(f"Getting messages from previous runs: {len(messages_from_history)}")
