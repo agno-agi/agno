@@ -11,11 +11,18 @@ class DeepInfra(OpenAILike):
     A class for interacting with DeepInfra models.
 
     For more information, see: https://deepinfra.com/docs/
+
+    Attributes:
+        id (str): The id of the Nvidia model to use. Default is "meta-llama/Llama-2-70b-chat-hf".
+        name (str): The name of this chat model instance. Default is "Nvidia"
+        provider (str): The provider of the model. Default is "Nvidia".
+        api_key (str): The api key to authorize request to Nvidia.
+        base_url (str): The base url to which the requests are sent.
     """
 
-    id: str = "deepinfra-chat"
+    id: str = "meta-llama/Llama-2-70b-chat-hf"
     name: str = "DeepInfra"
-    provider: str = "DeepInfra"
+    provider: str = "DeepInfra " + id
 
     api_key: Optional[str] = getenv("DEEPINFRA_API_KEY", None)
     base_url: str = "https://api.deepinfra.com/v1/openai"
