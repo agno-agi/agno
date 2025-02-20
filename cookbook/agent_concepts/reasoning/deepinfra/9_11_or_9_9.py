@@ -17,7 +17,7 @@ reasoning_agent_claude = Agent(
         id="deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
         temperature=0.6,
         max_tokens=1024,
-        top_p=0.95
+        top_p=0.95,
     ),
 )
 
@@ -28,7 +28,7 @@ reasoning_agent_openai = Agent(
         id="deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
         temperature=0.6,
         max_tokens=1024,
-        top_p=0.95
+        top_p=0.95,
     ),
 )
 

@@ -30,8 +30,8 @@ from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.models.base import Model
-from agno.models.openai.like import OpenAILike
 from agno.models.message import Message, MessageReferences
+from agno.models.openai.like import OpenAILike
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
@@ -2772,9 +2772,7 @@ class Agent:
                     reasoning_agent_messages=[groq_reasoning_message],
                 )
             # Use o-3 or OpenAILike with deepseek model for reasoning
-            elif (
-                reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")
-            ) or (
+            elif (reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")) or (
                 isinstance(reasoning_model, OpenAILike) and "deepseek" in reasoning_model.id.lower()
             ):
                 from agno.reasoning.openai import get_openai_reasoning, get_openai_reasoning_agent
@@ -2955,12 +2953,10 @@ class Agent:
                     reasoning_agent_messages=[groq_reasoning_message],
                 )
             # Use o-3 for reasoning
-            elif (
-                reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")
-            ) or (
+            elif (reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")) or (
                 isinstance(reasoning_model, OpenAILike) and "deepseek" in reasoning_model.id.lower()
             ):
-            # elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o"):
+                # elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o"):
                 from agno.reasoning.openai import aget_openai_reasoning, get_openai_reasoning_agent
 
                 openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
