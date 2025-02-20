@@ -33,7 +33,7 @@ agent = Agent(
 )
 
 # Get the response in a variable
-response: RunResponse = agent.run("New York")
-pprint(response.content)
+# response: RunResponse = agent.run("New York")
+# pprint(response.content)
 
 agent.print_response("New York")
