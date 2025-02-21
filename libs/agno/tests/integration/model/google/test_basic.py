@@ -3,6 +3,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
+from agno.exceptions import ModelProviderError
 from agno.memory.agent import AgentMemory
 from agno.memory.classifier import MemoryClassifier
 from agno.memory.db.sqlite import SqliteMemoryDb
@@ -78,6 +79,18 @@ async def test_async_basic_stream():
         assert response.content is not None
 
     _assert_metrics(agent.run_response)
+
+
+def test_exception_handling():
+    agent = Agent(model=Gemini(id="gemini-1.5-flash-made-up-id"), markdown=True, telemetry=False, monitoring=False)
+
+    # Print the response in the terminal
+    with pytest.raises(ModelProviderError) as exc:
+        agent.run("Share a 2 sentence horror story")
+
+    assert exc.value.model_name == "Gemini"
+    assert exc.value.model_id == "gemini-1.5-flash-made-up-id"
+    assert exc.value.status_code == 404
 
 
 def test_with_memory():

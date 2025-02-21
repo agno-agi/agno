@@ -64,7 +64,7 @@ class Playground:
                 return await call_next(request)
             except Exception as e:
                 return JSONResponse(
-                    status_code=500,
+                    status_code=e.status_code if hasattr(e, "status_code") else 500,
                     content={"message": str(e)},
                 )
 
