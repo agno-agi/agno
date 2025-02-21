@@ -5,6 +5,10 @@ on:
     branches:
       - 'main'  # Run on all branches
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
     branches:
       - 'release*'  # Run on PRs targeting release branches
 
