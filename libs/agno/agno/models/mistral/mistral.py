@@ -254,10 +254,10 @@ class MistralChat(Model):
 
         except HTTPValidationError as e:
             logger.error(f"HTTPValidationError from Mistral: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
             logger.error(f"SDKError from Mistral: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
         """
@@ -281,10 +281,10 @@ class MistralChat(Model):
             return stream
         except HTTPValidationError as e:
             logger.error(f"HTTPValidationError from Mistral: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
             logger.error(f"SDKError from Mistral: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> ChatCompletionResponse:
         """
@@ -308,10 +308,10 @@ class MistralChat(Model):
             return response
         except HTTPValidationError as e:
             logger.error(f"HTTPValidationError from Mistral: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
             logger.error(f"SDKError from Mistral: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> Any:
         """
@@ -336,10 +336,10 @@ class MistralChat(Model):
                 yield chunk
         except HTTPValidationError as e:
             logger.error(f"HTTPValidationError from Mistral: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
             logger.error(f"SDKError from Mistral: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def parse_provider_response(self, response: ChatCompletionResponse) -> ModelResponse:
         """

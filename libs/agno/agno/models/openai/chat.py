@@ -182,12 +182,14 @@ class OpenAIChat(Model):
             "top_p": self.top_p,
             "extra_headers": self.extra_headers,
             "extra_query": self.extra_query,
+            "metadata": self.metadata,
         }
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
         # Add tools
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
+
             if self.tool_choice is not None:
                 request_params["tool_choice"] = self.tool_choice
         # Add additional request params if provided
@@ -293,16 +295,20 @@ class OpenAIChat(Model):
             )
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIConnectionError as e:
             logger.error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletion, ParsedChatCompletion]:
         """
@@ -331,16 +337,20 @@ class OpenAIChat(Model):
             )
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIConnectionError as e:
             logger.error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
         """
@@ -362,16 +372,20 @@ class OpenAIChat(Model):
             )  # type: ignore
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIConnectionError as e:
             logger.error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[ChatCompletionChunk]:
         """
@@ -395,16 +409,20 @@ class OpenAIChat(Model):
                 yield chunk
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIConnectionError as e:
             logger.error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
     @staticmethod

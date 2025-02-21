@@ -425,15 +425,16 @@ class Agent:
             set_log_level_to_info()
 
     def set_monitoring(self) -> None:
-        if self.monitoring or getenv("AGNO_MONITOR", "false").lower() == "true":
-            self.monitoring = True
-        else:
-            self.monitoring = False
+        """Override monitoring and telemetry settings based on environment variables."""
 
-        if self.telemetry or getenv("AGNO_TELEMETRY", "true").lower() == "true":
-            self.telemetry = True
-        else:
-            self.telemetry = False
+        # Only override if the environment variable is set
+        monitor_env = getenv("AGNO_MONITOR")
+        if monitor_env is not None:
+            self.monitoring = monitor_env.lower() == "true"
+
+        telemetry_env = getenv("AGNO_TELEMETRY")
+        if telemetry_env is not None:
+            self.telemetry = telemetry_env.lower() == "true"
 
     def initialize_agent(self) -> None:
         self.set_debug()
@@ -881,10 +882,13 @@ class Agent:
                     import time
 
                     time.sleep(delay)
+
+        # If we get here, all retries failed
         if last_exception is not None:
-            raise Exception(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}"
+            logger.error(
+                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
+            raise last_exception
         else:
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -1286,7 +1290,13 @@ class Agent:
                     time.sleep(delay)
 
         # If we get here, all retries failed
-        raise Exception(f"Failed after {num_attempts} attempts. Last error: {str(last_exception)}")
+        if last_exception is not None:
+            logger.error(
+                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
+            )
+            raise last_exception
+        else:
+            raise Exception(f"Failed after {num_attempts} attempts.")
 
     def create_run_response(
         self,
@@ -1382,7 +1392,7 @@ class Agent:
                         if tool.name not in self._functions_for_model:
                             tool._agent = self
                             tool.process_entrypoint(strict=strict)
-                            if strict:
+                            if strict and tool.strict is None:
                                 tool.strict = True
                             self._functions_for_model[tool.name] = tool
                             self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
@@ -2392,7 +2402,18 @@ class Agent:
         if member_agent.name is None:
             member_agent.name = agent_name
 
-        transfer_function = Function.from_callable(_transfer_task_to_agent)
+        strict = (
+            True
+            if (
+                member_agent.response_model is not None
+                and member_agent.structured_outputs
+                and member_agent.model is not None
+                and member_agent.model.supports_structured_outputs
+            )
+            else False
+        )
+        transfer_function = Function.from_callable(_transfer_task_to_agent, strict=strict)
+        transfer_function.strict = strict
         transfer_function.name = f"transfer_task_to_{agent_name}"
         transfer_function.description = dedent(f"""\
         Use this function to transfer a task to {agent_name}
@@ -2729,7 +2750,7 @@ class Agent:
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
             # Use DeepSeek for reasoning
-            if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id == "deepseek-reasoner":
+            if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id.lower() == "deepseek-reasoner":
                 from agno.reasoning.deepseek import get_deepseek_reasoning, get_deepseek_reasoning_agent
 
                 ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
@@ -2748,7 +2769,7 @@ class Agent:
                     reasoning_agent_messages=[ds_reasoning_message],
                 )
             # Use Groq for reasoning
-            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
+            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id.lower():
                 from agno.reasoning.groq import get_groq_reasoning, get_groq_reasoning_agent
 
                 groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
@@ -3281,7 +3302,7 @@ class Agent:
     def log_agent_run(self) -> None:
         self.set_monitoring()
 
-        if not (self.telemetry or self.monitoring):
+        if not self.telemetry and not self.monitoring:
             return
 
         from agno.api.agent import AgentRunCreate, create_agent_run
@@ -3305,7 +3326,7 @@ class Agent:
     async def alog_agent_run(self) -> None:
         self.set_monitoring()
 
-        if not (self.telemetry or self.monitoring):
+        if not self.telemetry and not self.monitoring:
             return
 
         from agno.api.agent import AgentRunCreate, acreate_agent_run
