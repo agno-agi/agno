@@ -1,4 +1,28 @@
-# from ...libs.agno.agno.tools.bitbucket import BitbucketTools
+"""
+This example demonstrates how to use the BitbucketTools to interact with Bitbucket Cloud.
+
+Setup Instructions:
+1. Create a Bitbucket Cloud account if you don't have one
+2. Generate an App Password:
+   - Go to "Personal Bitbucket settings" -> "App passwords"
+   - Create a new App password with the required permissions:
+     - Account: Email, Read
+     - Workspace membership: Read
+     - Projects: Read
+     - Repositories: Read, Write, Admin
+     - Pull requests: Read, Write
+     - Issues: Read, Write
+3. Set environment variables:
+   - BITBUCKET_USERNAME: Your Bitbucket username
+   - BITBUCKET_PASSWORD: Your generated App password
+
+The BitbucketTools will automatically use these credentials from environment variables.
+For local development, you can add them to your .envrc file:
+
+export BITBUCKET_USERNAME="xxx"
+export BITBUCKET_PASSWORD="xxx"
+
+"""
 from agno.agent import Agent
 from agno.tools.bitbucket import BitbucketTools
 
