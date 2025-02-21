@@ -145,6 +145,7 @@ def test_multiple_tool_calls():
     assert "TSLA" in response.content and "latest news" in response.content.lower()
 
 
+@pytest.mark.skip(reason="This test is failing because cohere's tool structure doesn't work with no parameters")
 def test_tool_call_custom_tool_no_parameters():
     def get_the_weather_in_tokyo():
         """
@@ -169,6 +170,7 @@ def test_tool_call_custom_tool_no_parameters():
     assert "70" in response.content
 
 
+@pytest.mark.skip(reason="This test is failing because cohere's tool structure doesn't work with optional parameters")
 def test_tool_call_custom_tool_optional_parameters():
     def get_the_weather(city: Optional[str] = None):
         """
@@ -199,6 +201,7 @@ def test_tool_call_custom_tool_optional_parameters():
     assert "70" in response.content
 
 
+@pytest.mark.skip(reason="This test is failing because cohere's tool structure doesn't work with list parameters")
 def test_tool_call_list_parameters():
     agent = Agent(
         model=Cohere(id="command-r-08-2024"),

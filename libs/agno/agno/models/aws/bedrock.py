@@ -356,7 +356,6 @@ class AwsBedrock(Model):
         for response_delta in self.invoke_stream(messages=messages):
             model_response = ModelResponse(role="assistant")
             should_yield = False
-
             if "contentBlockStart" in response_delta:
                 # Handle tool use requests
                 tool = response_delta["contentBlockStart"]["start"].get("toolUse")
@@ -400,9 +399,10 @@ class AwsBedrock(Model):
                     # Finish collecting text content
                     content.append({"text": stream_data.response_content})
 
-            elif "messageStop" in response_delta:
-                if "usage" in response_delta["messageStop"]:
-                    usage = response_delta["messageStop"]["usage"]
+            elif "messageStop" in response_delta or "metadata" in response_delta:
+                body = response_delta.get("metadata") or response_delta.get("messageStop") or {}
+                if "usage" in body:
+                    usage = body["usage"]
                     model_response.response_usage = AwsBedrockResponseUsage(
                         input_tokens=usage.get("inputTokens", 0),
                         output_tokens=usage.get("outputTokens", 0),
@@ -410,7 +410,6 @@ class AwsBedrock(Model):
                     )
 
             # Update metrics
-            assistant_message.metrics.completion_tokens += 1
             if not assistant_message.metrics.time_to_first_token:
                 assistant_message.metrics.set_time_to_first_token()
 

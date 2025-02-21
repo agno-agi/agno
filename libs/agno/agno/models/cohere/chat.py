@@ -11,6 +11,9 @@ from agno.utils.log import logger
 try:
     from cohere import AsyncClientV2 as CohereAsyncClient
     from cohere import ClientV2 as CohereClient
+    from cohere.types.tool_v2 import ToolV2
+    from cohere.types.tool_v2function import ToolV2Function
+    from cohere.types.tool_parameter_definitions_value import ToolParameterDefinitionsValue
     from cohere.types.chat_response import ChatResponse
     from cohere.types.streamed_chat_response_v2 import StreamedChatResponseV2
 except (ModuleNotFoundError, ImportError):
@@ -80,6 +83,23 @@ class Cohere(Model):
         self.async_client = CohereAsyncClient(**_client_params)
         return self.async_client  # type: ignore
 
+    def _get_tool_definitions(self) -> List[ToolV2]:
+        if not self._functions:
+            return None
+
+        # Returns the tools in the format supported by the Cohere API
+        return [
+            ToolV2(
+                type="function",
+                function=ToolV2Function(
+                    name=f_name,
+                    description=function.description or "",
+                    parameters=function.parameters
+                )
+            )
+            for f_name, function in self._functions.items()
+        ]
+    
     @property
     def request_kwargs(self) -> Dict[str, Any]:
         _request_params: Dict[str, Any] = {}
@@ -100,10 +120,9 @@ class Cohere(Model):
         if self.presence_penalty:
             _request_params["presence_penalty"] = self.presence_penalty
 
-        if self._tools is not None and len(self._tools) > 0:
-            _request_params["tools"] = self._tools
-            if self.tool_choice is not None:
-                _request_params["tool_choice"] = self.tool_choice
+        if self._functions is not None and len(self._functions) > 0:
+            _request_params["tools"] = self._get_tool_definitions()
+            _request_params["strict_tools"] = True
 
         if self.request_params:
             _request_params.update(self.request_params)
