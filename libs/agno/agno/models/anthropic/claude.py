@@ -109,7 +109,6 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
 
     print()
     for idx, message in enumerate(messages):
-
         content = message.content or ""
         if message.role == "system":
             if content is not None:

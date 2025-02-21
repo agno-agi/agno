@@ -216,7 +216,7 @@ class AzureAIFoundry(Model):
         except HttpResponseError as e:
             logger.error(f"Azure AI API error: {e}")
             raise ModelProviderError(
-                message=e.response.reason, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+                message=e.reason, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
             logger.error(f"Error from Azure AI API: {e}")
@@ -242,7 +242,7 @@ class AzureAIFoundry(Model):
         except HttpResponseError as e:
             logger.error(f"Azure AI API error: {e}")
             raise ModelProviderError(
-                message=e.response.reason, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+                message=e.reason, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
             logger.error(f"Error from Azure AI API: {e}")
@@ -265,7 +265,7 @@ class AzureAIFoundry(Model):
         except HttpResponseError as e:
             logger.error(f"Azure AI API error: {e}")
             raise ModelProviderError(
-                message=e.response.reason, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+                message=e.reason, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
             logger.error(f"Error from Azure AI API: {e}")
@@ -294,7 +294,7 @@ class AzureAIFoundry(Model):
         except HttpResponseError as e:
             logger.error(f"Azure AI API error: {e}")
             raise ModelProviderError(
-                message=e.response.reason, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+                message=e.reason, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
             logger.error(f"Error from Azure AI API: {e}")

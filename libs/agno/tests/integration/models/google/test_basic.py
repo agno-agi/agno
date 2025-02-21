@@ -178,13 +178,20 @@ def test_structured_output():
     assert response.content.genre is not None
     assert response.content.plot is not None
 
+
 def test_structured_output_native():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), response_model=MovieScript, structured_outputs=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Gemini(id="gemini-1.5-flash"),
+        response_model=MovieScript,
+        structured_outputs=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response = agent.run("Create a movie about time travel")
 

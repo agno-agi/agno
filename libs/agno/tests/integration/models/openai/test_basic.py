@@ -143,14 +143,19 @@ def test_structured_output():
     assert response.content.plot is not None
 
 
-
 def test_structured_output_native():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), response_model=MovieScript, structured_outputs=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        response_model=MovieScript,
+        structured_outputs=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response = agent.run("Create a movie about time travel")
 

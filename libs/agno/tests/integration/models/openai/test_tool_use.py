@@ -1,4 +1,3 @@
-from pydantic import BaseModel, Field
 import pytest
 from pydantic import BaseModel, Field
 
