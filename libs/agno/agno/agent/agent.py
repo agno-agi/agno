@@ -425,18 +425,16 @@ class Agent:
             set_log_level_to_info()
 
     def set_monitoring(self) -> None:
-        """Overwrite the monitoring and telemetry settings based on the AGNO_MONITOR and AGNO_TELEMETRY environment variables."""
-        agno_monitor_var = getenv("AGNO_MONITOR")
-        if agno_monitor_var is not None and agno_monitor_var.lower() == "true":
-            self.monitoring = True
-        else:
-            self.monitoring = False
+        """Override monitoring and telemetry settings based on environment variables."""
 
-        agno_telemetry_var = getenv("AGNO_TELEMETRY")
-        if agno_telemetry_var is not None and agno_telemetry_var.lower() == "true":
-            self.telemetry = True
-        else:
-            self.telemetry = False
+        # Only override if the environment variable is set
+        monitor_env = getenv("AGNO_MONITOR")
+        if monitor_env is not None:
+            self.monitoring = monitor_env.lower() == "true"
+
+        telemetry_env = getenv("AGNO_TELEMETRY")
+        if telemetry_env is not None:
+            self.telemetry = telemetry_env.lower() == "true"
 
     def initialize_agent(self) -> None:
         self.set_debug()
