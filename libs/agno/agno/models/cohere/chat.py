@@ -120,8 +120,20 @@ class Cohere(Model):
         if self.presence_penalty:
             _request_params["presence_penalty"] = self.presence_penalty
 
-        if self._functions is not None and len(self._functions) > 0:
-            _request_params["tools"] = self._get_tool_definitions()
+        if self._tools is not None and len(self._tools) > 0:
+            _request_params["tools"] = self._tools
+            # Fix optional parameters where the "type" is [type, null]
+            for tool in _request_params["tools"]:  # type: ignore
+                params = []
+                if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
+                    for param_name, obj in tool["function"]["parameters"].get("properties", {}).items():  # type: ignore
+                        params.append(param_name)
+                        if isinstance(obj["type"], list):
+                            obj["type"] = obj["type"][0]
+
+                    # Cohere requires at least one required parameter, so if unset, set it to all parameters
+                    if len(tool["function"]["parameters"].get("required", [])) == 0:
+                        tool["function"]["parameters"]["required"] = params
             _request_params["strict_tools"] = True
 
         if self.request_params:
