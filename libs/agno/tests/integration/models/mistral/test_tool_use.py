@@ -145,7 +145,7 @@ def test_multiple_tool_calls():
     assert "get_current_stock_price" in response.content and "duckduckgo_news" in response.content.lower()
 
 
-@pytest.skip("Mistral is bad at custom tool calls")
+@pytest.mark.skip("Mistral is bad at custom tool calls")
 def test_tool_call_custom_tool_no_parameters():
     def get_the_weather_in_tokyo():
         """

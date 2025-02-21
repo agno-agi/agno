@@ -101,7 +101,7 @@ async def test_async_tool_use_stream():
     assert any("TSLA" in r.content for r in responses if r.content)
 
 
-@pytest.skip("Grok not yet good enough at multi-tool calls")
+@pytest.mark.skip("Grok not yet good enough at multi-tool calls")
 def test_multiple_tool_calls():
     agent = Agent(
         model=xAI(id="grok-2-1212"),

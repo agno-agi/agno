@@ -31,6 +31,7 @@ try:
         Schema,
         Tool,
         ToolConfig,
+        FunctionCallingConfigMode,
     )
 except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
@@ -284,8 +285,6 @@ class Gemini(Model):
         if self._tools:
             config["tools"] = [_format_function_definitions(self._tools)]
 
-            config["tool_config"] = ToolConfig(function_calling_config=FunctionCallingConfig(mode="ANY"))
-
         config = {k: v for k, v in config.items() if v is not None}
 
         if config:
@@ -307,7 +306,6 @@ class Gemini(Model):
             GenerateContentResponse: The response from the model.
         """
         formatted_messages, system_message = self._format_messages(messages)
-
         request_kwargs = self._get_request_kwargs(system_message)
         try:
             return self.get_client().models.generate_content(

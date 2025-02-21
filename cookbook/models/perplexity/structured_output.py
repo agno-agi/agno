@@ -3,7 +3,7 @@ from typing import List
 from agno.agent import Agent, RunResponse  # noqa
 from pydantic import BaseModel, Field
 
-from agno.models.perplexity.perplexity import Perplexity  # noqa
+from agno.models.perplexity import Perplexity
 
 
 class MovieScript(BaseModel):

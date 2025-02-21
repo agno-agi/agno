@@ -107,7 +107,7 @@ def test_with_memory():
     assert total_tokens[0] == input_tokens[0] + output_tokens[0]
 
 
-@pytest.skip("Perplexity is bad at structured outputs")
+@pytest.mark.skip("Perplexity is bad at structured outputs")
 def test_response_model():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
