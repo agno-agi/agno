@@ -313,10 +313,12 @@ class Gemini(Model):
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]):
         """
@@ -340,10 +342,12 @@ class Gemini(Model):
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]):
         """
@@ -361,10 +365,12 @@ class Gemini(Model):
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]):
         """
@@ -384,10 +390,12 @@ class Gemini(Model):
                 yield chunk
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message]):
         """
