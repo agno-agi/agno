@@ -352,6 +352,8 @@ class MistralChat(Model):
         if response.choices is not None and len(response.choices) > 0:
             response_message: AssistantMessage = response.choices[0].message
 
+            print("HERE", response_message.content)
+
             # -*- Set content
             model_response.content = response_message.content  # type: ignore
 
