@@ -131,7 +131,6 @@ _instructions = dedent("""\
     - Best practices and common patterns""")
 
 
-
 # Create the agent
 agno_support = Agent(
     name="Agno_Assist",
@@ -168,9 +167,7 @@ agno_support_voice = Agent(
     description=_description_voice,
     instructions=_instructions,
     knowledge=agent_knowledge,
-    tools=[
-        PythonTools(base_dir=tmp_dir.joinpath("agents"), read_files=True)
-    ],
+    tools=[PythonTools(base_dir=tmp_dir.joinpath("agents"), read_files=True)],
     storage=SqliteAgentStorage(
         table_name="agno_assist_sessions", db_file="tmp/agents.db"
     ),

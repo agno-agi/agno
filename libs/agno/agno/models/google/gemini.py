@@ -22,7 +22,6 @@ try:
     from google.genai.types import (
         Content,
         File,
-        FunctionCallingConfig,
         FunctionDeclaration,
         GenerateContentConfig,
         GenerateContentResponse,
@@ -30,8 +29,6 @@ try:
         Part,
         Schema,
         Tool,
-        ToolConfig,
-        FunctionCallingConfigMode,
     )
 except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")

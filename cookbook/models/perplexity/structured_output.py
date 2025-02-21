@@ -1,9 +1,8 @@
 from typing import List
 
 from agno.agent import Agent, RunResponse  # noqa
-from pydantic import BaseModel, Field
-
 from agno.models.perplexity import Perplexity
+from pydantic import BaseModel, Field
 
 
 class MovieScript(BaseModel):

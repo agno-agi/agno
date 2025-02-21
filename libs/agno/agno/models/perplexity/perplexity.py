@@ -32,7 +32,6 @@ class Perplexity(OpenAILike):
 
     supports_structured_outputs: bool = True
 
-
     @property
     def request_kwargs(self) -> Dict[str, Any]:
         """
@@ -42,7 +41,7 @@ class Perplexity(OpenAILike):
             Dict[str, Any]: A dictionary of keyword arguments for API requests.
         """
         # Define base request parameters
-        base_params = {
+        base_params: Dict[str, Any] = {
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "top_p": self.top_p,
@@ -51,7 +50,11 @@ class Perplexity(OpenAILike):
             "frequency_penalty": self.frequency_penalty,
         }
 
-        if self.response_format and isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+        if (
+            self.response_format
+            and isinstance(self.response_format, type)
+            and issubclass(self.response_format, BaseModel)
+        ):
             base_params["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {"schema": self.response_format.model_json_schema()},

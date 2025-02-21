@@ -73,12 +73,14 @@ async def test_async_basic_stream():
 
 
 def test_with_memory():
-    agent = Agent(model=MistralChat(id="mistral-small"), 
-                  add_history_to_messages=True,
-                  num_history_responses=5,
-                  markdown=True, 
-                  telemetry=False, 
-                  monitoring=False)
+    agent = Agent(
+        model=MistralChat(id="mistral-small"),
+        add_history_to_messages=True,
+        num_history_responses=5,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     # First interaction
     response1 = agent.run("My name is John Smith")
@@ -112,11 +114,13 @@ def test_response_model():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=MistralChat(id="mistral-small"),
-                  markdown=True, 
-                  telemetry=False, 
-                  monitoring=False,
-                  response_model=MovieScript)
+    agent = Agent(
+        model=MistralChat(id="mistral-small"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+        response_model=MovieScript,
+    )
 
     response = agent.run("Create a movie about time travel")
 
@@ -133,12 +137,14 @@ def test_native_structured_output():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=MistralChat(id="mistral-large-latest"),
-                  markdown=True, 
-                  telemetry=False, 
-                  monitoring=False,
-                  structured_outputs=True,
-                  response_model=MovieScript)
+    agent = Agent(
+        model=MistralChat(id="mistral-large-latest"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+        structured_outputs=True,
+        response_model=MovieScript,
+    )
 
     response = agent.run("Create a movie about time travel")
 

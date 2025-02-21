@@ -146,6 +146,7 @@ def test_tool_call_custom_tool_no_parameters():
     assert response.content is not None
     assert "70" in response.content
 
+
 def test_tool_call_custom_tool_optional_parameters():
     def get_the_weather(city: Optional[str] = None):
         """

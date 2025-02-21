@@ -72,12 +72,14 @@ async def test_async_basic_stream():
 
 
 def test_with_memory():
-    agent = Agent(model=Ollama(id="llama3.2:latest"), 
-                  add_history_to_messages=True,
-                  num_history_responses=5,
-                  markdown=True, 
-                  telemetry=False, 
-                  monitoring=False)
+    agent = Agent(
+        model=Ollama(id="llama3.2:latest"),
+        add_history_to_messages=True,
+        num_history_responses=5,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     # First interaction
     response1 = agent.run("My name is John Smith")
@@ -111,11 +113,9 @@ def test_response_model():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=Ollama(id="mistral"), 
-                  markdown=True, 
-                  telemetry=False, 
-                  monitoring=False,
-                  response_model=MovieScript)
+    agent = Agent(
+        model=Ollama(id="mistral"), markdown=True, telemetry=False, monitoring=False, response_model=MovieScript
+    )
 
     response = agent.run("Create a movie about time travel")
 

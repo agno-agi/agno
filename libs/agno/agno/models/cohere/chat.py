@@ -11,11 +11,10 @@ from agno.utils.log import logger
 try:
     from cohere import AsyncClientV2 as CohereAsyncClient
     from cohere import ClientV2 as CohereClient
-    from cohere.types.tool_v2 import ToolV2
-    from cohere.types.tool_v2function import ToolV2Function
-    from cohere.types.tool_parameter_definitions_value import ToolParameterDefinitionsValue
     from cohere.types.chat_response import ChatResponse
     from cohere.types.streamed_chat_response_v2 import StreamedChatResponseV2
+    from cohere.types.tool_v2 import ToolV2
+    from cohere.types.tool_v2function import ToolV2Function
 except (ModuleNotFoundError, ImportError):
     raise ImportError("`cohere` not installed. Please install using `pip install cohere`")
 
@@ -83,23 +82,6 @@ class Cohere(Model):
         self.async_client = CohereAsyncClient(**_client_params)
         return self.async_client  # type: ignore
 
-    def _get_tool_definitions(self) -> List[ToolV2]:
-        if not self._functions:
-            return None
-
-        # Returns the tools in the format supported by the Cohere API
-        return [
-            ToolV2(
-                type="function",
-                function=ToolV2Function(
-                    name=f_name,
-                    description=function.description or "",
-                    parameters=function.parameters
-                )
-            )
-            for f_name, function in self._functions.items()
-        ]
-    
     @property
     def request_kwargs(self) -> Dict[str, Any]:
         _request_params: Dict[str, Any] = {}

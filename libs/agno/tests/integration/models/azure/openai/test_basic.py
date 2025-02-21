@@ -158,6 +158,7 @@ def test_native_structured_output():
     assert response.content.genre is not None
     assert response.content.plot is not None
 
+
 def test_history():
     db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
     agent = Agent(
