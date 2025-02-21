@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from agno.agent.metrics import SessionMetrics
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
-from agno.media import Audio, AudioArtifact, AudioContent, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, AudioArtifact, AudioResponse, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
@@ -42,6 +42,7 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.message import get_text_from_message
 from agno.utils.safe_formatter import SafeFormatter
+from agno.utils.string import parse_structured_output
 from agno.utils.timer import Timer
 
 
@@ -546,7 +547,7 @@ class Agent:
                         )
                     if model_response_chunk.audio is not None:
                         if model_response.audio is None:
-                            model_response.audio = AudioContent(id=str(uuid4()), content="", transcript="")
+                            model_response.audio = AudioResponse(id=str(uuid4()), content="", transcript="")
 
                         if model_response_chunk.audio.id is not None:
                             model_response.audio.id = model_response_chunk.audio.id  # type: ignore
@@ -562,7 +563,7 @@ class Agent:
                         model_response.audio.channels = model_response_chunk.audio.channels
 
                         # Yield the audio and transcript bit by bit
-                        self.run_response.response_audio = AudioContent(
+                        self.run_response.response_audio = AudioResponse(
                             id=model_response_chunk.audio.id,
                             content=model_response_chunk.audio.content,
                             transcript=model_response_chunk.audio.transcript,
@@ -840,23 +841,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            from pydantic import ValidationError
-
-                            structured_output = None
-                            try:
-                                structured_output = self.response_model.model_validate_json(run_response.content)
-                            except ValidationError:
-                                # Check if response starts with ```json
-                                if run_response.content.startswith("```json"):
-                                    run_response.content = run_response.content.replace("```json\n", "").replace(
-                                        "\n```", ""
-                                    )
-                                    try:
-                                        structured_output = self.response_model.model_validate_json(
-                                            run_response.content
-                                        )
-                                    except Exception as e:
-                                        logger.warning(f"Failed to convert response to pydantic model: {e}")
+                            structured_output = parse_structured_output(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -910,6 +895,8 @@ class Agent:
                     import time
 
                     time.sleep(delay)
+
+        # If we get here, all retries failed
         if last_exception is not None:
             logger.error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
@@ -1014,7 +1001,7 @@ class Agent:
 
                     if model_response_chunk.audio is not None:
                         if model_response.audio is None:
-                            model_response.audio = AudioContent(id=str(uuid4()), content="", transcript="")
+                            model_response.audio = AudioResponse(id=str(uuid4()), content="", transcript="")
 
                         if model_response_chunk.audio.id is not None:
                             model_response.audio.id = model_response_chunk.audio.id  # type: ignore
@@ -1030,7 +1017,7 @@ class Agent:
                         model_response.audio.channels = model_response_chunk.audio.channels
 
                         # Yield the audio and transcript bit by bit
-                        self.run_response.response_audio = AudioContent(
+                        self.run_response.response_audio = AudioResponse(
                             id=model_response_chunk.audio.id,
                             content=model_response_chunk.audio.content,
                             transcript=model_response_chunk.audio.transcript,
@@ -1274,23 +1261,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            from pydantic import ValidationError
-
-                            structured_output = None
-                            try:
-                                structured_output = self.response_model.model_validate_json(run_response.content)
-                            except ValidationError:
-                                # Check if response starts with ```json
-                                if run_response.content.startswith("```json"):
-                                    run_response.content = run_response.content.replace("```json\n", "").replace(
-                                        "\n```", ""
-                                    )
-                                    try:
-                                        structured_output = self.response_model.model_validate_json(
-                                            run_response.content
-                                        )
-                                    except Exception as e:
-                                        logger.warning(f"Failed to convert response to pydantic model: {e}")
+                            structured_output = parse_structured_output(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -1345,8 +1316,11 @@ class Agent:
 
                     time.sleep(delay)
 
+        # If we get here, all retries failed
         if last_exception is not None:
-            logger.error(f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id}): {str(last_exception)}")
+            logger.error(
+                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
+            )
             raise last_exception
         else:
             raise Exception(f"Failed after {num_attempts} attempts.")
@@ -1445,7 +1419,7 @@ class Agent:
                         if tool.name not in self._functions_for_model:
                             tool._agent = self
                             tool.process_entrypoint(strict=strict)
-                            if strict:
+                            if strict and tool.strict is None:
                                 tool.strict = True
                             self._functions_for_model[tool.name] = tool
                             self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
@@ -2455,7 +2429,18 @@ class Agent:
         if member_agent.name is None:
             member_agent.name = agent_name
 
-        transfer_function = Function.from_callable(_transfer_task_to_agent)
+        strict = (
+            True
+            if (
+                member_agent.response_model is not None
+                and member_agent.structured_outputs
+                and member_agent.model is not None
+                and member_agent.model.supports_structured_outputs
+            )
+            else False
+        )
+        transfer_function = Function.from_callable(_transfer_task_to_agent, strict=strict)
+        transfer_function.strict = strict
         transfer_function.name = f"transfer_task_to_{agent_name}"
         transfer_function.description = dedent(f"""\
         Use this function to transfer a task to {agent_name}
@@ -2520,6 +2505,7 @@ class Agent:
         if self.knowledge is None:
             return None
 
+        # TODO: add async support
         relevant_docs: List[Document] = self.knowledge.search(query=query, num_documents=num_documents, **kwargs)
         if len(relevant_docs) == 0:
             return None
@@ -2550,9 +2536,9 @@ class Agent:
         if context is None:
             return ""
 
-        try:
-            import json
+        import json
 
+        try:
             return json.dumps(context, indent=2, default=str)
         except (TypeError, ValueError, OverflowError) as e:
             logger.warning(f"Failed to convert context to JSON: {e}")

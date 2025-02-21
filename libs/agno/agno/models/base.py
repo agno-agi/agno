@@ -7,7 +7,7 @@ from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Lit
 from uuid import uuid4
 
 from agno.exceptions import AgentRunException
-from agno.media import AudioContent
+from agno.media import AudioResponse
 from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.tools.function import Function, FunctionCall
@@ -21,7 +21,7 @@ class MessageData:
     response_role: Optional[Literal["system", "user", "assistant", "tool"]] = None
     response_content: Any = ""
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    response_audio: Optional[AudioContent] = None
+    response_audio: Optional[AudioResponse] = None
 
     extra: Dict[str, Any] = field(default_factory=dict)
 
@@ -609,7 +609,7 @@ class Model(ABC):
 
         if model_response.audio is not None:
             if stream_data.response_audio is None:
-                stream_data.response_audio = AudioContent(id=str(uuid4()), content="", transcript="")
+                stream_data.response_audio = AudioResponse(id=str(uuid4()), content="", transcript="")
 
             # Update the stream data with audio information
             if model_response.audio.id is not None:

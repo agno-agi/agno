@@ -7,7 +7,7 @@ import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.media import AudioContent
+from agno.media import AudioResponse
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
@@ -189,6 +189,7 @@ class OpenAIChat(Model):
         # Add tools
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
+
             if self.tool_choice is not None:
                 request_params["tool_choice"] = self.tool_choice
         # Add additional request params if provided
@@ -294,16 +295,20 @@ class OpenAIChat(Model):
             )
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIConnectionError as e:
             logger.error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletion, ParsedChatCompletion]:
         """
@@ -332,16 +337,20 @@ class OpenAIChat(Model):
             )
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIConnectionError as e:
             logger.error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
         """
@@ -363,16 +372,20 @@ class OpenAIChat(Model):
             )  # type: ignore
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIConnectionError as e:
             logger.error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[ChatCompletionChunk]:
         """
@@ -396,16 +409,20 @@ class OpenAIChat(Model):
                 yield chunk
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except APIConnectionError as e:
             logger.error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
     @staticmethod
@@ -501,14 +518,14 @@ class OpenAIChat(Model):
             # If the audio output modality is requested, we can extract an audio response
             try:
                 if isinstance(response_message.audio, dict):
-                    model_response.audio = AudioContent(
+                    model_response.audio = AudioResponse(
                         id=response_message.audio.get("id"),
                         content=response_message.audio.get("data"),
                         expires_at=response_message.audio.get("expires_at"),
                         transcript=response_message.audio.get("transcript"),
                     )
                 else:
-                    model_response.audio = AudioContent(
+                    model_response.audio = AudioResponse(
                         id=response_message.audio.id,
                         content=response_message.audio.data,
                         expires_at=response_message.audio.expires_at,
@@ -551,7 +568,7 @@ class OpenAIChat(Model):
             if hasattr(delta, "audio") and delta.audio is not None:
                 try:
                     if isinstance(delta.audio, dict):
-                        model_response.audio = AudioContent(
+                        model_response.audio = AudioResponse(
                             id=delta.audio.get("id"),
                             content=delta.audio.get("data"),
                             expires_at=delta.audio.get("expires_at"),
@@ -560,7 +577,7 @@ class OpenAIChat(Model):
                             mime_type="pcm16",
                         )
                     else:
-                        model_response.audio = AudioContent(
+                        model_response.audio = AudioResponse(
                             id=delta.audio.id,
                             content=delta.audio.data,
                             expires_at=delta.audio.expires_at,

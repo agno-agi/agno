@@ -137,7 +137,7 @@ class Audio(BaseModel):
         return {k: v for k, v in response_dict.items() if v is not None}
 
 
-class AudioContent(BaseModel):
+class AudioResponse(BaseModel):
     id: Optional[str] = None
     content: Optional[str] = None  # Base64 encoded
     expires_at: Optional[int] = None

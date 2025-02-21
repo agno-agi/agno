@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from agno.media import AudioArtifact, AudioContent, ImageArtifact, VideoArtifact
+from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Message, MessageReferences
 from agno.reasoning.step import ReasoningStep
 
@@ -16,6 +16,7 @@ class RunEvent(str, Enum):
     run_started = "RunStarted"
     run_response = "RunResponse"
     run_completed = "RunCompleted"
+    run_error = "RunError"
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     reasoning_started = "ReasoningStarted"
@@ -67,7 +68,7 @@ class RunResponse:
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
-    response_audio: Optional[AudioContent] = None  # Model audio response
+    response_audio: Optional[AudioResponse] = None  # Model audio response
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
