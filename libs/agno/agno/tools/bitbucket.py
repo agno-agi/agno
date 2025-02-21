@@ -14,11 +14,11 @@ class BitbucketTools(Toolkit):
 
     def __init__(
         self,
-        server_url: Optional[str] = "api.bitbucket.org",
+        server_url: str = "api.bitbucket.org",
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
-        api_version: Optional[str] = "2.0",
+        api_version: str = "2.0",
         list_repositories: bool = True,
         get_repository: bool = True,
         create_repository: bool = True,
@@ -62,12 +62,17 @@ class BitbucketTools(Toolkit):
         """
         super().__init__(name="bitbucket")
 
-        self.server_url = server_url or os.getenv("BITBUCKET_SERVER_URL")
         self.username = username or os.getenv("BITBUCKET_USERNAME")
         self.password = password or os.getenv("BITBUCKET_PASSWORD")
         self.token = token or os.getenv("BITBUCKET_TOKEN")
         self.auth_password = self.token or self.password
-        self.base_url = f"https://{self.server_url}/{api_version}"
+        self.server_url = server_url or "api.bitbucket.org"
+        self.api_version = api_version or "2.0"
+        self.base_url = (
+            f"https://{self.server_url}/{api_version}"
+            if not self.server_url.startswith(("http://", "https://"))
+            else f"{self.server_url}/{api_version}"
+        )
 
         if not (self.username and self.auth_password):
             logger.error("Username and password or token are required")
