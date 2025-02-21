@@ -184,6 +184,7 @@ class OpenAIChat(Model):
             "extra_query": self.extra_query,
             "metadata": self.metadata,
         }
+
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
         # Add tools
@@ -476,6 +477,13 @@ class OpenAIChat(Model):
             ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
+
+        if hasattr(response, "error") and response.error:
+            raise ModelProviderError(
+                message=response.error.get("message", "Unknown model error"),
+                model_name=self.name,
+                model_id=self.id,
+            )
 
         # Get response message
         response_message = response.choices[0].message
