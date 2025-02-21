@@ -10,7 +10,7 @@ on:
       - synchronize
       - reopened
     branches:
-      - 'release*'  # Run on PRs targeting release branches
+      - '*release*'  # Run on PRs targeting release branches
 
 jobs:
   style-check:
