@@ -18,7 +18,7 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(model=MistralChat(id="mistral-large-latest"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=MistralChat(id="mistral-small"), markdown=True, telemetry=False, monitoring=False)
 
     # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -31,7 +31,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=MistralChat(id="mistral-large-latest"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=MistralChat(id="mistral-small"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -49,7 +49,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=MistralChat(id="mistral-large-latest"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=MistralChat(id="mistral-small"), markdown=True, telemetry=False, monitoring=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -61,7 +61,7 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=MistralChat(id="mistral-large-latest"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=MistralChat(id="mistral-small"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -73,7 +73,7 @@ async def test_async_basic_stream():
 
 
 def test_with_memory():
-    agent = Agent(model=MistralChat(id="mistral-large-latest"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=MistralChat(id="mistral-small"), markdown=True, telemetry=False, monitoring=False)
 
     # First interaction
     response1 = agent.run("My name is John Smith")
@@ -107,7 +107,7 @@ def test_structured_output():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=MistralChat(id="mistral-large-latest"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=MistralChat(id="mistral-small"), markdown=True, telemetry=False, monitoring=False)
 
     response = agent.run("Create a movie about time travel")
 
@@ -121,7 +121,7 @@ def test_structured_output():
 def test_history():
     db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
     agent = Agent(
-        model=MistralChat(id="mistral-large-latest"),
+        model=MistralChat(id="mistral-small"),
         storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
         add_history_to_messages=True,
         telemetry=False,

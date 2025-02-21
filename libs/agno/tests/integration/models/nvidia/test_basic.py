@@ -18,7 +18,7 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(model=Nvidia(id="meta/llama-3.3-70b-instruct"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Nvidia(id="meta/llama-3.1-8b-instruct"), markdown=True, telemetry=False, monitoring=False)
 
     # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
