@@ -25,8 +25,8 @@ class BitbucketTools(Toolkit):
         Args:
             server_url (str, optional): The Bitbucket server URL. Defaults to "api.bitbucket.org".
             username (str, optional): The username to authenticate with. If not provided, it will take the value of `BITBUCKET_USERNAME` env variable.
-            password (str, optional): The password to authenticate with. If not provided, it will take the value of `BITBUCKET_PASSWORD` env variable..
-            token (str, optional): The token to authenticate with. If not provided, it will take the value of `BITBUCKET_TOKEN` env variable..
+            password (str, optional): The password to authenticate with. If not provided, it will take the value of `BITBUCKET_PASSWORD` env variable.
+            token (str, optional): The token to authenticate with. If not provided, it will take the value of `BITBUCKET_TOKEN` env variable.
             api_version (str, optional): The version of the Bitbucket API to use. Defaults to "2.0".
 
         Raises:
