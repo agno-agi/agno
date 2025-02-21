@@ -42,6 +42,7 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.message import get_text_from_message
 from agno.utils.safe_formatter import SafeFormatter
+from agno.utils.string import parse_structured_output
 from agno.utils.timer import Timer
 
 
@@ -812,39 +813,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            from pydantic import ValidationError
-
-                            structured_output = None
-                            try:
-                                # First attempt: direct JSON validation
-                                structured_output = self.response_model.model_validate_json(run_response.content)
-                            except ValidationError:
-                                # Second attempt: Try cleaning and escaping the JSON string
-                                cleaned_content = run_response.content
-
-                                # Handle code blocks if present
-                                if "```json" in cleaned_content:
-                                    cleaned_content = cleaned_content.split("```json")[-1].split("```")[0].strip()
-
-                                # Attempt to properly escape quotes within field values
-                                import re
-
-                                def escape_quotes_in_values(match):
-                                    key = match.group(1)
-                                    value = match.group(2)
-                                    # Escape quotes in the value portion only
-                                    escaped_value = value.replace('"', '\\"')
-                                    return f'"{key}": "{escaped_value}"'
-
-                                # Find and escape quotes in field values
-                                cleaned_content = re.sub(
-                                    r'"([^"]+)"\s*:\s*"([^"]*)"', escape_quotes_in_values, cleaned_content
-                                )
-
-                                try:
-                                    structured_output = self.response_model.model_validate_json(cleaned_content)
-                                except ValidationError as e:
-                                    logger.warning(f"Failed to parse cleaned JSON: {e}")
+                            structured_output = parse_structured_output(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -1232,39 +1201,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            from pydantic import ValidationError
-
-                            structured_output = None
-                            try:
-                                # First attempt: direct JSON validation
-                                structured_output = self.response_model.model_validate_json(run_response.content)
-                            except ValidationError:
-                                # Second attempt: Try cleaning and escaping the JSON string
-                                cleaned_content = run_response.content
-
-                                # Handle code blocks if present
-                                if "```json" in cleaned_content:
-                                    cleaned_content = cleaned_content.split("```json")[-1].split("```")[0].strip()
-
-                                # Attempt to properly escape quotes within field values
-                                import re
-
-                                def escape_quotes_in_values(match):
-                                    key = match.group(1)
-                                    value = match.group(2)
-                                    # Escape quotes in the value portion only
-                                    escaped_value = value.replace('"', '\\"')
-                                    return f'"{key}": "{escaped_value}"'
-
-                                # Find and escape quotes in field values
-                                cleaned_content = re.sub(
-                                    r'"([^"]+)"\s*:\s*"([^"]*)"', escape_quotes_in_values, cleaned_content
-                                )
-
-                                try:
-                                    structured_output = self.response_model.model_validate_json(cleaned_content)
-                                except ValidationError as e:
-                                    logger.warning(f"Failed to parse cleaned JSON: {e}")
+                            structured_output = parse_structured_output(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
