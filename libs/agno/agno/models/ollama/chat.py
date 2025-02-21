@@ -118,8 +118,15 @@ class Ollama(Model):
         # Add tools
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
+            # Fix optional parameters where the "type" is [type, null]
+            for tool in request_params["tools"]:  # type: ignore
+                if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
+                    for _, obj in tool["function"]["parameters"].get("properties", {}).items():  # type: ignore
+                        if isinstance(obj["type"], list):
+                            obj["type"] = obj["type"][0]
             if self.tool_choice is not None:
                 request_params["tool_choice"] = self.tool_choice
+
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)

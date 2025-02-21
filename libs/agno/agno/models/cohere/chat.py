@@ -137,7 +137,7 @@ class Cohere(Model):
             return self.get_client().chat(model=self.id, messages=self._format_messages(messages), **request_kwargs)  # type: ignore
         except Exception as e:
             logger.error(f"Unexpected error calling Cohere API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[StreamedChatResponseV2]:
         """
@@ -159,7 +159,7 @@ class Cohere(Model):
             )
         except Exception as e:
             logger.error(f"Unexpected error calling Cohere API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> ChatResponse:
         """
@@ -181,7 +181,7 @@ class Cohere(Model):
             )
         except Exception as e:
             logger.error(f"Unexpected error calling Cohere API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[StreamedChatResponseV2]:
         """
@@ -204,7 +204,7 @@ class Cohere(Model):
                 yield response
         except Exception as e:
             logger.error(f"Unexpected error calling Cohere API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def parse_provider_response(self, response: ChatResponse) -> ModelResponse:
         """
