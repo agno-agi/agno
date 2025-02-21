@@ -1392,7 +1392,7 @@ class Agent:
                         if tool.name not in self._functions_for_model:
                             tool._agent = self
                             tool.process_entrypoint(strict=strict)
-                            if strict:
+                            if strict and tool.strict is None:
                                 tool.strict = True
                             self._functions_for_model[tool.name] = tool
                             self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
@@ -2402,7 +2402,18 @@ class Agent:
         if member_agent.name is None:
             member_agent.name = agent_name
 
-        transfer_function = Function.from_callable(_transfer_task_to_agent)
+        strict = (
+            True
+            if (
+                member_agent.response_model is not None
+                and member_agent.structured_outputs
+                and member_agent.model is not None
+                and member_agent.model.supports_structured_outputs
+            )
+            else False
+        )
+        transfer_function = Function.from_callable(_transfer_task_to_agent, strict=strict)
+        transfer_function.strict = strict
         transfer_function.name = f"transfer_task_to_{agent_name}"
         transfer_function.description = dedent(f"""\
         Use this function to transfer a task to {agent_name}
