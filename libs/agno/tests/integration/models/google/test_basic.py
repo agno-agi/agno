@@ -256,7 +256,6 @@ def test_custom_client_params():
         model=Gemini(
             id="gemini-1.5-flash",
             vertexai=True,
-            project_id="394942673418",
             location="us-central1",
             generation_config=generation_config,
             safety_settings=safety_settings,

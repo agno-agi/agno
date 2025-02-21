@@ -271,8 +271,7 @@ def test_tool_call_list_parameters():
 
 def test_grounding():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        grounding=True,
+        model=Gemini(id="gemini-2.0-flash-exp", grounding=True),
     )
 
     response = agent.run("What is the weather in Tokyo?")
@@ -283,8 +282,7 @@ def test_grounding():
 
 def test_search():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        search=True,
+        model=Gemini(id="gemini-2.0-flash-exp", search=True),
     )
 
     response = agent.run("What is the weather in Tokyo?")

@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.cohere import Cohere
-from agno.storage.agent.postgres import PostgresAgentStorage
+from agno.storage.agent.sqlite import SqliteAgentStorage
 
 
 def _assert_metrics(response: RunResponse):
@@ -87,7 +87,7 @@ def test_with_memory():
     assert response1.content is not None
 
     # Second interaction should remember the name
-    response2 = agent.run("What's my name?")
+    response2 = agent.run("What's my name and surname?")
     assert "John Smith" in response2.content
 
     # Verify memories were created
@@ -114,7 +114,7 @@ def test_structured_output():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=Cohere(id="command-light"), response_model=MovieScript, telemetry=False, monitoring=False)
+    agent = Agent(model=Cohere(id="command-r-08-2024"), response_model=MovieScript, telemetry=False, monitoring=False)
 
     response = agent.run("Create a movie about time travel")
 
@@ -126,10 +126,9 @@ def test_structured_output():
 
 
 def test_history():
-    db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
     agent = Agent(
         model=Cohere(id="command"),
-        storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
+        storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,

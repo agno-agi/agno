@@ -170,6 +170,7 @@ def test_tool_call_custom_tool_no_parameters():
     assert "70" in response.content
 
 
+@pytest.mark.skip("Mistral is bad at custom tool calls")
 def test_tool_call_custom_tool_optional_parameters():
     def get_the_weather(city: Optional[str] = None):
         """
