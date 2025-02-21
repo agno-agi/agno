@@ -51,6 +51,7 @@ jobs:
       fail-fast: true  # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -119,6 +120,7 @@ jobs:
       fail-fast: true  # Stop all matrix jobs if one fails
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -151,8 +153,9 @@ jobs:
         python-version: ["3.12"]
       fail-fast: true
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -253,6 +256,7 @@ jobs:
       fail-fast: true
     env:
       FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -320,6 +324,7 @@ jobs:
       fail-fast: true
     env:
       MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
