@@ -3,7 +3,8 @@ name: Main Validation
 on:
   push:
     branches:
-      - 'main'  # Run on all branches
+      - 'main'  # Run on main
+      - '*release*'  # Run on release
   pull_request:
     types:
       - opened
