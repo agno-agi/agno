@@ -6,7 +6,6 @@ from agno.storage.agent.postgres import PostgresAgentStorage
 
 
 def _assert_metrics(response: RunResponse):
-    print("METRICS", response.metrics)
     input_tokens = response.metrics.get("input_tokens", [])
     output_tokens = response.metrics.get("output_tokens", [])
     total_tokens = response.metrics.get("total_tokens", [])
