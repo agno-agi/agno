@@ -19,6 +19,15 @@ class BitbucketTools(Toolkit):
         password: Optional[str] = None,
         token: Optional[str] = None,
         api_version: Optional[str] = "2.0",
+        list_repositories: bool = True,
+        get_repository: bool = True,
+        create_repository: bool = True,
+        list_repository_commits: bool = True,
+        list_pull_requests: bool = True,
+        get_pull_request: bool = True,
+        get_pull_request_changes: bool = True,
+        list_issues: bool = True,
+        list_repository_pipelines: bool = True,
     ):
         """Initializes Bitbucket Tools.
 
@@ -28,6 +37,15 @@ class BitbucketTools(Toolkit):
             password (str, optional): The password to authenticate with. If not provided, it will take the value of `BITBUCKET_PASSWORD` env variable.
             token (str, optional): The token to authenticate with. If not provided, it will take the value of `BITBUCKET_TOKEN` env variable.
             api_version (str, optional): The version of the Bitbucket API to use. Defaults to "2.0".
+            list_repositories (bool, optional): Whether to register the `list_repositories` method. Defaults to True.
+            get_repository (bool, optional): Whether to register the `get_repository` method. Defaults to True.
+            create_repository (bool, optional): Whether to register the `create_repository` method. Defaults to True.
+            list_repository_commits (bool, optional): Whether to register the `list_repository_commits` method. Defaults to True.
+            list_pull_requests (bool, optional): Whether to register the `list_pull_requests` method. Defaults to True.
+            get_pull_request (bool, optional): Whether to register the `get_pull_request` method. Defaults to True.
+            get_pull_request_changes (bool, optional): Whether to register the `get_pull_request_changes` method. Defaults to True.
+            list_issues (bool, optional): Whether to register the `list_issues` method. Defaults to True.
+            list_repository_pipelines (bool, optional): Whether to register the `list_repository_pipelines` method. Defaults to True.
 
         Raises:
             ValueError: If username and password or token are not provided.
@@ -58,15 +76,24 @@ class BitbucketTools(Toolkit):
         self.headers = {"Accept": "application/json", "Authorization": f"Basic {self._generate_access_token()}"}
 
         # Register methods
-        self.register(self.list_repositories)
-        self.register(self.get_repository)
-        self.register(self.create_repository)
-        self.register(self.list_repository_commits)
-        self.register(self.list_pull_requests)
-        self.register(self.get_pull_request)
-        self.register(self.get_pull_request_changes)
-        self.register(self.list_issues)
-        self.register(self.list_repository_pipelines)
+        if list_repositories:
+            self.register(self.list_repositories)
+        if get_repository:
+            self.register(self.get_repository)
+        if create_repository:
+            self.register(self.create_repository)
+        if list_repository_commits:
+            self.register(self.list_repository_commits)
+        if list_pull_requests:
+            self.register(self.list_pull_requests)
+        if get_pull_request:
+            self.register(self.get_pull_request)
+        if get_pull_request_changes:
+            self.register(self.get_pull_request_changes)
+        if list_issues:
+            self.register(self.list_issues)
+        if list_repository_pipelines:
+            self.register(self.list_repository_pipelines)
 
     def _generate_access_token(self) -> str:
         """Generate an access token for Bitbucket API using Basic Auth.
