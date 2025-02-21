@@ -1,7 +1,6 @@
 from typing import Optional
 
 import pytest
-
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa

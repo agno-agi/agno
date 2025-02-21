@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
 import pytest
+from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.openai import OpenAIChat

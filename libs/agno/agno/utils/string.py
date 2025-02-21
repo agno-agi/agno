@@ -1,7 +1,7 @@
 import hashlib
 import json
 import re
-from typing import Any, Optional, Type
+from typing import Optional, Type
 
 from pydantic import BaseModel, ValidationError
 
@@ -41,11 +41,11 @@ def parse_structured_output(content: str, response_model: Type[BaseModel]) -> Op
 
         # Clean the JSON string
         # Remove markdown formatting
-        content = re.sub(r'[*_`#]', '', content)
+        content = re.sub(r"[*_`#]", "", content)
 
         # Handle newlines and control characters
-        content = content.replace('\n', ' ').replace('\r', '')
-        content = re.sub(r'[\x00-\x1F\x7F]', '', content)
+        content = content.replace("\n", " ").replace("\r", "")
+        content = re.sub(r"[\x00-\x1F\x7F]", "", content)
 
         # Escape quotes only in values, not keys
         def escape_quotes_in_values(match):

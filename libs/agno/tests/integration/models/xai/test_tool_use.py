@@ -108,7 +108,7 @@ def test_multiple_tool_calls():
         instructions=[
             "Use YFinance for stock price queries",
             "Use DuckDuckGo for news and general information",
-            "When both price and news are requested, use both tools"
+            "When both price and news are requested, use both tools",
         ],
         show_tool_calls=True,
         markdown=True,

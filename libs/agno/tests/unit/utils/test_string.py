@@ -1,5 +1,5 @@
 from typing import Optional
-import pytest
+
 from pydantic import BaseModel
 
 from agno.utils.string import parse_structured_output
@@ -72,7 +72,7 @@ def test_parse_json_with_markdown_formatting():
 
 def test_parse_json_with_quotes_in_values():
     """Test parsing JSON with quotes in values"""
-    content = '{"name": "test \"quoted\" text", "value": "some "quoted" value"}'
+    content = '{"name": "test "quoted" text", "value": "some "quoted" value"}'
     result = parse_structured_output(content, TestModel)
     assert result is not None
     assert result.name == 'test "quoted" text'
