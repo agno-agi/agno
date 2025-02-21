@@ -13,8 +13,6 @@ try:
     from cohere import ClientV2 as CohereClient
     from cohere.types.chat_response import ChatResponse
     from cohere.types.streamed_chat_response_v2 import StreamedChatResponseV2
-    from cohere.types.tool_v2 import ToolV2
-    from cohere.types.tool_v2function import ToolV2Function
 except (ModuleNotFoundError, ImportError):
     raise ImportError("`cohere` not installed. Please install using `pip install cohere`")
 
