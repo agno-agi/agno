@@ -189,6 +189,7 @@ class OpenAIChat(Model):
         # Add tools
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
+
             if self.tool_choice is not None:
                 request_params["tool_choice"] = self.tool_choice
         # Add additional request params if provided
