@@ -40,6 +40,7 @@ class Ollama(Model):
     id: str = "llama3.1"
     name: str = "Ollama"
     provider: str = "Ollama"
+
     supports_structured_outputs: bool = True
 
     # Request parameters
@@ -56,10 +57,6 @@ class Ollama(Model):
     # Ollama clients
     client: Optional[OllamaClient] = None
     async_client: Optional[AsyncOllamaClient] = None
-
-    # Internal parameters. Not used for API requests
-    # Whether to use the structured outputs with this Model.
-    structured_outputs: bool = False
 
     def _get_client_params(self) -> Dict[str, Any]:
         base_params = {
@@ -150,10 +147,6 @@ class Ollama(Model):
         )
         if self._tools is not None:
             model_dict["tools"] = self._tools
-            if self.tool_choice is not None:
-                model_dict["tool_choice"] = self.tool_choice
-            else:
-                model_dict["tool_choice"] = "auto"
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
@@ -288,7 +281,7 @@ class Ollama(Model):
                 and self.structured_outputs
                 and issubclass(self.response_format, BaseModel)
             ):
-                parsed_object = response_message.parsed  # type: ignore
+                parsed_object = response_message.content  # type: ignore
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
         except Exception as e:
