@@ -1,6 +1,7 @@
 import pytest
+from pydantic import BaseModel, Field
 
-from agno.agent import Agent, AgentMemory, RunResponse  # noqa
+from agno.agent import Agent, RunResponse  # noqa
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
@@ -97,6 +98,26 @@ async def test_async_tool_use_stream():
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
     assert any("TSLA" in r.content for r in responses if r.content)
+
+
+def test_tool_use_with_native_structured_outputs():
+    class StockPrice(BaseModel):
+        price: float = Field(..., description="The price of the stock")
+        currency: str = Field(..., description="The currency of the stock")
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[YFinanceTools()],
+        show_tool_calls=True,
+        markdown=True,
+        response_model=StockPrice,
+        structured_outputs=True,
+    )
+    response = agent.run("What is the current price of TSLA?")
+    assert isinstance(response.content, StockPrice)
+    assert response.content is not None
+    assert response.content.price is not None
+    assert response.content.currency is not None
 
 
 def test_parallel_tool_calls():

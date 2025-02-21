@@ -107,9 +107,10 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
     chat_messages: List[Dict[str, str]] = []
     system_messages: List[str] = []
 
+    print()
     for idx, message in enumerate(messages):
         content = message.content or ""
-        if message.role == "system" or (message.role != "user" and idx in [0, 1]):
+        if message.role == "system":
             if content is not None:
                 system_messages.append(content)  # type: ignore
             continue

@@ -1,10 +1,9 @@
 from typing import Optional
 
 import pytest
-from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
-from agno.models.google import Gemini
+from agno.agent import Agent, RunResponse
+from agno.models.together import Together
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
@@ -12,7 +11,7 @@ from agno.tools.yfinance import YFinanceTools
 
 def test_tool_use():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
@@ -30,7 +29,7 @@ def test_tool_use():
 
 def test_tool_use_stream():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
@@ -58,7 +57,7 @@ def test_tool_use_stream():
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
@@ -69,7 +68,7 @@ async def test_async_tool_use():
     response = await agent.arun("What is the current price of TSLA?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages if msg.role == "model")
+    assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
     assert "TSLA" in response.content
 
@@ -77,7 +76,7 @@ async def test_async_tool_use():
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
@@ -102,53 +101,9 @@ async def test_async_tool_use_stream():
     assert any("TSLA" in r.content for r in responses if r.content)
 
 
-def test_tool_use_with_native_structured_outputs():
-    class StockPrice(BaseModel):
-        price: float = Field(..., description="The price of the stock")
-        currency: str = Field(..., description="The currency of the stock")
-
-    agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools()],
-        show_tool_calls=True,
-        markdown=True,
-        response_model=StockPrice,
-        structured_outputs=True,
-    )
-    # Gemini does not support structured outputs for tool calls at this time
-    with pytest.raises(Exception):
-        agent.run("What is the current price of TSLA?")
-    # assert isinstance(response.content, StockPrice)
-    # assert response.content is not None
-    # assert response.content.price is not None
-    # assert response.content.currency is not None
-
-
-def test_parallel_tool_calls():
-    agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools()],
-        show_tool_calls=True,
-        markdown=True,
-        telemetry=False,
-        monitoring=False,
-    )
-
-    response = agent.run("What is the current price of TSLA and AAPL?")
-
-    # Verify tool usage
-    tool_calls = []
-    for msg in response.messages:
-        if msg.tool_calls:
-            tool_calls.extend(msg.tool_calls)
-    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
-    assert response.content is not None
-    assert "TSLA" in response.content and "AAPL" in response.content
-
-
 def test_multiple_tool_calls():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Together(id="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"),
         tools=[YFinanceTools(), DuckDuckGoTools()],
         show_tool_calls=True,
         markdown=True,
@@ -163,7 +118,7 @@ def test_multiple_tool_calls():
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
-    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
+    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2
     assert response.content is not None
     assert "TSLA" in response.content and "latest news" in response.content.lower()
 
@@ -176,7 +131,7 @@ def test_tool_call_custom_tool_no_parameters():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Together(id="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"),
         tools=[get_the_weather_in_tokyo],
         show_tool_calls=True,
         markdown=True,
@@ -206,7 +161,7 @@ def test_tool_call_custom_tool_optional_parameters():
             return f"It is currently 70 degrees and cloudy in {city}"
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Together(id="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"),
         tools=[get_the_weather],
         show_tool_calls=True,
         markdown=True,
@@ -224,7 +179,7 @@ def test_tool_call_custom_tool_optional_parameters():
 
 def test_tool_call_list_parameters():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
         show_tool_calls=True,
