@@ -21,23 +21,6 @@ except (ModuleNotFoundError, ImportError):
     raise ImportError("`groq` not installed. Please install using `pip install groq`")
 
 
-def format_message(message: Message) -> Dict[str, Any]:
-    """
-    Format a message into the format expected by Groq.
-
-    Args:
-        message (Message): The message to format.
-
-    Returns:
-        Dict[str, Any]: The formatted message.
-    """
-    if message.role == "user":
-        if message.images is not None:
-            message = add_images_to_message(message=message, images=message.images)
-
-    return message.serialize_for_model()
-
-
 @dataclass
 class Groq(Model):
     """
@@ -213,6 +196,31 @@ class Groq(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
+    def format_message(self, message: Message) -> Dict[str, Any]:
+        """
+        Format a message into the format expected by Groq.
+
+        Args:
+            message (Message): The message to format.
+
+        Returns:
+            Dict[str, Any]: The formatted message.
+        """
+        if (
+            message.role == "system"
+            and isinstance(message.content, str)
+            and self.response_format is not None
+            and self.response_format.get("type") == "json_object"
+        ):
+            # This is required by Groq to ensure the model outputs in the correct format
+            message.content += "\n\nYour output should be in JSON format."
+
+        if message.role == "user":
+            if message.images is not None:
+                message = add_images_to_message(message=message, images=message.images)
+
+        return message.serialize_for_model()
+
     def invoke(self, messages: List[Message]) -> ChatCompletion:
         """
         Send a chat completion request to the Groq API.
@@ -226,7 +234,7 @@ class Groq(Model):
         try:
             return self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[format_message(m) for m in messages],  # type: ignore
+                messages=[self.format_message(m) for m in messages],  # type: ignore
                 **self.request_kwargs,
             )
         except (APIResponseValidationError, APIStatusError) as e:
@@ -254,7 +262,7 @@ class Groq(Model):
         try:
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[format_message(m) for m in messages],  # type: ignore
+                messages=[self.format_message(m) for m in messages],  # type: ignore
                 **self.request_kwargs,
             )
         except (APIResponseValidationError, APIStatusError) as e:
@@ -282,7 +290,7 @@ class Groq(Model):
         try:
             return self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[format_message(m) for m in messages],  # type: ignore
+                messages=[self.format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )
@@ -312,7 +320,7 @@ class Groq(Model):
         try:
             stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[format_message(m) for m in messages],  # type: ignore
+                messages=[self.format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )

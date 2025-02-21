@@ -38,6 +38,8 @@ class AzureOpenAI(OpenAILike):
     name: str = "AzureOpenAI"
     provider: str = "Azure"
 
+    supports_structured_outputs: bool = True
+
     api_key: Optional[str] = None
     api_version: Optional[str] = "2024-10-21"
     azure_endpoint: Optional[str] = None

@@ -93,6 +93,9 @@ class Cohere(Model):
         if self.presence_penalty:
             _request_params["presence_penalty"] = self.presence_penalty
 
+        if self.response_format:
+            _request_params["response_format"] = self.response_format
+
         if self._tools is not None and len(self._tools) > 0:
             _request_params["tools"] = self._tools
             if self.tool_choice is not None:

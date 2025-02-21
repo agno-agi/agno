@@ -42,6 +42,7 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.message import get_text_from_message
 from agno.utils.safe_formatter import SafeFormatter
+from agno.utils.string import parse_structured_output
 from agno.utils.timer import Timer
 
 
@@ -812,23 +813,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            from pydantic import ValidationError
-
-                            structured_output = None
-                            try:
-                                structured_output = self.response_model.model_validate_json(run_response.content)
-                            except ValidationError:
-                                # Check if response starts with ```json
-                                if run_response.content.startswith("```json"):
-                                    run_response.content = run_response.content.replace("```json\n", "").replace(
-                                        "\n```", ""
-                                    )
-                                    try:
-                                        structured_output = self.response_model.model_validate_json(
-                                            run_response.content
-                                        )
-                                    except Exception as e:
-                                        logger.warning(f"Failed to convert response to pydantic model: {e}")
+                            structured_output = parse_structured_output(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -1218,23 +1203,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            from pydantic import ValidationError
-
-                            structured_output = None
-                            try:
-                                structured_output = self.response_model.model_validate_json(run_response.content)
-                            except ValidationError:
-                                # Check if response starts with ```json
-                                if run_response.content.startswith("```json"):
-                                    run_response.content = run_response.content.replace("```json\n", "").replace(
-                                        "\n```", ""
-                                    )
-                                    try:
-                                        structured_output = self.response_model.model_validate_json(
-                                            run_response.content
-                                        )
-                                    except Exception as e:
-                                        logger.warning(f"Failed to convert response to pydantic model: {e}")
+                            structured_output = parse_structured_output(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -2478,6 +2447,7 @@ class Agent:
         if self.knowledge is None:
             return None
 
+        # TODO: add async support
         relevant_docs: List[Document] = self.knowledge.search(query=query, num_documents=num_documents, **kwargs)
         if len(relevant_docs) == 0:
             return None
@@ -2508,9 +2478,9 @@ class Agent:
         if context is None:
             return ""
 
-        try:
-            import json
+        import json
 
+        try:
             return json.dumps(context, indent=2, default=str)
         except (TypeError, ValueError, OverflowError) as e:
             logger.warning(f"Failed to convert context to JSON: {e}")
