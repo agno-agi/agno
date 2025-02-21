@@ -18,7 +18,7 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(model=Ollama(id="mistral"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Ollama(id="llama3.2:latest"), markdown=True, telemetry=False, monitoring=False)
 
     response: RunResponse = agent.run("Share a 2 sentence horror story")
 
@@ -30,7 +30,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=Ollama(id="mistral"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Ollama(id="llama3.2:latest"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -48,7 +48,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=Ollama(id="mistral"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Ollama(id="llama3.2:latest"), markdown=True, telemetry=False, monitoring=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -60,7 +60,7 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=Ollama(id="mistral"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Ollama(id="llama3.2:latest"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -72,7 +72,7 @@ async def test_async_basic_stream():
 
 
 def test_with_memory():
-    agent = Agent(model=Ollama(id="mistral"), 
+    agent = Agent(model=Ollama(id="llama3.2:latest"), 
                   add_history_to_messages=True,
                   num_history_responses=5,
                   markdown=True, 
@@ -117,7 +117,7 @@ def test_response_model():
                   monitoring=False,
                   response_model=MovieScript)
 
-    response = agent.run("Create a movie about time travel", output_schema=MovieScript)
+    response = agent.run("Create a movie about time travel")
 
     # Verify structured output
     assert isinstance(response.content, MovieScript)
@@ -129,7 +129,7 @@ def test_response_model():
 def test_history():
     db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
     agent = Agent(
-        model=Ollama(id="mistral"),
+        model=Ollama(id="llama3.2:latest"),
         storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
         add_history_to_messages=True,
         telemetry=False,
