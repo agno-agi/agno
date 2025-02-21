@@ -2,6 +2,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
+from agno.exceptions import ModelProviderError
 from agno.memory import AgentMemory
 from agno.memory.classifier import MemoryClassifier
 from agno.memory.db.sqlite import SqliteMemoryDb
@@ -75,6 +76,18 @@ async def test_async_basic_stream():
         assert isinstance(response, RunResponse)
         assert response.content is not None
     _assert_metrics(agent.run_response)
+
+
+def test_exception_handling():
+    agent = Agent(model=OpenAIChat(id="gpt-100"), markdown=True, telemetry=False, monitoring=False)
+
+    # Print the response in the terminal
+    with pytest.raises(ModelProviderError) as exc:
+        agent.run("Share a 2 sentence horror story")
+
+    assert exc.value.model_name == "OpenAIChat"
+    assert exc.value.model_id == "gpt-100"
+    assert exc.value.status_code == 404
 
 
 def test_with_memory():
