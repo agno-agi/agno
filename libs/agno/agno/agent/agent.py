@@ -2734,7 +2734,7 @@ class Agent:
         if reasoning_model_provided:
             # Use DeepSeek model for reasoning, including unofficial DeepSeek model providers when setting base_url
             if  reasoning_model.__class__.__name__ in ("DeepSeek", "OpenAIChat", "OpenAILike") and \
-                    ("deepseek-reasoner" == reasoning_model.id or "deepseek-r1" in reasoning_model.id):                
+                    ("deepseek-reasoner" == reasoning_model.id.lower() or "deepseek-r1" in reasoning_model.id.lower()):                
                 from agno.reasoning.deepseek import get_deepseek_reasoning, get_deepseek_reasoning_agent
 
                 ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
