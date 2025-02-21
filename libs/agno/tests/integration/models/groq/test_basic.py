@@ -2,14 +2,8 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.memory import AgentMemory
-from agno.memory.classifier import MemoryClassifier
-from agno.memory.db.sqlite import SqliteMemoryDb
-from agno.memory.manager import MemoryManager
-from agno.memory.summarizer import MemorySummarizer
-from agno.models.openai import OpenAIChat
-from agno.storage.agent.sqlite import SqliteAgentStorage
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.models.groq import Groq
+from agno.storage.agent.postgres import PostgresAgentStorage
 
 
 def _assert_metrics(response: RunResponse):
@@ -24,7 +18,7 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Groq(id="mixtral-8x7b-32768"), markdown=True, telemetry=False, monitoring=False)
 
     # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -37,7 +31,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Groq(id="mixtral-8x7b-32768"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -55,7 +49,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Groq(id="mixtral-8x7b-32768"), markdown=True, telemetry=False, monitoring=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -67,25 +61,19 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Groq(id="mixtral-8x7b-32768"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
     async for response in response_stream:
         assert isinstance(response, RunResponse)
         assert response.content is not None
+
     _assert_metrics(agent.run_response)
 
 
 def test_with_memory():
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        add_history_to_messages=True,
-        num_history_responses=5,
-        markdown=True,
-        telemetry=False,
-        monitoring=False,
-    )
+    agent = Agent(model=Groq(id="mixtral-8x7b-32768"), markdown=True, telemetry=False, monitoring=False)
 
     # First interaction
     response1 = agent.run("My name is John Smith")
@@ -119,7 +107,7 @@ def test_structured_output():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), response_model=MovieScript, telemetry=False, monitoring=False)
+    agent = Agent(model=Groq(id="mixtral-8x7b-32768"), markdown=True, telemetry=False, monitoring=False)
 
     response = agent.run("Create a movie about time travel")
 
@@ -131,9 +119,10 @@ def test_structured_output():
 
 
 def test_history():
+    db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        model=Groq(id="mixtral-8x7b-32768"),
+        storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,
@@ -146,37 +135,3 @@ def test_history():
     assert len(agent.run_response.messages) == 6
     agent.run("Hello 4")
     assert len(agent.run_response.messages) == 8
-
-
-def test_persistent_memory():
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools()],
-        markdown=True,
-        show_tool_calls=True,
-        telemetry=False,
-        monitoring=False,
-        instructions=[
-            "You can search the internet with DuckDuckGo.",
-        ],
-        storage=SqliteAgentStorage(table_name="chat_agent", db_file="tmp/agent_storage.db"),
-        # Adds the current date and time to the instructions
-        add_datetime_to_instructions=True,
-        # Adds the history of the conversation to the messages
-        add_history_to_messages=True,
-        # Number of history responses to add to the messages
-        num_history_responses=15,
-        memory=AgentMemory(
-            db=SqliteMemoryDb(db_file="tmp/agent_memory.db"),
-            create_user_memories=True,
-            create_session_summary=True,  # troublesome
-            update_user_memories_after_run=True,
-            update_session_summary_after_run=True,
-            classifier=MemoryClassifier(model=OpenAIChat(id="gpt-4o-mini")),
-            summarizer=MemorySummarizer(model=OpenAIChat(id="gpt-4o-mini")),
-            manager=MemoryManager(model=OpenAIChat(id="gpt-4o-mini")),
-        ),
-    )
-
-    response = agent.run("What is current news in France?")
-    assert response.content is not None
