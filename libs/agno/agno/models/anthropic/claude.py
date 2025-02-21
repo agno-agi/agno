@@ -271,13 +271,15 @@ class Claude(Model):
                 if "null" not in param_type_list:
                     required_params.append(param_name)
 
-            input_properties: Dict[str, Dict[str, Union[str, List[str]]]] = {
-                param_name: {
-                    "type": param_info.get("type", ""),
+            input_properties: Dict[str, Dict[str, Union[str, List[str]]]] = {}
+            for param_name, param_info in properties.items():
+                input_properties[param_name] = {
                     "description": param_info.get("description", ""),
                 }
-                for param_name, param_info in properties.items()
-            }
+                if "type" not in param_info and "anyOf" in param_info:
+                    input_properties[param_name]["anyOf"] = param_info["anyOf"]
+                else:
+                    input_properties[param_name]["type"] = param_info.get("type", "")
 
             tool = {
                 "name": func_name,
