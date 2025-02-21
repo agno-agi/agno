@@ -267,3 +267,27 @@ def test_tool_call_list_parameters():
         if call.get("type", "") == "function":
             assert call["function"]["name"] == "get_contents"
     assert response.content is not None
+
+
+def test_grounding():
+    agent = Agent(
+        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        grounding=True,
+    )
+
+    response = agent.run("What is the weather in Tokyo?")
+
+    assert response.content is not None
+    assert response.tools == []
+
+
+def test_search():
+    agent = Agent(
+        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        search=True,
+    )
+
+    response = agent.run("What is the weather in Tokyo?")
+
+    assert response.content is not None
+    assert response.tools == []
