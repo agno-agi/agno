@@ -16,6 +16,7 @@ def test_tool_use():
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
+        exponential_backoff=True,
         telemetry=False,
         monitoring=False,
     )
@@ -34,6 +35,7 @@ def test_tool_use_stream():
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
+        exponential_backoff=True,
         telemetry=False,
         monitoring=False,
     )
@@ -62,6 +64,7 @@ async def test_async_tool_use():
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
+        exponential_backoff=True,
         telemetry=False,
         monitoring=False,
     )
@@ -81,6 +84,7 @@ async def test_async_tool_use_stream():
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
+        exponential_backoff=True,
         telemetry=False,
         monitoring=False,
     )
@@ -113,6 +117,7 @@ def test_tool_use_with_native_structured_outputs():
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
+        exponential_backoff=True,
         response_model=StockPrice,
         structured_outputs=True,
     )
@@ -134,6 +139,7 @@ def test_tool_use_with_response_model():
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
+        exponential_backoff=True,
         response_model=StockPrice,
     )
     # Gemini does not support structured outputs for tool calls at this time
@@ -150,6 +156,7 @@ def test_parallel_tool_calls():
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
+        exponential_backoff=True,
         telemetry=False,
         monitoring=False,
     )
@@ -172,6 +179,7 @@ def test_multiple_tool_calls():
         tools=[YFinanceTools(), DuckDuckGoTools()],
         show_tool_calls=True,
         markdown=True,
+        exponential_backoff=True,
         telemetry=False,
         monitoring=False,
     )
@@ -198,6 +206,7 @@ def test_tool_call_custom_tool_no_parameters():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[get_the_weather_in_tokyo],
+        exponential_backoff=True,
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -228,6 +237,7 @@ def test_tool_call_custom_tool_optional_parameters():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[get_the_weather],
+        exponential_backoff=True,
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -247,6 +257,7 @@ def test_tool_call_list_parameters():
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
+        exponential_backoff=True,
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -272,6 +283,7 @@ def test_tool_call_list_parameters():
 def test_grounding():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp", grounding=True),
+        exponential_backoff=True,
     )
 
     response = agent.run("What is the weather in Tokyo?")
@@ -283,6 +295,7 @@ def test_grounding():
 def test_search():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp", search=True),
+        exponential_backoff=True,
     )
 
     response = agent.run("What is the weather in Tokyo?")

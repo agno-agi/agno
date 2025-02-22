@@ -133,7 +133,6 @@ def test_history():
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,
-        markdown=True,
     )
     agent.run("Hello")
     assert len(agent.run_response.messages) == 2

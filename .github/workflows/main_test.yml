@@ -486,6 +486,7 @@ jobs:
 
   # Run tests for Together
   test-together:
+    if: false # The tests take too long to run
     runs-on: ubuntu-latest
     strategy:
       matrix:

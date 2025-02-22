@@ -74,7 +74,7 @@ async def test_async_basic_stream():
 
 def test_with_memory():
     agent = Agent(
-        model=MistralChat(id="mistral-small"),
+        model=MistralChat(id="mistral-large-latest"),
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
