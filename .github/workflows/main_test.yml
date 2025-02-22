@@ -155,6 +155,7 @@ jobs:
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: "us-east-1"
       EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
@@ -384,6 +385,7 @@ jobs:
           python -m pytest ./libs/agno/tests/integration/models/nvidia
   # Run tests for OpenRouter
   test-openrouter:
+    if: false # Disable openrouter tests until we get a test account
     runs-on: ubuntu-latest
     strategy:
       matrix:

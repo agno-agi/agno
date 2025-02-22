@@ -2433,9 +2433,7 @@ class Agent:
             True
             if (
                 member_agent.response_model is not None
-                and member_agent.structured_outputs
                 and member_agent.model is not None
-                and member_agent.model.supports_structured_outputs
             )
             else False
         )
