@@ -3,7 +3,9 @@ from typing import List
 
 from agno.agent import Agent
 from agno.models.ollama import Ollama
+from agno.run.response import RunResponse
 from pydantic import BaseModel, Field
+from rich.pretty import pprint  # noqa
 
 
 class MovieScript(BaseModel):
@@ -34,12 +36,9 @@ structured_output_agent = Agent(
 )
 
 # Run the agent synchronously
-structured_output_agent.print_response("Llamas ruling the world")
+structured_output_response: RunResponse = structured_output_agent.run("New York")
+pprint(structured_output_response.content)
 
 
 # Run the agent asynchronously
-async def run_agents_async():
-    await structured_output_agent.aprint_response("Llamas ruling the world")
-
-
-asyncio.run(run_agents_async())
+asyncio.run(structured_output_agent.aprint_response("New York"))

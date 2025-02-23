@@ -1,65 +1,128 @@
-from agno.utils.string import extract_valid_json
+from typing import Optional
+
+from pydantic import BaseModel
+
+from agno.utils.string import parse_structured_output
 
 
-def test_extract_valid_json_with_valid_json():
-    content = 'Here is some text {"key": "value"} and more text.'
-    expected_json = {"key": "value"}
-    extracted_json = extract_valid_json(content)
-    assert extracted_json == expected_json
+class TestModel(BaseModel):
+    name: str
+    value: Optional[str] = None
+    description: Optional[str] = None
 
 
-def test_extract_valid_json_with_nested_json():
-    content = 'Start {"key": {"nested_key": "nested_value"}} End'
-    expected_json = {"key": {"nested_key": "nested_value"}}
-    extracted_json = extract_valid_json(content)
-    assert extracted_json == expected_json
+def test_parse_direct_json():
+    """Test parsing a clean JSON string directly"""
+    content = '{"name": "test", "value": "123"}'
+    result = parse_structured_output(content, TestModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
 
 
-def test_extract_valid_json_with_multiple_json_objects():
-    content = 'First {"key1": "value1"} Second {"key2": "value2"}'
-    expected_json = {"key1": "value1"}  # Only the first JSON should be returned
-    extracted_json = extract_valid_json(content)
-    assert extracted_json == expected_json
+def test_parse_json_with_markdown_block():
+    """Test parsing JSON from a markdown code block"""
+    content = """Some text before
+    ```json
+    {
+        "name": "test",
+        "value": "123"
+    }
+    ```
+    Some text after"""
+    result = parse_structured_output(content, TestModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
 
 
-def test_extract_valid_json_with_no_json():
-    content = "This is a string without JSON."
-    extracted_json = extract_valid_json(content)
-    assert extracted_json is None
+def test_parse_json_with_generic_code_block():
+    """Test parsing JSON from a generic markdown code block"""
+    content = """Some text before
+    ```
+    {
+        "name": "test",
+        "value": "123"
+    }
+    ```
+    Some text after"""
+    result = parse_structured_output(content, TestModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
 
 
-def test_extract_valid_json_with_invalid_json():
-    content = "This string contains {invalid JSON}."
-    extracted_json = extract_valid_json(content)
-    assert extracted_json is None
+def test_parse_json_with_control_characters():
+    """Test parsing JSON with control characters"""
+    content = '{\n\t"name": "test",\r\n\t"value": "123"\n}'
+    result = parse_structured_output(content, TestModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
 
 
-def test_extract_valid_json_with_json_array():
-    content = 'Here is a JSON array: ["item1", "item2"].'
-    extracted_json = extract_valid_json(content)
-    assert extracted_json is None  # Only JSON objects are extracted
+def test_parse_json_with_markdown_formatting():
+    """Test parsing JSON with markdown formatting"""
+    content = '{*"name"*: "test", `"value"`: "123"}'
+    result = parse_structured_output(content, TestModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
 
 
-def test_extract_valid_json_with_empty_json():
-    content = "Some text {} more text."
-    expected_json = {}
-    extracted_json = extract_valid_json(content)
-    assert extracted_json == expected_json
+def test_parse_json_with_quotes_in_values():
+    """Test parsing JSON with quotes in values"""
+    content = '{"name": "test "quoted" text", "value": "some "quoted" value"}'
+    result = parse_structured_output(content, TestModel)
+    assert result is not None
+    assert result.name == 'test "quoted" text'
+    assert result.value == 'some "quoted" value'
 
 
-def test_extract_valid_json_with_multiline_json():
-    content = """
-    Here is some text {
-        "key": "value",
-        "another_key": "another_value"
-    } and more text.
-    """
-    expected_json = {"key": "value", "another_key": "another_value"}
-    extracted_json = extract_valid_json(content)
-    assert extracted_json == expected_json
+def test_parse_json_with_missing_required_field():
+    """Test parsing JSON with missing required field"""
+    content = '{"value": "123"}'  # Missing required 'name' field
+    result = parse_structured_output(content, TestModel)
+    assert result is None
 
 
-def test_extract_valid_json_with_json_in_quotes():
-    content = 'Text before "{\\"key\\": \\"value\\"}" text after.'
-    extracted_json = extract_valid_json(content)
-    assert extracted_json is None  # JSON inside quotes should not be parsed
+def test_parse_invalid_json():
+    """Test parsing invalid JSON"""
+    content = '{"name": "test", value: "123"}'  # Missing quotes around value
+    result = parse_structured_output(content, TestModel)
+    assert result is None
+
+
+def test_parse_empty_string():
+    """Test parsing empty string"""
+    content = ""
+    result = parse_structured_output(content, TestModel)
+    assert result is None
+
+
+def test_parse_non_json_string():
+    """Test parsing non-JSON string"""
+    content = "Just some regular text"
+    result = parse_structured_output(content, TestModel)
+    assert result is None
+
+
+def test_parse_complex_markdown():
+    """Test parsing JSON embedded in complex markdown"""
+    content = """# Title
+    Here's some text with *formatting* and a code block:
+    
+    ```json
+    {
+        "name": "test",
+        "value": "123",
+        "description": "A \"quoted\" description"
+    }
+    ```
+    
+    And some more text after."""
+    result = parse_structured_output(content, TestModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
+    assert result.description == 'A "quoted" description'
