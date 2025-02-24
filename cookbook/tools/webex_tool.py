@@ -11,7 +11,8 @@ Steps:
 3. Get the Access Token
     3.1 Copy the Access Token shown on the confirmation page (displayed once).
     3.2 If lost, regenerate it via My Webex Apps → Edit Bot → Regenerate Access Token.
-4. Launch Webex itself and add your bot to a space like the Welcome space. Use the bot's email address (e.g. test@webex.bot)
+4. Set the WEBEX_ACCESS_TOKEN environment variable
+5. Launch Webex itself and add your bot to a space like the Welcome space. Use the bot's email address (e.g. test@webex.bot)
 """
 
 import os
