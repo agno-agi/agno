@@ -62,7 +62,6 @@ class Ollama(Model):
         base_params = {
             "host": self.host,
             "timeout": self.timeout,
-            "client_params": self.client_params,
         }
         # Create client_params dict with non-None values
         client_params = {k: v for k, v in base_params.items() if v is not None}
