@@ -115,7 +115,8 @@ class WebsiteReader(Reader):
 
             try:
                 logger.debug(f"Crawling: {current_url}")
-                response = httpx.get(current_url, timeout=10).raise_for_status()
+                response = httpx.get(current_url, timeout=10)
+                response.raise_for_status()
                 soup = BeautifulSoup(response.content, "html.parser")
 
                 # Extract main content
