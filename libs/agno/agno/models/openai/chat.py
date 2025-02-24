@@ -380,7 +380,7 @@ class OpenAIChat(Model):
             logger.error(f"API connection error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            logger.error(f"API status error from OpenAI API: {e.message}")
+            logger.error(f"API status error from OpenAI API: {e}")
             raise ModelProviderError(
                 message=e.response.json().get("error", {}).get("message", "Unknown model error"), status_code=e.response.status_code, model_name=self.name, model_id=self.id
             ) from e
