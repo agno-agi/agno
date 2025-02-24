@@ -11,6 +11,7 @@ from agno.utils.log import logger
 
 try:
     from boto3 import client as AwsClient
+    from boto3.session import Session
     from botocore.exceptions import ClientError
 except ImportError:
     logger.error("`boto3` not installed. Please install it via `pip install boto3`.")
@@ -29,10 +30,12 @@ class AwsBedrock(Model):
     """
     AWS Bedrock model.
 
-    To use this model, you need to set the following environment variables:
-    - AWS_ACCESS_KEY_ID
-    - AWS_SECRET_ACCESS_KEY
-    - AWS_REGION
+    To use this model, you need to either:
+    1. Set the following environment variables:
+       - AWS_ACCESS_KEY_ID
+       - AWS_SECRET_ACCESS_KEY
+       - AWS_REGION
+    2. Or provide a boto3 Session object
 
     Not all Bedrock models support all features. See this documentation for more information: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html
 
@@ -40,6 +43,7 @@ class AwsBedrock(Model):
         aws_region (Optional[str]): The AWS region to use.
         aws_access_key_id (Optional[str]): The AWS access key ID to use.
         aws_secret_access_key (Optional[str]): The AWS secret access key to use.
+        session (Optional[Session]): A boto3 Session object to use for authentication.
     """
 
     id: str = "mistral.mistral-small-2402-v1:0"
@@ -49,6 +53,7 @@ class AwsBedrock(Model):
     aws_region: Optional[str] = None
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
+    session: Optional[Session] = None
 
     # Request parameters
     max_tokens: Optional[int] = None
@@ -63,13 +68,17 @@ class AwsBedrock(Model):
         if self.client is not None:
             return self.client
 
+        if self.session:
+            self.client = self.session.client("bedrock-runtime")
+            return self.client
+
         self.aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
         self.aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
         self.aws_region = self.aws_region or getenv("AWS_REGION")
 
         if not self.aws_access_key_id or not self.aws_secret_access_key:
             raise AgnoError(
-                message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.",
+                message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
                 status_code=400,
             )
 
