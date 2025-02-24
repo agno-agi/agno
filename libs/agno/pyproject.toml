@@ -64,6 +64,7 @@ googlemaps = ["googlemaps"]
 todoist = ["todoist-api-python"]
 elevenlabs = ["elevenlabs"]
 fal = ["fal_client"]
+webex = ["webexpythonsdk"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -120,6 +121,7 @@ tools = [
   "agno[todoist]",
   "agno[elevenlabs]",
   "agno[fal]",
+  "agno[webex]",
 ]
 
 # All storage
@@ -283,10 +285,12 @@ module = [
   "tweepy.*",
   "twilio.*",
   "tzlocal.*",
+  "upstash_vector.*",
   "uvicorn.*",
   "vertexai.*",
   "voyageai.*",
   "weaviate.*",
+  "webexpythonsdk.*",
   "wikipedia.*",
   "yfinance.*",
   "youtube_transcript_api.*",
