@@ -31,7 +31,7 @@ def mock_webex_api():
 @pytest.fixture
 def webex_tools(mock_webex_api):
     """Create WebexTools instance with mocked API."""
-    with patch.dict("os.environ", {"WEBEX_TEAMS_ACCESS_TOKEN": "test_token"}):
+    with patch.dict("os.environ", {"WEBEX_ACCESS_TOKEN": "test_token"}):
         tools = WebexTools()
         tools.client = mock_webex_api
         return tools
@@ -47,7 +47,7 @@ def test_init_with_api_token():
 def test_init_with_env_var():
     """Test initialization with environment variable."""
     with patch("agno.tools.webex.WebexAPI") as mock_api:
-        with patch.dict("os.environ", {"WEBEX_TEAMS_ACCESS_TOKEN": "env_token"}):
+        with patch.dict("os.environ", {"WEBEX_ACCESS_TOKEN": "env_token"}):
             WebexTools()
             mock_api.assert_called_once_with(access_token="env_token")
 
@@ -61,7 +61,7 @@ def test_init_without_token():
 
 def test_init_with_selective_tools():
     """Test initialization with only selected tools."""
-    with patch.dict("os.environ", {"WEBEX_TEAMS_ACCESS_TOKEN": "test_token"}):
+    with patch.dict("os.environ", {"WEBEX_ACCESS_TOKEN": "test_token"}):
         tools = WebexTools(
             send_message=True,
             list_rooms=False,
