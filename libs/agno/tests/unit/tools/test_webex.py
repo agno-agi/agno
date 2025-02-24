@@ -4,9 +4,9 @@ import json
 from unittest.mock import Mock, patch
 
 import pytest
+from requests import Response
 from webexpythonsdk import WebexAPI
 from webexpythonsdk.exceptions import RateLimitError
-from requests import Response
 
 from agno.tools.webex import WebexTools
 
@@ -19,11 +19,11 @@ def mock_webex_api():
         mock_client = Mock(spec=WebexAPI)
         mock_messages = Mock()
         mock_rooms = Mock()
-        
+
         # Set up the nested structure
         mock_client.messages = mock_messages
         mock_client.rooms = mock_rooms
-        
+
         mock_api.return_value = mock_client
         return mock_client
 
@@ -40,7 +40,7 @@ def webex_tools(mock_webex_api):
 def test_init_with_api_token():
     """Test initialization with provided API token."""
     with patch("agno.tools.webex.WebexAPI") as mock_api:
-        tools = WebexTools(access_token="test_token")
+        WebexTools(access_token="test_token")
         mock_api.assert_called_once_with(access_token="test_token")
 
 
@@ -48,7 +48,7 @@ def test_init_with_env_var():
     """Test initialization with environment variable."""
     with patch("agno.tools.webex.WebexAPI") as mock_api:
         with patch.dict("os.environ", {"WEBEX_TEAMS_ACCESS_TOKEN": "env_token"}):
-            tools = WebexTools()
+            WebexTools()
             mock_api.assert_called_once_with(access_token="env_token")
 
 
@@ -78,9 +78,9 @@ def test_send_message_success(webex_tools, mock_webex_api):
         "id": "msg123",
         "roomId": "room123",
         "text": "Test message",
-        "created": "2024-01-01T10:00:00.000Z"
+        "created": "2024-01-01T10:00:00.000Z",
     }
-    
+
     mock_webex_api.messages.create.return_value = mock_response
 
     result = webex_tools.send_message("room123", "Test message")
@@ -158,4 +158,3 @@ def test_send_message_rate_limit(webex_tools, mock_webex_api):
 
     assert "error" in result_data
     assert "Too Many Requests" in str(result_data["error"])
-

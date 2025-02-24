@@ -11,6 +11,7 @@ try:
 except ImportError:
     logger.error("Webex tools require the `webexpythonsdk` package. Run `pip install webexpythonsdk` to install it.")
 
+
 class WebexTools(Toolkit):
     def __init__(self, send_message: bool = True, list_rooms: bool = True, access_token: Optional[str] = None):
         super().__init__(name="webex")
@@ -18,7 +19,7 @@ class WebexTools(Toolkit):
             access_token = os.getenv("WEBEX_ACCESS_TOKEN")
         if access_token is None:
             raise ValueError("Webex access token is not set. Please set the WEBEX_ACCESS_TOKEN environment variable.")
-        
+
         self.client = WebexAPI(access_token=access_token)
         if send_message:
             self.register(self.send_message)
@@ -40,7 +41,6 @@ class WebexTools(Toolkit):
         except ApiError as e:
             logger.error(f"Error sending message: {e} in room: {room_id}")
             return json.dumps({"error": str(e)})
-        
 
     def list_rooms(self) -> str:
         """
@@ -51,14 +51,14 @@ class WebexTools(Toolkit):
         try:
             response = self.client.rooms.list()
             rooms_list = [
-            {
-                "id": room.id,
-                "title": room.title,
-                "type": room.type,
-                "isPublic": room.isPublic,
-                "isReadOnly": room.isReadOnly,
-            } 
-            for room in response 
+                {
+                    "id": room.id,
+                    "title": room.title,
+                    "type": room.type,
+                    "isPublic": room.isPublic,
+                    "isReadOnly": room.isReadOnly,
+                }
+                for room in response
             ]
 
             return json.dumps({"rooms": rooms_list}, indent=4)
