@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import AgnoError, ModelProviderError
 from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
@@ -68,10 +68,9 @@ class AwsBedrock(Model):
         self.aws_region = self.aws_region or getenv("AWS_REGION")
 
         if not self.aws_access_key_id or not self.aws_secret_access_key:
-            raise ModelProviderError(
-                "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.",
-                model_name=self.name,
-                model_id=self.id,
+            raise AgnoError(
+                message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.",
+                status_code=400,
             )
 
         self.client = AwsClient(
@@ -238,10 +237,10 @@ class AwsBedrock(Model):
             return self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
         except ClientError as e:
             logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Dict[str, Any]]:
         """
@@ -271,10 +270,10 @@ class AwsBedrock(Model):
             return self.get_client().converse_stream(modelId=self.id, messages=formatted_messages, **body)["stream"]
         except ClientError as e:
             logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Overwrite the default from the base model
     def format_function_call_results(
@@ -357,7 +356,6 @@ class AwsBedrock(Model):
         for response_delta in self.invoke_stream(messages=messages):
             model_response = ModelResponse(role="assistant")
             should_yield = False
-
             if "contentBlockStart" in response_delta:
                 # Handle tool use requests
                 tool = response_delta["contentBlockStart"]["start"].get("toolUse")
@@ -401,9 +399,10 @@ class AwsBedrock(Model):
                     # Finish collecting text content
                     content.append({"text": stream_data.response_content})
 
-            elif "messageStop" in response_delta:
-                if "usage" in response_delta["messageStop"]:
-                    usage = response_delta["messageStop"]["usage"]
+            elif "messageStop" in response_delta or "metadata" in response_delta:
+                body = response_delta.get("metadata") or response_delta.get("messageStop") or {}
+                if "usage" in body:
+                    usage = body["usage"]
                     model_response.response_usage = AwsBedrockResponseUsage(
                         input_tokens=usage.get("inputTokens", 0),
                         output_tokens=usage.get("outputTokens", 0),
@@ -411,7 +410,6 @@ class AwsBedrock(Model):
                     )
 
             # Update metrics
-            assistant_message.metrics.completion_tokens += 1
             if not assistant_message.metrics.time_to_first_token:
                 assistant_message.metrics.set_time_to_first_token()
 

@@ -3,7 +3,7 @@ from typing import Optional
 import pytest
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.google import Gemini
+from agno.models.groq import Groq
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
@@ -11,7 +11,7 @@ from agno.tools.yfinance import YFinanceTools
 
 def test_tool_use():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Groq(id="gemma2-9b-it"),
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
@@ -29,7 +29,7 @@ def test_tool_use():
 
 def test_tool_use_stream():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Groq(id="mixtral-8x7b-32768"),
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
@@ -57,7 +57,7 @@ def test_tool_use_stream():
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Groq(id="gemma2-9b-it"),
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
@@ -68,7 +68,7 @@ async def test_async_tool_use():
     response = await agent.arun("What is the current price of TSLA?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages if msg.role == "model")
+    assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
     assert "TSLA" in response.content
 
@@ -76,7 +76,7 @@ async def test_async_tool_use():
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Groq(id="gemma2-9b-it"),
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
@@ -103,7 +103,7 @@ async def test_async_tool_use_stream():
 
 def test_parallel_tool_calls():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Groq(id="gemma2-9b-it"),
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
@@ -125,7 +125,7 @@ def test_parallel_tool_calls():
 
 def test_multiple_tool_calls():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Groq(id="llama-3.3-70b-versatile"),
         tools=[YFinanceTools(), DuckDuckGoTools()],
         show_tool_calls=True,
         markdown=True,
@@ -153,7 +153,7 @@ def test_tool_call_custom_tool_no_parameters():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Groq(id="gemma2-9b-it"),
         tools=[get_the_weather_in_tokyo],
         show_tool_calls=True,
         markdown=True,
@@ -183,7 +183,7 @@ def test_tool_call_custom_tool_optional_parameters():
             return f"It is currently 70 degrees and cloudy in {city}"
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Groq(id="gemma2-9b-it"),
         tools=[get_the_weather],
         show_tool_calls=True,
         markdown=True,
@@ -201,7 +201,7 @@ def test_tool_call_custom_tool_optional_parameters():
 
 def test_tool_call_list_parameters():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Groq(id="gemma2-9b-it"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
         show_tool_calls=True,

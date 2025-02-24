@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from agno.agent.metrics import SessionMetrics
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
-from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, AudioArtifact, AudioResponse, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
@@ -42,6 +42,7 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.message import get_text_from_message
 from agno.utils.safe_formatter import SafeFormatter
+from agno.utils.string import parse_structured_output
 from agno.utils.timer import Timer
 
 
@@ -428,18 +429,16 @@ class Agent:
             set_log_level_to_info()
 
     def set_monitoring(self) -> None:
-        """Overwrite the monitoring and telemetry settings based on the AGNO_MONITOR and AGNO_TELEMETRY environment variables."""
-        agno_monitor_var = getenv("AGNO_MONITOR")
-        if agno_monitor_var is not None and agno_monitor_var.lower() == "true":
-            self.monitoring = True
-        else:
-            self.monitoring = False
+        """Override monitoring and telemetry settings based on environment variables."""
 
-        agno_telemetry_var = getenv("AGNO_TELEMETRY")
-        if agno_telemetry_var is not None and agno_telemetry_var.lower() == "true":
-            self.telemetry = True
-        else:
-            self.telemetry = False
+        # Only override if the environment variable is set
+        monitor_env = getenv("AGNO_MONITOR")
+        if monitor_env is not None:
+            self.monitoring = monitor_env.lower() == "true"
+
+        telemetry_env = getenv("AGNO_TELEMETRY")
+        if telemetry_env is not None:
+            self.telemetry = telemetry_env.lower() == "true"
 
     def initialize_agent(self) -> None:
         self.set_debug()
@@ -553,6 +552,34 @@ class Agent:
                         yield self.create_run_response(
                             content=model_response_chunk.content, created_at=model_response_chunk.created_at
                         )
+                    if model_response_chunk.audio is not None:
+                        if model_response.audio is None:
+                            model_response.audio = AudioResponse(id=str(uuid4()), content="", transcript="")
+
+                        if model_response_chunk.audio.id is not None:
+                            model_response.audio.id = model_response_chunk.audio.id  # type: ignore
+                        if model_response_chunk.audio.content is not None:
+                            model_response.audio.content += model_response_chunk.audio.content  # type: ignore
+                        if model_response_chunk.audio.transcript is not None:
+                            model_response.audio.transcript += model_response_chunk.audio.transcript  # type: ignore
+                        if model_response_chunk.audio.expires_at is not None:
+                            model_response.audio.expires_at = model_response_chunk.audio.expires_at  # type: ignore
+                        if model_response_chunk.audio.mime_type is not None:
+                            model_response.audio.mime_type = model_response_chunk.audio.mime_type  # type: ignore
+                        model_response.audio.sample_rate = model_response_chunk.audio.sample_rate
+                        model_response.audio.channels = model_response_chunk.audio.channels
+
+                        # Yield the audio and transcript bit by bit
+                        self.run_response.response_audio = AudioResponse(
+                            id=model_response_chunk.audio.id,
+                            content=model_response_chunk.audio.content,
+                            transcript=model_response_chunk.audio.transcript,
+                            sample_rate=model_response_chunk.audio.sample_rate,
+                            channels=model_response_chunk.audio.channels,
+                        )
+                        self.run_response.created_at = model_response_chunk.created_at
+
+                        yield self.run_response
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                     # Add tool calls to the run_response
@@ -821,23 +848,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            from pydantic import ValidationError
-
-                            structured_output = None
-                            try:
-                                structured_output = self.response_model.model_validate_json(run_response.content)
-                            except ValidationError:
-                                # Check if response starts with ```json
-                                if run_response.content.startswith("```json"):
-                                    run_response.content = run_response.content.replace("```json\n", "").replace(
-                                        "\n```", ""
-                                    )
-                                    try:
-                                        structured_output = self.response_model.model_validate_json(
-                                            run_response.content
-                                        )
-                                    except Exception as e:
-                                        logger.warning(f"Failed to convert response to pydantic model: {e}")
+                            structured_output = parse_structured_output(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -891,6 +902,8 @@ class Agent:
                     import time
 
                     time.sleep(delay)
+
+        # If we get here, all retries failed
         if last_exception is not None:
             logger.error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
@@ -996,6 +1009,36 @@ class Agent:
                         yield self.create_run_response(
                             content=model_response_chunk.content, created_at=model_response_chunk.created_at
                         )
+
+                    if model_response_chunk.audio is not None:
+                        if model_response.audio is None:
+                            model_response.audio = AudioResponse(id=str(uuid4()), content="", transcript="")
+
+                        if model_response_chunk.audio.id is not None:
+                            model_response.audio.id = model_response_chunk.audio.id  # type: ignore
+                        if model_response_chunk.audio.content is not None:
+                            model_response.audio.content += model_response_chunk.audio.content  # type: ignore
+                        if model_response_chunk.audio.transcript is not None:
+                            model_response.audio.transcript += model_response_chunk.audio.transcript  # type: ignore
+                        if model_response_chunk.audio.expires_at is not None:
+                            model_response.audio.expires_at = model_response_chunk.audio.expires_at  # type: ignore
+                        if model_response_chunk.audio.mime_type is not None:
+                            model_response.audio.mime_type = model_response_chunk.audio.mime_type  # type: ignore
+                        model_response.audio.sample_rate = model_response_chunk.audio.sample_rate
+                        model_response.audio.channels = model_response_chunk.audio.channels
+
+                        # Yield the audio and transcript bit by bit
+                        self.run_response.response_audio = AudioResponse(
+                            id=model_response_chunk.audio.id,
+                            content=model_response_chunk.audio.content,
+                            transcript=model_response_chunk.audio.transcript,
+                            sample_rate=model_response_chunk.audio.sample_rate,
+                            channels=model_response_chunk.audio.channels,
+                        )
+                        self.run_response.created_at = model_response_chunk.created_at
+
+                        yield self.run_response
+
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                     # Add tool calls to the run_response
@@ -1229,23 +1272,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            from pydantic import ValidationError
-
-                            structured_output = None
-                            try:
-                                structured_output = self.response_model.model_validate_json(run_response.content)
-                            except ValidationError:
-                                # Check if response starts with ```json
-                                if run_response.content.startswith("```json"):
-                                    run_response.content = run_response.content.replace("```json\n", "").replace(
-                                        "\n```", ""
-                                    )
-                                    try:
-                                        structured_output = self.response_model.model_validate_json(
-                                            run_response.content
-                                        )
-                                    except Exception as e:
-                                        logger.warning(f"Failed to convert response to pydantic model: {e}")
+                            structured_output = parse_structured_output(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -1301,7 +1328,13 @@ class Agent:
                     time.sleep(delay)
 
         # If we get here, all retries failed
-        raise Exception(f"Failed after {num_attempts} attempts. Last error: {str(last_exception)}")
+        if last_exception is not None:
+            logger.error(
+                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
+            )
+            raise last_exception
+        else:
+            raise Exception(f"Failed after {num_attempts} attempts.")
 
     def create_run_response(
         self,
@@ -1397,7 +1430,7 @@ class Agent:
                         if tool.name not in self._functions_for_model:
                             tool._agent = self
                             tool.process_entrypoint(strict=strict)
-                            if strict:
+                            if strict and tool.strict is None:
                                 tool.strict = True
                             self._functions_for_model[tool.name] = tool
                             self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
@@ -2407,7 +2440,18 @@ class Agent:
         if member_agent.name is None:
             member_agent.name = agent_name
 
-        transfer_function = Function.from_callable(_transfer_task_to_agent)
+        strict = (
+            True
+            if (
+                member_agent.response_model is not None
+                and member_agent.structured_outputs
+                and member_agent.model is not None
+                and member_agent.model.supports_structured_outputs
+            )
+            else False
+        )
+        transfer_function = Function.from_callable(_transfer_task_to_agent, strict=strict)
+        transfer_function.strict = strict
         transfer_function.name = f"transfer_task_to_{agent_name}"
         transfer_function.description = dedent(f"""\
         Use this function to transfer a task to {agent_name}
@@ -2472,6 +2516,7 @@ class Agent:
         if self.knowledge is None:
             return None
 
+        # TODO: add async support
         relevant_docs: List[Document] = self.knowledge.search(query=query, num_documents=num_documents, **kwargs)
         if len(relevant_docs) == 0:
             return None
@@ -2502,9 +2547,9 @@ class Agent:
         if context is None:
             return ""
 
-        try:
-            import json
+        import json
 
+        try:
             return json.dumps(context, indent=2, default=str)
         except (TypeError, ValueError, OverflowError) as e:
             logger.warning(f"Failed to convert context to JSON: {e}")
