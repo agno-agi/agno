@@ -6,7 +6,7 @@ try:
     import lancedb
     import pyarrow as pa
 except ImportError:
-    raise ImportError("`lancedb` not installed.")
+    raise ImportError("`lancedb` not installed. Please install using `pip install lancedb`")
 
 from agno.document import Document
 from agno.embedder import Embedder
@@ -123,7 +123,7 @@ class LanceDb(VectorDb):
     def create(self) -> None:
         """Create the table if it does not exist."""
         if not self.exists():
-            self.connection = self._init_table()  # Connection update is needed
+            self.table = self._init_table()
 
     def _init_table(self) -> lancedb.db.LanceTable:
         schema = pa.schema(

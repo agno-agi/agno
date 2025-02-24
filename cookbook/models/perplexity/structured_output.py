@@ -1,9 +1,8 @@
 from typing import List
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.openai import OpenAIChat
+from agno.models.perplexity import Perplexity
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
 
 
 class MovieScript(BaseModel):
@@ -27,9 +26,13 @@ class MovieScript(BaseModel):
 
 # Agent that uses JSON mode
 json_mode_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    description="You write movie scripts.",
+    model=Perplexity(id="sonar-pro"),
+    description="You write movie scripts.  Please give the response in JSON format.",
     response_model=MovieScript,
+    markdown=True,
+    debug_mode=True,
+    # Only native structured outputs are supported
+    structured_outputs=True,
 )
 
 # Get the response in a variable

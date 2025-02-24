@@ -53,6 +53,19 @@ class Video(BaseModel):
         filepath = data.get("filepath")
         content = data.get("content")
 
+        # Convert and decompress content to bytes if it's a string
+        if content and isinstance(content, str):
+            import base64
+
+            try:
+                import zlib
+
+                decoded_content = base64.b64decode(content)
+                content = zlib.decompress(decoded_content)
+            except Exception:
+                content = base64.b64decode(content).decode("utf-8")
+        data["content"] = content
+
         # Count how many fields are set (not None)
         count = len([field for field in [filepath, content] if field is not None])
 
@@ -66,13 +79,14 @@ class Video(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         import base64
 
-        return {
+        response_dict = {
             "content": base64.b64encode(self.content).decode("utf-8")
             if isinstance(self.content, bytes)
             else self.content,
             "filepath": self.filepath,
             "format": self.format,
         }
+        return {k: v for k, v in response_dict.items() if v is not None}
 
 
 class Audio(BaseModel):
@@ -113,32 +127,41 @@ class Audio(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         import base64
 
-        return {
+        response_dict = {
             "content": base64.b64encode(self.content).decode("utf-8")
             if isinstance(self.content, bytes)
             else self.content,
             "filepath": self.filepath,
             "format": self.format,
         }
+        return {k: v for k, v in response_dict.items() if v is not None}
 
 
-class AudioOutput(BaseModel):
-    id: str
-    content: str  # Base64 encoded
-    expires_at: int
-    transcript: str
+class AudioResponse(BaseModel):
+    id: Optional[str] = None
+    content: Optional[str] = None  # Base64 encoded
+    expires_at: Optional[int] = None
+    transcript: Optional[str] = None
+
+    mime_type: Optional[str] = None
+    sample_rate: Optional[int] = 24000
+    channels: Optional[int] = 1
 
     def to_dict(self) -> Dict[str, Any]:
         import base64
 
-        return {
+        response_dict = {
             "id": self.id,
             "content": base64.b64encode(self.content).decode("utf-8")
             if isinstance(self.content, bytes)
             else self.content,
             "expires_at": self.expires_at,
             "transcript": self.transcript,
+            "mime_type": self.mime_type,
+            "sample_rate": self.sample_rate,
+            "channels": self.channels,
         }
+        return {k: v for k, v in response_dict.items() if v is not None}
 
 
 class Image(BaseModel):
@@ -183,7 +206,7 @@ class Image(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         import base64
 
-        return {
+        response_dict = {
             "content": base64.b64encode(self.content).decode("utf-8")
             if isinstance(self.content, bytes)
             else self.content,
@@ -191,3 +214,4 @@ class Image(BaseModel):
             "url": self.url,
             "detail": self.detail,
         }
+        return {k: v for k, v in response_dict.items() if v is not None}

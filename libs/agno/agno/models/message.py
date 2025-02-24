@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
-from agno.media import Audio, AudioOutput, Image, Video
+from agno.media import Audio, AudioResponse, Image, Video
 from agno.utils.log import logger
 from agno.utils.timer import Timer
 
@@ -143,7 +143,7 @@ class Message(BaseModel):
     videos: Optional[Sequence[Video]] = None
 
     # Output from the models
-    audio_output: Optional[AudioOutput] = None
+    audio_output: Optional[AudioResponse] = None
 
     # --- Data not sent to the Model API ---
     # The reasoning content from the model
