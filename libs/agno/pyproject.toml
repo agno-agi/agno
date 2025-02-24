@@ -283,6 +283,7 @@ module = [
   "tweepy.*",
   "twilio.*",
   "tzlocal.*",
+  "upstash_vector.*",
   "uvicorn.*",
   "vertexai.*",
   "voyageai.*",
