@@ -1,6 +1,7 @@
-import pytest
 from io import BytesIO
 from pathlib import Path
+
+import pytest
 
 from agno.document.base import Document
 from agno.document.reader.text_reader import TextReader
@@ -76,7 +77,7 @@ def test_empty_text_file(tmp_path):
 
     reader = TextReader()
     documents = reader.read(text_path)
-    
+
     # No chunks can be extracted from an empty file
     assert len(documents) == 0
 
@@ -112,8 +113,8 @@ def test_invalid_encoding(tmp_path):
     # Test handling of invalid encoding
     text_path = tmp_path / "invalid.txt"
     try:
-        with open(text_path, 'wb') as f:
-            f.write(b'\xFF\xFE\x00\x00')  # Invalid UTF-8
+        with open(text_path, "wb") as f:
+            f.write(b"\xff\xfe\x00\x00")  # Invalid UTF-8
 
         reader = TextReader()
         documents = reader.read(text_path)
@@ -129,7 +130,7 @@ def test_cp950_encoding(tmp_path):
     test_data = "中文測試"  # Chinese test text
     text_path = tmp_path / "cp950.txt"
     try:
-        with open(text_path, 'w', encoding='cp950') as f:
+        with open(text_path, "w", encoding="cp950") as f:
             f.write(test_data)
 
         reader = TextReader()

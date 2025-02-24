@@ -22,9 +22,10 @@ from agno.tools.webex import WebexTools
 
 agent = Agent(tools=[WebexTools()], show_tool_calls=True)
 
-#List all space in Webex
+# List all space in Webex
 agent.print_response("List all space on our Webex", markdown=True)
 
-#Send a message to a Space in Webex
-agent.print_response("Send a funny ice-breaking message to the webex Welcome space", markdown=True)
-
+# Send a message to a Space in Webex
+agent.print_response(
+    "Send a funny ice-breaking message to the webex Welcome space", markdown=True
+)
