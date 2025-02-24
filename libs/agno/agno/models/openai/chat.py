@@ -7,7 +7,7 @@ import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.media import AudioOutput
+from agno.media import AudioResponse
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
@@ -184,6 +184,7 @@ class OpenAIChat(Model):
             "extra_query": self.extra_query,
             "metadata": self.metadata,
         }
+
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
         # Add tools
@@ -477,6 +478,13 @@ class OpenAIChat(Model):
         """
         model_response = ModelResponse()
 
+        if hasattr(response, "error") and response.error:
+            raise ModelProviderError(
+                message=response.error.get("message", "Unknown model error"),
+                model_name=self.name,
+                model_id=self.id,
+            )
+
         # Get response message
         response_message = response.choices[0].message
 
@@ -515,13 +523,22 @@ class OpenAIChat(Model):
 
         # Add audio if present
         if hasattr(response_message, "audio") and response_message.audio is not None:
+            # If the audio output modality is requested, we can extract an audio response
             try:
-                model_response.audio = AudioOutput(
-                    id=response_message.audio.id,
-                    content=response_message.audio.data,
-                    expires_at=response_message.audio.expires_at,
-                    transcript=response_message.audio.transcript,
-                )
+                if isinstance(response_message.audio, dict):
+                    model_response.audio = AudioResponse(
+                        id=response_message.audio.get("id"),
+                        content=response_message.audio.get("data"),
+                        expires_at=response_message.audio.get("expires_at"),
+                        transcript=response_message.audio.get("transcript"),
+                    )
+                else:
+                    model_response.audio = AudioResponse(
+                        id=response_message.audio.id,
+                        content=response_message.audio.data,
+                        expires_at=response_message.audio.expires_at,
+                        transcript=response_message.audio.transcript,
+                    )
             except Exception as e:
                 logger.warning(f"Error processing audio: {e}")
 
@@ -558,12 +575,24 @@ class OpenAIChat(Model):
             # Add audio if present
             if hasattr(delta, "audio") and delta.audio is not None:
                 try:
-                    model_response.audio = AudioOutput(
-                        id=delta.audio.id,
-                        content=delta.audio.data,
-                        expires_at=delta.audio.expires_at,
-                        transcript=delta.audio.transcript,
-                    )
+                    if isinstance(delta.audio, dict):
+                        model_response.audio = AudioResponse(
+                            id=delta.audio.get("id"),
+                            content=delta.audio.get("data"),
+                            expires_at=delta.audio.get("expires_at"),
+                            transcript=delta.audio.get("transcript"),
+                            sample_rate=24000,
+                            mime_type="pcm16",
+                        )
+                    else:
+                        model_response.audio = AudioResponse(
+                            id=delta.audio.id,
+                            content=delta.audio.data,
+                            expires_at=delta.audio.expires_at,
+                            transcript=delta.audio.transcript,
+                            sample_rate=24000,
+                            mime_type="pcm16",
+                        )
                 except Exception as e:
                     logger.warning(f"Error processing audio: {e}")
 

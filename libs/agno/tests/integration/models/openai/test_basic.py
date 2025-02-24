@@ -23,6 +23,9 @@ def _assert_metrics(response: RunResponse):
     assert sum(total_tokens) > 0
     assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
 
+    assert response.metrics.get("completion_tokens_details") is not None
+    assert response.metrics.get("prompt_tokens_details") is not None
+
 
 def test_basic():
     agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)

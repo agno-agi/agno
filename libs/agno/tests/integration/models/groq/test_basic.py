@@ -16,6 +16,11 @@ def _assert_metrics(response: RunResponse):
     assert sum(total_tokens) > 0
     assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
 
+    assert response.metrics.get("additional_metrics")[0].get("completion_time") is not None
+    assert response.metrics.get("additional_metrics")[0].get("prompt_time") is not None
+    assert response.metrics.get("additional_metrics")[0].get("queue_time") is not None
+    assert response.metrics.get("additional_metrics")[0].get("total_time") is not None
+
 
 def test_basic():
     agent = Agent(model=Groq(id="mixtral-8x7b-32768"), markdown=True, telemetry=False, monitoring=False)
@@ -73,7 +78,14 @@ async def test_async_basic_stream():
 
 
 def test_with_memory():
-    agent = Agent(model=Groq(id="mixtral-8x7b-32768"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Groq(id="mixtral-8x7b-32768"),
+        add_history_to_messages=True,
+        num_history_responses=5,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     # First interaction
     response1 = agent.run("My name is John Smith")
@@ -101,15 +113,45 @@ def test_with_memory():
     assert total_tokens[0] == input_tokens[0] + output_tokens[0]
 
 
-def test_structured_output():
+def test_response_model():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=Groq(id="mixtral-8x7b-32768"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Groq(id="mixtral-8x7b-32768"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+        response_model=MovieScript,
+    )
 
     response = agent.run("Create a movie about time travel")
+
+    # Verify structured output
+    assert isinstance(response.content, MovieScript)
+    assert response.content.title is not None
+    assert response.content.genre is not None
+    assert response.content.plot is not None
+
+
+def test_native_structured_output():
+    class MovieScript(BaseModel):
+        title: str = Field(..., description="Movie title")
+        genre: str = Field(..., description="Movie genre")
+        plot: str = Field(..., description="Brief plot summary")
+
+    agent = Agent(
+        model=Groq(id="mixtral-8x7b-32768"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+        structured_outputs=True,
+        response_model=MovieScript,
+    )
+
+    response = agent.run("Create a movie about time travel. Your response should contain JSON.")
 
     # Verify structured output
     assert isinstance(response.content, MovieScript)

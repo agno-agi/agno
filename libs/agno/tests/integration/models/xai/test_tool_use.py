@@ -101,9 +101,10 @@ async def test_async_tool_use_stream():
     assert any("TSLA" in r.content for r in responses if r.content)
 
 
+@pytest.mark.skip("Grok not yet good enough at multi-tool calls")
 def test_multiple_tool_calls():
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-2-1212"),
         tools=[YFinanceTools(), DuckDuckGoTools()],
         instructions=[
             "Use YFinance for stock price queries",
@@ -116,7 +117,7 @@ def test_multiple_tool_calls():
         monitoring=False,
     )
 
-    response = agent.run("What is the current price of TSLA and what is the latest news about it?")
+    response = agent.run("What is the current price of TSLA and search for the latest news about it?")
 
     # Verify tool usage
     tool_calls = []

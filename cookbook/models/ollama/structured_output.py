@@ -36,9 +36,7 @@ structured_output_agent = Agent(
 )
 
 # Run the agent synchronously
-structured_output_response: RunResponse = structured_output_agent.run(
-    "New York"
-)
+structured_output_response: RunResponse = structured_output_agent.run("New York")
 pprint(structured_output_response.content)
 
 

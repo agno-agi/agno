@@ -52,7 +52,11 @@ def test_basic_stream():
 
 def test_with_memory():
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False, monitoring=False
+        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        add_history_to_messages=True,
+        telemetry=False,
+        monitoring=False,
+        markdown=True,
     )
 
     # First interaction
@@ -81,14 +85,18 @@ def test_with_memory():
     assert total_tokens[0] == input_tokens[0] + output_tokens[0]
 
 
-def test_structured_output():
+def test_response_model():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False, monitoring=False
+        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        response_model=MovieScript,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")

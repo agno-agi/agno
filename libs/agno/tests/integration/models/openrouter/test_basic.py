@@ -72,7 +72,14 @@ async def test_async_basic_stream():
 
 
 def test_with_memory():
-    agent = Agent(model=OpenRouter(id="anthropic/claude-3-sonnet"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=OpenRouter(id="anthropic/claude-3-sonnet"),
+        add_history_to_messages=True,
+        num_history_responses=5,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     # First interaction
     response1 = agent.run("My name is John Smith")
@@ -100,15 +107,21 @@ def test_with_memory():
     assert total_tokens[0] == input_tokens[0] + output_tokens[0]
 
 
-def test_structured_output():
+def test_response_model():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=OpenRouter(id="anthropic/claude-3-sonnet"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=OpenRouter(id="anthropic/claude-3-sonnet"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+        response_model=MovieScript,
+    )
 
-    response = agent.run("Create a movie about time travel", output_schema=MovieScript)
+    response = agent.run("Create a movie about time travel")
 
     # Verify structured output
     assert isinstance(response.content, MovieScript)

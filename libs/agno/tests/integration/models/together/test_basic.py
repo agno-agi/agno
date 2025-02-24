@@ -94,6 +94,8 @@ async def test_async_basic_stream():
 def test_with_memory():
     agent = Agent(
         model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
+        add_history_to_messages=True,
+        num_history_responses=5,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -125,7 +127,7 @@ def test_with_memory():
     assert total_tokens[0] == input_tokens[0] + output_tokens[0]
 
 
-def test_structured_output():
+def test_response_model():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
@@ -136,10 +138,10 @@ def test_structured_output():
         markdown=True,
         telemetry=False,
         monitoring=False,
-        structured_outputs=True,
+        response_model=MovieScript,
     )
 
-    response = agent.run("Create a movie about time travel", output_schema=MovieScript)
+    response = agent.run("Create a movie about time travel")
 
     # Verify structured output
     assert isinstance(response.content, MovieScript)

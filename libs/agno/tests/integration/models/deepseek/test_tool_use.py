@@ -9,6 +9,7 @@ from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
 
+@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_tool_use():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
@@ -27,6 +28,7 @@ def test_tool_use():
     assert "TSLA" in response.content
 
 
+@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_tool_use_stream():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
@@ -54,6 +56,7 @@ def test_tool_use_stream():
     assert any("TSLA" in r.content for r in responses if r.content)
 
 
+@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
@@ -73,6 +76,7 @@ async def test_async_tool_use():
     assert "TSLA" in response.content
 
 
+@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
@@ -101,6 +105,7 @@ async def test_async_tool_use_stream():
     assert any("TSLA" in r.content for r in responses if r.content)
 
 
+@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_parallel_tool_calls():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
@@ -123,6 +128,7 @@ def test_parallel_tool_calls():
     assert "TSLA" in response.content and "AAPL" in response.content
 
 
+@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_multiple_tool_calls():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
@@ -145,6 +151,7 @@ def test_multiple_tool_calls():
     assert "TSLA" in response.content and "latest news" in response.content.lower()
 
 
+@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_tool_call_custom_tool_no_parameters():
     def get_the_weather_in_tokyo():
         """
@@ -169,6 +176,7 @@ def test_tool_call_custom_tool_no_parameters():
     assert "70" in response.content
 
 
+@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_tool_call_custom_tool_optional_parameters():
     def get_the_weather(city: Optional[str] = None):
         """
@@ -199,6 +207,7 @@ def test_tool_call_custom_tool_optional_parameters():
     assert "70" in response.content
 
 
+@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_tool_call_list_parameters():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),

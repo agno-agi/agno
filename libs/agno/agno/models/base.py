@@ -4,9 +4,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import GeneratorType
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union
+from uuid import uuid4
 
 from agno.exceptions import AgentRunException
-from agno.media import AudioOutput
+from agno.media import AudioResponse
 from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.tools.function import Function, FunctionCall
@@ -20,7 +21,7 @@ class MessageData:
     response_role: Optional[Literal["system", "user", "assistant", "tool"]] = None
     response_content: Any = ""
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    response_audio: Optional[AudioOutput] = None
+    response_audio: Optional[AudioResponse] = None
 
     extra: Dict[str, Any] = field(default_factory=dict)
 
@@ -607,7 +608,23 @@ class Model(ABC):
             should_yield = True
 
         if model_response.audio is not None:
-            stream_data.response_audio = model_response.audio
+            if stream_data.response_audio is None:
+                stream_data.response_audio = AudioResponse(id=str(uuid4()), content="", transcript="")
+
+            # Update the stream data with audio information
+            if model_response.audio.id is not None:
+                stream_data.response_audio.id = model_response.audio.id  # type: ignore
+            if model_response.audio.content is not None:
+                stream_data.response_audio.content += model_response.audio.content  # type: ignore
+            if model_response.audio.transcript is not None:
+                stream_data.response_audio.transcript += model_response.audio.transcript  # type: ignore
+            if model_response.audio.expires_at is not None:
+                stream_data.response_audio.expires_at = model_response.audio.expires_at
+            if model_response.audio.mime_type is not None:
+                stream_data.response_audio.mime_type = model_response.audio.mime_type
+            stream_data.response_audio.sample_rate = model_response.audio.sample_rate
+            stream_data.response_audio.channels = model_response.audio.channels
+
             should_yield = True
 
         if model_response.extra is not None:

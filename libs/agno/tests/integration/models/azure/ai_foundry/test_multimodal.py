@@ -4,9 +4,7 @@ from agno.models.azure import AzureAIFoundry
 
 
 def test_image_input():
-    agent = Agent(
-        model=AzureAIFoundry(id="Phi-4"), markdown=True, telemetry=False, monitoring=False
-    )
+    agent = Agent(model=AzureAIFoundry(id="Phi-4"), markdown=True, telemetry=False, monitoring=False)
 
     response = agent.run(
         "Tell me about this image.",

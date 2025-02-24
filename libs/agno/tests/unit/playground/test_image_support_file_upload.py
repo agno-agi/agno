@@ -217,7 +217,7 @@ def test_pdf_upload_without_knowledge(test_app, mock_pdf_file):
     files = [mock_pdf_file]
     response = test_app.post("/v1/playground/agents/test-agent/runs", data=data, files=files)
     assert response.status_code == 404
-    assert "KnowledgeBase not found" in response.json()["detail"]
+    assert "KnowledgeBase not found" in response.json()["message"]
 
 
 def test_mixed_file_upload(test_app, mock_agent_with_knowledge, mock_image_file, mock_pdf_file, mock_pdf_reader):
@@ -254,7 +254,7 @@ def test_unsupported_file_type(test_app, mock_agent_with_knowledge):
     files = [("files", ("test.xyz", io.BytesIO(b"content"), "application/xyz"))]
     response = test_app.post("/v1/playground/agents/test-agent/runs", data=data, files=files)
     assert response.status_code == 400
-    assert "Unsupported file type" in response.json()["detail"]
+    assert "Unsupported file type" in response.json()["message"]
 
 
 def test_empty_file_upload(test_app):

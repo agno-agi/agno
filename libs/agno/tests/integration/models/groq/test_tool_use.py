@@ -125,7 +125,7 @@ def test_parallel_tool_calls():
 
 def test_multiple_tool_calls():
     agent = Agent(
-        model=Groq(id="gemma2-9b-it"),
+        model=Groq(id="llama-3.3-70b-versatile"),
         tools=[YFinanceTools(), DuckDuckGoTools()],
         show_tool_calls=True,
         markdown=True,
