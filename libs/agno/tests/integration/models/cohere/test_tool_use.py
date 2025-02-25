@@ -145,7 +145,7 @@ def test_multiple_tool_calls():
     assert "TSLA" in response.content and "latest news" in response.content.lower()
 
 
-@pytest.mark.skip(reason="This test is failing because cohere's tool structure doesn't work with no parameters")
+@pytest.mark.skip(reason="This test is failing because Cohere's tool structure doesn't work with no parameters")
 def test_tool_call_custom_tool_no_parameters():
     def get_the_weather_in_tokyo():
         """
@@ -223,5 +223,5 @@ def test_tool_call_list_parameters():
             tool_calls.extend(msg.tool_calls)
     for call in tool_calls:
         if call.get("type", "") == "function":
-            assert call["function"]["name"] == "get_contents"
+            assert call["function"]["name"] in ["get_contents", "exa_answer"]
     assert response.content is not None

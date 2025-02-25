@@ -134,11 +134,16 @@ class Cohere(Model):
             List[Dict[str, Any]]: The formatted messages.
         """
         formatted_messages = []
-        for m in messages:
-            m_dict = m.serialize_for_model()
-            if m_dict["content"] is None:
-                m_dict.pop("content")
-            formatted_messages.append(m_dict)
+        for message in messages:
+            message_dict = {
+                "role": message.role,
+                "content": message.content,
+                "name": message.name,
+                "tool_call_id": message.tool_call_id,
+                "tool_calls": message.tool_calls,
+            }
+            message_dict = {k: v for k, v in message_dict.items() if v is not None}
+            formatted_messages.append(message_dict)
         return formatted_messages
 
     def invoke(self, messages: List[Message]) -> ChatResponse:

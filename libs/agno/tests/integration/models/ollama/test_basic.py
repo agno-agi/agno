@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
 from agno.models.ollama import Ollama
-from agno.storage.agent.postgres import PostgresAgentStorage
+from agno.storage.agent.sqlite import SqliteAgentStorage
 
 
 def _assert_metrics(response: RunResponse):
@@ -94,17 +94,7 @@ def test_with_memory():
     assert [m.role for m in agent.memory.messages] == ["system", "user", "assistant", "user", "assistant"]
 
     # Test metrics structure and types
-    input_tokens = response2.metrics["input_tokens"]
-    output_tokens = response2.metrics["output_tokens"]
-    total_tokens = response2.metrics["total_tokens"]
-
-    assert isinstance(input_tokens[0], int)
-    assert input_tokens[0] > 0
-    assert isinstance(output_tokens[0], int)
-    assert output_tokens[0] > 0
-    assert isinstance(total_tokens[0], int)
-    assert total_tokens[0] > 0
-    assert total_tokens[0] == input_tokens[0] + output_tokens[0]
+    _assert_metrics(response2)
 
 
 def test_response_model():
@@ -127,10 +117,9 @@ def test_response_model():
 
 
 def test_history():
-    db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
     agent = Agent(
         model=Ollama(id="llama3.2:latest"),
-        storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
+        storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,

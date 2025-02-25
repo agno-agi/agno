@@ -5,8 +5,10 @@ from agno.knowledge.docx import DocxKnowledgeBase
 from agno.knowledge.json import JSONKnowledgeBase
 from agno.knowledge.pdf import PDFKnowledgeBase
 from agno.knowledge.text import TextKnowledgeBase
+from agno.models.openai import OpenAIChat
 from agno.playground.playground import Playground
 from agno.playground.serve import serve_playground_app
+from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -32,9 +34,31 @@ knowledge_base = CombinedKnowledgeBase(
     vector_db=PgVector(table_name="recipes_combined", db_url=db_url),
 )
 
-agent = Agent(knowledge=knowledge_base, show_tool_calls=True)
+file_agent = Agent(
+    name="File Upload Agent",
+    agent_id="file-upload-agent",
+    role="Answer questions about the uploaded files",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
+    knowledge=knowledge_base,
+    show_tool_calls=True,
+    markdown=True,
+)
 
-app = Playground(agents=[agent]).get_app()
+
+audio_agent = Agent(
+    name="Audio Understanding Agent",
+    agent_id="audio-understanding-agent",
+    role="Answer questions about audio files",
+    model=OpenAIChat(id="gpt-4o-audio-preview"),
+    storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
+    add_history_to_messages=True,
+    add_datetime_to_instructions=True,
+    show_tool_calls=True,
+    markdown=True,
+)
+
+app = Playground(agents=[file_agent, audio_agent]).get_app()
 
 if __name__ == "__main__":
     serve_playground_app("upload_files:app", reload=True)

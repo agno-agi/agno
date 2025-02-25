@@ -20,8 +20,11 @@ try:
         ContentBlockStopEvent,
         MessageDeltaEvent,
         MessageStopEvent,
+        RedactedThinkingBlock,
         TextBlock,
         TextDelta,
+        ThinkingBlock,
+        ThinkingDelta,
         ToolUseBlock,
     )
     from anthropic.types import Message as AnthropicMessage
@@ -159,7 +162,8 @@ class Claude(Model):
     provider: str = "Anthropic"
 
     # Request parameters
-    max_tokens: Optional[int] = 1024
+    max_tokens: Optional[int] = 4096
+    thinking: Optional[Dict[str, Any]] = None
     temperature: Optional[float] = None
     stop_sequences: Optional[List[str]] = None
     top_p: Optional[float] = None
@@ -181,11 +185,9 @@ class Claude(Model):
         if not self.api_key:
             logger.error("ANTHROPIC_API_KEY not set. Please set the ANTHROPIC_API_KEY environment variable.")
 
-        client_params.update(
-            {
-                "api_key": self.api_key,
-            }
-        )
+        # Add API key to client parameters
+        client_params["api_key"] = self.api_key
+        # Add additional client parameters
         if self.client_params is not None:
             client_params.update(self.client_params)
         return client_params
@@ -220,6 +222,8 @@ class Claude(Model):
         _request_params: Dict[str, Any] = {}
         if self.max_tokens:
             _request_params["max_tokens"] = self.max_tokens
+        if self.thinking:
+            _request_params["thinking"] = self.thinking
         if self.temperature:
             _request_params["temperature"] = self.temperature
         if self.stop_sequences:
@@ -492,15 +496,13 @@ class Claude(Model):
         model_response.role = response.role or "assistant"
 
         if response.content:
-            first_block = response.content[0]
-            if isinstance(first_block, TextBlock):
-                model_response.content = first_block.text
-            elif isinstance(first_block, ToolUseBlock):
-                tool_name = first_block.name
-                tool_input = first_block.input
-
-                if tool_input and isinstance(tool_input, dict):
-                    model_response.content = tool_input.get("query", "")
+            for block in response.content:
+                if isinstance(block, TextBlock):
+                    model_response.content = block.text
+                elif isinstance(block, ThinkingBlock):
+                    model_response.thinking = block.thinking
+                elif isinstance(block, RedactedThinkingBlock):
+                    model_response.thinking = block.data
 
         # -*- Extract tool calls from the response
         if response.stop_reason == "tool_use":
@@ -547,6 +549,9 @@ class Claude(Model):
             # Handle text content
             if isinstance(response.delta, TextDelta):
                 model_response.content = response.delta.text
+            # Handle thinking content
+            if isinstance(response.delta, ThinkingDelta):
+                model_response.thinking = response.delta.thinking
 
         elif isinstance(response, ContentBlockStopEvent):
             # Handle tool calls
