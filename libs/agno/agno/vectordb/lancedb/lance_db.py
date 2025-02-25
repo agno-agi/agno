@@ -39,11 +39,11 @@ class LanceDb(VectorDb):
         fill_value: The value to fill the vector with if on_bad_vectors is "fill".
     """
 
-    async_table: Optional[lancedb.db.AsyncTable] = None
-    table: Optional[lancedb.db.LanceTable] = None
+    async_table: Optional[lancedb.db.AsyncTable]
+    table: Optional[lancedb.db.LanceTable]
 
-    connection: Optional[lancedb.LanceDBConnection] = None
-    async_connection: Optional[lancedb.AsyncConnection] = None
+    connection: Optional[lancedb.LanceDBConnection]
+    async_connection: Optional[lancedb.AsyncConnection]
 
     def __init__(
         self,
