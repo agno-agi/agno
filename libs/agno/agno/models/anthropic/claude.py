@@ -16,8 +16,8 @@ try:
     from anthropic import APIConnectionError, APIStatusError, RateLimitError
     from anthropic import AsyncAnthropic as AsyncAnthropicClient
     from anthropic.types import (
-        ContentBlockStartEvent,
         ContentBlockDeltaEvent,
+        ContentBlockStartEvent,
         ContentBlockStopEvent,
         MessageDeltaEvent,
         MessageStopEvent,
@@ -127,8 +127,8 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
         elif message.role == "assistant":
             content = []
 
-            if message.thinking is not None:
-                from anthropic.types import ThinkingBlock, RedactedThinkingBlock
+            if message.thinking is not None and message.provider_data is not None:
+                from anthropic.types import RedactedThinkingBlock, ThinkingBlock
 
                 content.append(
                     ThinkingBlock(
@@ -140,9 +140,8 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
 
             if message.redacted_thinking is not None:
                 from anthropic.types import RedactedThinkingBlock
-                content.append(
-                    RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking")
-                )
+
+                content.append(RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking"))
 
             if isinstance(message.content, str) and message.content:
                 content.append(TextBlock(text=message.content, type="text"))
@@ -159,7 +158,7 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
                             type="tool_use",
                         )
                     )
-        
+
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
     return chat_messages, " ".join(system_messages)
 

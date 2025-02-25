@@ -120,7 +120,6 @@ def test_tool_use_with_content():
     assert "Tesla" in response.content
 
 
-
 def test_parallel_tool_calls():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),

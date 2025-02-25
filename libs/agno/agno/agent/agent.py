@@ -546,13 +546,19 @@ class Agent:
                         self.run_response.thinking = model_response.thinking
 
                     if model_response_chunk.redacted_thinking is not None:
-                        model_response.redacted_thinking = (model_response.redacted_thinking or "") + model_response_chunk.redacted_thinking
-                        
+                        model_response.redacted_thinking = (
+                            model_response.redacted_thinking or ""
+                        ) + model_response_chunk.redacted_thinking
+
                         # We only have thinking on response
                         self.run_response.thinking = model_response.redacted_thinking
 
                     # Only yield if we have content or thinking to show
-                    if model_response_chunk.content is not None or model_response_chunk.thinking is not None or model_response_chunk.redacted_thinking is not None:
+                    if (
+                        model_response_chunk.content is not None
+                        or model_response_chunk.thinking is not None
+                        or model_response_chunk.redacted_thinking is not None
+                    ):
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
@@ -654,7 +660,7 @@ class Agent:
                 if self.run_response.thinking is None:
                     self.run_response.thinking = model_response.redacted_thinking
                 else:
-                    self.run_response.thinking +=  model_response.redacted_thinking
+                    self.run_response.thinking += model_response.redacted_thinking
 
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:
@@ -1024,12 +1030,18 @@ class Agent:
                         self.run_response.thinking = model_response.thinking
 
                     if model_response_chunk.redacted_thinking is not None:
-                        model_response.redacted_thinking = (model_response.redacted_thinking or "") + model_response_chunk.redacted_thinking
+                        model_response.redacted_thinking = (
+                            model_response.redacted_thinking or ""
+                        ) + model_response_chunk.redacted_thinking
                         # We only have thinking on response
                         self.run_response.thinking = model_response.redacted_thinking
 
                     # Only yield if we have content or thinking to show
-                    if model_response_chunk.content is not None or model_response_chunk.thinking is not None or model_response_chunk.redacted_thinking is not None:
+                    if (
+                        model_response_chunk.content is not None
+                        or model_response_chunk.thinking is not None
+                        or model_response_chunk.redacted_thinking is not None
+                    ):
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
@@ -1131,7 +1143,7 @@ class Agent:
                 if self.run_response.thinking is None:
                     self.run_response.thinking = model_response.redacted_thinking
                 else:
-                    self.run_response.thinking +=  model_response.redacted_thinking
+                    self.run_response.thinking += model_response.redacted_thinking
 
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:

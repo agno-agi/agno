@@ -1,8 +1,10 @@
 import pytest
+
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.run.response import RunResponse
 from agno.tools.yfinance import YFinanceTools
+
 
 def test_thinking():
     agent = Agent(
@@ -24,6 +26,7 @@ def test_thinking():
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     assert response.messages[2].thinking is not None
+
 
 def test_thinking_stream():
     agent = Agent(
@@ -72,6 +75,7 @@ async def test_async_thinking():
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     assert response.messages[2].thinking is not None
 
+
 @pytest.mark.asyncio
 async def test_async_thinking_stream():
     agent = Agent(
@@ -97,6 +101,7 @@ async def test_async_thinking_stream():
         assert isinstance(response, RunResponse)
         assert response.content is not None or response.thinking is not None
 
+
 def test_redacted_thinking():
     agent = Agent(
         model=Claude(
@@ -109,12 +114,13 @@ def test_redacted_thinking():
         monitoring=False,
     )
     # Testing string from anthropic
-    response = agent.run("ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB")
+    response = agent.run(
+        "ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"
+    )
     assert response.thinking is not None
 
 
 def test_thinking_with_tool_calls():
-
     agent = Agent(
         model=Claude(
             id="claude-3-7-sonnet-20250219",
@@ -135,7 +141,6 @@ def test_thinking_with_tool_calls():
 
 
 def test_redacted_thinking_with_tool_calls():
-
     agent = Agent(
         model=Claude(
             id="claude-3-7-sonnet-20250219",
@@ -149,7 +154,9 @@ def test_redacted_thinking_with_tool_calls():
     )
 
     # Put a redacted thinking message in the history
-    agent.run("ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB")
+    agent.run(
+        "ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"
+    )
 
     response = agent.run("What is the current price of TSLA?")
 
