@@ -107,7 +107,6 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
     chat_messages: List[Dict[str, str]] = []
     system_messages: List[str] = []
 
-    print()
     for message in messages:
         content = message.content or ""
         if message.role == "system":
@@ -160,7 +159,7 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
                             type="tool_use",
                         )
                     )
-        print("MESSAGE", content)
+        
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
     return chat_messages, " ".join(system_messages)
 
