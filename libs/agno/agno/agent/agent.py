@@ -532,28 +532,28 @@ class Agent:
         model_response: ModelResponse
         self.model = cast(Model, self.model)
         if self.stream:
-            model_response = ModelResponse(content="")
+            model_response = ModelResponse()
             for model_response_chunk in self.model.response_stream(messages=run_messages.messages):
                 # If the model response is an assistant_response, yield a RunResponse
                 if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
-                    if model_response_chunk.content is not None or model_response_chunk.thinking is not None:
-                        if model_response_chunk.content is not None:
-                            model_response.content += model_response_chunk.content  # type: ignore
-                            # Update the run_response with the full content
-                            self.run_response.content = model_response.content
-                        if model_response_chunk.thinking is not None:
-                            if model_response.thinking is None:
-                                model_response.thinking = ""
-                            model_response.thinking += model_response_chunk.thinking
-                            # Update the run_response with the full thinking
-                            self.run_response.thinking = model_response.thinking
+                    # Process content and thinking
+                    if model_response_chunk.content is not None:
+                        model_response.content = (model_response.content or "") + model_response_chunk.content
+                        self.run_response.content = model_response.content
 
-                        # Yield the RunResponse with the content and thinking
+                    if model_response_chunk.thinking is not None:
+                        model_response.thinking = (model_response.thinking or "") + model_response_chunk.thinking
+                        self.run_response.thinking = model_response.thinking
+
+                    # Only yield if we have content or thinking to show
+                    if model_response_chunk.content is not None or model_response_chunk.thinking is not None:
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
                             created_at=model_response_chunk.created_at,
                         )
+
+                    # Process audio
                     if model_response_chunk.audio is not None:
                         if model_response.audio is None:
                             model_response.audio = AudioResponse(id=str(uuid4()), content="", transcript="")
@@ -1002,25 +1002,24 @@ class Agent:
             async for model_response_chunk in model_response_stream:  # type: ignore
                 # If the model response is an assistant_response, yield a RunResponse
                 if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
-                    if model_response_chunk.content is not None or model_response_chunk.thinking is not None:
-                        if model_response_chunk.content is not None:
-                            model_response.content += model_response_chunk.content  # type: ignore
-                            # Update the run_response with the full content
-                            self.run_response.content = model_response.content
-                        if model_response_chunk.thinking is not None:
-                            if model_response.thinking is None:
-                                model_response.thinking = ""
-                            model_response.thinking += model_response_chunk.thinking
-                            # Update the run_response with the full thinking
-                            self.run_response.thinking = model_response.thinking
+                    # Process content and thinking
+                    if model_response_chunk.content is not None:
+                        model_response.content = (model_response.content or "") + model_response_chunk.content
+                        self.run_response.content = model_response.content
 
-                        # Yield the RunResponse with the content and thinking
+                    if model_response_chunk.thinking is not None:
+                        model_response.thinking = (model_response.thinking or "") + model_response_chunk.thinking
+                        self.run_response.thinking = model_response.thinking
+
+                    # Only yield if we have content or thinking to show
+                    if model_response_chunk.content is not None or model_response_chunk.thinking is not None:
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
                             created_at=model_response_chunk.created_at,
                         )
 
+                    # Process audio
                     if model_response_chunk.audio is not None:
                         if model_response.audio is None:
                             model_response.audio = AudioResponse(id=str(uuid4()), content="", transcript="")
