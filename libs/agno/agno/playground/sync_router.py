@@ -121,7 +121,7 @@ def get_sync_playground_router(
             raise HTTPException(status_code=400, detail="Empty file")
         return Image(content=content)
 
-    async def process_audio(file: UploadFile) -> Audio:
+    def process_audio(file: UploadFile) -> Audio:
         content = file.file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
