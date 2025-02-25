@@ -311,6 +311,8 @@ class Model(ABC):
                 model_response.content = assistant_message.get_content_string()
             else:
                 model_response.content += assistant_message.get_content_string()
+        if assistant_message.thinking is not None:
+            model_response.thinking = assistant_message.thinking
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if provider_response.extra is not None:
@@ -1004,10 +1006,6 @@ class Model(ABC):
                 assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
             )
 
-        # Additional timing metrics (e.g., from Groq, Ollama)
-        if assistant_message.metrics.additional_metrics is None:
-            assistant_message.metrics.additional_metrics = {}
-
         additional_metrics = [
             "prompt_time",
             "completion_time",
@@ -1020,6 +1018,10 @@ class Model(ABC):
         ]
 
         for metric in additional_metrics:
+            # Additional timing metrics (e.g., from Groq, Ollama)
+            if assistant_message.metrics.additional_metrics is None:
+                assistant_message.metrics.additional_metrics = {}
+
             if hasattr(response_usage, metric) and getattr(response_usage, metric) is not None:
                 assistant_message.metrics.additional_metrics[metric] = getattr(response_usage, metric)
 
