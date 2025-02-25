@@ -4,9 +4,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import GeneratorType
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union
+from uuid import uuid4
 
 from agno.exceptions import AgentRunException
-from agno.media import AudioOutput
+from agno.media import AudioResponse
 from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.tools.function import Function, FunctionCall
@@ -19,8 +20,9 @@ from agno.utils.tools import get_function_call_for_tool_call
 class MessageData:
     response_role: Optional[Literal["system", "user", "assistant", "tool"]] = None
     response_content: Any = ""
+    response_thinking: Any = ""
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    response_audio: Optional[AudioOutput] = None
+    response_audio: Optional[AudioResponse] = None
 
     extra: Dict[str, Any] = field(default_factory=dict)
 
@@ -309,6 +311,8 @@ class Model(ABC):
                 model_response.content = assistant_message.get_content_string()
             else:
                 model_response.content += assistant_message.get_content_string()
+        if assistant_message.thinking is not None:
+            model_response.thinking = assistant_message.thinking
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if provider_response.extra is not None:
@@ -399,6 +403,10 @@ class Model(ABC):
         if provider_response.audio is not None:
             assistant_message.audio_output = provider_response.audio
 
+        # Add thinking content to assistant message
+        if provider_response.thinking is not None:
+            assistant_message.thinking = provider_response.thinking
+
         # Add reasoning content to assistant message
         if provider_response.reasoning_content is not None:
             assistant_message.reasoning_content = provider_response.reasoning_content
@@ -451,6 +459,8 @@ class Model(ABC):
             # Populate assistant message from stream data
             if stream_data.response_content:
                 assistant_message.content = stream_data.response_content
+            if stream_data.response_thinking:
+                assistant_message.thinking = stream_data.response_thinking
             if stream_data.response_audio:
                 assistant_message.audio_output = stream_data.response_audio
             if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
@@ -549,8 +559,6 @@ class Model(ABC):
 
             # Handle tool calls if present
             if assistant_message.tool_calls is not None:
-                yield ModelResponse(content="\n\n")
-
                 # Prepare function calls
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(assistant_message, messages)
                 function_call_results: List[Message] = []
@@ -601,6 +609,10 @@ class Model(ABC):
             stream_data.response_content += model_response.content
             should_yield = True
 
+        if model_response.thinking is not None:
+            stream_data.response_thinking += model_response.thinking
+            should_yield = True
+
         # Update stream_data tool calls
         if model_response.tool_calls is not None:
             if stream_data.response_tool_calls is None:
@@ -609,7 +621,23 @@ class Model(ABC):
             should_yield = True
 
         if model_response.audio is not None:
-            stream_data.response_audio = model_response.audio
+            if stream_data.response_audio is None:
+                stream_data.response_audio = AudioResponse(id=str(uuid4()), content="", transcript="")
+
+            # Update the stream data with audio information
+            if model_response.audio.id is not None:
+                stream_data.response_audio.id = model_response.audio.id  # type: ignore
+            if model_response.audio.content is not None:
+                stream_data.response_audio.content += model_response.audio.content  # type: ignore
+            if model_response.audio.transcript is not None:
+                stream_data.response_audio.transcript += model_response.audio.transcript  # type: ignore
+            if model_response.audio.expires_at is not None:
+                stream_data.response_audio.expires_at = model_response.audio.expires_at
+            if model_response.audio.mime_type is not None:
+                stream_data.response_audio.mime_type = model_response.audio.mime_type
+            stream_data.response_audio.sample_rate = model_response.audio.sample_rate
+            stream_data.response_audio.channels = model_response.audio.channels
+
             should_yield = True
 
         if model_response.extra is not None:

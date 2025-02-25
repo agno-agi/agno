@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from agno.media import AudioArtifact, AudioOutput, ImageArtifact, VideoArtifact
+from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Message, MessageReferences
 from agno.reasoning.step import ReasoningStep
 
@@ -16,6 +16,7 @@ class RunEvent(str, Enum):
     run_started = "RunStarted"
     run_response = "RunResponse"
     run_completed = "RunCompleted"
+    run_error = "RunError"
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     reasoning_started = "ReasoningStarted"
@@ -55,6 +56,7 @@ class RunResponse:
 
     content: Optional[Any] = None
     content_type: str = "str"
+    thinking: Optional[str] = None
     event: str = RunEvent.run_response.value
     messages: Optional[List[Message]] = None
     metrics: Optional[Dict[str, Any]] = None
@@ -67,12 +69,16 @@ class RunResponse:
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
-    response_audio: Optional[AudioOutput] = None  # Model audio response
+    response_audio: Optional[AudioResponse] = None  # Model audio response
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {k: v for k, v in asdict(self).items() if v is not None and k != "messages"}
+        _dict = {
+            k: v
+            for k, v in asdict(self).items()
+            if v is not None and k not in ["messages", "extra_data", "images", "videos", "audio", "response_audio"]
+        }
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
 
@@ -87,6 +93,9 @@ class RunResponse:
 
         if self.audio is not None:
             _dict["audio"] = [aud.model_dump(exclude_none=True) for aud in self.audio]
+
+        if self.response_audio is not None:
+            _dict["response_audio"] = self.response_audio.to_dict()
 
         if isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)

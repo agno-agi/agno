@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
-from agno.media import Audio, AudioOutput, Image, Video
+from agno.media import Audio, AudioResponse, Image, Video
 from agno.utils.log import logger
 from agno.utils.timer import Timer
 
@@ -143,9 +143,11 @@ class Message(BaseModel):
     videos: Optional[Sequence[Video]] = None
 
     # Output from the models
-    audio_output: Optional[AudioOutput] = None
+    audio_output: Optional[AudioResponse] = None
 
     # --- Data not sent to the Model API ---
+    # The thinking content from the model
+    thinking: Optional[str] = None
     # The reasoning content from the model
     reasoning_content: Optional[str] = None
     # The name of the tool called
@@ -280,6 +282,8 @@ class Message(BaseModel):
             _logger(f"Name: {self.name}")
         if self.tool_call_id:
             _logger(f"Tool call Id: {self.tool_call_id}")
+        if self.thinking:
+            _logger(f"<thinking>\n{self.thinking}\n</thinking>")
         if self.content:
             if isinstance(self.content, str) or isinstance(self.content, list):
                 _logger(self.content)

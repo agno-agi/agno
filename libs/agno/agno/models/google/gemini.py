@@ -21,11 +21,14 @@ try:
     from google.genai.errors import ClientError, ServerError
     from google.genai.types import (
         Content,
+        DynamicRetrievalConfig,
         File,
         FunctionDeclaration,
         GenerateContentConfig,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
+        GoogleSearch,
+        GoogleSearchRetrieval,
         Part,
         Schema,
         Tool,
@@ -50,23 +53,21 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         except Exception as e:
             logger.warning(f"Failed to download image from {image}: {e}")
             return None
-    # Case 2: Image is a local path
-    # Open the image file and add it as base64 encoded data
-    elif image.filepath is not None:
-        try:
-            import PIL.Image
-        except ImportError:
-            logger.error("`PIL.Image not installed. Please install it using 'pip install pillow'`")
-            raise
 
+    # Case 2: Image is a local path
+    elif image.filepath is not None:
         try:
             image_path = Path(image.filepath)
             if image_path.exists() and image_path.is_file():
-                image_data = PIL.Image.open(image_path)  # type: ignore
+                with open(image_path, "rb") as f:
+                    content_bytes = f.read()
             else:
                 logger.error(f"Image file {image_path} does not exist.")
                 raise
-            return image_data  # type: ignore
+            return {
+                "mime_type": "image/jpeg",
+                "data": content_bytes,
+            }
         except Exception as e:
             logger.warning(f"Failed to load image from {image.filepath}: {e}")
             return None
@@ -113,6 +114,10 @@ def _convert_schema(schema_dict) -> Optional[Schema]:
             )
         else:
             return None
+
+    if schema_type == "ARRAY":
+        items = _convert_schema(schema_dict["items"])
+        return Schema(type=schema_type, description=description, items=items)
     else:
         return Schema(type=schema_type, description=description)
 
@@ -128,7 +133,6 @@ def _format_function_definitions(tools_list):
             parameters_dict = func_info.get("parameters", {})
 
             parameters_schema = _convert_schema(parameters_dict)
-
             # Create a FunctionDeclaration instance
             function_decl = FunctionDeclaration(
                 name=name,
@@ -137,7 +141,6 @@ def _format_function_definitions(tools_list):
             )
 
             function_declarations.append(function_decl)
-
     if function_declarations:
         return Tool(function_declarations=function_declarations)
     else:
@@ -176,8 +179,11 @@ class Gemini(Model):
     # Request parameters
     function_declarations: Optional[List[Any]] = None
     generation_config: Optional[Any] = None
-    safety_settings: Optional[Any] = None
+    safety_settings: Optional[List[Any]] = None
     generative_model_kwargs: Optional[Dict[str, Any]] = None
+    search: bool = False
+    grounding: bool = False
+    grounding_dynamic_threshold: Optional[float] = None
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -238,25 +244,36 @@ class Gemini(Model):
         Returns:
             Dict[str, Any]: The request keyword arguments.
         """
-        base_params: Dict[str, Any] = {
-            "generation_config": self.generation_config,
-            "safety_settings": self.safety_settings,
-            "generative_model_kwargs": self.generative_model_kwargs,
-        }
+        request_params = {}
+        # User provides their own generation config
+        if self.generation_config is not None:
+            if isinstance(self.generation_config, GenerateContentConfig):
+                config = self.generation_config.model_dump()
+            else:
+                config = self.generation_config
+        else:
+            config = {}
 
-        config = {
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "top_k": self.top_k,
-            "max_output_tokens": self.max_output_tokens,
-            "stop_sequences": self.stop_sequences,
-            "logprobs": self.logprobs,
-            "presence_penalty": self.presence_penalty,
-            "frequency_penalty": self.frequency_penalty,
-            "seed": self.seed,
-            "response_modalities": self.response_modalities,
-            "speech_config": self.speech_config,
-        }
+        if self.generative_model_kwargs:
+            config.update(self.generative_model_kwargs)
+
+        config.update(
+            {
+                "safety_settings": self.safety_settings,
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "top_k": self.top_k,
+                "max_output_tokens": self.max_output_tokens,
+                "stop_sequences": self.stop_sequences,
+                "logprobs": self.logprobs,
+                "presence_penalty": self.presence_penalty,
+                "frequency_penalty": self.frequency_penalty,
+                "seed": self.seed,
+                "response_modalities": self.response_modalities,
+                "speech_config": self.speech_config,
+            }
+        )
+
         if system_message is not None:
             config["system_instruction"] = system_message  # type: ignore
 
@@ -268,16 +285,35 @@ class Gemini(Model):
             config["response_mime_type"] = "application/json"  # type: ignore
             config["response_schema"] = self.response_format
 
-        if self._tools:
+        if self.grounding and self.search:
+            logger.info("Both grounding and search are enabled. Grounding will take precedence.")
+            self.search = False
+
+        if self.grounding:
+            logger.info("Grounding enabled. External tools will be disabled.")
+            config["tools"] = [
+                Tool(
+                    google_search=GoogleSearchRetrieval(
+                        dynamic_retrieval_config=DynamicRetrievalConfig(
+                            dynamic_threshold=self.grounding_dynamic_threshold
+                        )
+                    )
+                ),
+            ]
+
+        elif self.search:
+            logger.info("Search enabled. External tools will be disabled.")
+            config["tools"] = [Tool(google_search=GoogleSearch())]
+
+        elif self._tools:
             config["tools"] = [_format_function_definitions(self._tools)]
 
         config = {k: v for k, v in config.items() if v is not None}
 
         if config:
-            base_params["config"] = GenerateContentConfig(**config)
+            request_params["config"] = GenerateContentConfig(**config)
 
         # Filter out None values
-        request_params = {k: v for k, v in base_params.items() if v is not None}
         if self.request_params:
             request_params.update(self.request_params)
         return request_params
@@ -293,9 +329,7 @@ class Gemini(Model):
             GenerateContentResponse: The response from the model.
         """
         formatted_messages, system_message = self._format_messages(messages)
-
         request_kwargs = self._get_request_kwargs(system_message)
-
         try:
             return self.get_client().models.generate_content(
                 model=self.id,
@@ -304,10 +338,12 @@ class Gemini(Model):
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]):
         """
@@ -331,10 +367,12 @@ class Gemini(Model):
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]):
         """
@@ -352,10 +390,12 @@ class Gemini(Model):
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]):
         """
@@ -375,10 +415,12 @@ class Gemini(Model):
                 yield chunk
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message]):
         """
@@ -410,16 +452,13 @@ class Gemini(Model):
                         )
                     )
             # Function results
-            elif message.role == "tool":
-                if hasattr(message, "combined_function_details"):
-                    for result in message.combined_function_details:
-                        message_parts.append(
-                            Part.from_function_response(name=result[0], response={"result": result[1]})
+            elif message.role == "tool" and message.tool_calls:
+                for tool_call in message.tool_calls:
+                    message_parts.append(
+                        Part.from_function_response(
+                            name=tool_call["tool_name"], response={"result": tool_call["content"]}
                         )
-                else:
-                    message_parts = [
-                        Part.from_function_response(name=message.tool_name, response={"result": message.content})
-                    ]
+                    )
             else:
                 if isinstance(content, str):
                     message_parts = [Part.from_text(text=content)]
@@ -489,7 +528,13 @@ class Gemini(Model):
                 mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3", data=audio.content
             )
 
-        # Case 2: Audio is a local file path
+        # Case 2: Audio is an url
+        elif audio.url is not None:
+            return Part.from_bytes(
+                mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3", data=audio.audio_url_content
+            )
+
+        # Case 3: Audio is a local file path
         elif audio.filepath is not None:
             audio_path = audio.filepath if isinstance(audio.filepath, Path) else Path(audio.filepath)
 
@@ -595,11 +640,9 @@ class Gemini(Model):
         if len(function_call_results) > 0:
             for result in function_call_results:
                 combined_content.append(result.content)
-                combined_function_result.append((result.tool_name, result.content))
+                combined_function_result.append({"tool_name": result.tool_name, "content": result.content})
 
-        messages.append(
-            Message(role="tool", content=combined_content, combined_function_details=combined_function_result)
-        )
+        messages.append(Message(role="tool", content=combined_content, tool_calls=combined_function_result))
 
     def parse_provider_response(self, response: GenerateContentResponse) -> ModelResponse:
         """
@@ -643,7 +686,7 @@ class Gemini(Model):
                         model_response.tool_calls.append(tool_call)
 
         # Extract usage metadata if present
-        if hasattr(response, "usage_metadata"):
+        if hasattr(response, "usage_metadata") and response.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response.usage_metadata
             model_response.response_usage = GeminiResponseUsage(
                 input_tokens=usage.prompt_token_count or 0,
@@ -679,7 +722,7 @@ class Gemini(Model):
                     model_response.tool_calls.append(tool_call)
 
         # Extract usage metadata if present
-        if hasattr(response_delta, "usage_metadata"):
+        if hasattr(response_delta, "usage_metadata") and response_delta.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response_delta.usage_metadata
             model_response.response_usage = GeminiResponseUsage(
                 input_tokens=usage.prompt_token_count or 0,
