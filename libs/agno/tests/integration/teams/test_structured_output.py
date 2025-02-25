@@ -1,6 +1,6 @@
 from typing import List
-import pytest
 
+import pytest
 from pydantic import BaseModel
 
 from agno.agent import Agent

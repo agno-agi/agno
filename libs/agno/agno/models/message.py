@@ -146,6 +146,8 @@ class Message(BaseModel):
     audio_output: Optional[AudioResponse] = None
 
     # --- Data not sent to the Model API ---
+    # The thinking content from the model
+    thinking: Optional[str] = None
     # The reasoning content from the model
     reasoning_content: Optional[str] = None
     # The name of the tool called
@@ -280,6 +282,8 @@ class Message(BaseModel):
             _logger(f"Name: {self.name}")
         if self.tool_call_id:
             _logger(f"Tool call Id: {self.tool_call_id}")
+        if self.thinking:
+            _logger(f"<thinking>\n{self.thinking}\n</thinking>")
         if self.content:
             if isinstance(self.content, str) or isinstance(self.content, list):
                 _logger(self.content)

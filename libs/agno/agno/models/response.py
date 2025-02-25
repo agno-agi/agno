@@ -26,6 +26,7 @@ class ModelResponse:
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     event: str = ModelResponseEvent.assistant_response.value
 
+    thinking: Optional[str] = None
     reasoning_content: Optional[str] = None
 
     response_usage: Optional[Any] = None

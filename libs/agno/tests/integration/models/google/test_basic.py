@@ -26,7 +26,9 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False
+    )
 
     # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -39,7 +41,9 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False
+    )
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -57,7 +61,9 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False
+    )
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -69,7 +75,9 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False
+    )
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -81,7 +89,13 @@ async def test_async_basic_stream():
 
 
 def test_exception_handling():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash-made-up-id"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Gemini(id="gemini-1.5-flash-made-up-id"),
+        exponential_backoff=True,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     # Print the response in the terminal
     with pytest.raises(ModelProviderError) as exc:
@@ -160,7 +174,13 @@ def test_structured_output():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, response_model=MovieScript, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
+        response_model=MovieScript,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response = agent.run("Create a movie about time travel")
 

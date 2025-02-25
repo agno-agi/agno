@@ -20,6 +20,7 @@ from agno.utils.tools import get_function_call_for_tool_call
 class MessageData:
     response_role: Optional[Literal["system", "user", "assistant", "tool"]] = None
     response_content: Any = ""
+    response_thinking: Any = ""
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     response_audio: Optional[AudioResponse] = None
 
@@ -400,6 +401,10 @@ class Model(ABC):
         if provider_response.audio is not None:
             assistant_message.audio_output = provider_response.audio
 
+        # Add thinking content to assistant message
+        if provider_response.thinking is not None:
+            assistant_message.thinking = provider_response.thinking
+
         # Add reasoning content to assistant message
         if provider_response.reasoning_content is not None:
             assistant_message.reasoning_content = provider_response.reasoning_content
@@ -452,6 +457,8 @@ class Model(ABC):
             # Populate assistant message from stream data
             if stream_data.response_content:
                 assistant_message.content = stream_data.response_content
+            if stream_data.response_thinking:
+                assistant_message.thinking = stream_data.response_thinking
             if stream_data.response_audio:
                 assistant_message.audio_output = stream_data.response_audio
             if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
@@ -598,6 +605,10 @@ class Model(ABC):
         # Update stream_data content
         if model_response.content is not None:
             stream_data.response_content += model_response.content
+            should_yield = True
+
+        if model_response.thinking is not None:
+            stream_data.response_thinking += model_response.thinking
             should_yield = True
 
         # Update stream_data tool calls
