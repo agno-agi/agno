@@ -10,9 +10,5 @@ agent = Agent(
     markdown=True,
 )
 
-# Get the response in a variable
-# run: RunResponse = agent.run("Share a 2 sentence horror story")
-# print(run.content)
-
 # Print the response in the terminal
-agent.print_response("Share a 2 sentence horror story", stream=True)
+agent.print_response("Share a very scary 2 sentence horror story", stream=True)

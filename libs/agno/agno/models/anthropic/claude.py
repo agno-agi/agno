@@ -495,20 +495,15 @@ class Claude(Model):
         # Add role (Claude always uses 'assistant')
         model_response.role = response.role or "assistant"
 
+        logger.info(f"Response: {response}")
         if response.content:
-            first_block = response.content[0]
-            if isinstance(first_block, TextBlock):
-                model_response.content = first_block.text
-            elif isinstance(first_block, ThinkingBlock):
-                model_response.thinking = first_block.thinking
-            elif isinstance(first_block, RedactedThinkingBlock):
-                model_response.thinking = first_block.data
-            elif isinstance(first_block, ToolUseBlock):
-                tool_name = first_block.name
-                tool_input = first_block.input
-
-                if tool_input and isinstance(tool_input, dict):
-                    model_response.content = tool_input.get("query", "")
+            for block in response.content:
+                if isinstance(block, TextBlock):
+                    model_response.content = block.text
+                elif isinstance(block, ThinkingBlock):
+                    model_response.thinking = block.thinking
+                elif isinstance(block, RedactedThinkingBlock):
+                    model_response.thinking = block.data
 
         # -*- Extract tool calls from the response
         if response.stop_reason == "tool_use":

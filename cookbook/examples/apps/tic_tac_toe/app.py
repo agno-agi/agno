@@ -1,5 +1,3 @@
-from textwrap import dedent
-
 import nest_asyncio
 import streamlit as st
 from agents import get_tic_tac_toe_referee
@@ -49,7 +47,8 @@ def main():
         model_options = {
             "gpt-4o": "openai:gpt-4o",
             "o3-mini": "openai:o3-mini",
-            "claude": "anthropic:claude-3-5-sonnet-20241022",
+            "claude-3.5": "anthropic:claude-3-5-sonnet-20241022",
+            "claude-3.7": "anthropic:claude-3-7-sonnet-20250219",
             "gemini-flash": "google:gemini-2.0-flash",
             "gemini-pro": "google:gemini-2.0-pro-exp-02-05",
             "llama-3.3": "groq:llama-3.3-70b-versatile",
@@ -57,21 +56,24 @@ def main():
         ################################################################
         # Model selection
         ################################################################
-        col1, col2 = st.columns(2)
-        with col1:
-            selected_p_x = st.selectbox(
-                "Select Player X",
-                list(model_options.keys()),
-                index=list(model_options.keys()).index("gpt-4o"),
-                key="model_p1",
-            )
-        with col2:
-            selected_p_o = st.selectbox(
-                "Select Player O",
-                list(model_options.keys()),
-                index=list(model_options.keys()).index("claude"),
-                key="model_p2",
-            )
+        selected_p_x = st.selectbox(
+            "Select Player X",
+            list(model_options.keys()),
+            index=list(model_options.keys()).index("claude-3.7"),
+            key="model_p1",
+        )
+        selected_p_o = st.selectbox(
+            "Select Player O",
+            list(model_options.keys()),
+            index=list(model_options.keys()).index("o3-mini"),
+            key="model_p2",
+        )
+        selected_referee = st.selectbox(
+            "Select Referee",
+            list(model_options.keys()),
+            index=list(model_options.keys()).index("gpt-4o"),
+            key="model_referee",
+        )
 
         ################################################################
         # Game controls
@@ -83,6 +85,7 @@ def main():
                     st.session_state.referee_agent = get_tic_tac_toe_referee(
                         model_x=model_options[selected_p_x],
                         model_o=model_options[selected_p_o],
+                        model_referee=model_options[selected_referee],
                         debug_mode=True,
                     )
                     st.session_state.game_board = TicTacToeBoard()
@@ -104,6 +107,7 @@ def main():
                     st.session_state.referee_agent = get_tic_tac_toe_referee(
                         model_x=model_options[selected_p_x],
                         model_o=model_options[selected_p_o],
+                        model_referee=model_options[selected_referee],
                         debug_mode=True,
                     )
                     st.session_state.game_board = TicTacToeBoard()
@@ -167,11 +171,11 @@ def main():
             valid_moves = st.session_state.game_board.get_valid_moves()
 
             response = st.session_state.referee_agent.team[0].run(
-                dedent(f"""\
-                Current board state:\n{st.session_state.game_board.get_board_state()}\n
-                Available valid moves (row, col): {valid_moves}\n
-                Choose your next move from the valid moves list above.
-                Respond with ONLY two numbers for row and column, e.g. "1 2"."""),
+                f"""\
+Current board state:\n{st.session_state.game_board.get_board_state()}\n
+Available valid moves (row, col): {valid_moves}\n
+Choose your next move from the valid moves list above.
+Respond with ONLY two numbers for row and column, e.g. "1 2".""",
                 stream=False,
             )
 
@@ -212,13 +216,13 @@ def main():
                 else:
                     logger.error(f"Invalid move attempt: {message}")
                     response = st.session_state.referee_agent.team[0].run(
-                        dedent(f"""\
-                        Invalid move: {message}
+                        f"""\
+Invalid move: {message}
 
-                        Current board state:\n{st.session_state.game_board.get_board_state()}\n
-                        Available valid moves (row, col): {valid_moves}\n
-                        Please choose a valid move from the list above.
-                        Respond with ONLY two numbers for row and column, e.g. "1 2"."""),
+Current board state:\n{st.session_state.game_board.get_board_state()}\n
+Available valid moves (row, col): {valid_moves}\n
+Please choose a valid move from the list above.
+Respond with ONLY two numbers for row and column, e.g. "1 2".""",
                         stream=False,
                     )
                     st.rerun()
@@ -233,10 +237,9 @@ def main():
     ####################################################################
     # About section
     ####################################################################
-    st.sidebar.markdown("### About")
     st.sidebar.markdown(f"""
-    ### 🎮 Tic Tac Toe Battle
-    Watch two models compete in real-time!
+    ### 🎮 Agent Tic Tac Toe Battle
+    Watch two agents compete in real-time!
 
     **Current Players:**
     * 🔵 Player X: `{selected_p_x}`
