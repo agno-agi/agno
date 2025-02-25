@@ -343,7 +343,8 @@ class LanceDb(VectorDb):
             List[Document]: List of matching documents
         """
         # TODO: Search is not yet supported in async (https://github.com/lancedb/lancedb/pull/2049)
-        self.table = self.connection.open_table(name=self.table_name)
+        if self.connection:
+            self.table = self.connection.open_table(name=self.table_name)
         if self.search_type == SearchType.vector:
             return self.vector_search(query, limit)
         elif self.search_type == SearchType.keyword:

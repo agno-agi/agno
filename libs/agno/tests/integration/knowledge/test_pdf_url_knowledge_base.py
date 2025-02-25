@@ -74,7 +74,7 @@ async def test_pdf_url_knowledge_base_async():
     for call in tool_calls:
         if call.get("type", "") == "function":
             assert call["function"]["name"] == "search_knowledge_base"
-            
+
     assert any(ingredient in response.content.lower() for ingredient in ["coconut", "chicken", "galangal"])
 
     # Clean up

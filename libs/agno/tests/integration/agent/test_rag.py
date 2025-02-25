@@ -24,6 +24,7 @@ async def loaded_knowledge_base():
     await knowledge_base.aload()
     return knowledge_base
 
+
 @pytest.mark.asyncio
 async def test_add_references(loaded_knowledge_base):
     agent = Agent(

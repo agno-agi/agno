@@ -138,7 +138,7 @@ def test_pdf_url_reader_invalid_url():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_pdf_processing(sample_pdf_path):
+async def test_async_pdf_processing(sample_pdf_path):
     reader = PDFReader()
     tasks = [reader.async_read(sample_pdf_path) for _ in range(3)]
     results = await asyncio.gather(*tasks)

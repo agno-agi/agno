@@ -91,7 +91,7 @@ def test_lance_db_sync_search_types():
 
 
 @pytest.mark.asyncio
-async def test_lance_db_basic_operations():
+async def test_lance_db_basic_async_operations():
     # Initialize LanceDB
     vector_db = LanceDb(
         table_name="test_basic_ops",
@@ -138,7 +138,7 @@ async def test_lance_db_basic_operations():
 
 
 @pytest.mark.asyncio
-async def test_lance_db_concurrent_operations():
+async def test_lance_db_async_operations():
     vector_db = LanceDb(
         table_name="test_concurrent",
         uri="tmp/lancedb",
