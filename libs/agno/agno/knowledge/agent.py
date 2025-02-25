@@ -115,6 +115,7 @@ class AgentKnowledge(BaseModel):
         num_documents = 0
         for document_list in self.document_lists:
             documents_to_load = document_list
+            print("COUNT", self.vector_db.get_count())
             # Upsert documents if upsert is True and vector db supports upsert
             if upsert and self.vector_db.upsert_available():
                 self.vector_db.upsert(documents=documents_to_load, filters=filters)

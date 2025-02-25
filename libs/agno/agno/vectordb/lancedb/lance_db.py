@@ -84,8 +84,10 @@ class LanceDb(VectorDb):
         self.connection: lancedb.LanceDBConnection = connection or lancedb.connect(uri=self.uri, api_key=api_key)
         self.table: Optional[lancedb.db.LanceTable] = table
 
-        self.async_connection: lancedb.AsyncConnection = async_connection
-        self.async_table: Optional[lancedb.db.AsyncTable] = async_table
+        if async_connection:
+            self.async_connection: lancedb.AsyncConnection = async_connection
+        if async_table:
+            self.async_table: Optional[lancedb.db.AsyncTable] = async_table
 
         if table_name and table_name in self.connection.table_names():
             # Open the table if it exists
@@ -95,23 +97,25 @@ class LanceDb(VectorDb):
             self._id = self.table.schema.names[1]  # type: ignore
 
         # LanceDB table details
-        if table is not None:
-            if not isinstance(table, lancedb.db.LanceTable):
-                raise ValueError(
-                    "table should be an instance of lancedb.db.LanceTable, ",
-                    f"got {type(table)}",
-                )
-            self.table = table
-            self.table_name = self.table.name
-            self._vector_col = self.table.schema.names[0]
-            self._id = self.tbl.schema.names[1]  # type: ignore
-        else:
-            if not table_name:
-                raise ValueError("Either table or table_name should be provided.")
-            self.table_name = table_name
-            self._id = "id"
-            self._vector_col = "vector"
-            self.table = self._init_table()
+        if self.table is None:
+            # LanceDB table details
+            if table:
+                if not isinstance(table, lancedb.db.LanceTable):
+                    raise ValueError(
+                        "table should be an instance of lancedb.db.LanceTable, ",
+                        f"got {type(table)}",
+                    )
+                self.table = table
+                self.table_name = self.table.name
+                self._vector_col = self.table.schema.names[0]
+                self._id = self.tbl.schema.names[1]  # type: ignore
+            else:
+                if not table_name:
+                    raise ValueError("Either table or table_name should be provided.")
+                self.table_name = table_name
+                self._id = "id"
+                self._vector_col = "vector"
+                self.table = self._init_table()
 
         self.reranker: Optional[Reranker] = reranker
         self.nprobes: Optional[int] = nprobes
@@ -141,7 +145,7 @@ class LanceDb(VectorDb):
     def create(self) -> None:
         """Create the table if it does not exist."""
         if not self.exists():
-            self.table = self._init_table()  # Connection update is needed
+            self.table = self._init_table()
 
     async def async_create(self) -> None:
         """Create the table asynchronously if it does not exist."""
@@ -203,6 +207,8 @@ class LanceDb(VectorDb):
         Returns:
             bool: True if document exists, False otherwise
         """
+        if self.connection:
+            self.table = self.connection.open_table(name=self.table_name)
         return self.doc_exists(document)
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
