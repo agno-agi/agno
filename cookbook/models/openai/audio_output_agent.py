@@ -8,14 +8,24 @@ agent = Agent(
     model=OpenAIChat(
         id="gpt-4o-audio-preview",
         modalities=["text", "audio"],
-        audio={"voice": "alloy", "format": "wav"},
+        audio={"voice": "sage", "format": "wav"},
     ),
+    add_history_to_messages=True,
     markdown=True,
 )
-response: RunResponse = agent.run("Tell me a 5 second scary story")
+agent.print_response("Tell me a 5 second scary story")
 
 # Save the response audio to a file
-if response.response_audio is not None:
+if agent.run_response.response_audio is not None:
     write_audio_to_file(
         audio=agent.run_response.response_audio.content, filename="tmp/scary_story.wav"
+    )
+
+agent.print_response("What would be in a sequal of this story?")
+
+# Save the response audio to a file
+if agent.run_response.response_audio is not None:
+    write_audio_to_file(
+        audio=agent.run_response.response_audio.content,
+        filename="tmp/scary_story_sequal.wav",
     )

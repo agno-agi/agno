@@ -100,10 +100,24 @@ class Cohere(Model):
         if self.presence_penalty:
             _request_params["presence_penalty"] = self.presence_penalty
 
+        if self.response_format:
+            _request_params["response_format"] = self.response_format
+
         if self._tools is not None and len(self._tools) > 0:
             _request_params["tools"] = self._tools
-            if self.tool_choice is not None:
-                _request_params["tool_choice"] = self.tool_choice
+            # Fix optional parameters where the "type" is [type, null]
+            for tool in _request_params["tools"]:  # type: ignore
+                params = []
+                if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
+                    for param_name, obj in tool["function"]["parameters"].get("properties", {}).items():  # type: ignore
+                        params.append(param_name)
+                        if isinstance(obj["type"], list):
+                            obj["type"] = obj["type"][0]
+
+                    # Cohere requires at least one required parameter, so if unset, set it to all parameters
+                    if len(tool["function"]["parameters"].get("required", [])) == 0:
+                        tool["function"]["parameters"]["required"] = params
+            _request_params["strict_tools"] = True
 
         if self.request_params:
             _request_params.update(self.request_params)
@@ -120,11 +134,16 @@ class Cohere(Model):
             List[Dict[str, Any]]: The formatted messages.
         """
         formatted_messages = []
-        for m in messages:
-            m_dict = m.serialize_for_model()
-            if m_dict["content"] is None:
-                m_dict.pop("content")
-            formatted_messages.append(m_dict)
+        for message in messages:
+            message_dict = {
+                "role": message.role,
+                "content": message.content,
+                "name": message.name,
+                "tool_call_id": message.tool_call_id,
+                "tool_calls": message.tool_calls,
+            }
+            message_dict = {k: v for k, v in message_dict.items() if v is not None}
+            formatted_messages.append(message_dict)
         return formatted_messages
 
     def invoke(self, messages: List[Message]) -> ChatResponse:
@@ -144,7 +163,7 @@ class Cohere(Model):
             return self.get_client().chat(model=self.id, messages=self._format_messages(messages), **request_kwargs)  # type: ignore
         except Exception as e:
             logger.error(f"Unexpected error calling Cohere API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[StreamedChatResponseV2]:
         """
@@ -166,7 +185,7 @@ class Cohere(Model):
             )
         except Exception as e:
             logger.error(f"Unexpected error calling Cohere API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> ChatResponse:
         """
@@ -188,7 +207,7 @@ class Cohere(Model):
             )
         except Exception as e:
             logger.error(f"Unexpected error calling Cohere API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[StreamedChatResponseV2]:
         """
@@ -211,7 +230,7 @@ class Cohere(Model):
                 yield response
         except Exception as e:
             logger.error(f"Unexpected error calling Cohere API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def parse_provider_response(self, response: ChatResponse) -> ModelResponse:
         """

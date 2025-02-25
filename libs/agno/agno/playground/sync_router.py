@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
-from agno.media import Image
+from agno.media import Audio, Image, Video
 from agno.playground.operator import (
     format_tools,
     get_agent_by_id,
@@ -26,6 +26,7 @@ from agno.playground.schemas import (
     WorkflowSessionResponse,
     WorkflowsGetResponse,
 )
+from agno.run.response import RunEvent
 from agno.storage.agent.session import AgentSession
 from agno.storage.workflow.session import WorkflowSession
 from agno.utils.log import logger
@@ -87,17 +88,50 @@ def get_sync_playground_router(
 
         return agent_list
 
-    def chat_response_streamer(agent: Agent, message: str, images: Optional[List[Image]] = None) -> Generator:
-        run_response = agent.run(message=message, images=images, stream=True, stream_intermediate_steps=True)
-        for run_response_chunk in run_response:
-            run_response_chunk = cast(RunResponse, run_response_chunk)
-            yield run_response_chunk.to_json()
+    def chat_response_streamer(
+        agent: Agent,
+        message: str,
+        images: Optional[List[Image]] = None,
+        audio: Optional[List[Audio]] = None,
+        videos: Optional[List[Video]] = None,
+    ) -> Generator:
+        try:
+            run_response = agent.run(
+                message,
+                images=images,
+                audio=audio,
+                videos=videos,
+                stream=True,
+                stream_intermediate_steps=True,
+            )
+            for run_response_chunk in run_response:
+                run_response_chunk = cast(RunResponse, run_response_chunk)
+                yield run_response_chunk.to_json()
+        except Exception as e:
+            error_response = RunResponse(
+                content=str(e),
+                event=RunEvent.run_error,
+            )
+            yield error_response.to_json()
+            return
 
     def process_image(file: UploadFile) -> Image:
         content = file.file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
         return Image(content=content)
+
+    def process_audio(file: UploadFile) -> Audio:
+        content = file.file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Empty file")
+        format = None
+        if file.filename and "." in file.filename:
+            format = file.filename.split(".")[-1].lower()
+        elif file.content_type:
+            format = file.content_type.split("/")[-1]
+
+        return Audio(content=content, format=format)
 
     @playground_router.post("/agents/{agent_id}/runs")
     def create_agent_run(
@@ -132,7 +166,7 @@ def get_sync_playground_router(
             new_agent_instance.monitoring = False
 
         base64_images: List[Image] = []
-
+        base64_audios: List[Audio] = []
         if files:
             for file in files:
                 if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
@@ -141,6 +175,13 @@ def get_sync_playground_router(
                         base64_images.append(base64_image)
                     except Exception as e:
                         logger.error(f"Error processing image {file.filename}: {e}")
+                        continue
+                elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
+                    try:
+                        base64_audio = process_audio(file)
+                        base64_audios.append(base64_audio)
+                    except Exception as e:
+                        logger.error(f"Error processing audio {file.filename}: {e}")
                         continue
                 else:
                     # Check for knowledge base before processing documents
@@ -197,7 +238,12 @@ def get_sync_playground_router(
 
         if stream:
             return StreamingResponse(
-                chat_response_streamer(new_agent_instance, message, images=base64_images if base64_images else None),
+                chat_response_streamer(
+                    new_agent_instance,
+                    message,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                ),
                 media_type="text/event-stream",
             )
         else:
@@ -206,6 +252,7 @@ def get_sync_playground_router(
                 new_agent_instance.run(
                     message=message,
                     images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
                     stream=False,
                 ),
             )

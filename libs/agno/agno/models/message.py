@@ -3,9 +3,9 @@ from dataclasses import asdict, dataclass
 from time import time
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field
 
-from agno.media import Audio, AudioOutput, Image, Video
+from agno.media import Audio, AudioResponse, Image, Video
 from agno.utils.log import logger
 from agno.utils.timer import Timer
 
@@ -143,9 +143,11 @@ class Message(BaseModel):
     videos: Optional[Sequence[Video]] = None
 
     # Output from the models
-    audio_output: Optional[AudioOutput] = None
+    audio_output: Optional[AudioResponse] = None
 
     # --- Data not sent to the Model API ---
+    # The thinking content from the model
+    thinking: Optional[str] = None
     # The reasoning content from the model
     reasoning_content: Optional[str] = None
     # The name of the tool called
@@ -179,30 +181,6 @@ class Message(BaseModel):
             else:
                 return json.dumps(self.content)
         return ""
-
-    def serialize_for_model(self) -> Dict[str, Any]:
-        _dict: Dict[str, Any] = {
-            "role": self.role,
-            "content": self.content,
-            "name": self.name,
-            "tool_call_id": self.tool_call_id,
-            "tool_calls": self.tool_calls,
-            "audio": self.audio,
-        }
-
-        # Remove None values
-        _dict = {k: v for k, v in _dict.items() if v is not None}
-
-        # Add the message's output as then input (for multi-turn audio)
-        if self.audio_output is not None:
-            _dict["content"] = None
-            _dict["audio"] = {"id": self.audio_output.id}
-
-        # Manually add the content field even if it is None
-        if self.content is None:
-            _dict["content"] = None
-
-        return _dict
 
     def to_dict(self) -> Dict[str, Any]:
         """Returns the message as a dictionary."""
@@ -255,10 +233,6 @@ class Message(BaseModel):
             "created_at": self.created_at,
         }
 
-    @model_serializer
-    def serialize_model(self):
-        return self.serialize_for_model()
-
     def log(self, metrics: bool = True, level: Optional[str] = None):
         """Log the message to the console
 
@@ -280,6 +254,8 @@ class Message(BaseModel):
             _logger(f"Name: {self.name}")
         if self.tool_call_id:
             _logger(f"Tool call Id: {self.tool_call_id}")
+        if self.thinking:
+            _logger(f"<thinking>\n{self.thinking}\n</thinking>")
         if self.content:
             if isinstance(self.content, str) or isinstance(self.content, list):
                 _logger(self.content)
