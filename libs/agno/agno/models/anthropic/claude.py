@@ -20,11 +20,7 @@ try:
         ContentBlockStopEvent,
         MessageDeltaEvent,
         MessageStopEvent,
-        RedactedThinkingBlock,
         TextBlock,
-        TextDelta,
-        ThinkingBlock,
-        ThinkingDelta,
         ToolUseBlock,
     )
     from anthropic.types import Message as AnthropicMessage
@@ -132,6 +128,7 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
             content = []
             if isinstance(message.content, str) and message.content:
                 content.append(TextBlock(text=message.content, type="text"))
+            # TODO: Handle thinking message blocks with signatures
             if message.tool_calls:
                 for tool_call in message.tool_calls:
                     content.append(
@@ -497,17 +494,17 @@ class Claude(Model):
 
         if response.content:
             for block in response.content:
-                if isinstance(block, TextBlock):
+                if block.type == "text":
                     model_response.content = block.text
-                elif isinstance(block, ThinkingBlock):
+                elif block.type == "thinking":
                     model_response.thinking = block.thinking
-                elif isinstance(block, RedactedThinkingBlock):
+                elif block.type == "redacted_thinking":
                     model_response.thinking = block.data
 
         # -*- Extract tool calls from the response
         if response.stop_reason == "tool_use":
             for block in response.content:
-                if isinstance(block, ToolUseBlock):
+                if block.type == "tool_use":
                     tool_name = block.name
                     tool_input = block.input
 
@@ -547,15 +544,15 @@ class Claude(Model):
 
         if isinstance(response, ContentBlockDeltaEvent):
             # Handle text content
-            if isinstance(response.delta, TextDelta):
+            if response.delta.type == "text_delta":
                 model_response.content = response.delta.text
             # Handle thinking content
-            if isinstance(response.delta, ThinkingDelta):
+            elif response.delta.type == "thinking_delta":
                 model_response.thinking = response.delta.thinking
 
         elif isinstance(response, ContentBlockStopEvent):
             # Handle tool calls
-            if isinstance(response.content_block, ToolUseBlock):  # type: ignore
+            if response.content_block.type == "tool_use":  # type: ignore
                 tool_use = response.content_block  # type: ignore
                 tool_name = tool_use.name
                 tool_input = tool_use.input
