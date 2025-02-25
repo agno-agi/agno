@@ -21,7 +21,6 @@ except (ModuleNotFoundError, ImportError):
     raise ImportError("`groq` not installed. Please install using `pip install groq`")
 
 
-
 @dataclass
 class Groq(Model):
     """
@@ -239,7 +238,7 @@ class Groq(Model):
             logger.warning("Video input is currently unsupported.")
 
         return message_dict
-    
+
     def invoke(self, messages: List[Message]) -> ChatCompletion:
         """
         Send a chat completion request to the Groq API.

@@ -81,7 +81,7 @@ class Video(BaseModel):
         import base64
         import zlib
 
-        return {
+        response_dict = {
             "content": base64.b64encode(
                 zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode("utf-8")
             ).decode("utf-8")
@@ -155,11 +155,8 @@ class Audio(BaseModel):
             "filepath": self.filepath,
             "format": self.format,
         }
+
         return {k: v for k, v in response_dict.items() if v is not None}
-
-        response_dict = {k: v for k, v in response_dict.items() if v is not None}
-
-        return response_dict
 
 
 class AudioResponse(BaseModel):
@@ -187,10 +184,6 @@ class AudioResponse(BaseModel):
             "channels": self.channels,
         }
         return {k: v for k, v in response_dict.items() if v is not None}
-
-        response_dict = {k: v for k, v in response_dict.items() if v is not None}
-
-        return response_dict
 
 
 class Image(BaseModel):
@@ -260,6 +253,5 @@ class Image(BaseModel):
             "url": self.url,
             "detail": self.detail,
         }
-
 
         return {k: v for k, v in response_dict.items() if v is not None}
