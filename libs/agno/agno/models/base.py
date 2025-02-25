@@ -26,9 +26,9 @@ class MessageData:
     response_audio: Optional[AudioResponse] = None
 
     # Data from the provider that we might need on subsequent messages
-    response_provider_data: Dict[str, Any] = field(default_factory=dict)
+    response_provider_data: Optional[Dict[str, Any]] = None
 
-    extra: Dict[str, Any] = field(default_factory=dict)
+    extra: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -646,6 +646,8 @@ class Model(ABC):
             should_yield = True
 
         if model_response.provider_data:
+            if stream_data.response_provider_data is None:
+                stream_data.response_provider_data = {}
             stream_data.response_provider_data.update(model_response.provider_data)
 
         # Update stream_data tool calls
@@ -676,6 +678,8 @@ class Model(ABC):
             should_yield = True
 
         if model_response.extra is not None:
+            if stream_data.extra is None:
+                stream_data.extra = {}
             stream_data.extra.update(model_response.extra)
 
         if model_response.response_usage is not None:
