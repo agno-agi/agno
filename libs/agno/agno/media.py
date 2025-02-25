@@ -90,6 +90,7 @@ class Video(BaseModel):
             "filepath": self.filepath,
             "format": self.format,
         }
+        return {k: v for k, v in response_dict.items() if v is not None}
 
 
 class Audio(BaseModel):
@@ -154,17 +155,22 @@ class Audio(BaseModel):
             "filepath": self.filepath,
             "format": self.format,
         }
+        return {k: v for k, v in response_dict.items() if v is not None}
 
         response_dict = {k: v for k, v in response_dict.items() if v is not None}
 
         return response_dict
 
 
-class AudioOutput(BaseModel):
-    id: str
-    content: str  # Base64 encoded
-    expires_at: int
-    transcript: str
+class AudioResponse(BaseModel):
+    id: Optional[str] = None
+    content: Optional[str] = None  # Base64 encoded
+    expires_at: Optional[int] = None
+    transcript: Optional[str] = None
+
+    mime_type: Optional[str] = None
+    sample_rate: Optional[int] = 24000
+    channels: Optional[int] = 1
 
     def to_dict(self) -> Dict[str, Any]:
         import base64
@@ -176,7 +182,11 @@ class AudioOutput(BaseModel):
             else self.content,
             "expires_at": self.expires_at,
             "transcript": self.transcript,
+            "mime_type": self.mime_type,
+            "sample_rate": self.sample_rate,
+            "channels": self.channels,
         }
+        return {k: v for k, v in response_dict.items() if v is not None}
 
         response_dict = {k: v for k, v in response_dict.items() if v is not None}
 
@@ -251,6 +261,5 @@ class Image(BaseModel):
             "detail": self.detail,
         }
 
-        response_dict = {k: v for k, v in response_dict.items() if v is not None}
 
-        return response_dict
+        return {k: v for k, v in response_dict.items() if v is not None}

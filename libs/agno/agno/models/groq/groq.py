@@ -12,7 +12,7 @@ from agno.utils.log import logger
 from agno.utils.openai import images_to_message
 
 try:
-    from groq import APIConnectionError, APIError, APIStatusError, APITimeoutError
+    from groq import APIError, APIResponseValidationError, APIStatusError
     from groq import AsyncGroq as AsyncGroqClient
     from groq import Groq as GroqClient
     from groq.types.chat import ChatCompletion
@@ -20,40 +20,6 @@ try:
 except (ModuleNotFoundError, ImportError):
     raise ImportError("`groq` not installed. Please install using `pip install groq`")
 
-
-def format_message(message: Message) -> Dict[str, Any]:
-    """
-    Format a message into the format expected by Groq.
-
-    Args:
-        message (Message): The message to format.
-
-    Returns:
-        Dict[str, Any]: The formatted message.
-    """
-    message_dict: Dict[str, Any] = {
-        "role": message.role,
-        "content": message.content,
-        "name": message.name,
-        "tool_call_id": message.tool_call_id,
-        "tool_calls": message.tool_calls,
-    }
-    message_dict = {k: v for k, v in message_dict.items() if v is not None}
-
-    if message.images is not None and len(message.images) > 0:
-        # Ignore non-string message content
-        # because we assume that the images/audio are already added to the message
-        if isinstance(message.content, str):
-            message_dict["content"] = [{"type": "text", "text": message.content}]
-            message_dict["content"].extend(images_to_message(images=message.images))
-
-    if message.audio is not None:
-        logger.warning("Audio input is currently unsupported.")
-
-    if message.videos is not None:
-        logger.warning("Video input is currently unsupported.")
-
-    return message_dict
 
 
 @dataclass
@@ -231,6 +197,49 @@ class Groq(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
+    def format_message(self, message: Message) -> Dict[str, Any]:
+        """
+        Format a message into the format expected by Groq.
+
+        Args:
+            message (Message): The message to format.
+
+        Returns:
+            Dict[str, Any]: The formatted message.
+        """
+        message_dict: Dict[str, Any] = {
+            "role": message.role,
+            "content": message.content,
+            "name": message.name,
+            "tool_call_id": message.tool_call_id,
+            "tool_calls": message.tool_calls,
+        }
+        message_dict = {k: v for k, v in message_dict.items() if v is not None}
+
+        if (
+            message.role == "system"
+            and isinstance(message.content, str)
+            and self.response_format is not None
+            and self.response_format.get("type") == "json_object"
+        ):
+            # This is required by Groq to ensure the model outputs in the correct format
+            message.content += "\n\nYour output should be in JSON format."
+
+        if message.images is not None and len(message.images) > 0:
+            # Ignore non-string message content
+            # because we assume that the images/audio are already added to the message
+            if isinstance(message.content, str):
+                message_dict["content"] = [{"type": "text", "text": message.content}]
+                message_dict["content"].extend(images_to_message(images=message.images))
+
+        if message.audio is not None:
+            logger.warning("Audio input is currently unsupported.")
+
+        if message.videos is not None:
+            logger.warning("Video input is currently unsupported.")
+
+        return message_dict
+    
     def invoke(self, messages: List[Message]) -> ChatCompletion:
         """
         Send a chat completion request to the Groq API.
@@ -244,15 +253,20 @@ class Groq(Model):
         try:
             return self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[format_message(m) for m in messages],  # type: ignore
+                messages=[self.format_message(m) for m in messages],  # type: ignore
                 **self.request_kwargs,
             )
-        except (APIError, APIConnectionError, APITimeoutError, APIStatusError) as e:
+        except (APIResponseValidationError, APIStatusError) as e:
             logger.error(f"Error calling Groq API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
+        except APIError as e:
+            logger.error(f"Error calling Groq API: {str(e)}")
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> ChatCompletion:
         """
@@ -267,15 +281,20 @@ class Groq(Model):
         try:
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[format_message(m) for m in messages],  # type: ignore
+                messages=[self.format_message(m) for m in messages],  # type: ignore
                 **self.request_kwargs,
             )
-        except (APIError, APIConnectionError, APITimeoutError, APIStatusError) as e:
+        except (APIResponseValidationError, APIStatusError) as e:
             logger.error(f"Error calling Groq API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
+        except APIError as e:
+            logger.error(f"Error calling Groq API: {str(e)}")
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
         """
@@ -290,16 +309,21 @@ class Groq(Model):
         try:
             return self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[format_message(m) for m in messages],  # type: ignore
+                messages=[self.format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )
-        except (APIError, APIConnectionError, APITimeoutError, APIStatusError) as e:
+        except (APIResponseValidationError, APIStatusError) as e:
             logger.error(f"Error calling Groq API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
+        except APIError as e:
+            logger.error(f"Error calling Groq API: {str(e)}")
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> Any:
         """
@@ -315,18 +339,23 @@ class Groq(Model):
         try:
             stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[format_message(m) for m in messages],  # type: ignore
+                messages=[self.format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )
             async for chunk in stream:  # type: ignore
                 yield chunk
-        except (APIError, APIConnectionError, APITimeoutError, APIStatusError) as e:
+        except (APIResponseValidationError, APIStatusError) as e:
             logger.error(f"Error calling Groq API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+            ) from e
+        except APIError as e:
+            logger.error(f"Error calling Groq API: {str(e)}")
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Groq API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
     @staticmethod

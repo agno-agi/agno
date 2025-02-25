@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
@@ -20,8 +20,11 @@ try:
         ContentBlockStopEvent,
         MessageDeltaEvent,
         MessageStopEvent,
+        RedactedThinkingBlock,
         TextBlock,
         TextDelta,
+        ThinkingBlock,
+        ThinkingDelta,
         ToolUseBlock,
     )
     from anthropic.types import Message as AnthropicMessage
@@ -107,9 +110,10 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
     chat_messages: List[Dict[str, str]] = []
     system_messages: List[str] = []
 
+    print()
     for idx, message in enumerate(messages):
         content = message.content or ""
-        if message.role == "system" or (message.role != "user" and idx in [0, 1]):
+        if message.role == "system":
             if content is not None:
                 system_messages.append(content)  # type: ignore
             continue
@@ -158,7 +162,8 @@ class Claude(Model):
     provider: str = "Anthropic"
 
     # Request parameters
-    max_tokens: Optional[int] = 1024
+    max_tokens: Optional[int] = 4096
+    thinking: Optional[Dict[str, Any]] = None
     temperature: Optional[float] = None
     stop_sequences: Optional[List[str]] = None
     top_p: Optional[float] = None
@@ -180,11 +185,9 @@ class Claude(Model):
         if not self.api_key:
             logger.error("ANTHROPIC_API_KEY not set. Please set the ANTHROPIC_API_KEY environment variable.")
 
-        client_params.update(
-            {
-                "api_key": self.api_key,
-            }
-        )
+        # Add API key to client parameters
+        client_params["api_key"] = self.api_key
+        # Add additional client parameters
         if self.client_params is not None:
             client_params.update(self.client_params)
         return client_params
@@ -219,6 +222,8 @@ class Claude(Model):
         _request_params: Dict[str, Any] = {}
         if self.max_tokens:
             _request_params["max_tokens"] = self.max_tokens
+        if self.thinking:
+            _request_params["thinking"] = self.thinking
         if self.temperature:
             _request_params["temperature"] = self.temperature
         if self.stop_sequences:
@@ -271,13 +276,15 @@ class Claude(Model):
                 if "null" not in param_type_list:
                     required_params.append(param_name)
 
-            input_properties: Dict[str, Dict[str, Union[str, List[str]]]] = {
-                param_name: {
-                    "type": param_info.get("type", ""),
+            input_properties: Dict[str, Dict[str, Union[str, List[str]]]] = {}
+            for param_name, param_info in properties.items():
+                input_properties[param_name] = {
                     "description": param_info.get("description", ""),
                 }
-                for param_name, param_info in properties.items()
-            }
+                if "type" not in param_info and "anyOf" in param_info:
+                    input_properties[param_name]["anyOf"] = param_info["anyOf"]
+                else:
+                    input_properties[param_name]["type"] = param_info.get("type", "")
 
             tool = {
                 "name": func_name,
@@ -317,16 +324,18 @@ class Claude(Model):
             )
         except APIConnectionError as e:
             logger.error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except RateLimitError as e:
             logger.warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Any:
         """
@@ -353,16 +362,18 @@ class Claude(Model):
             )
         except APIConnectionError as e:
             logger.error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except RateLimitError as e:
             logger.warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> AnthropicMessage:
         """
@@ -390,16 +401,18 @@ class Claude(Model):
             )
         except APIConnectionError as e:
             logger.error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except RateLimitError as e:
             logger.warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """
@@ -423,16 +436,18 @@ class Claude(Model):
                     yield chunk
         except APIConnectionError as e:
             logger.error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except RateLimitError as e:
             logger.warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Overwrite the default from the base model
     def format_function_call_results(
@@ -481,15 +496,13 @@ class Claude(Model):
         model_response.role = response.role or "assistant"
 
         if response.content:
-            first_block = response.content[0]
-            if isinstance(first_block, TextBlock):
-                model_response.content = first_block.text
-            elif isinstance(first_block, ToolUseBlock):
-                tool_name = first_block.name
-                tool_input = first_block.input
-
-                if tool_input and isinstance(tool_input, dict):
-                    model_response.content = tool_input.get("query", "")
+            for block in response.content:
+                if isinstance(block, TextBlock):
+                    model_response.content = block.text
+                elif isinstance(block, ThinkingBlock):
+                    model_response.thinking = block.thinking
+                elif isinstance(block, RedactedThinkingBlock):
+                    model_response.thinking = block.data
 
         # -*- Extract tool calls from the response
         if response.stop_reason == "tool_use":
@@ -536,6 +549,9 @@ class Claude(Model):
             # Handle text content
             if isinstance(response.delta, TextDelta):
                 model_response.content = response.delta.text
+            # Handle thinking content
+            if isinstance(response.delta, ThinkingDelta):
+                model_response.thinking = response.delta.thinking
 
         elif isinstance(response, ContentBlockStopEvent):
             # Handle tool calls

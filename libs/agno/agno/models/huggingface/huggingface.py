@@ -268,7 +268,10 @@ class HuggingFace(Model):
             )
         except InferenceTimeoutError as e:
             logger.error(f"Error invoking HuggingFace model: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        except Exception as e:
+            logger.error(f"Unexpected error invoking HuggingFace model: {e}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletionOutput]:
         """
@@ -289,7 +292,10 @@ class HuggingFace(Model):
                 )
         except InferenceTimeoutError as e:
             logger.error(f"Error invoking HuggingFace model: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        except Exception as e:
+            logger.error(f"Unexpected error invoking HuggingFace model: {e}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionStreamOutput]:
         """
@@ -311,7 +317,10 @@ class HuggingFace(Model):
             )  # type: ignore
         except InferenceTimeoutError as e:
             logger.error(f"Error invoking HuggingFace model: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        except Exception as e:
+            logger.error(f"Unexpected error invoking HuggingFace model: {e}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """
@@ -336,7 +345,10 @@ class HuggingFace(Model):
                     yield chunk
         except InferenceTimeoutError as e:
             logger.error(f"Error invoking HuggingFace model: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        except Exception as e:
+            logger.error(f"Unexpected error invoking HuggingFace model: {e}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
     @staticmethod
