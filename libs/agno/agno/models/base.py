@@ -509,9 +509,12 @@ class Model(ABC):
                     yield function_call_response
 
                 # Format and add results to messages
-                self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **stream_data.extra
-                )
+                if stream_data.extra is not None:
+                    self.format_function_call_results(
+                        messages=messages, function_call_results=function_call_results, **stream_data.extra
+                    )
+                else:
+                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
                 logger.debug(f"---------- {self.get_provider()} Response Stream ----------")
                 self._log_messages(messages)
@@ -603,9 +606,12 @@ class Model(ABC):
                     yield function_call_response
 
                 # Format and add results to messages
-                self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **stream_data.extra
-                )
+                if stream_data.extra is not None:
+                    self.format_function_call_results(
+                        messages=messages, function_call_results=function_call_results, **stream_data.extra
+                    )
+                else:
+                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
                 logger.debug(f"---------- {self.get_provider()} Async Response Stream ----------")
                 self._log_messages(messages)
