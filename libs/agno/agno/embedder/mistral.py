@@ -32,14 +32,14 @@ class MistralEmbedder(Embedder):
         if self.mistral_client:
             return self.mistral_client
 
-        _client_params = {
+        _client_params: Dict[str, Any] = {
             "api_key": self.api_key,
             "endpoint": self.endpoint,
             "max_retries": self.max_retries,
             "timeout": self.timeout,
         }
         _client_params = {k: v for k, v in _client_params.items() if v is not None}
-        
+
         if self.client_params:
             _client_params.update(self.client_params)
 

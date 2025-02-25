@@ -31,7 +31,7 @@ class OpenAIEmbedder(Embedder):
         if self.openai_client:
             return self.openai_client
 
-        _client_params = {
+        _client_params: Dict[str, Any] = {
             "api_key": self.api_key,
             "organization": self.organization,
             "base_url": self.base_url,
@@ -40,7 +40,7 @@ class OpenAIEmbedder(Embedder):
         if self.client_params:
             _client_params.update(self.client_params)
         self.openai_client = OpenAIClient(**_client_params)
-        return self.openai_client   
+        return self.openai_client
 
     def response(self, text: str) -> CreateEmbeddingResponse:
         _request_params: Dict[str, Any] = {

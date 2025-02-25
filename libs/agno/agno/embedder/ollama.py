@@ -7,8 +7,8 @@ from agno.utils.log import logger
 try:
     import pkg_resources
     from packaging import version
-    
-    ollama_version = pkg_resources.get_distribution('ollama').version
+
+    ollama_version = pkg_resources.get_distribution("ollama").version
     if version.parse(ollama_version).major == 0 and version.parse(ollama_version).minor < 3:
         import warnings
 
