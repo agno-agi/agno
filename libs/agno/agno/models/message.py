@@ -225,6 +225,8 @@ class Message(BaseModel):
             "tool_args": self.tool_args,
             "tool_call_error": self.tool_call_error,
             "tool_calls": self.tool_calls,
+            "thinking": self.thinking,
+            "redacted_thinking": self.redacted_thinking,
         }
         # Filter out None and empty collections
         message_dict = {
