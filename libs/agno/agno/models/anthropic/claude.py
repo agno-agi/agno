@@ -16,6 +16,7 @@ try:
     from anthropic import APIConnectionError, APIStatusError, RateLimitError
     from anthropic import AsyncAnthropic as AsyncAnthropicClient
     from anthropic.types import (
+        ContentBlockStartEvent,
         ContentBlockDeltaEvent,
         ContentBlockStopEvent,
         MessageDeltaEvent,
@@ -107,7 +108,7 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
     system_messages: List[str] = []
 
     print()
-    for idx, message in enumerate(messages):
+    for message in messages:
         content = message.content or ""
         if message.role == "system":
             if content is not None:
@@ -126,9 +127,27 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
         # Handle tool calls from history
         elif message.role == "assistant":
             content = []
+
+            if message.thinking is not None:
+                from anthropic.types import ThinkingBlock, RedactedThinkingBlock
+
+                content.append(
+                    ThinkingBlock(
+                        thinking=message.thinking,
+                        signature=message.provider_data.get("signature"),
+                        type="thinking",
+                    )
+                )
+
+            if message.redacted_thinking is not None:
+                from anthropic.types import RedactedThinkingBlock
+                content.append(
+                    RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking")
+                )
+
             if isinstance(message.content, str) and message.content:
                 content.append(TextBlock(text=message.content, type="text"))
-            # TODO: Handle thinking message blocks with signatures
+
             if message.tool_calls:
                 for tool_call in message.tool_calls:
                     content.append(
@@ -141,7 +160,7 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
                             type="tool_use",
                         )
                     )
-
+        print("MESSAGE", content)
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
     return chat_messages, " ".join(system_messages)
 
@@ -498,8 +517,11 @@ class Claude(Model):
                     model_response.content = block.text
                 elif block.type == "thinking":
                     model_response.thinking = block.thinking
+                    model_response.provider_data = {
+                        "signature": block.signature,
+                    }
                 elif block.type == "redacted_thinking":
-                    model_response.thinking = block.data
+                    model_response.redacted_thinking = block.data
 
         # -*- Extract tool calls from the response
         if response.stop_reason == "tool_use":
@@ -542,6 +564,10 @@ class Claude(Model):
         """
         model_response = ModelResponse()
 
+        if isinstance(response, ContentBlockStartEvent):
+            if response.content_block.type == "redacted_thinking":
+                model_response.redacted_thinking = response.content_block.data
+
         if isinstance(response, ContentBlockDeltaEvent):
             # Handle text content
             if response.delta.type == "text_delta":
@@ -549,6 +575,10 @@ class Claude(Model):
             # Handle thinking content
             elif response.delta.type == "thinking_delta":
                 model_response.thinking = response.delta.thinking
+            elif response.delta.type == "signature_delta":
+                model_response.provider_data = {
+                    "signature": response.delta.signature,
+                }
 
         elif isinstance(response, ContentBlockStopEvent):
             # Handle tool calls
