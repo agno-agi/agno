@@ -121,16 +121,16 @@ def get_sync_playground_router(
             raise HTTPException(status_code=400, detail="Empty file")
         return Image(content=content)
 
-    async def process_audio(file: UploadFile) -> Audio:            
+    async def process_audio(file: UploadFile) -> Audio:
         content = file.file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
         format = None
-        if file.filename and '.' in file.filename:
-            format = file.filename.split('.')[-1].lower()
+        if file.filename and "." in file.filename:
+            format = file.filename.split(".")[-1].lower()
         elif file.content_type:
             format = file.content_type.split("/")[-1]
-            
+
         return Audio(content=content, format=format)
 
     @playground_router.post("/agents/{agent_id}/runs")
