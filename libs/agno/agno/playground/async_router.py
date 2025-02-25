@@ -125,9 +125,17 @@ def get_async_playground_router(
 
         return Image(content=content)
 
-    async def process_audio(file: UploadFile) -> Audio:
+    async def process_audio(file: UploadFile) -> Audio:            
         content = file.file.read()
-        return Audio(content=content, format=file.content_type.split("/")[-1] if file.content_type else None)
+        if not content:
+            raise HTTPException(status_code=400, detail="Empty file")
+        format = None
+        if file.filename and '.' in file.filename:
+            format = file.filename.split('.')[-1].lower()
+        elif file.content_type:
+            format = file.content_type.split("/")[-1]
+            
+        return Audio(content=content, format=format)
 
     @playground_router.post("/agents/{agent_id}/runs")
     async def create_agent_run(
@@ -173,7 +181,7 @@ def get_async_playground_router(
                     except Exception as e:
                         logger.error(f"Error processing image {file.filename}: {e}")
                         continue
-                elif file.content_type in ["audio/wav", "audio/mp3"]:
+                elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
                     try:
                         base64_audio = await process_audio(file)
                         base64_audios.append(base64_audio)
