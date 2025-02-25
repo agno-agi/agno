@@ -311,6 +311,8 @@ class Model(ABC):
                 model_response.content = assistant_message.get_content_string()
             else:
                 model_response.content += assistant_message.get_content_string()
+        if assistant_message.thinking is not None:
+            model_response.thinking = assistant_message.thinking
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if provider_response.extra is not None:
