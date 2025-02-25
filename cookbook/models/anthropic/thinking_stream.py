@@ -1,4 +1,4 @@
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent
 from agno.models.anthropic import Claude
 
 agent = Agent(
