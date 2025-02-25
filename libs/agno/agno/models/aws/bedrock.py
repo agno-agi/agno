@@ -441,6 +441,8 @@ class AwsBedrock(Model):
                 yield model_response
 
         if tool_ids:
+            if stream_data.extra is None:
+                stream_data.extra = {}
             stream_data.extra["tool_ids"] = tool_ids
 
     def parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:  # type: ignore
