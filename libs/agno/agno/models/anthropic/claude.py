@@ -495,7 +495,6 @@ class Claude(Model):
         # Add role (Claude always uses 'assistant')
         model_response.role = response.role or "assistant"
 
-        logger.info(f"Response: {response}")
         if response.content:
             for block in response.content:
                 if isinstance(block, TextBlock):
