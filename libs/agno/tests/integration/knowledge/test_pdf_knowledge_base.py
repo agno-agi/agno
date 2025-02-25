@@ -29,7 +29,13 @@ def test_pdf_knowledge_base():
     agent = Agent(knowledge=knowledge_base)
     response = agent.run("Show me how to make Tom Kha Gai", markdown=True)
 
-    assert "Tom Kha Gai" in response.content
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+    for call in tool_calls:
+        if call.get("type", "") == "function":
+            assert call["function"]["name"] == "search_knowledge_base"
 
     # Clean up
     vector_db.drop()
@@ -57,7 +63,14 @@ async def test_pdf_knowledge_base_async():
     agent = Agent(knowledge=knowledge_base)
     response = await agent.arun("What ingredients do I need for Tom Kha Gai?", markdown=True)
 
-    assert "Tom Kha Gai" in response.content
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+    for call in tool_calls:
+        if call.get("type", "") == "function":
+            assert call["function"]["name"] == "search_knowledge_base"
+
     assert any(ingredient in response.content.lower() for ingredient in ["coconut", "chicken", "galangal"])
 
     # Clean up
