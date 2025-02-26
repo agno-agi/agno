@@ -1,4 +1,4 @@
-# Tic Tac Toe AI Battle
+# Agent Tic Tac Toe
 
 This example shows how to build an interactive Tic Tac Toe game where AI agents compete against each other. The application showcases how to:
 - Coordinate multiple AI agents in a turn-based game

@@ -16,7 +16,7 @@ class TextReader(Reader):
                     raise FileNotFoundError(f"Could not find file: {file}")
                 logger.info(f"Reading: {file}")
                 file_name = file.stem
-                file_contents = file.read_text()
+                file_contents = file.read_text("utf-8")
             else:
                 logger.info(f"Reading uploaded file: {file.name}")
                 file_name = file.name.split(".")[0]

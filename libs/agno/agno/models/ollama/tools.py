@@ -268,7 +268,7 @@ class OllamaTools(Ollama):
                     tool_call_data.is_closing_tool_call_tag = True
 
                     try:
-                        model_response.tool_calls = parse_tool_calls_from_content(tool_call_data.tool_call_content)
+                        model_response.tool_calls = _parse_tool_calls_from_content(tool_call_data.tool_call_content)
                         tool_call_data = ToolCall()
                     except Exception as e:
                         logger.warning(e)
@@ -282,18 +282,17 @@ class OllamaTools(Ollama):
                 model_response.content = content_delta
 
         if response_delta.get("done"):
-            model_response.response_usage = OllamaResponseUsage(
-                input_tokens=response_delta.get("prompt_eval_count", 0),
-                output_tokens=response_delta.get("eval_count", 0),
-                total_duration=response_delta.get("total_duration", 0),
-                load_duration=response_delta.get("load_duration", 0),
-                prompt_eval_duration=response_delta.get("prompt_eval_duration", 0),
-                eval_duration=response_delta.get("eval_duration", 0),
-            )
-            if model_response.response_usage.input_tokens or model_response.response_usage.output_tokens:
-                model_response.response_usage.total_tokens = (
-                    model_response.response_usage.input_tokens + model_response.response_usage.output_tokens
-                )
+            model_response.response_usage = {
+                "input_tokens": response_delta.get("prompt_eval_count", 0),
+                "output_tokens": response_delta.get("eval_count", 0),
+                "total_tokens": response_delta.get("prompt_eval_count", 0) + response_delta.get("eval_count", 0),
+                "additional_metrics": {
+                    "total_duration": response_delta.get("total_duration", 0),
+                    "load_duration": response_delta.get("load_duration", 0),
+                    "prompt_eval_duration": response_delta.get("prompt_eval_duration", 0),
+                    "eval_duration": response_delta.get("eval_duration", 0),
+                },
+            }
 
         return model_response
 
@@ -351,7 +350,7 @@ class OllamaTools(Ollama):
         return self.get_instructions_to_generate_tool_calls()
 
 
-def parse_tool_calls_from_content(response_content: str) -> List[Dict[str, Any]]:
+def _parse_tool_calls_from_content(response_content: str) -> List[Dict[str, Any]]:
     """
     Parse tool calls from response content.
 

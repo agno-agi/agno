@@ -69,7 +69,7 @@ class PythonTools(Toolkit):
                 file_path.parent.mkdir(parents=True, exist_ok=True)
             if file_path.exists() and not overwrite:
                 return f"File {file_name} already exists"
-            file_path.write_text(code)
+            file_path.write_text(code, encoding="utf-8")
             logger.info(f"Saved: {file_path}")
             logger.info(f"Running {file_path}")
             globals_after_run = runpy.run_path(str(file_path), init_globals=self.safe_globals, run_name="__main__")
@@ -122,7 +122,7 @@ class PythonTools(Toolkit):
         try:
             logger.info(f"Reading file: {file_name}")
             file_path = self.base_dir.joinpath(file_name)
-            contents = file_path.read_text()
+            contents = file_path.read_text(encoding="utf-8")
             return str(contents)
         except Exception as e:
             logger.error(f"Error reading file: {e}")

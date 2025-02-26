@@ -13,6 +13,12 @@ except ImportError:
     logger.error("`anthropic[bedrock]` not installed. Please install it via `pip install anthropic[bedrock]`.")
     raise
 
+try:
+    from boto3.session import Session
+except ImportError:
+    logger.error("`boto3` not installed. Please install it via `pip install boto3`.")
+    raise
+
 
 @dataclass
 class Claude(AnthropicClaude):
@@ -23,6 +29,7 @@ class Claude(AnthropicClaude):
         aws_region (Optional[str]): The AWS region to use.
         aws_access_key (Optional[str]): The AWS access key to use.
         aws_secret_key (Optional[str]): The AWS secret key to use.
+        session (Optional[Session]): A boto3 Session object to use for authentication.
     """
 
     id: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
@@ -32,6 +39,7 @@ class Claude(AnthropicClaude):
     aws_access_key: Optional[str] = None
     aws_secret_key: Optional[str] = None
     aws_region: Optional[str] = None
+    session: Optional[Session] = None
 
     # -*- Request parameters
     max_tokens: int = 4096
@@ -61,15 +69,26 @@ class Claude(AnthropicClaude):
         if self.client is not None:
             return self.client
 
-        self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY")
-        self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_KEY")
-        self.aws_region = self.aws_region or getenv("AWS_REGION")
+        client_params = {}
 
-        client_params = {
-            "aws_secret_key": self.aws_secret_key,
-            "aws_access_key": self.aws_access_key,
-            "aws_region": self.aws_region,
-        }
+        if self.session:
+            credentials = self.session.get_credentials()
+            client_params = {
+                "aws_access_key": credentials.access_key,
+                "aws_secret_key": credentials.secret_key,
+                "aws_region": self.session.region_name,
+            }
+        else:
+            self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY")
+            self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_KEY")
+            self.aws_region = self.aws_region or getenv("AWS_REGION")
+
+            client_params = {
+                "aws_secret_key": self.aws_secret_key,
+                "aws_access_key": self.aws_access_key,
+                "aws_region": self.aws_region,
+            }
+
         if self.client_params:
             client_params.update(self.client_params)
 
@@ -82,11 +101,22 @@ class Claude(AnthropicClaude):
         if self.async_client is not None:
             return self.async_client
 
-        client_params = {
-            "aws_secret_key": self.aws_secret_key,
-            "aws_access_key": self.aws_access_key,
-            "aws_region": self.aws_region,
-        }
+        client_params = {}
+
+        if self.session:
+            credentials = self.session.get_credentials()
+            client_params = {
+                "aws_access_key": credentials.access_key,
+                "aws_secret_key": credentials.secret_key,
+                "aws_region": self.session.region_name,
+            }
+        else:
+            client_params = {
+                "aws_secret_key": self.aws_secret_key,
+                "aws_access_key": self.aws_access_key,
+                "aws_region": self.aws_region,
+            }
+
         if self.client_params:
             client_params.update(self.client_params)
 

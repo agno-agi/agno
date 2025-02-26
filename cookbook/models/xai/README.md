@@ -42,3 +42,21 @@ python cookbook/models/xai/basic.py
 ```shell
 python cookbook/models/xai/tool_use.py
 ```
+
+### 6. Run Agent with Image URL Input
+
+```shell
+python cookbook/models/xai/image_agent.py
+```
+
+### 7. Run Agent with Image Input
+
+```shell
+python cookbook/models/xai/image_agent_bytes.py
+```
+
+### 8. Run Agent with Image Input and Memory
+
+```shell
+python cookbook/models/xai/image_agent_with_memory.py
+``

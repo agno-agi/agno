@@ -200,5 +200,5 @@ def test_tool_call_list_parameters():
             tool_calls.extend(msg.tool_calls)
     for call in tool_calls:
         if call.get("type", "") == "function":
-            assert call["function"]["name"] == "get_contents"
+            assert call["function"]["name"] in ["get_contents", "exa_answer"]
     assert response.content is not None

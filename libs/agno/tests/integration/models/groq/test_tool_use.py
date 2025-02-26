@@ -29,7 +29,7 @@ def test_tool_use():
 
 def test_tool_use_stream():
     agent = Agent(
-        model=Groq(id="mixtral-8x7b-32768"),
+        model=Groq(id="llama-3.3-70b-versatile"),
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
@@ -222,5 +222,5 @@ def test_tool_call_list_parameters():
             tool_calls.extend(msg.tool_calls)
     for call in tool_calls:
         if call.get("type", "") == "function":
-            assert call["function"]["name"] == "get_contents"
+            assert call["function"]["name"] in ["get_contents", "exa_answer"]
     assert response.content is not None

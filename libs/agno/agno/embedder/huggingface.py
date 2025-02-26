@@ -31,7 +31,8 @@ class HuggingfaceCustomEmbedder(Embedder):
             _client_params["api_key"] = self.api_key
         if self.client_params:
             _client_params.update(self.client_params)
-        return InferenceClient(**_client_params)
+        self.huggingface_client = InferenceClient(**_client_params)
+        return self.huggingface_client
 
     def _response(self, text: str):
         return self.client.post(json={"inputs": text}, model=self.id)

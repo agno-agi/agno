@@ -1,8 +1,6 @@
-import re
 from typing import List, Optional, Tuple
 
 import streamlit as st
-from agents import get_tic_tac_toe_referee
 
 # Define constants for players
 X_PLAYER = "X"
@@ -124,66 +122,6 @@ class TicTacToeBoard:
         return False, "Game in progress"
 
 
-def play_tic_tac_toe(debug_mode: bool = True) -> None:
-    """
-    Start and manage a game of Tic Tac Toe between two AI agents.
-
-    Args:
-        debug_mode (bool): Whether to show debug information during the game
-    """
-    # Initialize the game
-    referee_agent = get_tic_tac_toe_referee(debug_mode=debug_mode)
-    game_board = TicTacToeBoard()
-
-    print("Starting a new game of Tic Tac Toe!")
-    print(game_board.get_board_state())
-
-    # Game loop
-    while True:
-        # Get current player
-        current_player = "X" if game_board.current_player == "X" else "O"
-        agent = (
-            referee_agent.team[0] if current_player == "X" else referee_agent.team[1]
-        )
-
-        # Get agent's move
-        print(f"\n{current_player}'s turn ({agent.name}):")
-        valid_moves = game_board.get_valid_moves()
-
-        response = agent.run(
-            f"""Current board state:\n{game_board.get_board_state()}\n
-            Available valid moves (row, col): {valid_moves}\n
-            Choose your next move from the valid moves list above.
-            Respond with ONLY two numbers for row and column, e.g. "1 2".""",
-            stream=False,
-        )
-
-        # Parse move from response content
-        try:
-            numbers = re.findall(r"\d+", response.content if response else "")
-            row, col = map(int, numbers[:2])
-            success, message = game_board.make_move(row, col)
-            print(message)
-
-            if not success:
-                print("Invalid move! Try again.")
-                continue
-
-        except (ValueError, IndexError):
-            print("Invalid move format! Try again.")
-            continue
-
-        # Check for game end
-        winner = game_board.check_winner()
-        if winner:
-            print(f"\nGame Over! {winner} wins!")
-            break
-
-        if game_board.is_board_full():
-            print("\nGame Over! It's a draw!")
-            break
-
-
 def display_board(board: TicTacToeBoard):
     """Display the Tic Tac Toe board using Streamlit"""
     board_html = '<div class="game-board">'
@@ -202,17 +140,6 @@ def show_agent_status(agent_name: str, status: str):
     st.markdown(
         f"""<div class="agent-status">
             🤖 <b>{agent_name}</b>: {status}
-        </div>""",
-        unsafe_allow_html=True,
-    )
-
-
-def show_thinking_indicator(agent_name: str):
-    """Show a thinking indicator for the current agent"""
-    st.markdown(
-        f"""<div class="agent-thinking">
-            <div style="margin-right: 10px;">🔄</div>
-            <div>{agent_name} is thinking...</div>
         </div>""",
         unsafe_allow_html=True,
     )
@@ -363,7 +290,6 @@ CUSTOM_CSS = """
 }
 .agent-thinking {
     display: flex;
-    align-items: center;
     justify-content: center;
     background-color: #2b2b2b;
     padding: 10px;
@@ -378,16 +304,13 @@ CUSTOM_CSS = """
     border-radius: 10px;
     margin: 10px 0;
 }
-
 .thinking-container {
     position: fixed;
     bottom: 20px;
     left: 50%;
-    transform: translateX(-50%);
     z-index: 1000;
     min-width: 300px;
 }
-
 .agent-thinking {
     background-color: rgba(43, 43, 43, 0.95);
     border: 1px solid #4CAF50;

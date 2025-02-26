@@ -62,7 +62,6 @@ class Ollama(Model):
         base_params = {
             "host": self.host,
             "timeout": self.timeout,
-            "client_params": self.client_params,
         }
         # Create client_params dict with non-None values
         client_params = {k: v for k, v in base_params.items() if v is not None}
@@ -312,18 +311,17 @@ class Ollama(Model):
 
         # Get response usage
         if response.get("done"):
-            model_response.response_usage = OllamaResponseUsage(
-                input_tokens=response.get("prompt_eval_count", 0),
-                output_tokens=response.get("eval_count", 0),
-                total_duration=response.get("total_duration", 0),
-                load_duration=response.get("load_duration", 0),
-                prompt_eval_duration=response.get("prompt_eval_duration", 0),
-                eval_duration=response.get("eval_duration", 0),
-            )
-            if model_response.response_usage.input_tokens or model_response.response_usage.output_tokens:
-                model_response.response_usage.total_tokens = (
-                    model_response.response_usage.input_tokens + model_response.response_usage.output_tokens
-                )
+            model_response.response_usage = {
+                "input_tokens": response.get("prompt_eval_count", 0),
+                "output_tokens": response.get("eval_count", 0),
+                "total_tokens": response.get("prompt_eval_count", 0) + response.get("eval_count", 0),
+                "additional_metrics": {
+                    "total_duration": response.get("total_duration", 0),
+                    "load_duration": response.get("load_duration", 0),
+                    "prompt_eval_duration": response.get("prompt_eval_duration", 0),
+                    "eval_duration": response.get("eval_duration", 0),
+                },
+            }
 
         return model_response
 
@@ -359,17 +357,16 @@ class Ollama(Model):
                     model_response.tool_calls.append({"type": "function", "function": function_def})
 
         if response_delta.get("done"):
-            model_response.response_usage = OllamaResponseUsage(
-                input_tokens=response_delta.get("prompt_eval_count", 0),
-                output_tokens=response_delta.get("eval_count", 0),
-                total_duration=response_delta.get("total_duration", 0),
-                load_duration=response_delta.get("load_duration", 0),
-                prompt_eval_duration=response_delta.get("prompt_eval_duration", 0),
-                eval_duration=response_delta.get("eval_duration", 0),
-            )
-            if model_response.response_usage.input_tokens or model_response.response_usage.output_tokens:
-                model_response.response_usage.total_tokens = (
-                    model_response.response_usage.input_tokens + model_response.response_usage.output_tokens
-                )
+            model_response.response_usage = {
+                "input_tokens": response_delta.get("prompt_eval_count", 0),
+                "output_tokens": response_delta.get("eval_count", 0),
+                "total_tokens": response_delta.get("prompt_eval_count", 0) + response_delta.get("eval_count", 0),
+                "additional_metrics": {
+                    "total_duration": response_delta.get("total_duration", 0),
+                    "load_duration": response_delta.get("load_duration", 0),
+                    "prompt_eval_duration": response_delta.get("prompt_eval_duration", 0),
+                    "eval_duration": response_delta.get("eval_duration", 0),
+                },
+            }
 
         return model_response

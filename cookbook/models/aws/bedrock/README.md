@@ -19,6 +19,17 @@ export AWS_SECRET_ACCESS_KEY=***
 export AWS_REGION=***
 ```
 
+Alternatively, you can use an AWS profile:
+
+```python
+import boto3
+session = boto3.Session(profile_name='MY-PROFILE')
+agent = Agent(
+    model=AwsBedrock(id="mistral.mistral-small-2402-v1:0", session=session),
+    markdown=True
+)
+```
+
 ### 3. Install libraries
 
 ```shell

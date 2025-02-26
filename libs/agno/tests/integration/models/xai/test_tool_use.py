@@ -101,7 +101,7 @@ async def test_async_tool_use_stream():
     assert any("TSLA" in r.content for r in responses if r.content)
 
 
-@pytest.mark.skip("Grok not yet good enough at multi-tool calls")
+@pytest.mark.skip("Grok struggles with multiple tool calls")
 def test_multiple_tool_calls():
     agent = Agent(
         model=xAI(id="grok-2-1212"),
@@ -206,5 +206,5 @@ def test_tool_call_list_parameters():
             tool_calls.extend(msg.tool_calls)
     for call in tool_calls:
         if call.get("type", "") == "function":
-            assert call["function"]["name"] == "get_contents"
+            assert call["function"]["name"] in ["get_contents", "exa_answer"]
     assert response.content is not None

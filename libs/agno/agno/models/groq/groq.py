@@ -9,7 +9,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
-from agno.utils.openai import add_images_to_message
+from agno.utils.openai import images_to_message
 
 try:
     from groq import APIError, APIResponseValidationError, APIStatusError
@@ -206,6 +206,15 @@ class Groq(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
+        message_dict: Dict[str, Any] = {
+            "role": message.role,
+            "content": message.content,
+            "name": message.name,
+            "tool_call_id": message.tool_call_id,
+            "tool_calls": message.tool_calls,
+        }
+        message_dict = {k: v for k, v in message_dict.items() if v is not None}
+
         if (
             message.role == "system"
             and isinstance(message.content, str)
@@ -215,11 +224,20 @@ class Groq(Model):
             # This is required by Groq to ensure the model outputs in the correct format
             message.content += "\n\nYour output should be in JSON format."
 
-        if message.role == "user":
-            if message.images is not None:
-                message = add_images_to_message(message=message, images=message.images)
+        if message.images is not None and len(message.images) > 0:
+            # Ignore non-string message content
+            # because we assume that the images/audio are already added to the message
+            if isinstance(message.content, str):
+                message_dict["content"] = [{"type": "text", "text": message.content}]
+                message_dict["content"].extend(images_to_message(images=message.images))
 
-        return message.serialize_for_model()
+        if message.audio is not None:
+            logger.warning("Audio input is currently unsupported.")
+
+        if message.videos is not None:
+            logger.warning("Video input is currently unsupported.")
+
+        return message_dict
 
     def invoke(self, messages: List[Message]) -> ChatCompletion:
         """
@@ -411,8 +429,17 @@ class Groq(Model):
 
         # Add usage metrics if present
         if response.usage is not None:
-            model_response.response_usage = response.usage
-
+            model_response.response_usage = {
+                "input_tokens": response.usage.prompt_tokens,
+                "output_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+                "additional_metrics": {
+                    "completion_time": response.usage.completion_time,
+                    "prompt_time": response.usage.prompt_time,
+                    "queue_time": response.usage.queue_time,
+                    "total_time": response.usage.total_time,
+                },
+            }
         return model_response
 
     def parse_provider_response_delta(self, response: ChatCompletionChunk) -> ModelResponse:
@@ -440,6 +467,16 @@ class Groq(Model):
 
         # Add usage metrics if present
         if response.x_groq is not None and response.x_groq.usage is not None:
-            model_response.response_usage = response.x_groq.usage
+            model_response.response_usage = {
+                "input_tokens": response.x_groq.usage.prompt_tokens,
+                "output_tokens": response.x_groq.usage.completion_tokens,
+                "total_tokens": response.x_groq.usage.total_tokens,
+                "additional_metrics": {
+                    "completion_time": response.x_groq.usage.completion_time,
+                    "prompt_time": response.x_groq.usage.prompt_time,
+                    "queue_time": response.x_groq.usage.queue_time,
+                    "total_time": response.x_groq.usage.total_time,
+                },
+            }
 
         return model_response
