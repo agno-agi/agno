@@ -75,18 +75,18 @@ def main():
 
                 with st.spinner("🔄 Analyzing image... Please wait."):
                     try:
-                        # Read the image file as binary and prepare a payload
+                        # Read the image file as binary
                         with open(image_path, "rb") as f:
                             image_bytes = f.read()
-                        # Create a mapping with the image data and its MIME type
-                        image_payload = {"content": image_bytes, "mime_type": "image/png"}
+                        # creating an instance of Image
+                        agno_image = AgnoImage(content=image_bytes, format="png")
                         
                         prompt = (
                             f"Analyze this medical image considering the following context: {additional_info}"
                             if additional_info
                             else "Analyze this medical image and provide detailed findings."
                         )
-                        response = agent.run(prompt, images=[image_payload])
+                        response = agent.run(prompt, images=[agno_image])
                         st.markdown("### 📋 Analysis Results")
                         st.markdown("---")
                         if hasattr(response, "content"):
