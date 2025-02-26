@@ -101,6 +101,25 @@ async def test_async_tool_use_stream():
     assert any("TSLA" in r.content for r in responses if r.content)
 
 
+def test_tool_use_with_content():
+    agent = Agent(
+        model=Claude(id="claude-3-5-haiku-20241022"),
+        tools=[YFinanceTools()],
+        show_tool_calls=True,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run("What is the current price of TSLA? What does the ticker stand for?")
+
+    # Verify tool usage
+    assert any(msg.tool_calls for msg in response.messages)
+    assert response.content is not None
+    assert "TSLA" in response.content
+    assert "Tesla" in response.content
+
+
 def test_parallel_tool_calls():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
@@ -222,5 +241,5 @@ def test_tool_call_list_parameters():
             tool_calls.extend(msg.tool_calls)
     for call in tool_calls:
         if call.get("type", "") == "function":
-            assert call["function"]["name"] in ["get_contents", "exa_answer"]
+            assert call["function"]["name"] in ["get_contents", "exa_answer", "search_exa"]
     assert response.content is not None

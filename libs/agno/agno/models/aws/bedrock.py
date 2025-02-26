@@ -19,13 +19,6 @@ except ImportError:
 
 
 @dataclass
-class AwsBedrockResponseUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-
-
-@dataclass
 class AwsBedrock(Model):
     """
     AWS Bedrock model.
@@ -346,11 +339,11 @@ class AwsBedrock(Model):
             model_response.content = content
 
         if "usage" in response:
-            model_response.response_usage = AwsBedrockResponseUsage(
-                input_tokens=response["usage"]["inputTokens"],
-                output_tokens=response["usage"]["outputTokens"],
-                total_tokens=response["usage"]["totalTokens"],
-            )
+            model_response.response_usage = {
+                "input_tokens": response["usage"]["inputTokens"],
+                "output_tokens": response["usage"]["outputTokens"],
+                "total_tokens": response["usage"]["totalTokens"],
+            }
 
         return model_response
 
@@ -412,11 +405,11 @@ class AwsBedrock(Model):
                 body = response_delta.get("metadata") or response_delta.get("messageStop") or {}
                 if "usage" in body:
                     usage = body["usage"]
-                    model_response.response_usage = AwsBedrockResponseUsage(
-                        input_tokens=usage.get("inputTokens", 0),
-                        output_tokens=usage.get("outputTokens", 0),
-                        total_tokens=usage.get("totalTokens", 0),
-                    )
+                    model_response.response_usage = {
+                        "input_tokens": usage.get("inputTokens", 0),
+                        "output_tokens": usage.get("outputTokens", 0),
+                        "total_tokens": usage.get("totalTokens", 0),
+                    }
 
             # Update metrics
             if not assistant_message.metrics.time_to_first_token:
@@ -441,6 +434,8 @@ class AwsBedrock(Model):
                 yield model_response
 
         if tool_ids:
+            if stream_data.extra is None:
+                stream_data.extra = {}
             stream_data.extra["tool_ids"] = tool_ids
 
     def parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:  # type: ignore

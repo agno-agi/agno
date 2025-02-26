@@ -3,7 +3,7 @@ from dataclasses import asdict, dataclass
 from time import time
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field
 
 from agno.media import Audio, AudioResponse, Image, Video
 from agno.utils.log import logger
@@ -145,9 +145,14 @@ class Message(BaseModel):
     # Output from the models
     audio_output: Optional[AudioResponse] = None
 
-    # --- Data not sent to the Model API ---
     # The thinking content from the model
     thinking: Optional[str] = None
+    redacted_thinking: Optional[str] = None
+
+    # Data from the provider we might need on subsequent messages
+    provider_data: Optional[Dict[str, Any]] = None
+
+    # --- Data not sent to the Model API ---
     # The reasoning content from the model
     reasoning_content: Optional[str] = None
     # The name of the tool called
@@ -182,30 +187,6 @@ class Message(BaseModel):
                 return json.dumps(self.content)
         return ""
 
-    def serialize_for_model(self) -> Dict[str, Any]:
-        _dict: Dict[str, Any] = {
-            "role": self.role,
-            "content": self.content,
-            "name": self.name,
-            "tool_call_id": self.tool_call_id,
-            "tool_calls": self.tool_calls,
-            "audio": self.audio,
-        }
-
-        # Remove None values
-        _dict = {k: v for k, v in _dict.items() if v is not None}
-
-        # Add the message's output as then input (for multi-turn audio)
-        if self.audio_output is not None:
-            _dict["content"] = None
-            _dict["audio"] = {"id": self.audio_output.id}
-
-        # Manually add the content field even if it is None
-        if self.content is None:
-            _dict["content"] = None
-
-        return _dict
-
     def to_dict(self) -> Dict[str, Any]:
         """Returns the message as a dictionary."""
         message_dict = {
@@ -220,6 +201,8 @@ class Message(BaseModel):
             "tool_args": self.tool_args,
             "tool_call_error": self.tool_call_error,
             "tool_calls": self.tool_calls,
+            "thinking": self.thinking,
+            "redacted_thinking": self.redacted_thinking,
         }
         # Filter out None and empty collections
         message_dict = {
@@ -256,10 +239,6 @@ class Message(BaseModel):
             "metrics": self.metrics,
             "created_at": self.created_at,
         }
-
-    @model_serializer
-    def serialize_model(self):
-        return self.serialize_for_model()
 
     def log(self, metrics: bool = True, level: Optional[str] = None):
         """Log the message to the console

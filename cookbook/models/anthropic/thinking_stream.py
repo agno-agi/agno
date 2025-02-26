@@ -11,4 +11,4 @@ agent = Agent(
 )
 
 # Print the response in the terminal
-agent.print_response("Share a very scary 2 sentence horror story")
+agent.print_response("Share a very scary 2 sentence horror story", stream=True)

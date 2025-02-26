@@ -16,6 +16,11 @@ def _assert_metrics(response: RunResponse):
     assert sum(total_tokens) > 0
     assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
 
+    assert response.metrics.get("additional_metrics")[0].get("completion_time") is not None
+    assert response.metrics.get("additional_metrics")[0].get("prompt_time") is not None
+    assert response.metrics.get("additional_metrics")[0].get("queue_time") is not None
+    assert response.metrics.get("additional_metrics")[0].get("total_time") is not None
+
 
 def test_basic():
     agent = Agent(model=Groq(id="mixtral-8x7b-32768"), markdown=True, telemetry=False, monitoring=False)
