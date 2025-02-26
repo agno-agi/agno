@@ -26,7 +26,7 @@ agent = Agent(
     model=OpenAIChat(
         id="gpt-4o-audio-preview",
         modalities=["text", "audio"],
-        audio={"voice": "alloy", "format": "wav"},
+        audio={"voice": "sage", "format": "wav"},
     ),
     description=dedent("""\
         You are an expert in audio processing and voice interaction, capable of understanding

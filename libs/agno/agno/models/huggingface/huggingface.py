@@ -28,12 +28,6 @@ except (ModuleNotFoundError, ImportError):
 
 
 @dataclass
-class StreamData:
-    response_content: str = ""
-    response_tool_calls: Optional[List[ChatCompletionStreamOutputDeltaToolCall]] = None
-
-
-@dataclass
 class HuggingFace(Model):
     """
     A class for interacting with HuggingFace Hub Inference models.
@@ -223,6 +217,33 @@ class HuggingFace(Model):
         cleaned_dict = {k: v for k, v in _dict.items() if v is not None}
         return cleaned_dict
 
+    def _format_message(self, message: Message) -> Dict[str, Any]:
+        """
+        Format a message into the format expected by OpenAI.
+
+        Args:
+            message (Message): The message to format.
+
+        Returns:
+            Dict[str, Any]: The formatted message.
+        """
+        message_dict = {
+            "role": message.role,
+            "content": message.content,
+            "name": message.name,
+            "tool_call_id": message.tool_call_id,
+            "tool_calls": message.tool_calls,
+        }
+        message_dict = {k: v for k, v in message_dict.items() if v is not None}
+
+        if message.tool_calls is not None and len(message.tool_calls) == 0:
+            message_dict["tool_calls"] = None
+
+        if message.content is None:
+            message_dict["content"] = None
+
+        return message_dict
+
     def invoke(self, messages: List[Message]) -> Union[ChatCompletionOutput]:
         """
         Send a chat completion request to the HuggingFace Hub.
@@ -236,12 +257,15 @@ class HuggingFace(Model):
         try:
             return self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[m.serialize_for_model() for m in messages],
+                messages=[self._format_message(m) for m in messages],
                 **self.request_kwargs,
             )
         except InferenceTimeoutError as e:
             logger.error(f"Error invoking HuggingFace model: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        except Exception as e:
+            logger.error(f"Unexpected error invoking HuggingFace model: {e}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletionOutput]:
         """
@@ -257,12 +281,15 @@ class HuggingFace(Model):
             async with self.get_async_client() as client:
                 return await client.chat.completions.create(
                     model=self.id,
-                    messages=[m.serialize_for_model() for m in messages],
+                    messages=[self._format_message(m) for m in messages],
                     **self.request_kwargs,
                 )
         except InferenceTimeoutError as e:
             logger.error(f"Error invoking HuggingFace model: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        except Exception as e:
+            logger.error(f"Unexpected error invoking HuggingFace model: {e}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionStreamOutput]:
         """
@@ -277,14 +304,17 @@ class HuggingFace(Model):
         try:
             yield from self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[m.serialize_for_model() for m in messages],  # type: ignore
+                messages=[self._format_message(m) for m in messages],
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.request_kwargs,
             )  # type: ignore
         except InferenceTimeoutError as e:
             logger.error(f"Error invoking HuggingFace model: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        except Exception as e:
+            logger.error(f"Unexpected error invoking HuggingFace model: {e}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """
@@ -300,7 +330,7 @@ class HuggingFace(Model):
             async with self.get_async_client() as client:
                 stream = await client.chat.completions.create(
                     model=self.id,
-                    messages=[m.serialize_for_model() for m in messages],
+                    messages=[self._format_message(m) for m in messages],
                     stream=True,
                     stream_options={"include_usage": True},
                     **self.request_kwargs,
@@ -309,7 +339,10 @@ class HuggingFace(Model):
                     yield chunk
         except InferenceTimeoutError as e:
             logger.error(f"Error invoking HuggingFace model: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        except Exception as e:
+            logger.error(f"Unexpected error invoking HuggingFace model: {e}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
     @staticmethod

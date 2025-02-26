@@ -103,7 +103,6 @@ class ChromaDb(VectorDb):
                 return True
         except Exception as e:
             logger.error(f"Document does not exist: {e}")
-
         return False
 
     def name_exists(self, name: str) -> bool:

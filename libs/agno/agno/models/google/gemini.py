@@ -21,11 +21,14 @@ try:
     from google.genai.errors import ClientError, ServerError
     from google.genai.types import (
         Content,
+        DynamicRetrievalConfig,
         File,
         FunctionDeclaration,
         GenerateContentConfig,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
+        GoogleSearch,
+        GoogleSearchRetrieval,
         Part,
         Schema,
         Tool,
@@ -145,13 +148,6 @@ def _format_function_definitions(tools_list):
 
 
 @dataclass
-class GeminiResponseUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-
-
-@dataclass
 class Gemini(Model):
     """
     Gemini model class for Google's Generative AI models.
@@ -178,6 +174,9 @@ class Gemini(Model):
     generation_config: Optional[Any] = None
     safety_settings: Optional[List[Any]] = None
     generative_model_kwargs: Optional[Dict[str, Any]] = None
+    search: bool = False
+    grounding: bool = False
+    grounding_dynamic_threshold: Optional[float] = None
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -279,7 +278,27 @@ class Gemini(Model):
             config["response_mime_type"] = "application/json"  # type: ignore
             config["response_schema"] = self.response_format
 
-        if self._tools:
+        if self.grounding and self.search:
+            logger.info("Both grounding and search are enabled. Grounding will take precedence.")
+            self.search = False
+
+        if self.grounding:
+            logger.info("Grounding enabled. External tools will be disabled.")
+            config["tools"] = [
+                Tool(
+                    google_search=GoogleSearchRetrieval(
+                        dynamic_retrieval_config=DynamicRetrievalConfig(
+                            dynamic_threshold=self.grounding_dynamic_threshold
+                        )
+                    )
+                ),
+            ]
+
+        elif self.search:
+            logger.info("Search enabled. External tools will be disabled.")
+            config["tools"] = [Tool(google_search=GoogleSearch())]
+
+        elif self._tools:
             config["tools"] = [_format_function_definitions(self._tools)]
 
         config = {k: v for k, v in config.items() if v is not None}
@@ -303,7 +322,6 @@ class Gemini(Model):
             GenerateContentResponse: The response from the model.
         """
         formatted_messages, system_message = self._format_messages(messages)
-
         request_kwargs = self._get_request_kwargs(system_message)
         try:
             return self.get_client().models.generate_content(
@@ -313,10 +331,12 @@ class Gemini(Model):
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]):
         """
@@ -340,10 +360,12 @@ class Gemini(Model):
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]):
         """
@@ -361,10 +383,12 @@ class Gemini(Model):
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]):
         """
@@ -384,10 +408,12 @@ class Gemini(Model):
                 yield chunk
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message]):
         """
@@ -655,11 +681,11 @@ class Gemini(Model):
         # Extract usage metadata if present
         if hasattr(response, "usage_metadata") and response.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response.usage_metadata
-            model_response.response_usage = GeminiResponseUsage(
-                input_tokens=usage.prompt_token_count or 0,
-                output_tokens=usage.candidates_token_count or 0,
-                total_tokens=usage.total_token_count or 0,
-            )
+            model_response.response_usage = {
+                "input_tokens": usage.prompt_token_count or 0,
+                "output_tokens": usage.candidates_token_count or 0,
+                "total_tokens": usage.total_token_count or 0,
+            }
 
         return model_response
 
@@ -691,10 +717,10 @@ class Gemini(Model):
         # Extract usage metadata if present
         if hasattr(response_delta, "usage_metadata") and response_delta.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response_delta.usage_metadata
-            model_response.response_usage = GeminiResponseUsage(
-                input_tokens=usage.prompt_token_count or 0,
-                output_tokens=usage.candidates_token_count or 0,
-                total_tokens=usage.total_token_count or 0,
-            )
+            model_response.response_usage = {
+                "input_tokens": usage.prompt_token_count or 0,
+                "output_tokens": usage.candidates_token_count or 0,
+                "total_tokens": usage.total_token_count or 0,
+            }
 
         return model_response

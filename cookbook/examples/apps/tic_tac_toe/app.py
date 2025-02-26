@@ -1,8 +1,6 @@
-from textwrap import dedent
-
 import nest_asyncio
 import streamlit as st
-from agents import get_tic_tac_toe_referee
+from agents import get_tic_tac_toe_players
 from agno.utils.log import logger
 from utils import (
     CUSTOM_CSS,
@@ -16,7 +14,7 @@ nest_asyncio.apply()
 
 # Page configuration
 st.set_page_config(
-    page_title="Tic Tac Toe AI Battle",
+    page_title="Agent Tic Tac Toe",
     page_icon="🎮",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -30,9 +28,8 @@ def main():
     ####################################################################
     # App header
     ####################################################################
-    st.markdown("<h1 class='main-title'>Agent Tic Tac Toe</h1>", unsafe_allow_html=True)
     st.markdown(
-        "<p class='subtitle'>Watch AI agents battle it out in Tic Tac Toe!</p>",
+        "<h1 class='main-title'>Watch Agents play Tic Tac Toe</h1>",
         unsafe_allow_html=True,
     )
 
@@ -49,7 +46,9 @@ def main():
         model_options = {
             "gpt-4o": "openai:gpt-4o",
             "o3-mini": "openai:o3-mini",
-            "claude": "anthropic:claude-3-5-sonnet-20241022",
+            "claude-3.5": "anthropic:claude-3-5-sonnet",
+            "claude-3.7": "anthropic:claude-3-7-sonnet",
+            "claude-3.7-thinking": "anthropic:claude-3-7-sonnet-thinking",
             "gemini-flash": "google:gemini-2.0-flash",
             "gemini-pro": "google:gemini-2.0-pro-exp-02-05",
             "llama-3.3": "groq:llama-3.3-70b-versatile",
@@ -57,21 +56,18 @@ def main():
         ################################################################
         # Model selection
         ################################################################
-        col1, col2 = st.columns(2)
-        with col1:
-            selected_p_x = st.selectbox(
-                "Select Player X",
-                list(model_options.keys()),
-                index=list(model_options.keys()).index("gpt-4o"),
-                key="model_p1",
-            )
-        with col2:
-            selected_p_o = st.selectbox(
-                "Select Player O",
-                list(model_options.keys()),
-                index=list(model_options.keys()).index("claude"),
-                key="model_p2",
-            )
+        selected_p_x = st.selectbox(
+            "Select Player X",
+            list(model_options.keys()),
+            index=list(model_options.keys()).index("claude-3.7-thinking"),
+            key="model_p1",
+        )
+        selected_p_o = st.selectbox(
+            "Select Player O",
+            list(model_options.keys()),
+            index=list(model_options.keys()).index("o3-mini"),
+            key="model_p2",
+        )
 
         ################################################################
         # Game controls
@@ -80,10 +76,12 @@ def main():
         with col1:
             if not st.session_state.game_started:
                 if st.button("▶️ Start Game"):
-                    st.session_state.referee_agent = get_tic_tac_toe_referee(
-                        model_x=model_options[selected_p_x],
-                        model_o=model_options[selected_p_o],
-                        debug_mode=True,
+                    st.session_state.player_x, st.session_state.player_o = (
+                        get_tic_tac_toe_players(
+                            model_x=model_options[selected_p_x],
+                            model_o=model_options[selected_p_o],
+                            debug_mode=True,
+                        )
                     )
                     st.session_state.game_board = TicTacToeBoard()
                     st.session_state.game_started = True
@@ -101,10 +99,12 @@ def main():
         with col2:
             if st.session_state.game_started:
                 if st.button("🔄 New Game"):
-                    st.session_state.referee_agent = get_tic_tac_toe_referee(
-                        model_x=model_options[selected_p_x],
-                        model_o=model_options[selected_p_o],
-                        debug_mode=True,
+                    st.session_state.player_x, st.session_state.player_o = (
+                        get_tic_tac_toe_players(
+                            model_x=model_options[selected_p_x],
+                            model_o=model_options[selected_p_o],
+                            debug_mode=True,
+                        )
                     )
                     st.session_state.game_board = TicTacToeBoard()
                     st.session_state.game_paused = False
@@ -166,12 +166,17 @@ def main():
 
             valid_moves = st.session_state.game_board.get_valid_moves()
 
-            response = st.session_state.referee_agent.team[0].run(
-                dedent(f"""\
-                Current board state:\n{st.session_state.game_board.get_board_state()}\n
-                Available valid moves (row, col): {valid_moves}\n
-                Choose your next move from the valid moves list above.
-                Respond with ONLY two numbers for row and column, e.g. "1 2"."""),
+            current_agent = (
+                st.session_state.player_x
+                if current_player == "X"
+                else st.session_state.player_o
+            )
+            response = current_agent.run(
+                f"""\
+Current board state:\n{st.session_state.game_board.get_board_state()}\n
+Available valid moves (row, col): {valid_moves}\n
+Choose your next move from the valid moves above.
+Respond with ONLY two numbers for row and column, e.g. "1 2".""",
                 stream=False,
             )
 
@@ -211,14 +216,14 @@ def main():
                     st.rerun()
                 else:
                     logger.error(f"Invalid move attempt: {message}")
-                    response = st.session_state.referee_agent.team[0].run(
-                        dedent(f"""\
-                        Invalid move: {message}
+                    response = current_agent.run(
+                        f"""\
+Invalid move: {message}
 
-                        Current board state:\n{st.session_state.game_board.get_board_state()}\n
-                        Available valid moves (row, col): {valid_moves}\n
-                        Please choose a valid move from the list above.
-                        Respond with ONLY two numbers for row and column, e.g. "1 2"."""),
+Current board state:\n{st.session_state.game_board.get_board_state()}\n
+Available valid moves (row, col): {valid_moves}\n
+Please choose a valid move from the list above.
+Respond with ONLY two numbers for row and column, e.g. "1 2".""",
                         stream=False,
                     )
                     st.rerun()
@@ -233,18 +238,16 @@ def main():
     ####################################################################
     # About section
     ####################################################################
-    st.sidebar.markdown("### About")
     st.sidebar.markdown(f"""
-    ### 🎮 Tic Tac Toe Battle
-    Watch two models compete in real-time!
+    ### 🎮 Agent Tic Tac Toe Battle
+    Watch two agents compete in real-time!
 
     **Current Players:**
     * 🔵 Player X: `{selected_p_x}`
     * 🔴 Player O: `{selected_p_o}`
-    * 🎯 Referee: `{model_options[selected_p_x]}`
 
     **How it Works:**
-    Each AI agent analyzes the board and employs strategic thinking to:
+    Each Agent analyzes the board and employs strategic thinking to:
     * 🏆 Find winning moves
     * 🛡️ Block opponent victories
     * ⭐ Control strategic positions
