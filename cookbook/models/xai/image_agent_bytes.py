@@ -1,3 +1,4 @@
+from os import getenv
 from pathlib import Path
 
 from agno.agent import Agent
@@ -7,6 +8,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
     model=xAI(id="grok-2-vision-latest"),
+    api_key=getenv("XAI_API_KEY"),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )
