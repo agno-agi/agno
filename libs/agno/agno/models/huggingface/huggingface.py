@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
 from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Union
+import json
 
 import httpx
 from pydantic import BaseModel
@@ -223,9 +224,10 @@ class HuggingFace(Model):
         cleaned_dict = {k: v for k, v in _dict.items() if v is not None}
         return cleaned_dict
 
+
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """
-        Format a message into the format expected by OpenAI.
+        Format a message into the format expected by HuggingFace.
 
         Args:
             message (Message): The message to format.
@@ -233,20 +235,21 @@ class HuggingFace(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
+        # print(message)
         message_dict = {
             "role": message.role,
-            "content": message.content,
-            "name": message.name,
-            "tool_call_id": message.tool_call_id,
+            "content": message.content if message.content is not None else "",
+            "name": message.name or message.tool_name,
+            # "tool_call_id": message.tool_call_id,
             "tool_calls": message.tool_calls,
         }
+
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-        if message.tool_calls is not None and len(message.tool_calls) == 0:
-            message_dict["tool_calls"] = None
+        # if message.tool_calls is None or len(message.tool_calls) == 0:
+        #     message_dict["tool_calls"] = None
 
-        if message.content is None:
-            message_dict["content"] = None
+        print(message_dict)
 
         return message_dict
 
@@ -405,6 +408,9 @@ class HuggingFace(Model):
 
         if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
             model_response.tool_calls = [asdict(t) for t in response_message.tool_calls]
+            for tool_call in model_response.tool_calls:
+                if isinstance(tool_call["function"]["arguments"], dict):
+                    tool_call["function"]["arguments"] = json.dumps(tool_call["function"]["arguments"])
 
         try:
             if (
@@ -437,5 +443,7 @@ class HuggingFace(Model):
                 model_response.content = response_delta_message.content
             if response_delta_message.tool_calls is not None and len(response_delta_message.tool_calls) > 0:
                 model_response.tool_calls = response_delta_message.tool_calls  # type: ignore
+        if response_delta.usage is not None:
+            model_response.response_usage = response_delta.usage
 
         return model_response
