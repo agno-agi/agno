@@ -145,9 +145,14 @@ class Message(BaseModel):
     # Output from the models
     audio_output: Optional[AudioResponse] = None
 
-    # --- Data not sent to the Model API ---
     # The thinking content from the model
     thinking: Optional[str] = None
+    redacted_thinking: Optional[str] = None
+
+    # Data from the provider we might need on subsequent messages
+    provider_data: Optional[Dict[str, Any]] = None
+
+    # --- Data not sent to the Model API ---
     # The reasoning content from the model
     reasoning_content: Optional[str] = None
     # The name of the tool called
@@ -196,6 +201,8 @@ class Message(BaseModel):
             "tool_args": self.tool_args,
             "tool_call_error": self.tool_call_error,
             "tool_calls": self.tool_calls,
+            "thinking": self.thinking,
+            "redacted_thinking": self.redacted_thinking,
         }
         # Filter out None and empty collections
         message_dict = {

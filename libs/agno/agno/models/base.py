@@ -21,10 +21,14 @@ class MessageData:
     response_role: Optional[Literal["system", "user", "assistant", "tool"]] = None
     response_content: Any = ""
     response_thinking: Any = ""
+    response_redacted_thinking: Any = ""
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     response_audio: Optional[AudioResponse] = None
 
-    extra: Dict[str, Any] = field(default_factory=dict)
+    # Data from the provider that we might need on subsequent messages
+    response_provider_data: Optional[Dict[str, Any]] = None
+
+    extra: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -313,6 +317,8 @@ class Model(ABC):
                 model_response.content += assistant_message.get_content_string()
         if assistant_message.thinking is not None:
             model_response.thinking = assistant_message.thinking
+        if assistant_message.redacted_thinking is not None:
+            model_response.redacted_thinking = assistant_message.redacted_thinking
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if provider_response.extra is not None:
@@ -363,6 +369,10 @@ class Model(ABC):
                 model_response.content = assistant_message.get_content_string()
             else:
                 model_response.content += assistant_message.get_content_string()
+        if assistant_message.thinking is not None:
+            model_response.thinking = assistant_message.thinking
+        if assistant_message.redacted_thinking is not None:
+            model_response.redacted_thinking = assistant_message.redacted_thinking
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if provider_response.extra is not None:
@@ -407,9 +417,17 @@ class Model(ABC):
         if provider_response.thinking is not None:
             assistant_message.thinking = provider_response.thinking
 
+        # Add redacted thinking content to assistant message
+        if provider_response.redacted_thinking is not None:
+            assistant_message.redacted_thinking = provider_response.redacted_thinking
+
         # Add reasoning content to assistant message
         if provider_response.reasoning_content is not None:
             assistant_message.reasoning_content = provider_response.reasoning_content
+
+        # Add provider data to assistant message
+        if provider_response.provider_data is not None:
+            assistant_message.provider_data = provider_response.provider_data
 
         # Add usage metrics if provided
         if provider_response.response_usage is not None:
@@ -461,6 +479,10 @@ class Model(ABC):
                 assistant_message.content = stream_data.response_content
             if stream_data.response_thinking:
                 assistant_message.thinking = stream_data.response_thinking
+            if stream_data.response_redacted_thinking:
+                assistant_message.redacted_thinking = stream_data.response_redacted_thinking
+            if stream_data.response_provider_data:
+                assistant_message.provider_data = stream_data.response_provider_data
             if stream_data.response_audio:
                 assistant_message.audio_output = stream_data.response_audio
             if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
@@ -487,9 +509,12 @@ class Model(ABC):
                     yield function_call_response
 
                 # Format and add results to messages
-                self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **stream_data.extra
-                )
+                if stream_data.extra is not None:
+                    self.format_function_call_results(
+                        messages=messages, function_call_results=function_call_results, **stream_data.extra
+                    )
+                else:
+                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
                 logger.debug(f"---------- {self.get_provider()} Response Stream ----------")
                 self._log_messages(messages)
@@ -548,6 +573,12 @@ class Model(ABC):
             # Populate assistant message from stream data
             if stream_data.response_content:
                 assistant_message.content = stream_data.response_content
+            if stream_data.response_thinking:
+                assistant_message.thinking = stream_data.response_thinking
+            if stream_data.response_redacted_thinking:
+                assistant_message.redacted_thinking = stream_data.response_redacted_thinking
+            if stream_data.response_provider_data:
+                assistant_message.provider_data = stream_data.response_provider_data
             if stream_data.response_audio:
                 assistant_message.audio_output = stream_data.response_audio
             if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
@@ -575,9 +606,12 @@ class Model(ABC):
                     yield function_call_response
 
                 # Format and add results to messages
-                self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **stream_data.extra
-                )
+                if stream_data.extra is not None:
+                    self.format_function_call_results(
+                        messages=messages, function_call_results=function_call_results, **stream_data.extra
+                    )
+                else:
+                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
                 logger.debug(f"---------- {self.get_provider()} Async Response Stream ----------")
                 self._log_messages(messages)
@@ -613,6 +647,15 @@ class Model(ABC):
             stream_data.response_thinking += model_response.thinking
             should_yield = True
 
+        if model_response.redacted_thinking is not None:
+            stream_data.response_redacted_thinking += model_response.redacted_thinking
+            should_yield = True
+
+        if model_response.provider_data:
+            if stream_data.response_provider_data is None:
+                stream_data.response_provider_data = {}
+            stream_data.response_provider_data.update(model_response.provider_data)
+
         # Update stream_data tool calls
         if model_response.tool_calls is not None:
             if stream_data.response_tool_calls is None:
@@ -641,6 +684,8 @@ class Model(ABC):
             should_yield = True
 
         if model_response.extra is not None:
+            if stream_data.extra is None:
+                stream_data.extra = {}
             stream_data.extra.update(model_response.extra)
 
         if model_response.response_usage is not None:
