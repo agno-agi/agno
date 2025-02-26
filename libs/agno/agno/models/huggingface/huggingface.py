@@ -28,12 +28,6 @@ except (ModuleNotFoundError, ImportError):
 
 
 @dataclass
-class StreamData:
-    response_content: str = ""
-    response_tool_calls: Optional[List[ChatCompletionStreamOutputDeltaToolCall]] = None
-
-
-@dataclass
 class HuggingFace(Model):
     """
     A class for interacting with HuggingFace Hub Inference models.

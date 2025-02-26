@@ -148,13 +148,6 @@ def _format_function_definitions(tools_list):
 
 
 @dataclass
-class GeminiResponseUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-
-
-@dataclass
 class Gemini(Model):
     """
     Gemini model class for Google's Generative AI models.
@@ -688,11 +681,11 @@ class Gemini(Model):
         # Extract usage metadata if present
         if hasattr(response, "usage_metadata") and response.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response.usage_metadata
-            model_response.response_usage = GeminiResponseUsage(
-                input_tokens=usage.prompt_token_count or 0,
-                output_tokens=usage.candidates_token_count or 0,
-                total_tokens=usage.total_token_count or 0,
-            )
+            model_response.response_usage = {
+                "input_tokens": usage.prompt_token_count or 0,
+                "output_tokens": usage.candidates_token_count or 0,
+                "total_tokens": usage.total_token_count or 0,
+            }
 
         return model_response
 
@@ -724,10 +717,10 @@ class Gemini(Model):
         # Extract usage metadata if present
         if hasattr(response_delta, "usage_metadata") and response_delta.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response_delta.usage_metadata
-            model_response.response_usage = GeminiResponseUsage(
-                input_tokens=usage.prompt_token_count or 0,
-                output_tokens=usage.candidates_token_count or 0,
-                total_tokens=usage.total_token_count or 0,
-            )
+            model_response.response_usage = {
+                "input_tokens": usage.prompt_token_count or 0,
+                "output_tokens": usage.candidates_token_count or 0,
+                "total_tokens": usage.total_token_count or 0,
+            }
 
         return model_response
