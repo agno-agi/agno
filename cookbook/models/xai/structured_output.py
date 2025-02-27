@@ -1,4 +1,5 @@
 import asyncio
+from os import getenv
 from typing import List
 
 from agno.agent import Agent
@@ -30,6 +31,7 @@ class MovieScript(BaseModel):
 # Agent that returns a structured output
 structured_output_agent = Agent(
     model=xAI(id="grok-2-latest"),
+    api_key=getenv("XAI_API_KEY"),
     description="You write movie scripts.",
     response_model=MovieScript,
     structured_outputs=True,
