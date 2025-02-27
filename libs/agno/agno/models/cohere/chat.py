@@ -18,13 +18,6 @@ except (ModuleNotFoundError, ImportError):
 
 
 @dataclass
-class CohereResponseUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-
-
-@dataclass
 class Cohere(Model):
     id: str = "command-r-plus"
     name: str = "cohere"
@@ -254,11 +247,11 @@ class Cohere(Model):
             model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
 
         if response.usage is not None and response.usage.tokens is not None:
-            model_response.response_usage = CohereResponseUsage(
-                input_tokens=int(response.usage.tokens.input_tokens) or 0,  # type: ignore
-                output_tokens=int(response.usage.tokens.output_tokens) or 0,  # type: ignore
-                total_tokens=int(response.usage.tokens.input_tokens + response.usage.tokens.output_tokens) or 0,  # type: ignore
-            )
+            model_response.response_usage = {
+                "input_tokens": int(response.usage.tokens.input_tokens) or 0,  # type: ignore
+                "output_tokens": int(response.usage.tokens.output_tokens) or 0,  # type: ignore
+                "total_tokens": int(response.usage.tokens.input_tokens + response.usage.tokens.output_tokens) or 0,  # type: ignore
+            }
 
         return model_response
 
@@ -324,14 +317,14 @@ class Cohere(Model):
         ):
             self._add_usage_metrics_to_assistant_message(
                 assistant_message=assistant_message,
-                response_usage=CohereResponseUsage(
-                    input_tokens=int(response.delta.usage.tokens.input_tokens) or 0,  # type: ignore
-                    output_tokens=int(response.delta.usage.tokens.output_tokens) or 0,  # type: ignore
-                    total_tokens=int(
+                response_usage={
+                    "input_tokens": int(response.delta.usage.tokens.input_tokens) or 0,  # type: ignore
+                    "output_tokens": int(response.delta.usage.tokens.output_tokens) or 0,  # type: ignore
+                    "total_tokens": int(
                         response.delta.usage.tokens.input_tokens + response.delta.usage.tokens.output_tokens  # type: ignore
                     )
                     or 0,
-                ),
+                },
             )
 
         return model_response, tool_use
