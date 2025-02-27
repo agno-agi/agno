@@ -1,5 +1,4 @@
 import pytest
-from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
 from agno.models.huggingface import HuggingFace

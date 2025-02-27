@@ -26,10 +26,7 @@ def _assert_metrics(response: RunResponse):
 
 def test_basic():
     agent = Agent(
-        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
-        markdown=True,
-        telemetry=False,
-        monitoring=False
+        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"), markdown=True, telemetry=False, monitoring=False
     )
 
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -42,10 +39,7 @@ def test_basic():
 
 def test_basic_stream():
     agent = Agent(
-        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
-        markdown=True,
-        telemetry=False,
-        monitoring=False
+        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"), markdown=True, telemetry=False, monitoring=False
     )
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
@@ -65,10 +59,7 @@ def test_basic_stream():
 @pytest.mark.asyncio
 async def test_async_basic():
     agent = Agent(
-        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
-        markdown=True,
-        telemetry=False,
-        monitoring=False
+        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"), markdown=True, telemetry=False, monitoring=False
     )
 
     response = await agent.arun("Share a 2 sentence horror story")
@@ -82,10 +73,7 @@ async def test_async_basic():
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     agent = Agent(
-        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
-        markdown=True,
-        telemetry=False,
-        monitoring=False
+        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"), markdown=True, telemetry=False, monitoring=False
     )
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
@@ -97,12 +85,7 @@ async def test_async_basic_stream():
 
 
 def test_exception_handling():
-    agent = Agent(
-        model=HuggingFace(id="nonexistent-model"),
-        markdown=True,
-        telemetry=False,
-        monitoring=False
-    )
+    agent = Agent(model=HuggingFace(id="nonexistent-model"), markdown=True, telemetry=False, monitoring=False)
 
     with pytest.raises(ModelProviderError) as exc:
         agent.run("Share a 2 sentence horror story")
@@ -148,7 +131,7 @@ def test_structured_output():
         model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
         response_model=MovieScript,
         telemetry=False,
-        monitoring=False
+        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -198,15 +181,9 @@ def test_persistent_memory():
             create_session_summary=True,
             update_user_memories_after_run=True,
             update_session_summary_after_run=True,
-            classifier=MemoryClassifier(
-                model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct")
-            ),
-            summarizer=MemorySummarizer(
-                model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct")
-            ),
-            manager=MemoryManager(
-                model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct")
-            ),
+            classifier=MemoryClassifier(model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct")),
+            summarizer=MemorySummarizer(model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct")),
+            manager=MemoryManager(model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct")),
         ),
     )
 

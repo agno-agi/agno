@@ -1,8 +1,8 @@
+import json
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
 from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Union
-import json
 
 import httpx
 from pydantic import BaseModel
@@ -221,7 +221,6 @@ class HuggingFace(Model):
         )
         cleaned_dict = {k: v for k, v in _dict.items() if v is not None}
         return cleaned_dict
-
 
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """
