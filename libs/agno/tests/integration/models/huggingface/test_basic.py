@@ -152,7 +152,6 @@ def test_structured_output():
     )
 
     response = agent.run("Create a movie about time travel")
-
     # Verify structured output
     assert isinstance(response.content, MovieScript)
     assert response.content.title is not None
@@ -200,13 +199,13 @@ def test_persistent_memory():
             update_user_memories_after_run=True,
             update_session_summary_after_run=True,
             classifier=MemoryClassifier(
-                model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2")
+                model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct")
             ),
             summarizer=MemorySummarizer(
-                model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2")
+                model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct")
             ),
             manager=MemoryManager(
-                model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2")
+                model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct")
             ),
         ),
     )

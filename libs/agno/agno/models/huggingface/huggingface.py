@@ -171,8 +171,6 @@ class HuggingFace(Model):
             _request_params["max_tokens"] = self.max_tokens
         if self.presence_penalty is not None:
             _request_params["presence_penalty"] = self.presence_penalty
-        if self.response_format is not None:
-            _request_params["response_format"] = self.response_format
         if self.seed is not None:
             _request_params["seed"] = self.seed
         if self.stop is not None:
@@ -235,21 +233,18 @@ class HuggingFace(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        # print(message)
         message_dict = {
             "role": message.role,
             "content": message.content if message.content is not None else "",
             "name": message.name or message.tool_name,
-            # "tool_call_id": message.tool_call_id,
+            "tool_call_id": message.tool_call_id,
             "tool_calls": message.tool_calls,
         }
 
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-        # if message.tool_calls is None or len(message.tool_calls) == 0:
-        #     message_dict["tool_calls"] = None
-
-        print(message_dict)
+        if message.tool_calls is None or len(message.tool_calls) == 0:
+            message_dict["tool_calls"] = None
 
         return message_dict
 
@@ -442,7 +437,8 @@ class HuggingFace(Model):
             if response_delta_message.content is not None:
                 model_response.content = response_delta_message.content
             if response_delta_message.tool_calls is not None and len(response_delta_message.tool_calls) > 0:
-                model_response.tool_calls = response_delta_message.tool_calls  # type: ignore
+                print(response_delta_message.tool_calls)
+                model_response.tool_calls = [response_delta_message.tool_calls]  # type: ignore
         if response_delta.usage is not None:
             model_response.response_usage = response_delta.usage
 
