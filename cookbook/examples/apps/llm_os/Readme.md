@@ -62,7 +62,7 @@ Please install [docker desktop](https://docs.docker.com/desktop/install/mac-inst
 - Run using a helper script
 
 ```shell
-./cookbook/run_pgvector.sh
+./cookbook/scripts/run_pgvector.sh
 ```
 
 - OR run using the docker run command
