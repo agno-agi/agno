@@ -320,8 +320,14 @@ class OpenAIChat(Model):
             )
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
             raise ModelProviderError(
-                message=e.response.json().get("error", {}).get("message", "Unknown model error"),
+                message=error_message,
                 status_code=e.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
@@ -331,8 +337,14 @@ class OpenAIChat(Model):
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
             raise ModelProviderError(
-                message=e.response.json().get("error", {}).get("message", "Unknown model error"),
+                message=error_message,
                 status_code=e.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
@@ -368,8 +380,14 @@ class OpenAIChat(Model):
             )
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
             raise ModelProviderError(
-                message=e.response.json().get("error", {}).get("message", "Unknown model error"),
+                message=error_message,
                 status_code=e.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
@@ -379,8 +397,14 @@ class OpenAIChat(Model):
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
             raise ModelProviderError(
-                message=e.response.json().get("error", {}).get("message", "Unknown model error"),
+                message=error_message,
                 status_code=e.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
@@ -409,8 +433,14 @@ class OpenAIChat(Model):
             )  # type: ignore
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
             raise ModelProviderError(
-                message=e.response.json().get("error", {}).get("message", "Unknown model error"),
+                message=error_message,
                 status_code=e.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
@@ -420,8 +450,14 @@ class OpenAIChat(Model):
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
             raise ModelProviderError(
-                message=e.response.json().get("error", {}).get("message", "Unknown model error"),
+                message=error_message,
                 status_code=e.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
@@ -452,8 +488,14 @@ class OpenAIChat(Model):
                 yield chunk
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
             raise ModelProviderError(
-                message=e.response.json().get("error", {}).get("message", "Unknown model error"),
+                message=error_message,
                 status_code=e.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
@@ -463,8 +505,14 @@ class OpenAIChat(Model):
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
             raise ModelProviderError(
-                message=e.response.json().get("error", {}).get("message", "Unknown model error"),
+                message=error_message,
                 status_code=e.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
