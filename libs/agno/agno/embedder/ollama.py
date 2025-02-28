@@ -60,7 +60,7 @@ class OllamaEmbedder(Embedder):
             response = self._response(text=text)
             if response is None:
                 return []
-            return response.get("embedding", [])
+            return response.get("embeddings", [])
         except Exception as e:
             logger.warning(e)
             return []
