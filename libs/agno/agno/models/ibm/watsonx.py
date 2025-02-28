@@ -104,12 +104,10 @@ class WatsonX(Model):
         self.api_key = self.api_key or getenv("IBM_WATSONX_API_KEY")
         if not self.api_key:
             logger.error("IBM_WATSONX_API_KEY not set. Please set the IBM_WATSONX_API_KEY environment variable.")
-            raise ValueError("IBM_WATSONX_API_KEY environment variable not set")
 
         self.project_id = self.project_id or getenv("IBM_WATSONX_PROJECT_ID")
         if not self.project_id:
             logger.error("IBM_WATSONX_PROJECT_ID not set. Please set the IBM_WATSONX_PROJECT_ID environment variable.")
-            raise ValueError("IBM_WATSONX_PROJECT_ID environment variable not set")
 
         # Create credentials object
         credentials = Credentials(url=self.url, api_key=self.api_key, verify=self.verify)
