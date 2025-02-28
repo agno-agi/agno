@@ -163,7 +163,6 @@ class WatsonX(Model):
             "tool_calls": message.tool_calls,
         }
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
-        print(message_dict)
         if message.images is not None and len(message.images) > 0:
             if isinstance(message.content, str):
                 message_dict["content"] = [{"type": "text", "text": message.content}]

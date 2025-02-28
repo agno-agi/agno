@@ -17,7 +17,7 @@ with open(image_path, "rb") as img_file:
     image_bytes = img_file.read()
 
 agent.print_response(
-    "Tell me about this image",
+    "Tell me about this image and and give me the latest news about it.",
     images=[
         Image(content=image_bytes),
     ],
