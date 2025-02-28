@@ -10,8 +10,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
-from agno.utils.openai import add_images_to_message
-
+from agno.utils.openai import images_to_message
 try:
     from ibm_watsonx_ai import Credentials
     from ibm_watsonx_ai.foundation_models import ModelInference
@@ -60,8 +59,8 @@ def _format_message(message: Message) -> Dict[str, Any]:
         Dict[str, Any]: The formatted message.
     """
     if message.images is not None and not isinstance(message.content, str):
-        message = add_images_to_message(message=message, images=message.images)
-    return message.serialize_for_model()
+        message = images_to_message(message=message, images=message.images)
+    return message.to_dict()
 
 
 @dataclass
@@ -149,26 +148,16 @@ class WatsonX(Model):
             "top_logprobs": self.top_logprobs,
             "response_format": self.response_format,
         }
-        params = {k: v for k, v in params.items() if v is not None}
-
-        request_params: Dict[str, Any] = {"params": params}
-
+        # Filter out None values
+        request_params = {k: v for k, v in params.items() if v is not None}
         # Add tools
-        if self._tools is not None and len(self._tools) > 0:
+        if self._tools is not None:
             request_params["tools"] = self._tools
             if self.tool_choice is not None:
-                if isinstance(self.tool_choice, dict):
-                    request_params["tool_choice"] = self.tool_choice
-                else:
-                    request_params["tool_choice_option"] = self.tool_choice
-            else:
-                request_params["tool_choice_option"] = "auto"
-
+                request_params["tool_choice"] = self.tool_choice
+        # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
-
-        request_params = {k: v for k, v in request_params.items() if v is not None}
-
         return request_params
 
     def invoke(self, messages: List[Message]) -> Any:

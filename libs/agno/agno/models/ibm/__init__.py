@@ -1,1 +1,1 @@
-from agno.models.groq.groq import Groq
+from agno.models.ibm.watsonx import WatsonX
