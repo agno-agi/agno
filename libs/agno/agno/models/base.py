@@ -1033,8 +1033,8 @@ class Model(ABC):
             assistant_message: Message to update with metrics
             response_usage: Usage data from model provider
         """
-        # Standard token metrics
 
+        # Standard token metrics
         if isinstance(response_usage, dict):
             if "input_tokens" in response_usage:
                 assistant_message.metrics.input_tokens = response_usage.get("input_tokens", 0)
@@ -1068,24 +1068,9 @@ class Model(ABC):
                     assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
                 )
 
-        additional_metrics = [
-            "prompt_time",
-            "completion_time",
-            "queue_time",
-            "total_time",
-            "total_duration",
-            "load_duration",
-            "prompt_eval_duration",
-            "eval_duration",
-        ]
-
-        for metric in additional_metrics:
-            # Additional timing metrics (e.g., from Groq, Ollama)
-            if assistant_message.metrics.additional_metrics is None:
-                assistant_message.metrics.additional_metrics = {}
-
-            if hasattr(response_usage, metric) and getattr(response_usage, metric) is not None:
-                assistant_message.metrics.additional_metrics[metric] = getattr(response_usage, metric)
+        # Additional metrics (e.g., from Groq, Ollama)
+        if isinstance(response_usage, dict) and "additional_metrics" in response_usage:
+            assistant_message.metrics.additional_metrics = response_usage["additional_metrics"]
 
         # Token details (e.g., from OpenAI)
         if hasattr(response_usage, "prompt_tokens_details"):

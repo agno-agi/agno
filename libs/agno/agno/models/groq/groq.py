@@ -429,8 +429,17 @@ class Groq(Model):
 
         # Add usage metrics if present
         if response.usage is not None:
-            model_response.response_usage = response.usage
-
+            model_response.response_usage = {
+                "input_tokens": response.usage.prompt_tokens,
+                "output_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+                "additional_metrics": {
+                    "completion_time": response.usage.completion_time,
+                    "prompt_time": response.usage.prompt_time,
+                    "queue_time": response.usage.queue_time,
+                    "total_time": response.usage.total_time,
+                },
+            }
         return model_response
 
     def parse_provider_response_delta(self, response: ChatCompletionChunk) -> ModelResponse:
@@ -458,6 +467,16 @@ class Groq(Model):
 
         # Add usage metrics if present
         if response.x_groq is not None and response.x_groq.usage is not None:
-            model_response.response_usage = response.x_groq.usage
+            model_response.response_usage = {
+                "input_tokens": response.x_groq.usage.prompt_tokens,
+                "output_tokens": response.x_groq.usage.completion_tokens,
+                "total_tokens": response.x_groq.usage.total_tokens,
+                "additional_metrics": {
+                    "completion_time": response.x_groq.usage.completion_time,
+                    "prompt_time": response.x_groq.usage.prompt_time,
+                    "queue_time": response.x_groq.usage.queue_time,
+                    "total_time": response.x_groq.usage.total_time,
+                },
+            }
 
         return model_response
