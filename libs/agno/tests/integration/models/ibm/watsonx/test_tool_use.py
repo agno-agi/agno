@@ -122,6 +122,7 @@ def test_parallel_tool_calls():
     assert response.content is not None
     assert "TSLA" in response.content and "AAPL" in response.content
 
+
 @pytest.mark.skip(reason="Hallucinates most of the time")
 def test_multiple_tool_calls():
     agent = Agent(
@@ -168,6 +169,7 @@ def test_tool_call_custom_tool_no_parameters():
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "70" in response.content
+
 
 @pytest.mark.skip(reason="Hallucinates most of the time")
 def test_tool_call_custom_tool_optional_parameters():

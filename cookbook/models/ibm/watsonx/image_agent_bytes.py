@@ -7,7 +7,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
     model=WatsonX(id="meta-llama/llama-3-2-11b-vision-instruct"),
-    tools=[DuckDuckGoTools()],
     markdown=True,
 )
 
@@ -18,7 +17,7 @@ with open(image_path, "rb") as img_file:
     image_bytes = img_file.read()
 
 agent.print_response(
-    "Tell me about this image and give me the latest news about it.",
+    "Tell me about this image",
     images=[
         Image(content=image_bytes),
     ],

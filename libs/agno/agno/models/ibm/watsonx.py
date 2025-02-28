@@ -9,8 +9,9 @@ from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
 from agno.utils.openai import images_to_message
+from agno.utils.log import logger
+
 try:
     from ibm_watsonx_ai import Credentials
     from ibm_watsonx_ai.foundation_models import ModelInference
@@ -47,20 +48,6 @@ def _format_images_for_message(message: Message, images: List[Image]) -> Message
         message.content = message_content_with_image
     return message
 
-
-def _format_message(message: Message) -> Dict[str, Any]:
-    """
-    Format a message into the format expected by WatsonX.
-
-    Args:
-        message (Message): The message to format.
-
-    Returns:
-        Dict[str, Any]: The formatted message.
-    """
-    if message.images is not None and not isinstance(message.content, str):
-        message = images_to_message(message=message, images=message.images)
-    return message.to_dict()
 
 
 @dataclass
@@ -157,6 +144,31 @@ class WatsonX(Model):
         if self.request_params:
             request_params.update(self.request_params)
         return request_params
+    
+    def _format_message(self, message: Message) -> Dict[str, Any]:
+        """
+        Format a message into the format expected by WatsonX.
+
+        Args:
+            message (Message): The message to format.
+
+        Returns:
+            Dict[str, Any]: The formatted message.
+        """
+        message_dict: Dict[str, Any] = {
+            "role": message.role,
+            "content": message.content,
+            "name": message.name,
+            "tool_call_id": message.tool_call_id,
+            "tool_calls": message.tool_calls,
+        }
+        message_dict = {k: v for k, v in message_dict.items() if v is not None}
+        print(message_dict)
+        if message.images is not None and len(message.images) > 0:
+            if isinstance(message.content, str):
+                message_dict["content"] = [{"type": "text", "text": message.content}]
+                message_dict["content"].extend(images_to_message(images=message.images))
+        return message_dict
 
     def invoke(self, messages: List[Message]) -> Any:
         """
@@ -171,7 +183,7 @@ class WatsonX(Model):
         try:
             client = self.get_client()
 
-            formatted_messages = [_format_message(m) for m in messages]
+            formatted_messages = [self._format_message(m) for m in messages]
             request_params = self._get_request_params()
 
             # Call chat method
@@ -194,7 +206,7 @@ class WatsonX(Model):
         """
         try:
             client = self.get_client()
-            formatted_messages = [_format_message(m) for m in messages]
+            formatted_messages = [self._format_message(m) for m in messages]
 
             request_params = self._get_request_params()
 
@@ -216,7 +228,7 @@ class WatsonX(Model):
         """
         try:
             client = self.get_client()
-            formatted_messages = [_format_message(m) for m in messages]
+            formatted_messages = [self._format_message(m) for m in messages]
 
             request_params = self._get_request_params()
 
@@ -238,7 +250,7 @@ class WatsonX(Model):
         """
         try:
             client = self.get_client()
-            formatted_messages = [_format_message(m) for m in messages]
+            formatted_messages = [self._format_message(m) for m in messages]
 
             # Get parameters for chat
             request_params = self._get_request_params()
