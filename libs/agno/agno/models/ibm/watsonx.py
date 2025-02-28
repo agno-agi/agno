@@ -9,8 +9,8 @@ from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.openai import images_to_message
 from agno.utils.log import logger
+from agno.utils.openai import images_to_message
 
 try:
     from ibm_watsonx_ai import Credentials
@@ -47,7 +47,6 @@ def _format_images_for_message(message: Message, images: List[Image]) -> Message
     if len(message_content_with_image) > 1:
         message.content = message_content_with_image
     return message
-
 
 
 @dataclass
@@ -144,7 +143,7 @@ class WatsonX(Model):
         if self.request_params:
             request_params.update(self.request_params)
         return request_params
-    
+
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """
         Format a message into the format expected by WatsonX.
@@ -191,7 +190,7 @@ class WatsonX(Model):
 
         except Exception as e:
             logger.error(f"Error calling WatsonX API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> Any:
         """
@@ -213,7 +212,7 @@ class WatsonX(Model):
 
         except Exception as e:
             logger.error(f"Error calling WatsonX API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
         """
@@ -235,7 +234,7 @@ class WatsonX(Model):
 
         except Exception as e:
             logger.error(f"Error calling WatsonX API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncGenerator[Any, None]:
         """
@@ -260,7 +259,7 @@ class WatsonX(Model):
 
         except Exception as e:
             logger.error(f"Error in async streaming from WatsonX API: {str(e)}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
     @staticmethod
