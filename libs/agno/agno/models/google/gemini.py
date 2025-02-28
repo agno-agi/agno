@@ -430,6 +430,9 @@ class Gemini(Model):
                 system_message = message.content
                 continue
 
+            if role == "tool" and not message.tool_calls:
+                continue
+
             # Add content to the message for the model
             content = message.content
             # Initialize message_parts to be used for Gemini
