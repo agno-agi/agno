@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional
+from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Sequence
 
 from pydantic import BaseModel
 
@@ -18,7 +18,7 @@ except ImportError:
     raise ImportError("`ibm-watsonx-ai` is not installed. Please install it using `pip install ibm-watsonx-ai`.")
 
 
-def _format_images_for_message(message: Message, images: List[Image]) -> Message:
+def _format_images_for_message(message: Message, images: Sequence[Image]) -> Message:
     """
     Format an image into the format expected by WatsonX.
     """
