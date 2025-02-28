@@ -1,7 +1,7 @@
 """Run `pip install duckduckgo-search` to install dependencies."""
 
 from agno.agent import Agent
-from agno.models.ibm.watsonx import WatsonX
+from agno.models.ibm import WatsonX
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(

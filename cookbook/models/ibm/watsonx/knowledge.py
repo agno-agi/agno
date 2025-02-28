@@ -2,7 +2,7 @@
 
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.models.ibm.watsonx import WatsonX
+from agno.models.ibm import WatsonX
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

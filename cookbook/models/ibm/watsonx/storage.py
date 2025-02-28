@@ -1,7 +1,7 @@
 """Run `pip install duckduckgo-search sqlalchemy ibm-watsonx-ai` to install dependencies."""
 
 from agno.agent import Agent
-from agno.models.ibm.watsonx import WatsonX
+from agno.models.ibm import WatsonX
 from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 

@@ -1,7 +1,7 @@
 from typing import List
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.ibm.watsonx import WatsonX
+from agno.models.ibm import WatsonX
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
