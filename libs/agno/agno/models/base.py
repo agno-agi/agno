@@ -637,6 +637,10 @@ class Model(ABC):
         if not assistant_message.metrics.time_to_first_token:
             assistant_message.metrics.set_time_to_first_token()
 
+        # Add role to assistant message
+        if model_response.role is not None:
+            assistant_message.role = model_response.role
+
         should_yield = False
         # Update stream_data content
         if model_response.content is not None:
