@@ -170,5 +170,6 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
         except Exception as e:
             logger.error(f"Failed to process image: {str(e)}")
             continue
+    print(image_messages)
 
     return image_messages
