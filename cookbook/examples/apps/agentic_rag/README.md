@@ -9,7 +9,7 @@ It allows users to ask questions based on custom knowledge bases, documents, and
 
 ```shell
 python3 -m venv .venv
-source .venv/bin/activate 
+source .venv/bin/activate
 ```
 
 ### 2. Install dependencies
@@ -39,7 +39,7 @@ export GROQ_API_KEY=your_groq_key_here
 - Run using a helper script
 
 ```shell
-./cookbook/run_pgvector.sh
+./cookbook/scripts/run_pgvector.sh
 ```
 
 - OR run using the docker run command
