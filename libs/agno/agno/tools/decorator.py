@@ -1,12 +1,12 @@
 from functools import update_wrapper, wraps
-from typing import Any, Callable, Optional, TypeVar, Union, overload
+from typing import Any, Callable, Optional, TypeVar, Union, overload, Dict
 
 from agno.tools.function import Function
 from agno.utils.log import logger
 
 # Type variable for better type hints
 F = TypeVar("F", bound=Callable[..., Any])
-ToolConfig = TypeVar("ToolConfig", bound=dict[str, Any])
+ToolConfig = TypeVar("ToolConfig", bound=Dict[str, Any])
 
 
 @overload
