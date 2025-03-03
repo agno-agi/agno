@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, Image, Video
 from agno.models.base import Model
-from agno.models.message import Message
+from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
@@ -167,8 +167,6 @@ class Gemini(Model):
 
     supports_structured_outputs: bool = True
 
-    assistant_message_role: str = "model"
-
     # Request parameters
     function_declarations: Optional[List[Any]] = None
     generation_config: Optional[Any] = None
@@ -200,6 +198,14 @@ class Gemini(Model):
 
     # Gemini client
     client: Optional[GeminiClient] = None
+
+    # The role to map the message role to.
+    role_map = {
+        "system": "system",
+        "user": "user",
+        "model": "assistant",
+        "tool": "tool",
+    }
 
     def get_client(self) -> GeminiClient:
         """
@@ -430,13 +436,15 @@ class Gemini(Model):
                 system_message = message.content
                 continue
 
+            role = "model" if role == "assistant" else role
+
             # Add content to the message for the model
             content = message.content
             # Initialize message_parts to be used for Gemini
             message_parts: List[Any] = []
 
             # Function calls
-            if (not content or message.role == "model") and message.tool_calls:
+            if (not content or role == "model") and message.tool_calls:
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_call(
@@ -445,7 +453,7 @@ class Gemini(Model):
                         )
                     )
             # Function results
-            elif message.role == "tool" and message.tool_calls:
+            elif role == "tool" and message.tool_calls:
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_response(
@@ -630,12 +638,19 @@ class Gemini(Model):
         """
         combined_content: List = []
         combined_function_result: List = []
+        message_metrics = MessageMetrics()
         if len(function_call_results) > 0:
             for result in function_call_results:
                 combined_content.append(result.content)
                 combined_function_result.append({"tool_name": result.tool_name, "content": result.content})
+                message_metrics += result.metrics
 
-        messages.append(Message(role="tool", content=combined_content, tool_calls=combined_function_result))
+        if combined_content:
+            messages.append(
+                Message(
+                    role="tool", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
+                )
+            )
 
     def parse_provider_response(self, response: GenerateContentResponse) -> ModelResponse:
         """
@@ -655,7 +670,7 @@ class Gemini(Model):
 
             # Add role
             if response_message.role is not None:
-                model_response.role = response_message.role
+                model_response.role = self.role_map[response_message.role]
 
             # Add content
             if response_message.parts is not None:
@@ -693,6 +708,10 @@ class Gemini(Model):
         model_response = ModelResponse()
 
         response_message: Content = response_delta.candidates[0].content
+
+        # Add role
+        if response_message.role is not None:
+            model_response.role = self.role_map[response_message.role]
 
         if response_message.parts is not None:
             for part in response_message.parts:

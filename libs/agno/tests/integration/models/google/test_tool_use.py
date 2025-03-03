@@ -72,7 +72,7 @@ async def test_async_tool_use():
     response = await agent.arun("What is the current price of TSLA?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages if msg.role == "model")
+    assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
     assert "TSLA" in response.content
 
