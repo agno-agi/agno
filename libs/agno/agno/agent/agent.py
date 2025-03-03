@@ -30,6 +30,7 @@ from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.models.base import Model
+from agno.models.openai import OpenAIChat
 from agno.models.message import Message, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -2834,8 +2835,10 @@ class Agent:
 
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
-            # Use DeepSeek for reasoning
-            if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id.lower() == "deepseek-reasoner":
+            # Use deepseek reasoning model for reasoning, including unofficial deepseek reasoning model providers when setting base_url
+            # Use isinstance to check all model classes that inherit from OpenAIChat, including OpenAILike, DeepSeek, and others
+            if  isinstance(reasoning_model, OpenAIChat) and \
+                    ("deepseek-reasoner" in reasoning_model.id.lower() or "deepseek-r1" in reasoning_model.id.lower()):                
                 from agno.reasoning.deepseek import get_deepseek_reasoning, get_deepseek_reasoning_agent
 
                 ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
