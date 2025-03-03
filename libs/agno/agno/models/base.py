@@ -196,7 +196,6 @@ class Model(ABC):
                     messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                 )
 
-
                 logger.debug(f"---------- {self.get_provider()} Response ----------")
                 self._log_messages(messages)
 
