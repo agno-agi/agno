@@ -199,6 +199,14 @@ class Gemini(Model):
     # Gemini client
     client: Optional[GeminiClient] = None
 
+    # The role to map the message role to.
+    role_map = {
+        "system": "system",
+        "user": "user",
+        "model": "assistant",
+        "tool": "tool",
+    }
+
     def get_client(self) -> GeminiClient:
         """
         Returns an instance of the GeminiClient client.
@@ -655,10 +663,7 @@ class Gemini(Model):
 
             # Add role
             if response_message.role is not None:
-                if response_message.role == "model":
-                    model_response.role = self.assistant_message_role
-                else:
-                    model_response.role = response_message.role
+                model_response.role = self.role_map[response_message.role]
 
             # Add content
             if response_message.parts is not None:
@@ -699,10 +704,7 @@ class Gemini(Model):
 
         # Add role
         if response_message.role is not None:
-            if response_message.role == "model":
-                model_response.role = self.assistant_message_role
-            else:
-                model_response.role = response_message.role
+            model_response.role = self.role_map[response_message.role]
 
         if response_message.parts is not None:
             for part in response_message.parts:
