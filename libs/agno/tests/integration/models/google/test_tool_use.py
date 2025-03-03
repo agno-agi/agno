@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.google import Gemini
+from agno.models.message import Message
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
@@ -302,3 +303,12 @@ def test_search():
 
     assert response.content is not None
     assert response.tools == []
+
+def test_invalid_tool_call():
+    agent = Agent(
+        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05", tool_choice="required"),
+        tools=[YFinanceTools()],
+        show_tool_calls=True,
+    )
+    agent.print_response("What is the stock price of TSLA?")
+    assert False
