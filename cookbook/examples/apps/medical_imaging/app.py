@@ -80,7 +80,7 @@ def main():
                             image_bytes = f.read()
                         # creating an instance of Image
                         agno_image = AgnoImage(content=image_bytes, format="png")
-                        
+
                         prompt = (
                             f"Analyze this medical image considering the following context: {additional_info}"
                             if additional_info
