@@ -80,7 +80,7 @@ mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
 
 # Dependencies for Knowledge
-pdf = ["pypdf"]
+pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 
 # Dependencies for Performance
