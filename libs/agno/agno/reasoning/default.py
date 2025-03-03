@@ -15,10 +15,12 @@ def get_default_reasoning_agent(
     tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
     structured_outputs: bool = False,
     monitoring: bool = False,
+    telemetry: bool = True,
+    debug_mode: bool = False,
 ) -> Optional["Agent"]:  # type: ignore  # noqa: F821
     from agno.agent import Agent
 
-    return Agent(
+    agent =  Agent(
         model=reasoning_model,
         description="You are a meticulous and thoughtful assistant that solves a problem by thinking through it step-by-step.",
         instructions=[
@@ -66,4 +68,11 @@ def get_default_reasoning_agent(
         response_model=ReasoningSteps,
         structured_outputs=structured_outputs,
         monitoring=monitoring,
+        telemetry=telemetry,
+        debug_mode=debug_mode,
     )
+
+    agent.model.show_tool_calls = False
+
+    return agent
+

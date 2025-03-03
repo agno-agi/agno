@@ -1,75 +1,39 @@
 from dataclasses import asdict, dataclass, field
-from enum import Enum
 from time import time
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
-from agno.models.message import Message, MessageReferences
-from agno.reasoning.step import ReasoningStep
-
-
-class RunEvent(str, Enum):
-    """Events that can be sent by the run() functions"""
-
-    run_started = "RunStarted"
-    run_response = "RunResponse"
-    run_completed = "RunCompleted"
-    run_error = "RunError"
-    run_cancelled = "RunCancelled"
-    tool_call_started = "ToolCallStarted"
-    tool_call_completed = "ToolCallCompleted"
-    reasoning_started = "ReasoningStarted"
-    reasoning_step = "ReasoningStep"
-    reasoning_completed = "ReasoningCompleted"
-    updating_memory = "UpdatingMemory"
-    workflow_started = "WorkflowStarted"
-    workflow_completed = "WorkflowCompleted"
+from agno.models.message import Message
+from agno.run.response import RunResponseExtraData, RunEvent, RunResponse
 
 
 @dataclass
-class RunResponseExtraData:
-    references: Optional[List[MessageReferences]] = None
-    add_messages: Optional[List[Message]] = None
-    history: Optional[List[Message]] = None
-    reasoning_steps: Optional[List[ReasoningStep]] = None
-    reasoning_messages: Optional[List[Message]] = None
+class TeamRunResponse:
+    """Response returned by Team.run() functions"""
 
-    def to_dict(self) -> Dict[str, Any]:
-        _dict = {}
-        if self.add_messages is not None:
-            _dict["add_messages"] = [m.to_dict() for m in self.add_messages]
-        if self.history is not None:
-            _dict["history"] = [m.to_dict() for m in self.history]
-        if self.reasoning_messages is not None:
-            _dict["reasoning_messages"] = [m.to_dict() for m in self.reasoning_messages]
-        if self.reasoning_steps is not None:
-            _dict["reasoning_steps"] = [rs.model_dump() for rs in self.reasoning_steps]
-        if self.references is not None:
-            _dict["references"] = [r.model_dump() for r in self.references]
-        return _dict
-
-
-@dataclass
-class RunResponse:
-    """Response returned by Agent.run() or Workflow.run() functions"""
+    event: str = RunEvent.run_response.value
 
     content: Optional[Any] = None
     content_type: str = "str"
     thinking: Optional[str] = None
-    event: str = RunEvent.run_response.value
     messages: Optional[List[Message]] = None
     metrics: Optional[Dict[str, Any]] = None
     model: Optional[str] = None
+
+    member_responses: List[RunResponse] = field(default_factory=list)
+
     run_id: Optional[str] = None
-    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
     session_id: Optional[str] = None
-    workflow_id: Optional[str] = None
+
     tools: Optional[List[Dict[str, Any]]] = None
-    images: Optional[List[ImageArtifact]] = None  # Images attached to the response
-    videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
-    audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
+
+    images: Optional[List[ImageArtifact]] = None  # Images from member runs
+    videos: Optional[List[VideoArtifact]] = None  # Videos from member runs
+    audio: Optional[List[AudioArtifact]] = None  # Audio from member runs
+
     response_audio: Optional[AudioResponse] = None  # Model audio response
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
@@ -121,3 +85,18 @@ class RunResponse:
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
             return json.dumps(self.content, **kwargs)
+
+    def add_member_run(self, run_response: RunResponse) -> None:
+        self.member_responses.append(run_response)
+        if run_response.images is not None:
+            if self.images is None:
+                self.images = []
+            self.images.extend(run_response.images)
+        if run_response.videos is not None:
+            if self.videos is None:
+                self.videos = []
+            self.videos.extend(run_response.videos)
+        if run_response.audio is not None:
+            if self.audio is None:
+                self.audio = []
+            self.audio.extend(run_response.audio)
