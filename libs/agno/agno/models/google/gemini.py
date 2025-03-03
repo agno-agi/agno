@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, Image, Video
 from agno.models.base import Model
-from agno.models.message import Message
+from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
@@ -638,13 +638,19 @@ class Gemini(Model):
         """
         combined_content: List = []
         combined_function_result: List = []
+        message_metrics = MessageMetrics()
         if len(function_call_results) > 0:
             for result in function_call_results:
                 combined_content.append(result.content)
                 combined_function_result.append({"tool_name": result.tool_name, "content": result.content})
+                message_metrics += result.metrics
 
         if combined_content:
-            messages.append(Message(role="tool", content=combined_content, tool_calls=combined_function_result))
+            messages.append(
+                Message(
+                    role="tool", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
+                )
+            )
 
     def parse_provider_response(self, response: GenerateContentResponse) -> ModelResponse:
         """
