@@ -83,6 +83,9 @@ singlestore = ["sqlalchemy"]
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 
+# Dependencies for reader
+csv_async = ["aiofiles"]
+
 # Dependencies for Performance
 performance = ["memory_profiler"]
 
