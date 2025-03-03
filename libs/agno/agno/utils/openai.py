@@ -134,7 +134,7 @@ def _process_image(image: Image) -> Optional[Dict[str, Any]]:
         image_payload = _process_bytes_image(image.content)
 
     else:
-        logger.warning(f"Unsupported image type: {type(image)}")
+        logger.warning(f"Unsupported image format: {image}")
         return None
 
     if image.detail:
