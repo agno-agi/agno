@@ -138,7 +138,7 @@ def test_no_file_upload(test_app, mock_agent):
     # Get the copied agent that was actually used
     copied_agent = mock_agent.deep_copy()
     # Verify agent.run was called with correct parameters
-    copied_agent.run.assert_called_once_with(message="Hello", stream=False, images=None)
+    copied_agent.run.assert_called_once_with(message="Hello", stream=False, images=None, audio=None)
 
 
 def test_single_image_upload(test_app, mock_agent, mock_image_file):
@@ -163,6 +163,7 @@ def test_single_image_upload(test_app, mock_agent, mock_image_file):
     assert isinstance(call_args["images"], list)
     assert len(call_args["images"]) == 1
     assert isinstance(call_args["images"][0], Image)
+    assert call_args["audio"] is None
 
 
 def test_multiple_image_upload(test_app, mock_agent, mock_image_file):
@@ -184,6 +185,7 @@ def test_multiple_image_upload(test_app, mock_agent, mock_image_file):
     call_args = copied_agent.run.call_args[1]
     assert len(call_args["images"]) == 3
     assert all(isinstance(img, Image) for img in call_args["images"])
+    assert call_args["audio"] is None
 
 
 def test_pdf_upload_with_knowledge(test_app, mock_agent_with_knowledge, mock_pdf_file, mock_pdf_reader):
@@ -203,7 +205,7 @@ def test_pdf_upload_with_knowledge(test_app, mock_agent_with_knowledge, mock_pdf
     # Verify knowledge.load_documents was called
     copied_agent.knowledge.load_documents.assert_called_once_with(["This is mock PDF content"])
     # Verify agent.run was called without images
-    copied_agent.run.assert_called_once_with(message="Analyze this PDF", stream=False, images=None)
+    copied_agent.run.assert_called_once_with(message="Analyze this PDF", stream=False, images=None, audio=None)
 
 
 def test_pdf_upload_without_knowledge(test_app, mock_pdf_file):
@@ -241,6 +243,7 @@ def test_mixed_file_upload(test_app, mock_agent_with_knowledge, mock_image_file,
     call_args = copied_agent.run.call_args[1]
     assert len(call_args["images"]) == 1
     assert isinstance(call_args["images"][0], Image)
+    assert call_args["audio"] is None
 
 
 def test_unsupported_file_type(test_app, mock_agent_with_knowledge):

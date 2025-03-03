@@ -545,11 +545,24 @@ class Agent:
                         model_response.thinking = (model_response.thinking or "") + model_response_chunk.thinking
                         self.run_response.thinking = model_response.thinking
 
+                    if model_response_chunk.redacted_thinking is not None:
+                        model_response.redacted_thinking = (
+                            model_response.redacted_thinking or ""
+                        ) + model_response_chunk.redacted_thinking
+
+                        # We only have thinking on response
+                        self.run_response.thinking = model_response.redacted_thinking
+
                     # Only yield if we have content or thinking to show
-                    if model_response_chunk.content is not None or model_response_chunk.thinking is not None:
+                    if (
+                        model_response_chunk.content is not None
+                        or model_response_chunk.thinking is not None
+                        or model_response_chunk.redacted_thinking is not None
+                    ):
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
+                            redacted_thinking=model_response_chunk.redacted_thinking,
                             created_at=model_response_chunk.created_at,
                         )
 
@@ -643,6 +656,11 @@ class Agent:
             # Update the run_response thinking with the model response thinking
             if model_response.thinking is not None:
                 self.run_response.thinking = model_response.thinking
+            if model_response.redacted_thinking is not None:
+                if self.run_response.thinking is None:
+                    self.run_response.thinking = model_response.redacted_thinking
+                else:
+                    self.run_response.thinking += model_response.redacted_thinking
 
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:
@@ -698,6 +716,7 @@ class Agent:
         # Create an AgentRun object to add to memory
         agent_run = AgentRun(response=self.run_response)
         agent_run.message = run_messages.user_message
+
         # Update the memories with the user message if needed
         if (
             self.memory.create_user_memories
@@ -1011,11 +1030,23 @@ class Agent:
                         model_response.thinking = (model_response.thinking or "") + model_response_chunk.thinking
                         self.run_response.thinking = model_response.thinking
 
+                    if model_response_chunk.redacted_thinking is not None:
+                        model_response.redacted_thinking = (
+                            model_response.redacted_thinking or ""
+                        ) + model_response_chunk.redacted_thinking
+                        # We only have thinking on response
+                        self.run_response.thinking = model_response.redacted_thinking
+
                     # Only yield if we have content or thinking to show
-                    if model_response_chunk.content is not None or model_response_chunk.thinking is not None:
+                    if (
+                        model_response_chunk.content is not None
+                        or model_response_chunk.thinking is not None
+                        or model_response_chunk.redacted_thinking is not None
+                    ):
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
+                            redacted_thinking=model_response_chunk.redacted_thinking,
                             created_at=model_response_chunk.created_at,
                         )
 
@@ -1109,6 +1140,11 @@ class Agent:
             # Update the run_response thinking with the model response thinking
             if model_response.thinking is not None:
                 self.run_response.thinking = model_response.thinking
+            if model_response.redacted_thinking is not None:
+                if self.run_response.thinking is None:
+                    self.run_response.thinking = model_response.redacted_thinking
+                else:
+                    self.run_response.thinking += model_response.redacted_thinking
 
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:
@@ -1356,17 +1392,19 @@ class Agent:
         content: Optional[Any] = None,
         *,
         thinking: Optional[str] = None,
+        redacted_thinking: Optional[str] = None,
         event: RunEvent = RunEvent.run_response,
         content_type: Optional[str] = None,
         created_at: Optional[int] = None,
     ) -> RunResponse:
         self.run_response = cast(RunResponse, self.run_response)
+        thinking_combined = (thinking or "") + (redacted_thinking or "")
         rr = RunResponse(
             run_id=self.run_id,
             session_id=self.session_id,
             agent_id=self.agent_id,
             content=content,
-            thinking=thinking,
+            thinking=thinking_combined if thinking_combined else None,
             tools=self.run_response.tools,
             audio=self.run_response.audio,
             images=self.run_response.images,

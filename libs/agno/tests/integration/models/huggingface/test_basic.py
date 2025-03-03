@@ -8,7 +8,7 @@ from agno.memory.classifier import MemoryClassifier
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.manager import MemoryManager
 from agno.memory.summarizer import MemorySummarizer
-from agno.models.openai import OpenAIChat
+from agno.models.huggingface import HuggingFace
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
@@ -23,25 +23,24 @@ def _assert_metrics(response: RunResponse):
     assert sum(total_tokens) > 0
     assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
 
-    assert response.metrics.get("completion_tokens_details") is not None
-    assert response.metrics.get("prompt_tokens_details") is not None
-
 
 def test_basic():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"), markdown=True, telemetry=False, monitoring=False
+    )
 
-    # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
-
     assert response.content is not None
-    assert len(response.messages) == 3
-    assert [m.role for m in response.messages] == ["system", "user", "assistant"]
+    assert len(response.messages) >= 2
+    assert response.messages[1].role == "user"
 
     _assert_metrics(response)
 
 
 def test_basic_stream():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"), markdown=True, telemetry=False, monitoring=False
+    )
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -59,19 +58,23 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"), markdown=True, telemetry=False, monitoring=False
+    )
 
     response = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
-    assert len(response.messages) == 3
-    assert [m.role for m in response.messages] == ["system", "user", "assistant"]
+    assert len(response.messages) >= 2
+    assert response.messages[1].role == "user"
     _assert_metrics(response)
 
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"), markdown=True, telemetry=False, monitoring=False
+    )
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -82,20 +85,19 @@ async def test_async_basic_stream():
 
 
 def test_exception_handling():
-    agent = Agent(model=OpenAIChat(id="gpt-100"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=HuggingFace(id="nonexistent-model"), markdown=True, telemetry=False, monitoring=False)
 
-    # Print the response in the terminal
     with pytest.raises(ModelProviderError) as exc:
         agent.run("Share a 2 sentence horror story")
 
-    assert exc.value.model_name == "OpenAIChat"
-    assert exc.value.model_id == "gpt-100"
-    assert exc.value.status_code == 404
+    assert exc.value.model_name == "HuggingFace"
+    assert exc.value.model_id == "nonexistent-model"
+    assert exc.value.status_code in [500, 502]
 
 
 def test_with_memory():
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
@@ -125,33 +127,14 @@ def test_structured_output():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), response_model=MovieScript, telemetry=False, monitoring=False)
-
-    response = agent.run("Create a movie about time travel")
-
-    # Verify structured output
-    assert isinstance(response.content, MovieScript)
-    assert response.content.title is not None
-    assert response.content.genre is not None
-    assert response.content.plot is not None
-
-
-def test_structured_output_native():
-    class MovieScript(BaseModel):
-        title: str = Field(..., description="Movie title")
-        genre: str = Field(..., description="Movie genre")
-        plot: str = Field(..., description="Brief plot summary")
-
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
         response_model=MovieScript,
-        structured_outputs=True,
         telemetry=False,
         monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
-
     # Verify structured output
     assert isinstance(response.content, MovieScript)
     assert response.content.title is not None
@@ -161,7 +144,7 @@ def test_structured_output_native():
 
 def test_history():
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
         storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
@@ -179,7 +162,7 @@ def test_history():
 
 def test_persistent_memory():
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
         tools=[DuckDuckGoTools()],
         markdown=True,
         show_tool_calls=True,
@@ -189,21 +172,18 @@ def test_persistent_memory():
             "You can search the internet with DuckDuckGo.",
         ],
         storage=SqliteAgentStorage(table_name="chat_agent", db_file="tmp/agent_storage.db"),
-        # Adds the current date and time to the instructions
         add_datetime_to_instructions=True,
-        # Adds the history of the conversation to the messages
         add_history_to_messages=True,
-        # Number of history responses to add to the messages
         num_history_responses=15,
         memory=AgentMemory(
             db=SqliteMemoryDb(db_file="tmp/agent_memory.db"),
             create_user_memories=True,
-            create_session_summary=True,  # troublesome
+            create_session_summary=True,
             update_user_memories_after_run=True,
             update_session_summary_after_run=True,
-            classifier=MemoryClassifier(model=OpenAIChat(id="gpt-4o-mini")),
-            summarizer=MemorySummarizer(model=OpenAIChat(id="gpt-4o-mini")),
-            manager=MemoryManager(model=OpenAIChat(id="gpt-4o-mini")),
+            classifier=MemoryClassifier(model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct")),
+            summarizer=MemorySummarizer(model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct")),
+            manager=MemoryManager(model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct")),
         ),
     )
 

@@ -45,9 +45,10 @@ class Video(BaseModel):
     format: Optional[str] = None  # E.g. `mp4`, `mov`, `avi`, `mkv`, `webm`, `flv`, `mpeg`, `mpg`, `wmv`, `three_gp`
 
     @model_validator(mode="before")
-    def validate_exclusive_video(cls, data: Any):
+    def validate_data(cls, data: Any):
         """
         Ensure that exactly one of `filepath`, or `content` is provided.
+        Also converts content to bytes if it's a string.
         """
         # Extract the values from the input data
         filepath = data.get("filepath")
@@ -78,11 +79,14 @@ class Video(BaseModel):
 
     def to_dict(self) -> Dict[str, Any]:
         import base64
+        import zlib
 
         response_dict = {
-            "content": base64.b64encode(self.content).decode("utf-8")
-            if isinstance(self.content, bytes)
-            else self.content,
+            "content": base64.b64encode(
+                zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode("utf-8")
+            ).decode("utf-8")
+            if self.content
+            else None,
             "filepath": self.filepath,
             "format": self.format,
         }
@@ -96,14 +100,28 @@ class Audio(BaseModel):
     format: Optional[str] = None
 
     @model_validator(mode="before")
-    def validate_exclusive_audio(cls, data: Any):
+    def validate_data(cls, data: Any):
         """
         Ensure that exactly one of `filepath`, or `content` is provided.
+        Also converts content to bytes if it's a string.
         """
         # Extract the values from the input data
         filepath = data.get("filepath")
         content = data.get("content")
         url = data.get("url")
+
+        # Convert and decompress content to bytes if it's a string
+        if content and isinstance(content, str):
+            import base64
+
+            try:
+                import zlib
+
+                decoded_content = base64.b64decode(content)
+                content = zlib.decompress(decoded_content)
+            except Exception:
+                content = base64.b64decode(content).decode("utf-8")
+        data["content"] = content
 
         # Count how many fields are set (not None)
         count = len([field for field in [filepath, content, url] if field is not None])
@@ -126,14 +144,18 @@ class Audio(BaseModel):
 
     def to_dict(self) -> Dict[str, Any]:
         import base64
+        import zlib
 
         response_dict = {
-            "content": base64.b64encode(self.content).decode("utf-8")
-            if isinstance(self.content, bytes)
-            else self.content,
+            "content": base64.b64encode(
+                zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode("utf-8")
+            ).decode("utf-8")
+            if self.content
+            else None,
             "filepath": self.filepath,
             "format": self.format,
         }
+
         return {k: v for k, v in response_dict.items() if v is not None}
 
 
@@ -184,14 +206,28 @@ class Image(BaseModel):
             return None
 
     @model_validator(mode="before")
-    def validate_exclusive_image(cls, data: Any):
+    def validate_data(cls, data: Any):
         """
         Ensure that exactly one of `url`, `filepath`, or `content` is provided.
+        Also converts content to bytes if it's a string.
         """
         # Extract the values from the input data
         url = data.get("url")
         filepath = data.get("filepath")
         content = data.get("content")
+
+        # Convert and decompress content to bytes if it's a string
+        if content and isinstance(content, str):
+            import base64
+
+            try:
+                import zlib
+
+                decoded_content = base64.b64decode(content)
+                content = zlib.decompress(decoded_content)
+            except Exception:
+                content = base64.b64decode(content).decode("utf-8")
+        data["content"] = content
 
         # Count how many fields are set (not None)
         count = len([field for field in [url, filepath, content] if field is not None])
@@ -205,13 +241,17 @@ class Image(BaseModel):
 
     def to_dict(self) -> Dict[str, Any]:
         import base64
+        import zlib
 
         response_dict = {
-            "content": base64.b64encode(self.content).decode("utf-8")
-            if isinstance(self.content, bytes)
-            else self.content,
+            "content": base64.b64encode(
+                zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode("utf-8")
+            ).decode("utf-8")
+            if self.content
+            else None,
             "filepath": self.filepath,
             "url": self.url,
             "detail": self.detail,
         }
+
         return {k: v for k, v in response_dict.items() if v is not None}

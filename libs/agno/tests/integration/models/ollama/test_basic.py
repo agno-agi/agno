@@ -16,6 +16,11 @@ def _assert_metrics(response: RunResponse):
     assert sum(total_tokens) > 0
     assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
 
+    assert response.metrics.get("additional_metrics")[0].get("total_duration") is not None
+    assert response.metrics.get("additional_metrics")[0].get("load_duration") is not None
+    assert response.metrics.get("additional_metrics")[0].get("prompt_eval_duration") is not None
+    assert response.metrics.get("additional_metrics")[0].get("eval_duration") is not None
+
 
 def test_basic():
     agent = Agent(model=Ollama(id="llama3.2:latest"), markdown=True, telemetry=False, monitoring=False)
