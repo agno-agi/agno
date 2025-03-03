@@ -643,7 +643,8 @@ class Gemini(Model):
                 combined_content.append(result.content)
                 combined_function_result.append({"tool_name": result.tool_name, "content": result.content})
 
-        messages.append(Message(role="tool", content=combined_content, tool_calls=combined_function_result))
+        if combined_content:
+            messages.append(Message(role="tool", content=combined_content, tool_calls=combined_function_result))
 
     def parse_provider_response(self, response: GenerateContentResponse) -> ModelResponse:
         """

@@ -1016,7 +1016,7 @@ class Model(ABC):
             model_response.tool_calls = []
 
         function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(assistant_message, messages)
-        if self.show_tool_calls:
+        if self.show_tool_calls and function_calls_to_run:
             self._show_tool_calls(function_calls_to_run, model_response)
         return function_calls_to_run
 
