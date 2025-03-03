@@ -2,7 +2,7 @@
 
 [Models overview](https://dataplatform.cloud.ibm.com/docs/content/wsj/analyze-data/fm-models.html?context=wx)
 
-Supported models:
+Some of the supported models:
 
 - `ibm/granite-20b-code-instruct`
 - `ibm/granite-3-2b-instruct`
@@ -30,6 +30,7 @@ source ~/.venvs/aienv/bin/activate
 ```shell
 export IBM_WATSONX_API_KEY=***
 export IBM_WATSONX_PROJECT_ID=***
+export IBM_WATSONX_URL=*** (optional, defaults to https://eu-de.ml.cloud.ibm.com)
 ```
 
 ### 3. Install libraries

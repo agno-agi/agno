@@ -74,7 +74,7 @@ async def test_async_basic_stream():
 
 def test_with_memory():
     agent = Agent(
-        model=WatsonX(id="ibm/granite-20b-code-instruct"),
+        model=WatsonX(id="mistralai/mistral-large"),
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
@@ -105,7 +105,7 @@ def test_response_model():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=WatsonX(id="ibm/granite-20b-code-instruct"),
+        model=WatsonX(id="mistralai/mistral-large"),
         markdown=True,
         telemetry=False,
         monitoring=False,

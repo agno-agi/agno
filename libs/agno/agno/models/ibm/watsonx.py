@@ -94,6 +94,8 @@ class WatsonX(Model):
         if not self.project_id:
             logger.error("IBM_WATSONX_PROJECT_ID not set. Please set the IBM_WATSONX_PROJECT_ID environment variable.")
 
+        self.url = getenv("IBM_WATSONX_URL") or self.url
+
         # Create credentials object
         credentials = Credentials(url=self.url, api_key=self.api_key, verify=self.verify)
 
@@ -132,7 +134,12 @@ class WatsonX(Model):
             "response_format": self.response_format,
         }
         # Filter out None values
-        request_params = {k: v for k, v in params.items() if v is not None}
+        params = {k: v for k, v in params.items() if v is not None}
+        request_params = {}
+
+        if params:
+            request_params["params"] = params
+
         # Add tools
         if self._tools is not None:
             request_params["tools"] = self._tools

@@ -49,6 +49,7 @@ groq = ["groq"]
 mistral = ["mistralai"]
 openai = ["openai"]
 ollama = ["ollama"]
+ibm = ["ibm-watsonx-ai"]
 
 # Dependencies for Tools
 exa = ["exa_py"]
@@ -104,6 +105,7 @@ models = [
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
+  "agno[ibm]"
 ]
 
 # All tools
