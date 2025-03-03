@@ -444,7 +444,7 @@ class Gemini(Model):
             message_parts: List[Any] = []
 
             # Function calls
-            if (not content or message.role == "model") and message.tool_calls:
+            if (not content or role == "model") and message.tool_calls:
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_call(
@@ -453,7 +453,7 @@ class Gemini(Model):
                         )
                     )
             # Function results
-            elif message.role == "tool" and message.tool_calls:
+            elif role == "tool" and message.tool_calls:
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_response(
