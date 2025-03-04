@@ -7,12 +7,12 @@ import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.media import AudioOutput
+from agno.media import AudioResponse
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
-from agno.utils.openai import add_audio_to_message, add_images_to_message
+from agno.utils.openai import audio_to_message, images_to_message
 
 try:
     from openai import APIConnectionError, APIStatusError, RateLimitError
@@ -53,8 +53,10 @@ class OpenAIChat(Model):
     top_logprobs: Optional[int] = None
     max_tokens: Optional[int] = None
     max_completion_tokens: Optional[int] = None
-    modalities: Optional[List[str]] = None
-    audio: Optional[Dict[str, Any]] = None
+    modalities: Optional[List[str]] = None  # "text" and/or "audio"
+    audio: Optional[Dict[str, Any]] = (
+        None  # E.g. {"voice": "alloy", "format": "wav"}. `format` must be one of `wav`, `mp3`, `flac`, `opus`, or `pcm16`. `voice` must be one of `ash`, `ballad`, `coral`, `sage`, `verse`, `alloy`, `echo`, and `shimmer`.
+    )
     presence_penalty: Optional[float] = None
     response_format: Optional[Any] = None
     seed: Optional[int] = None
@@ -182,12 +184,15 @@ class OpenAIChat(Model):
             "top_p": self.top_p,
             "extra_headers": self.extra_headers,
             "extra_query": self.extra_query,
+            "metadata": self.metadata,
         }
+
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
         # Add tools
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
+
             if self.tool_choice is not None:
                 request_params["tool_choice"] = self.tool_choice
         # Add additional request params if provided
@@ -246,22 +251,44 @@ class OpenAIChat(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        if message.role == "user":
-            if message.images is not None:
-                message = add_images_to_message(message=message, images=message.images)
+        message_dict: Dict[str, Any] = {
+            "role": self.role_map[message.role],
+            "content": message.content,
+            "name": message.name,
+            "tool_call_id": message.tool_call_id,
+            "tool_calls": message.tool_calls,
+        }
+        message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-            if message.audio is not None:
-                message = add_audio_to_message(message=message, audio=message.audio)
+        # Ignore non-string message content
+        # because we assume that the images/audio are already added to the message
+        if (message.images is not None and len(message.images) > 0) or (
+            message.audio is not None and len(message.audio) > 0
+        ):
+            # Ignore non-string message content
+            # because we assume that the images/audio are already added to the message
+            if isinstance(message.content, str):
+                message_dict["content"] = [{"type": "text", "text": message.content}]
+                if message.images is not None:
+                    message_dict["content"].extend(images_to_message(images=message.images))
 
-            if message.videos is not None:
-                logger.warning("Video input is currently unsupported.")
+                if message.audio is not None:
+                    message_dict["content"].extend(audio_to_message(audio=message.audio))
+
+        if message.audio_output is not None:
+            message_dict["content"] = None
+            message_dict["audio"] = {"id": message.audio_output.id}
+
+        if message.videos is not None:
+            logger.warning("Video input is currently unsupported.")
 
         # OpenAI expects the tool_calls to be None if empty, not an empty list
         if message.tool_calls is not None and len(message.tool_calls) == 0:
-            message.tool_calls = None
+            message_dict["tool_calls"] = None
 
-        message_dict = message.serialize_for_model()
-        message_dict["role"] = self.role_map[message_dict["role"]]
+        # Manually add the content field even if it is None
+        if message.content is None:
+            message_dict["content"] = None
 
         return message_dict
 
@@ -293,16 +320,38 @@ class OpenAIChat(Model):
             )
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
+            raise ModelProviderError(
+                message=error_message,
+                status_code=e.response.status_code,
+                model_name=self.name,
+                model_id=self.id,
+            ) from e
         except APIConnectionError as e:
             logger.error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
+            raise ModelProviderError(
+                message=error_message,
+                status_code=e.response.status_code,
+                model_name=self.name,
+                model_id=self.id,
+            ) from e
         except Exception as e:
             logger.error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletion, ParsedChatCompletion]:
         """
@@ -331,16 +380,38 @@ class OpenAIChat(Model):
             )
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
+            raise ModelProviderError(
+                message=error_message,
+                status_code=e.response.status_code,
+                model_name=self.name,
+                model_id=self.id,
+            ) from e
         except APIConnectionError as e:
             logger.error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
+            raise ModelProviderError(
+                message=error_message,
+                status_code=e.response.status_code,
+                model_name=self.name,
+                model_id=self.id,
+            ) from e
         except Exception as e:
             logger.error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
         """
@@ -362,16 +433,38 @@ class OpenAIChat(Model):
             )  # type: ignore
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
+            raise ModelProviderError(
+                message=error_message,
+                status_code=e.response.status_code,
+                model_name=self.name,
+                model_id=self.id,
+            ) from e
         except APIConnectionError as e:
             logger.error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
+            raise ModelProviderError(
+                message=error_message,
+                status_code=e.response.status_code,
+                model_name=self.name,
+                model_id=self.id,
+            ) from e
         except Exception as e:
             logger.error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[ChatCompletionChunk]:
         """
@@ -395,16 +488,38 @@ class OpenAIChat(Model):
                 yield chunk
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
+            raise ModelProviderError(
+                message=error_message,
+                status_code=e.response.status_code,
+                model_name=self.name,
+                model_id=self.id,
+            ) from e
         except APIConnectionError as e:
             logger.error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             logger.error(f"API status error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            error_message = e.response.json().get("error", {})
+            error_message = (
+                error_message.get("message", "Unknown model error")
+                if isinstance(error_message, dict)
+                else error_message
+            )
+            raise ModelProviderError(
+                message=error_message,
+                status_code=e.response.status_code,
+                model_name=self.name,
+                model_id=self.id,
+            ) from e
         except Exception as e:
             logger.error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
     @staticmethod
@@ -459,6 +574,13 @@ class OpenAIChat(Model):
         """
         model_response = ModelResponse()
 
+        if hasattr(response, "error") and response.error:
+            raise ModelProviderError(
+                message=response.error.get("message", "Unknown model error"),
+                model_name=self.name,
+                model_id=self.id,
+            )
+
         # Get response message
         response_message = response.choices[0].message
 
@@ -497,13 +619,22 @@ class OpenAIChat(Model):
 
         # Add audio if present
         if hasattr(response_message, "audio") and response_message.audio is not None:
+            # If the audio output modality is requested, we can extract an audio response
             try:
-                model_response.audio = AudioOutput(
-                    id=response_message.audio.id,
-                    content=response_message.audio.data,
-                    expires_at=response_message.audio.expires_at,
-                    transcript=response_message.audio.transcript,
-                )
+                if isinstance(response_message.audio, dict):
+                    model_response.audio = AudioResponse(
+                        id=response_message.audio.get("id"),
+                        content=response_message.audio.get("data"),
+                        expires_at=response_message.audio.get("expires_at"),
+                        transcript=response_message.audio.get("transcript"),
+                    )
+                else:
+                    model_response.audio = AudioResponse(
+                        id=response_message.audio.id,
+                        content=response_message.audio.data,
+                        expires_at=response_message.audio.expires_at,
+                        transcript=response_message.audio.transcript,
+                    )
             except Exception as e:
                 logger.warning(f"Error processing audio: {e}")
 
@@ -540,12 +671,24 @@ class OpenAIChat(Model):
             # Add audio if present
             if hasattr(delta, "audio") and delta.audio is not None:
                 try:
-                    model_response.audio = AudioOutput(
-                        id=delta.audio.id,
-                        content=delta.audio.data,
-                        expires_at=delta.audio.expires_at,
-                        transcript=delta.audio.transcript,
-                    )
+                    if isinstance(delta.audio, dict):
+                        model_response.audio = AudioResponse(
+                            id=delta.audio.get("id"),
+                            content=delta.audio.get("data"),
+                            expires_at=delta.audio.get("expires_at"),
+                            transcript=delta.audio.get("transcript"),
+                            sample_rate=24000,
+                            mime_type="pcm16",
+                        )
+                    else:
+                        model_response.audio = AudioResponse(
+                            id=delta.audio.id,
+                            content=delta.audio.data,
+                            expires_at=delta.audio.expires_at,
+                            transcript=delta.audio.transcript,
+                            sample_rate=24000,
+                            mime_type="pcm16",
+                        )
                 except Exception as e:
                     logger.warning(f"Error processing audio: {e}")
 

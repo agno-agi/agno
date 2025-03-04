@@ -55,7 +55,6 @@ class GithubTools(Toolkit):
 
     def authenticate(self):
         """Authenticate with GitHub using the provided access token."""
-
         if not self.access_token:  # Fixes lint type error
             raise ValueError("GitHub access token is required")
 

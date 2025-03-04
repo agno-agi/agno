@@ -1,131 +1,96 @@
-# Agno Hackathon
+# Hackathon Resources
 
-## Setup
+Thank you for using Agno to build your hackathon project! Here you'll find setup guides, examples, and resources to bring your multimodal agents to life.
 
-### Create and activate a virtual environment
+> Read this documentation on [Agno Docs](https://docs.agno.com/hackathon)
+
+## Environment Setup
+
+Let's get your environment setup for the hackathon. Here are the steps:
+
+1. Create a virtual environment
+2. Install libraries
+3. Export your API keys
+
+### Create a virtual environment
+
+You can use `python3 -m venv` or `uv` to create a virtual environment.
+
+- Standard python
 
 ```shell
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### Export your API keys
+- Using uv
 
 ```shell
-export OPENAI_API_KEY=***
+uv venv --python 3.12
+source .venv/bin/activate
 ```
 
 ### Install libraries
 
-```shell
-pip install -U openai agno
-```
+Install the `agno` python package along with the models and tools you want to use.
 
-## Example - Basic Agent
-
-```python
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    description="You are an enthusiastic news reporter with a flair for storytelling!",
-    markdown=True
-)
-agent.print_response("Tell me about a breaking news story from New York.", stream=True)
-```
-
-## Example - Image Agent
-
-```python
-from agno.agent import Agent
-from agno.media import Image
-from agno.models.openai import OpenAIChat
-
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    markdown=True,
-)
-
-agent.print_response(
-    "Tell me about this image",
-    images=[
-        Image(
-            url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
-        )
-    ],
-    stream=True,
-)
-```
-
-## Example - Audio Agent
-
-```python
-from agno.agent import Agent
-from agno.media import Audio
-from agno.models.openai import OpenAIChat
-
-url = "https://openaiassets.blob.core.windows.net/$web/API/docs/audio/alloy.wav"
-
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o-audio-preview", modalities=["text"]),
-    markdown=True,
-)
-agent.print_response("What is in this audio?", audio=[Audio(url=url, format="wav")])
-```
-
-## Example - Video Agent
-
-```python
-from pathlib import Path
-
-from agno.agent import Agent
-from agno.media import Video
-from agno.models.google import Gemini
-
-agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
-    markdown=True,
-)
-
-# Run: `wget https://storage.googleapis.com/generativeai-downloads/images/GreatRedSpot.mp4` to download a sample video
-video_path = Path(__file__).parent.joinpath("sample_video.mp4")
-
-agent.print_response("Tell me about this video?", videos=[Video(filepath=video_path)])
-```
-
-
-The following model providers provide the most multimodal support:
-- Gemini - Image, Audio and Video input
-- OpenAI - Image and Audio input
-- Anthropic - Image input
-- Groq - Image input
-- Mistral - Image input
-
-For more information, see the [model providers](https://docs.agno.com/models/compatibility#multimodal-support) documentation.
-
-### Use Agent UI to give an interface to your agent
-
-Run:
+- Standard python
 
 ```shell
-agno setup
+pip install -U agno openai
 ```
 
+- Using uv
+
+```shell
+uv pip install -U agno openai
 ```
-python cookbook/playground/demo.py
+
+### Export your API keys
+
+Export the API keys for the models and tools you want to use.
+
+```shell
+export OPENAI_API_KEY=***
+export GOOGLE_API_KEY=***
+export ELEVEN_LABS_API_KEY=***
 ```
 
-Then head to: [app.agno.com/playground](https://app.agno.com/playground) to see your agent in action!
+## Text Agents
 
-## Model usage:
+Here are some examples of Text Agents built with Agno:
 
-```cookbook/hackathon/models```
+- [Simple Text Agent](cookbook/hackathon/examples/simple_text_agent.py)
+- [Agent with Tools](cookbook/hackathon/examples/agent_with_tools.py)
+- [Agent with Knowledge](cookbook/hackathon/examples/agent_with_knowledge.py)
+- [Agent with Structured Outputs](cookbook/hackathon/examples/structured_output.py)
+- [Research Agent](cookbook/hackathon/examples/research_agent.py)
+- [Youtube Agent](cookbook/hackathon/examples/youtube_agent.py)
 
-##  Examples:
+## Image Agents
 
-```cookbook/hackathon/examples```
+- [Image Input + Tools](cookbook/hackathon/multimodal_examples/image_input_with_tools.py)
+- [Image Generation](cookbook/hackathon/multimodal_examples/image_generate.py)
+- [Image to Structured Output](cookbook/hackathon/multimodal_examples/image_to_structured_output.py)
+- [Image to Audio](cookbook/hackathon/multimodal_examples/image_to_audio.py)
+- [Image to Image](cookbook/hackathon/multimodal_examples/image_to_image.py)
+- [Image Transcription](cookbook/hackathon/multimodal_examples/image_transcription.py)
+- [Image Generation with Steps](cookbook/hackathon/multimodal_examples/image_generate_with_intermediate_steps.py)
+- [Image Search with Giphy](cookbook/hackathon/multimodal_examples/image_gif_search.py)
 
-## Multimodal Examples:
+## Audio Agents
 
-```cookbook/hackathon/multimodal_examples```
+- [Audio Input](cookbook/hackathon/multimodal_examples/audio_input.py)
+- [Audio Input Output](cookbook/hackathon/multimodal_examples/audio_input_output.py)
+- [Audio Multiturn](cookbook/hackathon/multimodal_examples/audio_multi_turn.py)
+- [Audio Sentiment Analysis](cookbook/hackathon/multimodal_examples/audio_sentiment_analysis.py)
+- [Audio Transcription](cookbook/hackathon/multimodal_examples/audio_transcription.py)
+- [Audio Podcast](cookbook/hackathon/multimodal_examples/audio_podcast_generator.py)
+
+## Video Agents
+
+- [Video Input](cookbook/hackathon/multimodal_examples/video_input.py)
+- [Video to Shorts](cookbook/hackathon/multimodal_examples/video_to_shorts.py)
+- [Video Caption](cookbook/hackathon/multimodal_examples/video_caption.py)
+- [Video Generation using Replicate](cookbook/hackathon/multimodal_examples/video_generate_using_replicate.py)
+- [Video Generation using Models Lab](cookbook/hackathon/multimodal_examples/video_generate_using_models_lab.py)

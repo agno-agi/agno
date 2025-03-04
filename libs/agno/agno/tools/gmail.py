@@ -101,8 +101,10 @@ class GmailTools(Toolkit):
         get_starred_emails: bool = True,
         get_emails_by_context: bool = True,
         get_emails_by_date: bool = True,
+        get_emails_by_thread: bool = True,
         create_draft_email: bool = True,
         send_email: bool = True,
+        send_email_reply: bool = True,
         search_emails: bool = True,
         creds: Optional[Credentials] = None,
         credentials_path: Optional[str] = None,
@@ -118,9 +120,11 @@ class GmailTools(Toolkit):
             get_starred_emails (bool): Enable getting starred emails. Defaults to True.
             get_emails_by_context (bool): Enable getting emails by context. Defaults to True.
             get_emails_by_date (bool): Enable getting emails by date. Defaults to True.
+            get_emails_by_thread (bool): Enable getting emails by thread. Defaults to True.
             create_draft_email (bool): Enable creating draft emails. Defaults to True.
             send_email (bool): Enable sending emails. Defaults to True.
             search_emails (bool): Enable searching emails. Defaults to True.
+            send_email_reply (bool): Enable sending email replies. Defaults to True.
             creds (Optional[Credentials]): Pre-existing credentials. Defaults to None.
             credentials_path (Optional[str]): Path to credentials file. Defaults to None.
             token_path (Optional[str]): Path to token file. Defaults to None.
@@ -146,6 +150,7 @@ class GmailTools(Toolkit):
             get_starred_emails,
             get_emails_by_context,
             get_emails_by_date,
+            get_emails_by_thread,
             search_emails,
         ]
 
@@ -167,10 +172,14 @@ class GmailTools(Toolkit):
             self.register(self.get_emails_by_context)
         if get_emails_by_date:
             self.register(self.get_emails_by_date)
+        if get_emails_by_thread:
+            self.register(self.get_emails_by_thread)
         if create_draft_email:
             self.register(self.create_draft_email)
         if send_email:
             self.register(self.send_email)
+        if send_email_reply:
+            self.register(self.send_email_reply)
         if search_emails:
             self.register(self.search_emails)
 
@@ -219,6 +228,10 @@ class GmailTools(Toolkit):
                 f"Subject: {email['subject']}\n"
                 f"Date: {email['date']}\n"
                 f"Body: {email['body']}\n"
+                f"Message ID: {email['id']}\n"
+                f"In-Reply-To: {email['in-reply-to']}\n"
+                f"References: {email['references']}\n"
+                f"Thread ID: {email['thread_id']}\n"
                 "----------------------------------------"
             )
             formatted_emails.append(formatted_email)
@@ -286,6 +299,27 @@ class GmailTools(Toolkit):
             return f"Error retrieving unread emails: {error}"
         except Exception as error:
             return f"Unexpected error retrieving unread emails: {type(error).__name__}: {error}"
+
+    @authenticate
+    def get_emails_by_thread(self, thread_id: str) -> str:
+        """
+        Retrieve all emails from a specific thread.
+
+        Args:
+            thread_id (str): The ID of the email thread.
+
+        Returns:
+            str: Formatted string containing email thread details.
+        """
+        try:
+            thread = self.service.users().threads().get(userId="me", id=thread_id).execute()  # type: ignore
+            messages = thread.get("messages", [])
+            emails = self._get_message_details(messages)
+            return self._format_emails(emails)
+        except HttpError as error:
+            return f"Error retrieving emails from thread {thread_id}: {error}"
+        except Exception as error:
+            return f"Unexpected error retrieving emails from thread {thread_id}: {type(error).__name__}: {error}"
 
     @authenticate
     def get_starred_emails(self, count: int) -> str:
@@ -398,6 +432,37 @@ class GmailTools(Toolkit):
         return str(message)
 
     @authenticate
+    def send_email_reply(
+        self, thread_id: str, message_id: str, to: str, subject: str, body: str, cc: Optional[str] = None
+    ) -> str:
+        """
+        Respond to an existing email thread.
+
+        Args:
+            thread_id (str): The ID of the email thread to reply to.
+            message_id (str): The ID of the email being replied to.
+            to (str): Comma-separated recipient email addresses.
+            subject (str): Email subject (prefixed with "Re:" if not already).
+            body (str): Email body content.
+            cc (Optional[str]): Comma-separated CC email addresses (optional).
+
+        Returns:
+            str: Stringified dictionary containing sent email details including id.
+        """
+        self._validate_email_params(to, subject, body)
+
+        # Ensure subject starts with "Re:" for consistency
+        if not subject.lower().startswith("re:"):
+            subject = f"Re: {subject}"
+
+        body = body.replace("\n", "<br>")
+        message = self._create_message(
+            to.split(","), subject, body, cc.split(",") if cc else None, thread_id, message_id
+        )
+        message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
+        return str(message)
+
+    @authenticate
     def search_emails(self, query: str, count: int) -> str:
         """
         Get X number of emails based on a given natural text query.
@@ -435,16 +500,36 @@ class GmailTools(Toolkit):
         if body is None:
             raise ValueError("Email body cannot be None")
 
-    def _create_message(self, to: List[str], subject: str, body: str, cc: Optional[List[str]] = None) -> dict:
-        """Create email message"""
+    def _create_message(
+        self,
+        to: List[str],
+        subject: str,
+        body: str,
+        cc: Optional[List[str]] = None,
+        thread_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+    ) -> dict:
         body = body.replace("\\n", "\n")
         message = MIMEText(body, "html")
         message["to"] = ", ".join(to)
         message["from"] = "me"
         message["subject"] = subject
+
         if cc:
-            message["cc"] = ", ".join(cc)
-        return {"raw": base64.urlsafe_b64encode(message.as_bytes()).decode()}
+            message["Cc"] = ", ".join(cc)
+
+        # Add reply headers if this is a response
+        if thread_id and message_id:
+            message["In-Reply-To"] = message_id
+            message["References"] = message_id
+
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        email_data = {"raw": raw_message}
+
+        if thread_id:
+            email_data["threadId"] = thread_id
+
+        return email_data
 
     def _get_message_details(self, messages: List[dict]) -> List[dict]:
         """Get details for list of messages"""
@@ -454,6 +539,7 @@ class GmailTools(Toolkit):
             details.append(
                 {
                     "id": msg_data["id"],
+                    "thread_id": msg_data.get("threadId"),
                     "subject": next(
                         (header["value"] for header in msg_data["payload"]["headers"] if header["name"] == "Subject"),
                         None,
@@ -463,6 +549,22 @@ class GmailTools(Toolkit):
                     ),
                     "date": next(
                         (header["value"] for header in msg_data["payload"]["headers"] if header["name"] == "Date"), None
+                    ),
+                    "in-reply-to": next(
+                        (
+                            header["value"]
+                            for header in msg_data["payload"]["headers"]
+                            if header["name"] == "In-Reply-To"
+                        ),
+                        None,
+                    ),
+                    "references": next(
+                        (
+                            header["value"]
+                            for header in msg_data["payload"]["headers"]
+                            if header["name"] == "References"
+                        ),
+                        None,
                     ),
                     "body": self._get_message_body(msg_data),
                 }
