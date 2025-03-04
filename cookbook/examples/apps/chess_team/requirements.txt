@@ -5,3 +5,4 @@ openai>=1.60.1
 pydantic>=2.10.6
 typing-extensions>=4.12.2
 python-dotenv>=1.0.0
+python-chess>=1.10.0
