@@ -30,14 +30,20 @@ def _format_images_for_message(message: Message, images: Sequence[Image]) -> Mes
     for image in images:
         try:
             if image.content is not None:
+                image_content = image.content
+            elif image.url is not None:
+                image_content = image.image_url_content
+            else:
+                logger.warning(f"Unsupported image format: {image}")
+                continue
+
+            if image_content is not None:
                 import base64
 
-                base64_image = base64.b64encode(image.content).decode("utf-8")
+                base64_image = base64.b64encode(image_content).decode("utf-8")
                 image_url = f"data:image/jpeg;base64,{base64_image}"
                 image_payload = {"type": "image_url", "image_url": {"url": image_url}}
                 message_content_with_image.append(image_payload)
-            else:
-                logger.warning(f"Unsupported image format: {image}")
 
         except Exception as e:
             logger.error(f"Failed to process image: {str(e)}")
