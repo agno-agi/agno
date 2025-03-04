@@ -8,7 +8,6 @@ import chess
 from agents import get_chess_teams
 from agno.utils.log import logger
 from utils import (
-    BLACK,
     CUSTOM_CSS,
     WHITE,
     ChessBoard,
@@ -22,7 +21,6 @@ from utils import (
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger(__name__)
 
 nest_asyncio.apply()
 
@@ -256,7 +254,6 @@ def main():
             legal_moves = get_legal_moves_with_descriptions(st.session_state.game_board)
             
             # Format legal moves for the agent
-            legal_moves_text = ", ".join([f"{move['san']} ({move['uci']})" for move in legal_moves])
             legal_moves_descriptions = "\n".join([f"- {move['san']} ({move['uci']}): {move['description']}" for move in legal_moves])
             
             # Get board state
