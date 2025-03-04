@@ -28,7 +28,7 @@ Let's use Postgres for storing our data, but the SQL Agent should work with any 
 - Run using a helper script
 
 ```shell
-./cookbook/run_pgvector.sh
+./cookbook/scripts/run_pgvector.sh
 ```
 
 - OR run using the docker run command
