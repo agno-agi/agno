@@ -9,7 +9,7 @@ Usage Examples:
 ---------------
 1. Quick game with default settings:
    agents = get_chess_teams()
-   
+
 2. Game with debug mode off:
    agents = get_chess_teams(debug_mode=False)
 
@@ -66,7 +66,6 @@ def get_model_for_provider(provider: str, model_name: str):
             return Claude(
                 id="claude-3-7-sonnet-20250219",
                 max_tokens=8192,
-                thinking={"type": "enabled", "budget_tokens": 4096},
             )
         else:
             return Claude(id=model_name)
@@ -149,8 +148,23 @@ def get_chess_teams(
         return {
             "white_piece_agent": white_piece_agent,
             "black_piece_agent": black_piece_agent,
-            "master_agent": master_agent
+            "master_agent": master_agent,
         }
     except Exception as e:
         logger.error(f"Error initializing agents: {str(e)}")
-        raise 
+        raise
+
+
+def is_claude_thinking_model(agent: Agent) -> bool:
+    """
+    Args:
+        agent: The agent to check
+    Returns:
+        bool: True if the agent uses a Claude model with thinking enabled
+    """
+    return (
+        hasattr(agent.model, "id")
+        and isinstance(agent.model.id, str)
+        and "claude" in agent.model.id.lower()
+        and "thinking" in agent.model.id.lower()
+    )

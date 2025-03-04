@@ -1,5 +1,6 @@
-from typing import Dict, List, Tuple
 from dataclasses import dataclass
+from typing import Dict, List, Tuple
+
 import chess
 import streamlit as st
 
@@ -352,17 +353,17 @@ class ChessBoard:
         try:
             # Convert to python-chess move
             move = chess.Move.from_uci(move_str)
-            
+
             # Check if move is legal
             if move not in self.board.legal_moves:
                 return False, f"Invalid move: {move_str} is not a legal move."
-            
+
             # Make the move
             self.board.push(move)
-            
+
             # Switch player
             self.current_color = BLACK if self.current_color == WHITE else WHITE
-            
+
             return True, f"Move successful!\n{self.get_board_state()}"
         except ValueError:
             return False, f"Invalid move format: {move_str}. Use format like 'e2e4'."
@@ -399,11 +400,13 @@ class ChessBoard:
         """
         if color is None:
             color = self.current_color
-            
+
         # If it's not the specified color's turn, return empty list
-        if (color == WHITE and not self.board.turn) or (color == BLACK and self.board.turn):
+        if (color == WHITE and not self.board.turn) or (
+            color == BLACK and self.board.turn
+        ):
             return []
-            
+
         return [move.uci() for move in self.board.legal_moves]
 
     def is_game_over(self) -> bool:
@@ -423,14 +426,14 @@ class ChessBoard:
             Tuple[bool, Dict]: (is_game_over, state_info)
         """
         is_game_over = self.board.is_game_over()
-        
+
         state_info = {
             "current_player": self.current_color,
             "fen": self.board.fen(),
             "halfmove_clock": self.board.halfmove_clock,
             "fullmove_number": self.board.fullmove_number,
         }
-        
+
         if is_game_over:
             if self.board.is_checkmate():
                 winner = BLACK if self.board.turn else WHITE
@@ -454,7 +457,7 @@ class ChessBoard:
         else:
             state_info["result"] = None
             state_info["reason"] = None
-            
+
         return is_game_over, state_info
 
 
@@ -467,36 +470,46 @@ def display_board(board: ChessBoard):
     """
     # Get the current board state
     board_obj = board.board
-    
+
     # Create HTML for the chess board
     html = '<div class="chess-board">'
-    
+
     # Unicode chess pieces
     pieces = {
-        'r': '♜', 'n': '♞', 'b': '♝', 'q': '♛', 'k': '♚', 'p': '♟',
-        'R': '♖', 'N': '♘', 'B': '♗', 'Q': '♕', 'K': '♔', 'P': '♙',
-        '.': ''
+        "r": "♜",
+        "n": "♞",
+        "b": "♝",
+        "q": "♛",
+        "k": "♚",
+        "p": "♟",
+        "R": "♖",
+        "N": "♘",
+        "B": "♗",
+        "Q": "♕",
+        "K": "♔",
+        "P": "♙",
+        ".": "",
     }
-    
+
     # Convert board to a 2D array for easier rendering
     board_array = []
-    for row in str(board_obj).split('\n'):
-        board_array.append(row.split(' '))
-    
+    for row in str(board_obj).split("\n"):
+        board_array.append(row.split(" "))
+
     # Render the board
     for i in range(8):
         for j in range(8):
             square_color = "white-square" if (i + j) % 2 == 0 else "black-square"
             piece = board_array[i][j]
-            piece_unicode = pieces.get(piece, '')
-            
+            piece_unicode = pieces.get(piece, "")
+
             html += f'<div class="chess-square {square_color}">'
             if piece_unicode:
                 html += f'<span class="piece">{piece_unicode}</span>'
-            html += '</div>'
-    
-    html += '</div>'
-    
+            html += "</div>"
+
+    html += "</div>"
+
     # Display the board
     st.markdown(html, unsafe_allow_html=True)
 
@@ -513,7 +526,7 @@ def show_agent_status(agent_name: str, status: str, is_white: bool = True):
     color_class = "white" if is_white else "black"
     st.markdown(
         f"""<div class="agent-status {color_class}">
-            <div style="margin-right: 10px;">{'♔' if is_white else '♚'}</div>
+            <div style="margin-right: 10px;">{"♔" if is_white else "♚"}</div>
             <div>
                 <strong>{agent_name}</strong><br>
                 {status}
@@ -532,19 +545,19 @@ def display_move_history(move_history):
     """
     if not move_history:
         return
-        
+
     st.markdown("<h3>Move History</h3>", unsafe_allow_html=True)
-    
+
     html = '<div class="move-history">'
     for move in move_history:
-        description = move.get('description', '')
+        description = move.get("description", "")
         description_html = f"<br><small>{description}</small>" if description else ""
-        
+
         html += f"""<div class="move-entry">
-                    <strong>{move['number']}.</strong> {move['player']} played <code>{move['move']}</code>{description_html}
+                    <strong>{move["number"]}.</strong> {move["player"]} played <code>{move["move"]}</code>{description_html}
                 </div>"""
-    html += '</div>'
-    
+    html += "</div>"
+
     st.markdown(html, unsafe_allow_html=True)
 
 
@@ -560,16 +573,23 @@ def parse_move(move_text: str) -> str:
     """
     # Clean up the text and extract the move
     move_text = move_text.strip()
-    
+
     # If the move is already in UCI format (e.g., "e2e4"), return it
-    if len(move_text) == 4 and move_text[0].isalpha() and move_text[1].isdigit() and move_text[2].isalpha() and move_text[3].isdigit():
+    if (
+        len(move_text) == 4
+        and move_text[0].isalpha()
+        and move_text[1].isdigit()
+        and move_text[2].isalpha()
+        and move_text[3].isdigit()
+    ):
         return move_text
-        
+
     # Try to extract the move from text
     import re
-    move_match = re.search(r'([a-h][1-8][a-h][1-8])', move_text)
+
+    move_match = re.search(r"([a-h][1-8][a-h][1-8])", move_text)
     if move_match:
         return move_match.group(1)
-        
+
     # If no match found, return the original text (will be handled as an error later)
-    return move_text 
+    return move_text

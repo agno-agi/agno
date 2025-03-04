@@ -1,11 +1,11 @@
+import json
 import logging
 from typing import Dict, List
 
+import chess
 import nest_asyncio
 import streamlit as st
-import json
-import chess
-from agents import get_chess_teams
+from agents import get_chess_teams, is_claude_thinking_model
 from agno.utils.log import logger
 from utils import (
     CUSTOM_CSS,
@@ -39,40 +39,40 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 def get_legal_moves_with_descriptions(board: ChessBoard) -> List[Dict]:
     """
     Get all legal moves with descriptions for the current player.
-    
+
     Args:
         board: ChessBoard instance
-        
+
     Returns:
         List of dictionaries with move information
     """
     legal_moves = []
-    
+
     # Get python-chess board
     chess_board = board.board
-    
+
     # Get all legal moves
     for move in chess_board.legal_moves:
         # Get source and destination squares
         from_square = chess.square_name(move.from_square)
         to_square = chess.square_name(move.to_square)
-        
+
         # Get piece type
         piece = chess_board.piece_at(move.from_square)
         piece_type = piece.symbol().upper() if piece else "?"
-        
+
         # Check if it's a capture
         is_capture = chess_board.is_capture(move)
-        
+
         # Check if it's a promotion
         promotion = None
         if move.promotion:
             promotion = chess.piece_name(move.promotion)
-        
+
         # Check if it's a castling move
         is_kingside_castle = chess_board.is_kingside_castling(move)
         is_queenside_castle = chess_board.is_queenside_castling(move)
-        
+
         # Create move description
         if is_kingside_castle:
             description = "Kingside castle (O-O)"
@@ -86,17 +86,19 @@ def get_legal_moves_with_descriptions(board: ChessBoard) -> List[Dict]:
             description = f"{piece_type} from {from_square} captures {captured_type} at {to_square}"
         else:
             description = f"{piece_type} from {from_square} to {to_square}"
-        
+
         # Add move to list
-        legal_moves.append({
-            "uci": move.uci(),
-            "san": chess_board.san(move),
-            "description": description,
-            "is_capture": is_capture,
-            "is_castle": is_kingside_castle or is_queenside_castle,
-            "promotion": promotion
-        })
-    
+        legal_moves.append(
+            {
+                "uci": move.uci(),
+                "san": chess_board.san(move),
+                "description": description,
+                "is_capture": is_capture,
+                "is_castle": is_kingside_castle or is_queenside_castle,
+                "promotion": promotion,
+            }
+        )
+
     return legal_moves
 
 
@@ -140,7 +142,7 @@ def main():
             index=list(model_options.keys()).index("gpt-4o"),
             key="model_white",
         )
-        
+
         st.markdown("#### Black Player")
         selected_black = st.selectbox(
             "Select Black Player",
@@ -148,7 +150,7 @@ def main():
             index=list(model_options.keys()).index("claude-3.7"),
             key="model_black",
         )
-        
+
         st.markdown("#### Game Master")
         selected_master = st.selectbox(
             "Select Game Master",
@@ -218,7 +220,7 @@ def main():
         if game_over:
             result = state_info.get("result", "")
             reason = state_info.get("reason", "")
-            
+
             if "white_win" in result:
                 st.success(f"🏆 Game Over! White ({selected_white}) wins by {reason}!")
             elif "black_win" in result:
@@ -228,7 +230,9 @@ def main():
         else:
             # Show current player status
             current_color = st.session_state.game_board.current_color
-            current_model_name = selected_white if current_color == WHITE else selected_black
+            current_model_name = (
+                selected_white if current_color == WHITE else selected_black
+            )
 
             show_agent_status(
                 f"{current_color.capitalize()} Player ({current_model_name})",
@@ -252,21 +256,30 @@ def main():
 
             # Get legal moves using python-chess directly
             legal_moves = get_legal_moves_with_descriptions(st.session_state.game_board)
-            
+
             # Format legal moves for the agent
-            legal_moves_descriptions = "\n".join([f"- {move['san']} ({move['uci']}): {move['description']}" for move in legal_moves])
-            
+            legal_moves_descriptions = "\n".join(
+                [
+                    f"- {move['san']} ({move['uci']}): {move['description']}"
+                    for move in legal_moves
+                ]
+            )
+
             # Get board state
             board_state = st.session_state.game_board.get_board_state()
             fen = st.session_state.game_board.get_fen()
-            
+
             # Get move from current player agent
             current_agent = (
                 st.session_state.agents["white_piece_agent"]
                 if current_color == WHITE
                 else st.session_state.agents["black_piece_agent"]
             )
-            
+
+            kwargs = {"stream": False}
+            if is_claude_thinking_model(current_agent):
+                kwargs["thinking"] = {"type": "enabled", "budget_tokens": 4096}
+
             response = current_agent.run(
                 f"""\
 Current board state (FEN): {fen}
@@ -279,37 +292,44 @@ Legal moves available:
 Choose your next move from the legal moves above.
 Respond with ONLY your chosen move in UCI notation (e.g., 'e2e4').
 Do not include any other text in your response.""",
-                stream=False,
+                **kwargs,
             )
 
             try:
                 # Parse the move from the response
                 move_str = parse_move(response.content if response else "")
-                
+
                 # Verify the move is in the list of legal moves
                 legal_move_ucis = [move["uci"] for move in legal_moves]
-                
+
                 if move_str not in legal_move_ucis:
                     # Try to find a matching move
                     for move in legal_moves:
                         if move["san"].lower() == move_str.lower():
                             move_str = move["uci"]
                             break
-                
+
                 # Make the move
                 success, message = st.session_state.game_board.make_move(move_str)
 
                 if success:
                     # Find the move description
-                    move_description = next((move["description"] for move in legal_moves if move["uci"] == move_str), "")
-                    
+                    move_description = next(
+                        (
+                            move["description"]
+                            for move in legal_moves
+                            if move["uci"] == move_str
+                        ),
+                        "",
+                    )
+
                     move_number = len(st.session_state.move_history) + 1
                     st.session_state.move_history.append(
                         {
                             "number": move_number,
                             "player": f"{current_color.capitalize()} ({current_model_name})",
                             "move": move_str,
-                            "description": move_description
+                            "description": move_description,
                         }
                     )
 
@@ -322,10 +342,17 @@ Do not include any other text in your response.""",
 
                     # Check game state after move
                     game_over, state_info = st.session_state.game_board.get_game_state()
-                    
+
                     # If game is not over, get analysis from master agent
                     if not game_over and move_number % 2 == 0:  # After black's move
                         master_agent = st.session_state.agents["master_agent"]
+
+                        kwargs = {"stream": False}
+                        if is_claude_thinking_model(master_agent):
+                            kwargs["thinking"] = {
+                                "type": "enabled",
+                                "budget_tokens": 4096,
+                            }
                         master_response = master_agent.run(
                             f"""\
 Current board state (FEN): {st.session_state.game_board.get_fen()}
@@ -347,19 +374,27 @@ Respond with a JSON object containing:
     "commentary": "brief analysis of the position",
     "advantage": "white"/"black"/"equal"
 }}""",
-                            stream=False,
+                            **kwargs,
                         )
-                        
+
                         try:
                             # Extract JSON from response
-                            analysis_text = master_response.content if master_response else "{}"
+                            analysis_text = (
+                                master_response.content if master_response else "{}"
+                            )
                             analysis = json.loads(analysis_text)
-                            
+
                             # Display analysis
                             advantage = analysis.get("advantage", "equal")
                             commentary = analysis.get("commentary", "")
-                            
-                            advantage_color = "#f0d9b5" if advantage == "white" else "#b58863" if advantage == "black" else "#888888"
+
+                            advantage_color = (
+                                "#f0d9b5"
+                                if advantage == "white"
+                                else "#b58863"
+                                if advantage == "black"
+                                else "#888888"
+                            )
                             st.markdown(
                                 f"""<div style="background-color: rgba(100, 100, 100, 0.2); padding: 10px; border-radius: 5px; margin: 10px 0; border-left: 4px solid {advantage_color};">
                                     <strong>Master Analysis:</strong><br>
@@ -369,23 +404,27 @@ Respond with a JSON object containing:
                             )
                         except Exception as e:
                             logger.error(f"Error parsing master analysis: {str(e)}")
-                    
+
                     if game_over:
                         result = state_info.get("result", "")
                         reason = state_info.get("reason", "")
-                        
+
                         if "white_win" in result:
                             logger.info(f"Game Over - White wins by {reason}")
-                            st.success(f"🏆 Game Over! White ({selected_white}) wins by {reason}!")
+                            st.success(
+                                f"🏆 Game Over! White ({selected_white}) wins by {reason}!"
+                            )
                         elif "black_win" in result:
                             logger.info(f"Game Over - Black wins by {reason}")
-                            st.success(f"🏆 Game Over! Black ({selected_black}) wins by {reason}!")
+                            st.success(
+                                f"🏆 Game Over! Black ({selected_black}) wins by {reason}!"
+                            )
                         else:
                             logger.info(f"Game Over - Draw by {reason}")
                             st.info(f"🤝 Game Over! It's a draw by {reason}!")
-                        
+
                         st.session_state.game_paused = True
-                    
+
                     st.rerun()
                 else:
                     logger.error(f"Invalid move attempt: {message}")
