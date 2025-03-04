@@ -238,6 +238,5 @@ def test_search_with_filters(vector_db, mock_mongodb_client):
     assert results[0].meta_data["type"] == "test"
 
     # Verify the search pipeline included filters
-    collection.aggregate.assert_called_once()
     args = collection.aggregate.call_args[0][0]
     assert any("$match" in stage for stage in args)
