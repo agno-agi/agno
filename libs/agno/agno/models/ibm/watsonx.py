@@ -148,9 +148,9 @@ class WatsonX(Model):
 
         # Add tools
         if self._tools is not None:
-            request_params["tools"] = self._tools
+            request_params["tools"] = self._tools  # type: ignore
             if self.tool_choice is not None:
-                request_params["tool_choice"] = self.tool_choice
+                request_params["tool_choice"] = self.tool_choice  # type: ignore
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)

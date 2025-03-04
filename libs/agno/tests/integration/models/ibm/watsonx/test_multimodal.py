@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from agno.agent.agent import Agent
 from agno.media import Image
 from agno.models.ibm import WatsonX
@@ -14,6 +15,7 @@ def test_image_input():
 
     assert "golden" in response.content.lower()
     assert "bridge" in response.content.lower()
+
 
 def test_image_input_bytes():
     agent = Agent(model=WatsonX(id="meta-llama/llama-3-2-11b-vision-instruct"), telemetry=False, monitoring=False)
