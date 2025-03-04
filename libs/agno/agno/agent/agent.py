@@ -508,6 +508,9 @@ class Agent:
         run_messages: RunMessages = self.get_run_messages(
             message=message, audio=audio, images=images, videos=videos, messages=messages, **kwargs
         )
+        if len(run_messages.messages) == 0:
+            logger.error("No messages to be sent to the model.")
+
         self.run_messages = run_messages
 
         # 5. Reason about the task if reasoning is enabled
@@ -991,6 +994,8 @@ class Agent:
         run_messages: RunMessages = self.get_run_messages(
             message=message, audio=audio, images=images, videos=videos, messages=messages, **kwargs
         )
+        if len(run_messages.messages) == 0:
+            logger.error("No messages to be sent to the model.")
         self.run_messages = run_messages
 
         # 5. Reason about the task if reasoning is enabled
