@@ -29,11 +29,11 @@ agent = Agent(
     model=AzureOpenAI(id="gpt-4o-mini"),
     description="You help people write movie scripts.",
     response_model=MovieScript,
-    # debug_mode=True,
+    structured_outputs=True,
 )
 
 # Get the response in a variable
-# run: RunResponse = agent.run("New York")
-# pprint(run.content)
+run: RunResponse = agent.run("New York")
+pprint(run.content)
 
-agent.print_response("New York")
+# agent.print_response("New York")
