@@ -15,29 +15,43 @@
 
 ## Overview
 
-[Agno](https://docs.agno.com) is a lightweight library for building multi-modal Agents.
+**[Agno](https://docs.agno.com) is a lightweight library for building Multimodal Agents with memory, knowledge and tools.**
 
-## Simple, Fast, and Agnostic
+1. Build lightning-fast Agents that work with text, image, audio and video.
+2. Add memory, knowledge and tools as needed.
+3. Run anywhere, Agno is open-source.
 
-Agno is designed with three core principles:
+## AI Engineering is Software Engineering
 
-- **Simplicity**: No graphs, chains, or convoluted patterns — just pure python.
-- **Uncompromising Performance**: Blazing fast agents with a minimal memory footprint.
-- **Truly Agnostic**: Any model, any provider, any modality. Agno is designed to be the container for AGI.
+When building AI products, 80% of your solution will be standard python code, and the remaining 20% will use Agents for automation. Agno is designed for such use cases.
+
+Write your AI logic using familiar programming constructs (if, else, while, for) and avoid complex abstractions like graphs and chains. Here's a simple Agent that can search the web:
+
+```python websearch_agent.py
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    markdown=True
+)
+agent.print_response("What's happening in New York?", stream=True)
+```
 
 ## Key features
 
-Here's why you should build Agents with Agno:
+Agno is designed to be simple, fast and model agnostic. Here are some key features:
 
 - **Lightning Fast**: Agent creation is ~10,000x faster than LangGraph (see [performance](#performance)).
 - **Model Agnostic**: Use any model, any provider, no lock-in.
-- **Multi Modal**: Native support for input and output text, image, audio and video.
-- **Multi Agent**: Delegate tasks across a team of specialized agents.
+- **Multi Modal**: Native support for text, image, audio and video.
+- **Multi Agent**: Build teams of specialized agents.
 - **Memory Management**: Store agent sessions and state in a database.
-- **Knowledge Stores**: Use vector databases for Agentic RAG or dynamic few-shot.
+- **Knowledge Stores**: Use vector databases for RAG or dynamic few-shot.
 - **Structured Outputs**: Make Agents respond with structured data.
 - **Monitoring**: Track agent sessions and performance in real-time on [agno.com](https://app.agno.com).
-
 
 ## Installation
 
@@ -47,14 +61,14 @@ pip install -U agno
 
 ## What are Agents?
 
-Agents are autonomous programs that use language models to achieve tasks. They solve problems by running tools and using knowledge and memory to improve responses.
+**Agents** are AI programs that execute tasks autonomously. They solve problems by running tools, accessing knowledge and memory to improve responses. Unlike traditional programs that follow a predefined execution path, agents dynamically adapt their approach based on context, knowledge and tool results.
 
 Instead of a rigid binary definition, let's think of Agents in terms of agency and autonomy.
 
 - **Level 0**: Agents with no tools (basic inference tasks).
 - **Level 1**: Agents with tools for autonomous task execution.
 - **Level 2**: Agents with knowledge, combining memory and reasoning.
-- **Level 3**: Teams of agents collaborating on complex workflows.
+- **Level 3**: Teams of specialized agents collaborating on complex workflows.
 
 ## Example - Basic Agent
 
@@ -220,14 +234,14 @@ python agent_team.py
 
 ## Performance
 
-At Agno, we're obsessed with performance. Agno is designed to power high performance agentic systems:
+At Agno, we're obsessed with performance. Why? because even simple AI workflows can spawn thousands of Agents to achieve their goals. Scale that to a modest number of users and performance becomes a bottleneck. Agno is designed to power high performance agentic systems:
 
 - Agent instantiation: ~2μs on average (~10,000x faster than LangGraph).
 - Memory footprint: ~3.75Kib on average (~50x less memory than LangGraph).
 
 > Tested on an Apple M4 Mackbook Pro.
 
-While an Agent's performance is bottlenecked by inference, we must do everything possible to minimize execution time, reduce memory usage, and parallelize tool calls. These numbers may seem trivial at first, but they add up even at a reasonably small scale.
+While an Agent's run-time is bottlenecked by inference, we must do everything possible to minimize execution time, reduce memory usage, and parallelize tool calls. These numbers may seem trivial at first, but our experience shows that they add up even at a reasonably small scale.
 
 ### Instantiation time
 
@@ -249,9 +263,9 @@ python evals/performance/instantiation_with_tool.py
 python evals/performance/other/langgraph_instantiation.py
 ```
 
-The following evaluation is run on an Apple M4 Mackbook Pro, but we'll soon be moving this to a Github actions runner for consistency.
+> The following evaluation is run on an Apple M4 Mackbook Pro. It also runs as a Github action on this repo.
 
-LangGraph is on the right, **we start it first to give it a head start**.
+LangGraph is on the right, **let's start it first and give it a head start**.
 
 Agno is on the left, notice how it finishes before LangGraph gets 1/2 way through the runtime measurement, and hasn't even started the memory measurement. That's how fast Agno is.
 
@@ -263,9 +277,7 @@ Dividing the average time of a Langgraph Agent by the average time of an Agno Ag
 0.020526s / 0.000002s ~ 10,263
 ```
 
-In this particular run, **Agno Agent instantiation is roughly 10,000 times faster than Langgraph Agent instantiation**. Sure, the runtime will be dominated by inference, but these numbers add up as the number of Agents grows.
-
-The numbers continue to favor Agno as the number of tools grow, and we all memory and knowledge stores.
+In this particular run, **Agno Agents startup is roughly 10,000 times faster than Langgraph Agents**. The numbers continue to favor Agno as the number of tools grow, and we add memory and knowledge stores.
 
 ### Memory usage
 
@@ -283,13 +295,13 @@ Dividing the average memory usage of a Langgraph Agent by the average memory usa
 
 ### Conclusion
 
-Agno agents are designed for high-performance and while we do share some benchmarks against other frameworks, we should be mindful that accuracy and reliability are more important than speed.
+Agno agents are designed for performance and while we do share some benchmarks against other frameworks, we should be mindful that accuracy and reliability are more important than speed.
 
 We'll be publishing accuracy and reliability benchmarks running on Github actions in the coming weeks. Given that each framework is different and we won't be able to tune their performance like we do with Agno, for future benchmarks we'll only be comparing against ourselves.
 
 ## Cursor Setup
 
-When building Agno agents, using the Agno docs as a documentation source in Cursor is a great way to speed up your development.
+When building Agno agents, using Agno documentation as a source in Cursor is a great way to speed up your development.
 
 1. In Cursor, go to the settings or preferences section.
 2. Find the section to manage documentation sources.

@@ -24,6 +24,7 @@ The game integrates:
 import sys
 from pathlib import Path
 from textwrap import dedent
+from typing import Tuple
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
@@ -55,19 +56,32 @@ def get_model_for_provider(provider: str, model_name: str):
     elif provider == "google":
         return Gemini(id=model_name)
     elif provider == "anthropic":
-        return Claude(id=model_name)
+        if model_name == "claude-3-5-sonnet":
+            return Claude(id="claude-3-5-sonnet-20241022", max_tokens=8192)
+        elif model_name == "claude-3-7-sonnet":
+            return Claude(
+                id="claude-3-7-sonnet-20250219",
+                max_tokens=8192,
+            )
+        elif model_name == "claude-3-7-sonnet-thinking":
+            return Claude(
+                id="claude-3-7-sonnet-20250219",
+                max_tokens=8192,
+                thinking={"type": "enabled", "budget_tokens": 4096},
+            )
+        else:
+            return Claude(id=model_name)
     elif provider == "groq":
         return Groq(id=model_name)
     else:
         raise ValueError(f"Unsupported model provider: {provider}")
 
 
-def get_tic_tac_toe_referee(
+def get_tic_tac_toe_players(
     model_x: str = "openai:gpt-4o",
     model_o: str = "openai:o3-mini",
-    model_referee: str = "openai:gpt-4o",
     debug_mode: bool = True,
-) -> Agent:
+) -> Tuple[Agent, Agent]:
     """
     Returns an instance of the Tic Tac Toe Referee Agent that coordinates the game.
 
@@ -83,90 +97,69 @@ def get_tic_tac_toe_referee(
     # Parse model provider and name
     provider_x, model_name_x = model_x.split(":")
     provider_o, model_name_o = model_o.split(":")
-    provider_referee, model_name_referee = model_referee.split(":")
 
     # Create model instances using the helper function
     model_x = get_model_for_provider(provider_x, model_name_x)
     model_o = get_model_for_provider(provider_o, model_name_o)
-    model_referee = get_model_for_provider(provider_referee, model_name_referee)
 
-    player1 = Agent(
-        name="Player 1",
+    player_x = Agent(
+        name="Player X",
         description=dedent("""\
-        You are the X player in Tic Tac Toe. Your goal is to win by placing three X's in a row (horizontally, vertically, or diagonally).
+        You are Player X in a Tic Tac Toe game. Your goal is to win by placing three X's in a row (horizontally, vertically, or diagonally).
 
-        Game Rules:
-        - You must make valid moves on a 3x3 grid using row (0-2) and column (0-2) coordinates
-        - The top-left corner is (0,0), and bottom-right is (2,2)
-        - You can only place X's in empty spaces marked by " " on the board
-        - You will be given a list of valid moves - only choose from these moves
-        - Respond with ONLY the row and column numbers for your move, e.g. "1 2"
+        BOARD LAYOUT:
+        - The board is a 3x3 grid with coordinates from (0,0) to (2,2)
+        - Top-left is (0,0), bottom-right is (2,2)
 
-        Strategy:
+        RULES:
+        - You can only place X in empty spaces (shown as " " on the board)
+        - Players take turns placing their marks
+        - First to get 3 marks in a row (horizontal, vertical, or diagonal) wins
+        - If all spaces are filled with no winner, the game is a draw
+
+        YOUR RESPONSE:
+        - Provide ONLY two numbers separated by a space (row column)
+        - Example: "1 2" places your X in row 1, column 2
+        - Choose only from the valid moves list provided to you
+
+        STRATEGY TIPS:
         - Study the board carefully and make strategic moves
-        - Try to create winning opportunities while blocking your opponent
-        - Pay attention to the valid moves list to avoid illegal moves
+        - Block your opponent's potential winning moves
+        - Create opportunities for multiple winning paths
+        - Pay attention to the valid moves and avoid illegal moves
         """),
         model=model_x,
-    )
-
-    player2 = Agent(
-        name="Player 2",
-        description=dedent("""\
-        You are the O player in Tic Tac Toe. Your goal is to win by placing three O's in a row (horizontally, vertically, or diagonally).
-
-        Game Rules:
-        - You must make valid moves on a 3x3 grid using row (0-2) and column (0-2) coordinates
-        - The top-left corner is (0,0), and bottom-right is (2,2)
-        - You can only place O's in empty spaces marked by " " on the board
-        - You will be given a list of valid moves - only choose from these moves
-        - Respond with ONLY the row and column numbers for your move, e.g. "1 2"
-
-        Strategy:
-        - Study the board carefully and make strategic moves to win
-        - Block your opponent's winning opportunities
-        - Pay attention to the valid moves list to avoid illegal moves
-        """),
-        model=model_o,
-    )
-
-    t3_agent = Agent(
-        name="Tic Tac Toe Referee Agent",
-        description=dedent("""\
-        You are the referee of a Tic Tac Toe game. Your responsibilities include:
-
-        Game Management:
-        1. Track and maintain the current board state
-        2. Validate all moves before they are made
-        3. Ensure moves are only made in empty spaces (marked by " ")
-        4. Keep track of whose turn it is (X goes first)
-
-        Move Validation:
-        1. Check that moves are within the 3x3 grid (0-2 for rows and columns)
-        2. Verify the chosen position is empty before allowing a move
-        3. Maintain and provide the list of valid moves to players
-
-        Game State Checking:
-        1. Check for winning conditions after each move:
-           - Three X's or O's in a row horizontally
-           - Three X's or O's in a row vertically
-           - Three X's or O's in a row diagonally
-        2. Check for draw conditions:
-           - Board is full with no winner
-
-        Communication:
-        1. Announce the current state of the board after each move
-        2. Declare moves as valid or invalid
-        3. Announce the winner or draw when game ends
-        4. Provide clear feedback to players about their moves
-
-        You will coordinate between the X and O players, ensuring fair play and proper game progression.
-        """),
-        model=model_referee,
-        team=[player1, player2],
-        show_tool_calls=True,
-        markdown=True,
         debug_mode=debug_mode,
     )
 
-    return t3_agent
+    player_o = Agent(
+        name="Player O",
+        description=dedent("""\
+        You are Player O in a Tic Tac Toe game. Your goal is to win by placing three O's in a row (horizontally, vertically, or diagonally).
+
+        BOARD LAYOUT:
+        - The board is a 3x3 grid with coordinates from (0,0) to (2,2)
+        - Top-left is (0,0), bottom-right is (2,2)
+
+        RULES:
+        - You can only place X in empty spaces (shown as " " on the board)
+        - Players take turns placing their marks
+        - First to get 3 marks in a row (horizontal, vertical, or diagonal) wins
+        - If all spaces are filled with no winner, the game is a draw
+
+        YOUR RESPONSE:
+        - Provide ONLY two numbers separated by a space (row column)
+        - Example: "1 2" places your X in row 1, column 2
+        - Choose only from the valid moves list provided to you
+
+        STRATEGY TIPS:
+        - Study the board carefully and make strategic moves
+        - Block your opponent's potential winning moves
+        - Create opportunities for multiple winning paths
+        - Pay attention to the valid moves and avoid illegal moves
+        """),
+        model=model_o,
+        debug_mode=debug_mode,
+    )
+
+    return player_x, player_o

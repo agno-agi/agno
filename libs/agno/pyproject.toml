@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.1.4"
+version = "1.1.8"
 description = "Agno: a lightweight framework for building multi-modal Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -49,6 +49,7 @@ groq = ["groq"]
 mistral = ["mistralai"]
 openai = ["openai"]
 ollama = ["ollama"]
+ibm = ["ibm-watsonx-ai"]
 
 # Dependencies for Tools
 exa = ["exa_py"]
@@ -64,6 +65,7 @@ googlemaps = ["googlemaps"]
 todoist = ["todoist-api-python"]
 elevenlabs = ["elevenlabs"]
 fal = ["fal_client"]
+webex = ["webexpythonsdk"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -103,6 +105,7 @@ models = [
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
+  "agno[ibm]"
 ]
 
 # All tools
@@ -120,6 +123,7 @@ tools = [
   "agno[todoist]",
   "agno[elevenlabs]",
   "agno[fal]",
+  "agno[webex]",
 ]
 
 # All storage
@@ -231,6 +235,7 @@ module = [
   "googlesearch.*",
   "groq.*",
   "huggingface_hub.*",
+  "ibm_watsonx_ai.*",
   "imghdr.*",
   "jira.*",
   "kubernetes.*",
@@ -283,10 +288,12 @@ module = [
   "tweepy.*",
   "twilio.*",
   "tzlocal.*",
+  "upstash_vector.*",
   "uvicorn.*",
   "vertexai.*",
   "voyageai.*",
   "weaviate.*",
+  "webexpythonsdk.*",
   "wikipedia.*",
   "yfinance.*",
   "youtube_transcript_api.*",

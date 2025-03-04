@@ -5,7 +5,7 @@ from agno.embedder.base import Embedder
 from agno.utils.log import logger
 
 try:
-    from voyageai import Client
+    from voyageai import Client as VoyageClient
     from voyageai.object import EmbeddingsObject
 except ImportError:
     raise ImportError("`voyageai` not installed. Please install using `pip install voyageai`")
@@ -21,23 +21,23 @@ class VoyageAIEmbedder(Embedder):
     max_retries: Optional[int] = None
     timeout: Optional[float] = None
     client_params: Optional[Dict[str, Any]] = None
-    voyage_client: Optional[Client] = None
+    voyage_client: Optional[VoyageClient] = None
 
     @property
-    def client(self) -> Client:
+    def client(self) -> VoyageClient:
         if self.voyage_client:
             return self.voyage_client
 
-        _client_params: Dict[str, Any] = {}
-        if self.api_key:
-            _client_params["api_key"] = self.api_key
-        if self.max_retries:
-            _client_params["max_retries"] = self.max_retries
-        if self.timeout:
-            _client_params["timeout"] = self.timeout
+        _client_params = {
+            "api_key": self.api_key,
+            "max_retries": self.max_retries,
+            "timeout": self.timeout,
+        }
+        _client_params = {k: v for k, v in _client_params.items() if v is not None}
         if self.client_params:
             _client_params.update(self.client_params)
-        return Client(**_client_params)
+        self.voyage_client = VoyageClient(**_client_params)
+        return self.voyage_client
 
     def _response(self, text: str) -> EmbeddingsObject:
         _request_params: Dict[str, Any] = {

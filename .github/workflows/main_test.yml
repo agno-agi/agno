@@ -3,10 +3,8 @@ name: Main Validation
 on:
   push:
     branches:
-      - 'main'  # Run on all branches
-  pull_request:
-    branches:
-      - 'release*'  # Run on PRs targeting release branches
+      - 'main'  # Run on main
+      - '*release*'  # Run on release
 
 jobs:
   style-check:
@@ -53,6 +51,7 @@ jobs:
       fail-fast: true  # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -86,6 +85,8 @@ jobs:
       fail-fast: true  # Stop all matrix jobs if one fails
     env:
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -119,6 +120,7 @@ jobs:
       fail-fast: true  # Stop all matrix jobs if one fails
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -151,8 +153,10 @@ jobs:
         python-version: ["3.12"]
       fail-fast: true
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: "us-east-1"
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -186,6 +190,7 @@ jobs:
       fail-fast: true
     env:
       CO_API_KEY: ${{ secrets.CO_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -252,6 +257,7 @@ jobs:
       fail-fast: true
     env:
       FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -285,6 +291,7 @@ jobs:
       fail-fast: true
     env:
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -318,6 +325,7 @@ jobs:
       fail-fast: true
     env:
       MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -344,6 +352,7 @@ jobs:
 
   # Run tests for Nvidia
   test-nvidia:
+    if: false # Disable nvidia tests until we get a test account
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -374,9 +383,9 @@ jobs:
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/models/nvidia
-
   # Run tests for OpenRouter
   test-openrouter:
+    if: false # Disable openrouter tests until we get a test account
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -384,6 +393,7 @@ jobs:
       fail-fast: true
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -476,6 +486,7 @@ jobs:
 
   # Run tests for Together
   test-together:
+    if: false # The tests take too long to run
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -483,6 +494,7 @@ jobs:
       fail-fast: true
     env:
       TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -516,6 +528,7 @@ jobs:
       fail-fast: true
     env:
       XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -540,6 +553,74 @@ jobs:
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/models/xai
 
+  test-ibm-watsonx:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    env:
+      IBM_WATSONX_PROJECT_ID: ${{ secrets.IBM_WATSONX_PROJECT_ID }}
+      IBM_WATSONX_API_KEY: ${{ secrets.IBM_WATSONX_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v41
+      - name: Run xAI tests
+        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/ibm/watsonx') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/ibm/watsonx') || contains(github.base_ref, 'release')
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/models/ibm/watsonx
+  
+  test-deepinfra:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    env:
+      DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v41
+      - name: Run DeepInfra tests
+        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/deepinfra') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/deepinfra') || contains(github.base_ref, 'release')
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/models/deepinfra
+
+          
   # Run remaining integration tests
   test-remaining:
     runs-on: ubuntu-latest

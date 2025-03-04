@@ -18,13 +18,6 @@ except (ModuleNotFoundError, ImportError):
 
 
 @dataclass
-class CohereResponseUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-
-
-@dataclass
 class Cohere(Model):
     id: str = "command-r-plus"
     name: str = "cohere"
@@ -134,11 +127,16 @@ class Cohere(Model):
             List[Dict[str, Any]]: The formatted messages.
         """
         formatted_messages = []
-        for m in messages:
-            m_dict = m.serialize_for_model()
-            if m_dict["content"] is None:
-                m_dict.pop("content")
-            formatted_messages.append(m_dict)
+        for message in messages:
+            message_dict = {
+                "role": message.role,
+                "content": message.content,
+                "name": message.name,
+                "tool_call_id": message.tool_call_id,
+                "tool_calls": message.tool_calls,
+            }
+            message_dict = {k: v for k, v in message_dict.items() if v is not None}
+            formatted_messages.append(message_dict)
         return formatted_messages
 
     def invoke(self, messages: List[Message]) -> ChatResponse:
@@ -249,11 +247,11 @@ class Cohere(Model):
             model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
 
         if response.usage is not None and response.usage.tokens is not None:
-            model_response.response_usage = CohereResponseUsage(
-                input_tokens=int(response.usage.tokens.input_tokens) or 0,  # type: ignore
-                output_tokens=int(response.usage.tokens.output_tokens) or 0,  # type: ignore
-                total_tokens=int(response.usage.tokens.input_tokens + response.usage.tokens.output_tokens) or 0,  # type: ignore
-            )
+            model_response.response_usage = {
+                "input_tokens": int(response.usage.tokens.input_tokens) or 0,  # type: ignore
+                "output_tokens": int(response.usage.tokens.output_tokens) or 0,  # type: ignore
+                "total_tokens": int(response.usage.tokens.input_tokens + response.usage.tokens.output_tokens) or 0,  # type: ignore
+            }
 
         return model_response
 
@@ -319,14 +317,14 @@ class Cohere(Model):
         ):
             self._add_usage_metrics_to_assistant_message(
                 assistant_message=assistant_message,
-                response_usage=CohereResponseUsage(
-                    input_tokens=int(response.delta.usage.tokens.input_tokens) or 0,  # type: ignore
-                    output_tokens=int(response.delta.usage.tokens.output_tokens) or 0,  # type: ignore
-                    total_tokens=int(
+                response_usage={
+                    "input_tokens": int(response.delta.usage.tokens.input_tokens) or 0,  # type: ignore
+                    "output_tokens": int(response.delta.usage.tokens.output_tokens) or 0,  # type: ignore
+                    "total_tokens": int(
                         response.delta.usage.tokens.input_tokens + response.delta.usage.tokens.output_tokens  # type: ignore
                     )
                     or 0,
-                ),
+                },
             )
 
         return model_response, tool_use
