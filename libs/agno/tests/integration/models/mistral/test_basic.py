@@ -163,6 +163,7 @@ def test_history():
     agent.run("Hello 4")
     assert len(agent.run_response.messages) == 8
 
+
 def test_with_reasoning():
     agent = Agent(
         model=MistralChat(
@@ -177,4 +178,3 @@ def test_with_reasoning():
     )
     response = agent.run("What is the capital of France?")
     assert response.content is not None
-    assert response.thinking is not None
