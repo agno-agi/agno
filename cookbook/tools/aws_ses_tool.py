@@ -117,31 +117,13 @@ agent = Agent(
     show_tool_calls=True,
 )
 
-if __name__ == "__main__":
-    # Example prompts showing different ways to specify recipients and content
-    prompts = [
-        """Research AI developments in healthcare from the past week and email a summary 
-        to health-team@company.com. Focus on practical applications in clinical settings.""",
-        """Send jane@research.org a detailed update about recent breakthroughs in 
-        quantum computing and their potential impact on AI.""",
-        """Compile a weekly digest of AI safety developments and send it to 
-        safety-team@company.com. Include both technical and policy updates.""",
-        """Find the latest news about AI in autonomous vehicles and email the findings 
-        to autonomous@mobility.org. Highlight real-world deployments and testing.""",
-        """Research MLOps tools released in the last month and send a technical summary 
-        to devops@tech.com. Include setup instructions and GitHub links.""",
-    ]
+# Example 1: Send an email
+agent.print_response(
+    "Research AI developments in healthcare from the past week and email a summary " 
+    "to health-team@company.com. Focus on practical applications in clinical settings.",
+    markdown=True
+)
 
-    # Choose one prompt to run
-    agent.print_response(prompts[0])
-
-"""
-The agent will now handle recipient emails as part of natural language prompts.
-This allows for more flexible and context-aware email sending. For example:
-
-- "Send weekly AI updates to team@company.com"
-- "Research LLM developments and email findings to alice@research.org"
-- "Compile AI safety news and send it to safety-team@org.com"
-- "Find AI startup news and email a summary to vc@investor.com"
-- "Get latest AI paper summaries and send them to researcher@university.edu"
-"""
+# Note: Make sure you have the necessary AWS credentials set up in your environment
+# or use AWS CLI's configure command to set them up before running this script.
+# Also ensure that both sender and recipient emails are verified in AWS SES (required in sandbox mode).
