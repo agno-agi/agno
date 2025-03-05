@@ -24,7 +24,7 @@ class GithubTools(Toolkit):
         get_pull_request_changes: bool = True,
         create_issue: bool = True,
         create_repository: bool = True,
-        delete_repository: bool = True,
+        delete_repository: bool = False,
         get_repository_languages: bool = True,
         list_branches: bool = True,
     ):
