@@ -5,7 +5,7 @@ from typing import Dict, List
 import chess
 import nest_asyncio
 import streamlit as st
-from agents import get_chess_teams, is_claude_thinking_model
+from agents import get_chess_teams
 from agno.utils.log import logger
 from utils import (
     CUSTOM_CSS,
@@ -13,6 +13,7 @@ from utils import (
     ChessBoard,
     display_board,
     display_move_history,
+    is_claude_thinking_model,
     parse_move,
     show_agent_status,
 )

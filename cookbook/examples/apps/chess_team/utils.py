@@ -3,6 +3,7 @@ from typing import Dict, List, Tuple
 
 import chess
 import streamlit as st
+from agno.agent import Agent
 
 # Define constants
 WHITE = "white"
@@ -648,9 +649,19 @@ def display_move_history(move_history):
 
     # Unicode chess pieces
     pieces = {
-        "r": "♜", "n": "♞", "b": "♝", "q": "♛", "k": "♚", "p": "♟",
-        "R": "♖", "N": "♘", "B": "♗", "Q": "♕", "K": "♔", "P": "♙",
-        ".": ""
+        "r": "♜",
+        "n": "♞",
+        "b": "♝",
+        "q": "♛",
+        "k": "♚",
+        "p": "♟",
+        "R": "♖",
+        "N": "♘",
+        "B": "♗",
+        "Q": "♕",
+        "K": "♔",
+        "P": "♙",
+        ".": "",
     }
 
     for move in move_history:
@@ -668,7 +679,7 @@ def display_move_history(move_history):
         current_move = move["move"]
         from_square = current_move[:2]
         to_square = current_move[2:]
-        
+
         # Convert algebraic notation to board coordinates
         file_map = {"a": 0, "b": 1, "c": 2, "d": 3, "e": 4, "f": 5, "g": 6, "h": 7}
         from_file, from_rank = from_square[0], int(from_square[1])
@@ -686,39 +697,43 @@ def display_move_history(move_history):
             board_array.append(row.split(" "))
 
         # Create move history item with mini board
-        html += f'<div class="move-history-item">'
-        html += f'<strong>Move {move["number"]}</strong><br>'
-        html += f'{move["player"]}<br>'
+        html += '<div class="move-history-item">'
+        html += f"<strong>Move {move['number']}</strong><br>"
+        html += f"{move['player']}<br>"
         html += f'<div class="move-text {move_color_class}">{move["move"]}</div>'
-        
+
         # Add mini chess board
         html += '<div class="mini-chess-board">'
         for i in range(8):
             for j in range(8):
-                square_color = "mini-white-square" if (i + j) % 2 == 0 else "mini-black-square"
+                square_color = (
+                    "mini-white-square" if (i + j) % 2 == 0 else "mini-black-square"
+                )
                 piece = board_array[i][j]
                 piece_unicode = pieces.get(piece, "")
-                
+
                 # Add move highlighting classes
                 highlight_class = ""
                 if (i, j) == from_coords:
                     highlight_class = f" move-from {move_color_class}"
                 elif (i, j) == to_coords:
                     highlight_class = f" move-to {move_color_class}"
-                
+
                 html += f'<div class="mini-square {square_color}{highlight_class}">'
                 if piece_unicode:
                     piece_color = "white-piece" if piece.isupper() else "black-piece"
-                    html += f'<span class="mini-piece {piece_color}">{piece_unicode}</span>'
-                html += '</div>'
-        html += '</div>'  # End mini-chess-board
+                    html += (
+                        f'<span class="mini-piece {piece_color}">{piece_unicode}</span>'
+                    )
+                html += "</div>"
+        html += "</div>"  # End mini-chess-board
 
         if move.get("description"):
             html += f'<div class="description">{move["description"]}</div>'
-        
-        html += '</div>'  # End move-history-item
 
-    html += '</div>'  # End move-history-grid
+        html += "</div>"  # End move-history-item
+
+    html += "</div>"  # End move-history-grid
 
     st.markdown(html, unsafe_allow_html=True)
 
@@ -755,3 +770,18 @@ def parse_move(move_text: str) -> str:
 
     # If no match found, return the original text (will be handled as an error later)
     return move_text
+
+
+def is_claude_thinking_model(agent: Agent) -> bool:
+    """
+    Args:
+        agent: The agent to check
+    Returns:
+        bool: True if the agent uses a Claude model with thinking enabled
+    """
+    return (
+        hasattr(agent.model, "id")
+        and isinstance(agent.model.id, str)
+        and "claude" in agent.model.id.lower()
+        and "thinking" in agent.model.id.lower()
+    )

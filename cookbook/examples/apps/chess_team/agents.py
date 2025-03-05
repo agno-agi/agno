@@ -153,18 +153,3 @@ def get_chess_teams(
     except Exception as e:
         logger.error(f"Error initializing agents: {str(e)}")
         raise
-
-
-def is_claude_thinking_model(agent: Agent) -> bool:
-    """
-    Args:
-        agent: The agent to check
-    Returns:
-        bool: True if the agent uses a Claude model with thinking enabled
-    """
-    return (
-        hasattr(agent.model, "id")
-        and isinstance(agent.model.id, str)
-        and "claude" in agent.model.id.lower()
-        and "thinking" in agent.model.id.lower()
-    )
