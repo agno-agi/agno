@@ -166,7 +166,7 @@ class LanceDb(VectorDb):
     def _init_table(self) -> lancedb.db.LanceTable:
         schema = self._base_schema()
 
-        logger.debug(f"Creating table: {self.table_name}")
+        logger.info(f"Creating table: {self.table_name}")
         tbl = self.connection.create_table(self.table_name, schema=schema, mode="overwrite", exist_ok=True)  # type: ignore
         return tbl  # type: ignore
 
@@ -211,11 +211,12 @@ class LanceDb(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
         """
-        logger.debug(f"Inserting {len(documents)} documents")
-        data = []
         if len(documents) <= 0:
-            logger.debug("No documents to insert")
+            logger.info("No documents to insert")
             return
+        
+        logger.info(f"Inserting {len(documents)} documents")
+        data = []
 
         for document in documents:
             document.embed(embedder=self.embedder)
@@ -259,11 +260,12 @@ class LanceDb(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
         """
-        logger.debug(f"Inserting {len(documents)} documents")
-        data = []
         if len(documents) <= 0:
             logger.debug("No documents to insert")
             return
+
+        logger.info(f"Inserting {len(documents)} documents")
+        data = []
 
         # Prepare documents for insertion
         for document in documents:
@@ -316,6 +318,8 @@ class LanceDb(VectorDb):
         await self.async_insert(documents, filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        if self.connection:
+            self.table = self.connection.open_table(name=self.table_name)
         if self.search_type == SearchType.vector:
             return self.vector_search(query, limit)
         elif self.search_type == SearchType.keyword:
