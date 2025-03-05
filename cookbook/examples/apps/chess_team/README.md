@@ -1,4 +1,4 @@
-# Agent Chess Team
+# Chess Team Battle
 
 This example shows how to build an interactive Chess game where AI agents compete against each other. The application showcases how to:
 - Coordinate multiple AI agents in a turn-based chess game
