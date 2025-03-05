@@ -196,6 +196,29 @@ CUSTOM_CSS = """
         grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
         gap: 10px;
         padding: 10px;
+        max-height: 600px;  /* Height of approximately 2 rows of boards */
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: #666 #333;
+    }
+    
+    /* Webkit scrollbar styling */
+    .move-history-grid::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    .move-history-grid::-webkit-scrollbar-track {
+        background: #333;
+        border-radius: 4px;
+    }
+
+    .move-history-grid::-webkit-scrollbar-thumb {
+        background: #666;
+        border-radius: 4px;
+    }
+
+    .move-history-grid::-webkit-scrollbar-thumb:hover {
+        background: #888;
     }
     
     .move-history-item {
