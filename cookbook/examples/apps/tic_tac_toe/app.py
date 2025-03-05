@@ -45,6 +45,7 @@ def main():
         st.markdown("### Game Controls")
         model_options = {
             "gpt-4o": "openai:gpt-4o",
+            "gpt-4.5": "openai:gpt-4.5-preview",
             "o3-mini": "openai:o3-mini",
             "claude-3.5": "anthropic:claude-3-5-sonnet",
             "claude-3.7": "anthropic:claude-3-7-sonnet",
