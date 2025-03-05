@@ -49,6 +49,7 @@ groq = ["groq"]
 mistral = ["mistralai"]
 openai = ["openai"]
 ollama = ["ollama"]
+ibm = ["ibm-watsonx-ai"]
 
 # Dependencies for Tools
 exa = ["exa_py"]
@@ -80,7 +81,7 @@ mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
 
 # Dependencies for Knowledge
-pdf = ["pypdf"]
+pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 
 # Dependencies for Performance
@@ -104,6 +105,7 @@ models = [
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
+  "agno[ibm]"
 ]
 
 # All tools
@@ -233,6 +235,7 @@ module = [
   "googlesearch.*",
   "groq.*",
   "huggingface_hub.*",
+  "ibm_watsonx_ai.*",
   "imghdr.*",
   "jira.*",
   "kubernetes.*",
