@@ -116,6 +116,7 @@ class WebsiteReader(Reader):
             try:
                 logger.debug(f"Crawling: {current_url}")
                 response = httpx.get(current_url, timeout=10)
+                response.raise_for_status()
                 soup = BeautifulSoup(response.content, "html.parser")
 
                 # Extract main content
@@ -147,7 +148,7 @@ class WebsiteReader(Reader):
                             self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
             except Exception as e:
-                logger.debug(f"Failed to crawl: {current_url}: {e}")
+                logger.warning(f"Failed to crawl: {current_url}: {e}")
                 pass
 
         return crawler_result

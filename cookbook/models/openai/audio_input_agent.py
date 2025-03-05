@@ -1,5 +1,3 @@
-import base64
-
 import requests
 from agno.agent import Agent, RunResponse  # noqa
 from agno.media import Audio
@@ -17,5 +15,5 @@ agent = Agent(
     markdown=True,
 )
 agent.print_response(
-    "What is in this audio?", audio=[Audio(content=wav_data, format="wav")]
+    "What is in this audio?", audio=[Audio(content=wav_data, format="wav")], stream=True
 )

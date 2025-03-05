@@ -121,7 +121,6 @@ class Function(BaseModel):
             # logger.debug(f"JSON schema for {function_name}: {parameters}")
         except Exception as e:
             logger.warning(f"Could not parse args for {function_name}: {e}", exc_info=True)
-
         return cls(
             name=function_name,
             description=get_entrypoint_docstring(entrypoint=c),

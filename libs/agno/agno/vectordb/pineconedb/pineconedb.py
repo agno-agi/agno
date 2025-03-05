@@ -1,10 +1,25 @@
 from typing import Any, Dict, List, Optional, Union
 
 try:
+    from packaging import version
+    from pinecone import __version__
+
+    if version.parse(__version__).major >= 6:
+        import warnings
+
+        warnings.warn(
+            "We do not yet support Pinecone v6.x.x. We are actively working to achieve compatibility. "
+            "In the meantime, we recommend using Pinecone v5.4.2 for the best experience. Please run `pip install pinecone==5.4.2`",
+            UserWarning,
+        )
+        raise RuntimeError("Incompatible Pinecone version detected. Execution halted.")
+
     from pinecone import Pinecone, PodSpec, ServerlessSpec
     from pinecone.config import Config
+
 except ImportError:
     raise ImportError("The `pinecone` package is not installed, please install using `pip install pinecone`.")
+
 
 from agno.document import Document
 from agno.embedder import Embedder
@@ -365,3 +380,26 @@ class PineconeDb(VectorDb):
             return True
         except Exception:
             return False
+
+    async def async_create(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_doc_exists(self, document: Document) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_drop(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_exists(self) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

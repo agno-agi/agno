@@ -40,6 +40,7 @@ class Ollama(Model):
     id: str = "llama3.1"
     name: str = "Ollama"
     provider: str = "Ollama"
+
     supports_structured_outputs: bool = True
 
     # Request parameters
@@ -57,15 +58,10 @@ class Ollama(Model):
     client: Optional[OllamaClient] = None
     async_client: Optional[AsyncOllamaClient] = None
 
-    # Internal parameters. Not used for API requests
-    # Whether to use the structured outputs with this Model.
-    structured_outputs: bool = False
-
     def _get_client_params(self) -> Dict[str, Any]:
         base_params = {
             "host": self.host,
             "timeout": self.timeout,
-            "client_params": self.client_params,
         }
         # Create client_params dict with non-None values
         client_params = {k: v for k, v in base_params.items() if v is not None}
@@ -118,8 +114,15 @@ class Ollama(Model):
         # Add tools
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
+            # Fix optional parameters where the "type" is [type, null]
+            for tool in request_params["tools"]:  # type: ignore
+                if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
+                    for _, obj in tool["function"]["parameters"].get("properties", {}).items():  # type: ignore
+                        if isinstance(obj["type"], list):
+                            obj["type"] = obj["type"][0]
             if self.tool_choice is not None:
                 request_params["tool_choice"] = self.tool_choice
+
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
@@ -143,10 +146,6 @@ class Ollama(Model):
         )
         if self._tools is not None:
             model_dict["tools"] = self._tools
-            if self.tool_choice is not None:
-                model_dict["tool_choice"] = self.tool_choice
-            else:
-                model_dict["tool_choice"] = "auto"
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
@@ -281,7 +280,7 @@ class Ollama(Model):
                 and self.structured_outputs
                 and issubclass(self.response_format, BaseModel)
             ):
-                parsed_object = response_message.parsed  # type: ignore
+                parsed_object = response_message.content  # type: ignore
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
         except Exception as e:
@@ -312,18 +311,17 @@ class Ollama(Model):
 
         # Get response usage
         if response.get("done"):
-            model_response.response_usage = OllamaResponseUsage(
-                input_tokens=response.get("prompt_eval_count", 0),
-                output_tokens=response.get("eval_count", 0),
-                total_duration=response.get("total_duration", 0),
-                load_duration=response.get("load_duration", 0),
-                prompt_eval_duration=response.get("prompt_eval_duration", 0),
-                eval_duration=response.get("eval_duration", 0),
-            )
-            if model_response.response_usage.input_tokens or model_response.response_usage.output_tokens:
-                model_response.response_usage.total_tokens = (
-                    model_response.response_usage.input_tokens + model_response.response_usage.output_tokens
-                )
+            model_response.response_usage = {
+                "input_tokens": response.get("prompt_eval_count", 0),
+                "output_tokens": response.get("eval_count", 0),
+                "total_tokens": response.get("prompt_eval_count", 0) + response.get("eval_count", 0),
+                "additional_metrics": {
+                    "total_duration": response.get("total_duration", 0),
+                    "load_duration": response.get("load_duration", 0),
+                    "prompt_eval_duration": response.get("prompt_eval_duration", 0),
+                    "eval_duration": response.get("eval_duration", 0),
+                },
+            }
 
         return model_response
 
@@ -359,17 +357,16 @@ class Ollama(Model):
                     model_response.tool_calls.append({"type": "function", "function": function_def})
 
         if response_delta.get("done"):
-            model_response.response_usage = OllamaResponseUsage(
-                input_tokens=response_delta.get("prompt_eval_count", 0),
-                output_tokens=response_delta.get("eval_count", 0),
-                total_duration=response_delta.get("total_duration", 0),
-                load_duration=response_delta.get("load_duration", 0),
-                prompt_eval_duration=response_delta.get("prompt_eval_duration", 0),
-                eval_duration=response_delta.get("eval_duration", 0),
-            )
-            if model_response.response_usage.input_tokens or model_response.response_usage.output_tokens:
-                model_response.response_usage.total_tokens = (
-                    model_response.response_usage.input_tokens + model_response.response_usage.output_tokens
-                )
+            model_response.response_usage = {
+                "input_tokens": response_delta.get("prompt_eval_count", 0),
+                "output_tokens": response_delta.get("eval_count", 0),
+                "total_tokens": response_delta.get("prompt_eval_count", 0) + response_delta.get("eval_count", 0),
+                "additional_metrics": {
+                    "total_duration": response_delta.get("total_duration", 0),
+                    "load_duration": response_delta.get("load_duration", 0),
+                    "prompt_eval_duration": response_delta.get("prompt_eval_duration", 0),
+                    "eval_duration": response_delta.get("eval_duration", 0),
+                },
+            }
 
         return model_response

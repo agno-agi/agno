@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.1.1"
+version = "1.1.8"
 description = "Agno: a lightweight framework for building multi-modal Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -39,7 +39,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "pytest-asyncio", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
+dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
 
 # Dependencies for Models
 anthropic = ["anthropic"]
@@ -49,6 +49,7 @@ groq = ["groq"]
 mistral = ["mistralai"]
 openai = ["openai"]
 ollama = ["ollama"]
+ibm = ["ibm-watsonx-ai"]
 
 # Dependencies for Tools
 exa = ["exa_py"]
@@ -58,21 +59,30 @@ duckdb = ["duckdb"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 youtube = ["youtube_transcript_api"]
 firecrawl = ["firecrawl-py"]
+github = ["PyGithub"]
+gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
+googlemaps = ["googlemaps"]
+todoist = ["todoist-api-python"]
 elevenlabs = ["elevenlabs"]
 fal = ["fal_client"]
+webex = ["webexpythonsdk"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
-postgres = ["psycopg-binary"]
+postgres = ["psycopg-binary", "psycopg"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
 lancedb = ["lancedb", "tantivy"]
 qdrant = ["qdrant-client"]
+cassandra = ["cassio"]
+mongodb = ["pymongo[srv]"]
+singlestore = ["sqlalchemy"]
 
 # Dependencies for Knowledge
-pdf = ["pypdf"]
+pdf = ["pypdf", "rapidocr_onnxruntime"]
+docx = ["python-docx"]
 
 # Dependencies for Performance
 performance = ["memory_profiler"]
@@ -95,6 +105,7 @@ models = [
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
+  "agno[ibm]"
 ]
 
 # All tools
@@ -106,8 +117,13 @@ tools = [
   "agno[newspaper]",
   "agno[youtube]",
   "agno[firecrawl]",
+  "agno[github]",
+  "agno[gmail]",
+  "agno[googlemaps]",
+  "agno[todoist]",
   "agno[elevenlabs]",
   "agno[fal]",
+  "agno[webex]",
 ]
 
 # All storage
@@ -122,11 +138,15 @@ vectordbs = [
   "agno[chromadb]",
   "agno[lancedb]",
   "agno[qdrant]",
+  "agno[cassandra]",
+  "agno[mongodb]",
+  "agno[singlestore]"
 ]
 
 # All knowledge
 knowledge = [
   "agno[pdf]",
+  "agno[docx]",
 ]
 
 # All libraries for testing
@@ -191,6 +211,7 @@ module = [
   "boto3.*",
   "botocore.*",
   "bs4.*",
+  "bson.*",
   "cassio.*",
   "chonkie.*",
   "chromadb.*",
@@ -214,6 +235,7 @@ module = [
   "googlesearch.*",
   "groq.*",
   "huggingface_hub.*",
+  "ibm_watsonx_ai.*",
   "imghdr.*",
   "jira.*",
   "kubernetes.*",
@@ -266,10 +288,12 @@ module = [
   "tweepy.*",
   "twilio.*",
   "tzlocal.*",
+  "upstash_vector.*",
   "uvicorn.*",
   "vertexai.*",
   "voyageai.*",
   "weaviate.*",
+  "webexpythonsdk.*",
   "wikipedia.*",
   "yfinance.*",
   "youtube_transcript_api.*",

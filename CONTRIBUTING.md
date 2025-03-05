@@ -12,6 +12,7 @@ Please follow the [fork and pull request](https://docs.github.com/en/get-started
 - Send a pull request.
 - We appreciate your support & input!
 
+
 ## Development setup
 
 1. Clone the repository.
@@ -43,6 +44,18 @@ Ensure your code meets our quality standards by running the appropriate formatti
   - `.\scripts\validate.bat`
 
 These scripts will perform code formatting with `ruff` and static type checks with `mypy`.
+
+## Local testing
+
+Before submitting a pull request, ensure all tests pass locally:
+
+1. Do the development setup above.
+
+2. Run the test suite `./scripts/test.sh`
+
+3. Run specific test files or test cases: `pytest ./libs/agno/tests/unit/utils/test_string.py` or whatever file you want to test.
+
+Make sure all tests pass before submitting your pull request. If you add new features, include appropriate test coverage.
 
 ## Adding a new Vector Database
 

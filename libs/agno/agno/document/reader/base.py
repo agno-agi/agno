@@ -18,5 +18,8 @@ class Reader:
     def read(self, obj: Any) -> List[Document]:
         raise NotImplementedError
 
+    async def async_read(self, obj: Any) -> List[Document]:
+        raise NotImplementedError
+
     def chunk_document(self, document: Document) -> List[Document]:
         return self.chunking_strategy.chunk(document)
