@@ -5,7 +5,6 @@ import chess
 import streamlit as st
 from agno.agent import Agent
 
-# Define constants
 WHITE = "white"
 BLACK = "black"
 
@@ -364,8 +363,7 @@ class SimpleChessBoard:
         )
 
         for i, row in enumerate(self.board):
-            # Add rank number and row
-            html_output.append(f'<div class="chess-row">')
+            html_output.append('<div class="chess-row">')
             html_output.append(f'<div class="chess-rank">{8 - i}</div>')
 
             for piece in row:
@@ -377,10 +375,10 @@ class SimpleChessBoard:
                     f'<div class="chess-cell {piece_class}">{piece_char}</div>'
                 )
 
-            html_output.append("</div>")  # Close chess-row
+            html_output.append("</div>")
 
-        html_output.append("</div>")  # Close chess-grid
-        html_output.append("</div>")  # Close chess-board-wrapper
+        html_output.append("</div>")
+        html_output.append("</div>")
 
         return "\n".join(html_output)
 
@@ -443,7 +441,7 @@ class SimpleChessBoard:
             "b": "Bishop",
             "n": "Knight",
             "p": "Pawn",
-            ".": "Empty",  # Add empty square mapping
+            ".": "Empty",
         }
         return piece_names.get(piece, "Unknown")
 
@@ -454,9 +452,8 @@ class SimpleChessBoard:
 
 class ChessBoard:
     def __init__(self):
-        # Initialize chess board using python-chess library
         self.board = chess.Board()
-        self.current_color = WHITE  # White starts
+        self.current_color = WHITE
         self.move_history = []
 
     def make_move(self, move_str: str) -> Tuple[bool, str]:
@@ -477,7 +474,6 @@ class ChessBoard:
             if move not in self.board.legal_moves:
                 return False, f"Invalid move: {move_str} is not a legal move."
 
-            # Make the move
             self.board.push(move)
 
             # Switch player
@@ -517,8 +513,6 @@ class ChessBoard:
         Returns:
             List of legal moves in UCI notation
         """
-        if color is None:
-            color = self.current_color
 
         # If it's not the specified color's turn, return empty list
         if (color == WHITE and not self.board.turn) or (
@@ -587,7 +581,6 @@ def display_board(board: ChessBoard):
     Args:
         board: ChessBoard instance
     """
-    # Get the current board state
     board_obj = board.board
 
     # Create HTML for the chess board
@@ -615,7 +608,6 @@ def display_board(board: ChessBoard):
     for row in str(board_obj).split("\n"):
         board_array.append(row.split(" "))
 
-    # Render the board
     for i in range(8):
         for j in range(8):
             square_color = "white-square" if (i + j) % 2 == 0 else "black-square"
@@ -629,7 +621,6 @@ def display_board(board: ChessBoard):
 
     html += "</div>"
 
-    # Display the board
     st.markdown(html, unsafe_allow_html=True)
 
 
@@ -667,7 +658,6 @@ def display_move_history(move_history):
 
     st.markdown("<h3>Move History</h3>", unsafe_allow_html=True)
 
-    # Create grid container
     html = '<div class="move-history-grid">'
 
     # Unicode chess pieces
@@ -688,14 +678,13 @@ def display_move_history(move_history):
     }
 
     for move in move_history:
-        # Create a board for this move
         board = chess.Board()
         # Play all moves up to this point
         for i in range(move["number"]):
             if i < len(move_history):
                 try:
                     board.push(chess.Move.from_uci(move_history[i]["move"]))
-                except:
+                except (chess.InvalidMoveError, ValueError) as e:
                     continue
 
         # Get the current move's from and to squares
@@ -714,7 +703,7 @@ def display_move_history(move_history):
         is_white_move = "white" in move["player"].lower()
         move_color_class = "white-move" if is_white_move else "black-move"
 
-        # Convert board to 2D array
+        # Board to 2D array
         board_array = []
         for row in str(board).split("\n"):
             board_array.append(row.split(" "))
@@ -735,7 +724,7 @@ def display_move_history(move_history):
                 piece = board_array[i][j]
                 piece_unicode = pieces.get(piece, "")
 
-                # Add move highlighting classes
+                # highlighting moves
                 highlight_class = ""
                 if (i, j) == from_coords:
                     highlight_class = f" move-from {move_color_class}"
@@ -749,14 +738,14 @@ def display_move_history(move_history):
                         f'<span class="mini-piece {piece_color}">{piece_unicode}</span>'
                     )
                 html += "</div>"
-        html += "</div>"  # End mini-chess-board
+        html += "</div>"
 
         if move.get("description"):
             html += f'<div class="description">{move["description"]}</div>'
 
-        html += "</div>"  # End move-history-item
+        html += "</div>"
 
-    html += "</div>"  # End move-history-grid
+    html += "</div>"
 
     st.markdown(html, unsafe_allow_html=True)
 
@@ -771,7 +760,6 @@ def parse_move(move_text: str) -> str:
     Returns:
         Extracted move in UCI format
     """
-    # Clean up the text and extract the move
     move_text = move_text.strip()
 
     # If the move is already in UCI format (e.g., "e2e4"), return it
@@ -791,7 +779,6 @@ def parse_move(move_text: str) -> str:
     if move_match:
         return move_match.group(1)
 
-    # If no match found, return the original text (will be handled as an error later)
     return move_text
 
 
