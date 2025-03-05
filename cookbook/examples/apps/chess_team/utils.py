@@ -188,6 +188,101 @@ CUSTOM_CSS = """
     .chess-row:nth-child(odd) .chess-cell:nth-child(odd) {
         background-color: #262626;
     }
+    
+    /* Additional CSS for move history grid */
+    .move-history-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 10px;
+        padding: 10px;
+    }
+    
+    .move-history-item {
+        background: rgba(40, 40, 40, 0.8);
+        border-radius: 5px;
+        padding: 10px;
+        text-align: center;
+        border: 1px solid #444;
+    }
+    
+    .move-history-item .move-text {
+        font-family: monospace;
+        font-size: 1.1em;
+        margin: 5px 0;
+    }
+
+    .move-history-item .move-text.white-move {
+        color: #4CAF50;
+    }
+
+    .move-history-item .move-text.black-move {
+        color: #ff4444;
+    }
+    
+    .move-history-item .description {
+        color: #888;
+        font-size: 0.9em;
+        margin-top: 5px;
+    }
+    
+    /* Mini chess board for history */
+    .mini-chess-board {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        width: 160px;
+        margin: 10px auto;
+        border: 1px solid #555;
+        position: relative;
+    }
+    
+    .mini-square {
+        aspect-ratio: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        position: relative;
+    }
+    
+    .mini-white-square {
+        background-color: #f0d9b5;
+    }
+    
+    .mini-black-square {
+        background-color: #b58863;
+    }
+    
+    .mini-piece {
+        font-size: 14px;
+        line-height: 20px;
+        z-index: 2;
+    }
+
+    .mini-piece.white-piece {
+        color: #ffffff;
+        text-shadow: 0 0 2px #000;
+    }
+
+    .mini-piece.black-piece {
+        color: #000000;
+        text-shadow: 0 0 2px #fff;
+    }
+
+    .mini-square.move-from.white-move {
+        background-color: rgba(76, 175, 80, 0.5) !important;
+    }
+
+    .mini-square.move-to.white-move {
+        background-color: rgba(76, 175, 80, 0.7) !important;
+    }
+
+    .mini-square.move-from.black-move {
+        background-color: rgba(255, 68, 68, 0.5) !important;
+    }
+
+    .mini-square.move-to.black-move {
+        background-color: rgba(255, 68, 68, 0.7) !important;
+    }
 </style>
 """
 
@@ -538,7 +633,7 @@ def show_agent_status(agent_name: str, status: str, is_white: bool = True):
 
 def display_move_history(move_history):
     """
-    Display the move history.
+    Display the move history with miniature chess boards.
 
     Args:
         move_history: List of move history entries
@@ -548,15 +643,82 @@ def display_move_history(move_history):
 
     st.markdown("<h3>Move History</h3>", unsafe_allow_html=True)
 
-    html = '<div class="move-history">'
-    for move in move_history:
-        description = move.get("description", "")
-        description_html = f"<br><small>{description}</small>" if description else ""
+    # Create grid container
+    html = '<div class="move-history-grid">'
 
-        html += f"""<div class="move-entry">
-                    <strong>{move["number"]}.</strong> {move["player"]} played <code>{move["move"]}</code>{description_html}
-                </div>"""
-    html += "</div>"
+    # Unicode chess pieces
+    pieces = {
+        "r": "♜", "n": "♞", "b": "♝", "q": "♛", "k": "♚", "p": "♟",
+        "R": "♖", "N": "♘", "B": "♗", "Q": "♕", "K": "♔", "P": "♙",
+        ".": ""
+    }
+
+    for move in move_history:
+        # Create a board for this move
+        board = chess.Board()
+        # Play all moves up to this point
+        for i in range(move["number"]):
+            if i < len(move_history):
+                try:
+                    board.push(chess.Move.from_uci(move_history[i]["move"]))
+                except:
+                    continue
+
+        # Get the current move's from and to squares
+        current_move = move["move"]
+        from_square = current_move[:2]
+        to_square = current_move[2:]
+        
+        # Convert algebraic notation to board coordinates
+        file_map = {"a": 0, "b": 1, "c": 2, "d": 3, "e": 4, "f": 5, "g": 6, "h": 7}
+        from_file, from_rank = from_square[0], int(from_square[1])
+        to_file, to_rank = to_square[0], int(to_square[1])
+        from_coords = (8 - from_rank, file_map[from_file])
+        to_coords = (8 - to_rank, file_map[to_file])
+
+        # Determine if it's a white or black move
+        is_white_move = "white" in move["player"].lower()
+        move_color_class = "white-move" if is_white_move else "black-move"
+
+        # Convert board to 2D array
+        board_array = []
+        for row in str(board).split("\n"):
+            board_array.append(row.split(" "))
+
+        # Create move history item with mini board
+        html += f'<div class="move-history-item">'
+        html += f'<strong>Move {move["number"]}</strong><br>'
+        html += f'{move["player"]}<br>'
+        html += f'<div class="move-text {move_color_class}">{move["move"]}</div>'
+        
+        # Add mini chess board
+        html += '<div class="mini-chess-board">'
+        for i in range(8):
+            for j in range(8):
+                square_color = "mini-white-square" if (i + j) % 2 == 0 else "mini-black-square"
+                piece = board_array[i][j]
+                piece_unicode = pieces.get(piece, "")
+                
+                # Add move highlighting classes
+                highlight_class = ""
+                if (i, j) == from_coords:
+                    highlight_class = f" move-from {move_color_class}"
+                elif (i, j) == to_coords:
+                    highlight_class = f" move-to {move_color_class}"
+                
+                html += f'<div class="mini-square {square_color}{highlight_class}">'
+                if piece_unicode:
+                    piece_color = "white-piece" if piece.isupper() else "black-piece"
+                    html += f'<span class="mini-piece {piece_color}">{piece_unicode}</span>'
+                html += '</div>'
+        html += '</div>'  # End mini-chess-board
+
+        if move.get("description"):
+            html += f'<div class="description">{move["description"]}</div>'
+        
+        html += '</div>'  # End move-history-item
+
+    html += '</div>'  # End move-history-grid
 
     st.markdown(html, unsafe_allow_html=True)
 
