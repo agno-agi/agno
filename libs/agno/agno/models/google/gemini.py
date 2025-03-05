@@ -40,18 +40,22 @@ except ImportError:
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     # Case 1: Image is a URL
     # Download the image from the URL and add it as base64 encoded data
-    if image.url is not None and image.image_url_content is not None:
-        try:
-            import base64
+    if image.url is not None:
+        content_bytes = image.image_url_content
+        if content_bytes is not None:
+            try:
+                import base64
 
-            content_bytes = image.image_url_content
-            image_data = {
-                "mime_type": "image/jpeg",
-                "data": base64.b64encode(content_bytes).decode("utf-8"),
-            }
-            return image_data
-        except Exception as e:
-            logger.warning(f"Failed to download image from {image}: {e}")
+                image_data = {
+                    "mime_type": "image/jpeg",
+                    "data": base64.b64encode(content_bytes).decode("utf-8"),
+                }
+                return image_data
+            except Exception as e:
+                logger.warning(f"Failed to download image from {image}: {e}")
+                return None
+        else:
+            logger.warning(f"Unsupported image format: {image}")
             return None
 
     # Case 2: Image is a local path
