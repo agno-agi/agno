@@ -75,7 +75,10 @@ def _format_messages(messages: List[Message]) -> List[MistralMessage]:
             else:
                 mistral_message = UserMessage(role="user", content=message.content)
         elif message.role == "assistant":
-            if message.tool_calls is not None:
+            if message.reasoning_content is not None:
+                message.role = "user"
+                mistral_message = UserMessage(role="user", content=message.content)
+            elif message.tool_calls is not None:
                 mistral_message = AssistantMessage(
                     role="assistant", content=message.content, tool_calls=message.tool_calls
                 )
@@ -87,6 +90,7 @@ def _format_messages(messages: List[Message]) -> List[MistralMessage]:
             mistral_message = ToolMessage(name="tool", content=message.content, tool_call_id=message.tool_call_id)
         else:
             raise ValueError(f"Unknown role: {message.role}")
+
         mistral_messages.append(mistral_message)
     return mistral_messages
 
