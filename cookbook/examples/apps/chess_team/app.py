@@ -353,57 +353,6 @@ Do not include any other text in your response.""",
                                 "type": "enabled",
                                 "budget_tokens": 4096,
                             }
-                        master_response = master_agent.run(
-                            f"""\
-Current board state (FEN): {st.session_state.game_board.get_fen()}
-Board visualization:
-{st.session_state.game_board.get_board_state()}
-
-Last move: {move_description}
-
-Analyze the current position and provide:
-1. Is the game over? (checkmate, stalemate, etc.)
-2. Who has the advantage (white, black, or equal)?
-3. Brief commentary on the position
-
-Respond with a JSON object containing:
-{{
-    "game_over": true/false,
-    "result": "white_win"/"black_win"/"draw"/null,
-    "reason": "explanation if game is over",
-    "commentary": "brief analysis of the position",
-    "advantage": "white"/"black"/"equal"
-}}""",
-                            **kwargs,
-                        )
-
-                        try:
-                            # Extract JSON from response
-                            analysis_text = (
-                                master_response.content if master_response else "{}"
-                            )
-                            analysis = json.loads(analysis_text)
-
-                            # Display analysis
-                            advantage = analysis.get("advantage", "equal")
-                            commentary = analysis.get("commentary", "")
-
-                            advantage_color = (
-                                "#f0d9b5"
-                                if advantage == "white"
-                                else "#b58863"
-                                if advantage == "black"
-                                else "#888888"
-                            )
-                            st.markdown(
-                                f"""<div style="background-color: rgba(100, 100, 100, 0.2); padding: 10px; border-radius: 5px; margin: 10px 0; border-left: 4px solid {advantage_color};">
-                                    <strong>Master Analysis:</strong><br>
-                                    {commentary}
-                                </div>""",
-                                unsafe_allow_html=True,
-                            )
-                        except Exception as e:
-                            logger.error(f"Error parsing master analysis: {str(e)}")
 
                     if game_over:
                         result = state_info.get("result", "")
@@ -428,7 +377,6 @@ Respond with a JSON object containing:
                     st.rerun()
                 else:
                     logger.error(f"Invalid move attempt: {message}")
-                    # Try again with a clearer error message
                     response = current_agent.run(
                         f"""\
 Invalid move: {message}
