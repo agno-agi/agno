@@ -129,7 +129,6 @@ def main():
             "claude-3.7-thinking": "anthropic:claude-3-7-sonnet-thinking",
             "gemini-flash": "google:gemini-2.0-flash",
             "gemini-pro": "google:gemini-2.0-pro-exp-02-05",
-            "llama-3.3": "groq:llama-3.3-70b-versatile",
         }
         ################################################################
         # Model selection
