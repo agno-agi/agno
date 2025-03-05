@@ -52,3 +52,9 @@ python cookbook/agent_concepts/reasoning/deepseek/ethical_dilemma.py
 ```shell
 python cookbook/agent_concepts/reasoning/deepseek/finance_agent.py
 ```
+
+### Run reasoning agent with non-official API provider for deepseek reasoning model. 
+
+```shell
+python cookbook/agent_concepts/reasoning/deepseek/custom_base_url.py
+```
