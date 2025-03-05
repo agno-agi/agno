@@ -148,7 +148,7 @@ class WebsiteReader(Reader):
                             self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
             except Exception as e:
-                logger.debug(f"Failed to crawl: {current_url}: {e}")
+                logger.warning(f"Failed to crawl: {current_url}: {e}")
                 pass
 
         return crawler_result
