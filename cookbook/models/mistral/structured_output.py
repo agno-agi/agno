@@ -27,19 +27,20 @@ class MovieScript(BaseModel):
     )
 
 
-json_mode_agent = Agent(
+structured_output_agent = Agent(
     model=MistralChat(
         id="mistral-large-latest",
     ),
     tools=[DuckDuckGoTools()],
     description="You help people write movie scripts.",
     response_model=MovieScript,
+    structured_outputs=True,
     show_tool_calls=True,
-    debug_mode=True,
+    # debug_mode=True,
 )
 
 # Get the response in a variable
-# json_mode_response: RunResponse = json_mode_agent.run("New York")
-# pprint(json_mode_response.content)
+structured_output_response: RunResponse = structured_output_agent.run("New York")
+pprint(structured_output_response.content)
 
-json_mode_agent.print_response("Find a cool movie idea about London and write it.")
+# json_mode_agent.print_response("Find a cool movie idea about London and write it.")

@@ -15,5 +15,5 @@ agent = Agent(
     markdown=True,
 )
 agent.print_response(
-    "What is in this audio?", audio=[Audio(content=wav_data, format="wav")]
+    "What is in this audio?", audio=[Audio(content=wav_data, format="wav")], stream=True
 )

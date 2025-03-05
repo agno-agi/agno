@@ -3,19 +3,26 @@
 This example shows how to create an AI support assistant that combines iterative knowledge searching
 with Agno's documentation to provide comprehensive, well-researched answers about the Agno framework.
 
+You can either use the "AgnoAssist" agent or the "AgnoAssistVoice" agent.
+
 Key Features:
 - Iterative knowledge base searching
 - Deep reasoning and comprehensive answers
 - Source attribution and citations
 - Interactive session management
 
-Example prompts to try:
+Example prompts for `AgnoAssist`:
+- "What is Agno and what are its key features? Generate some audio content to explain the key features."
+- "How do I create my first agent with Agno? Show me some example code."
+- "What's the difference between Level 0 and Level 1 agents?"
+- "How can I add memory to my Agno agent?"
+- "How do I implement RAG with Agno? Generate a diagram of the process."
+
+Example prompts for `AgnoAssistVoice`:
 - "What is Agno and what are its key features?"
 - "How do I create my first agent with Agno?"
 - "What's the difference between Level 0 and Level 1 agents?"
-- "How can I add memory to my Agno agent?"
 - "What models does Agno support?"
-- "How do I implement RAG with Agno?"
 """
 
 from pathlib import Path
@@ -48,16 +55,17 @@ agent_knowledge = UrlKnowledge(
     ),
 )
 
-# Create the agent
-agno_support = Agent(
-    name="Agno_Assist",
-    agent_id="agno_assist",
-    model=OpenAIChat(id="gpt-4o"),
-    description=dedent("""\
+_description = dedent("""\
     You are AgnoAssist, an advanced AI Agent specialized in the Agno framework.
     Your goal is to help developers understand and effectively use Agno by providing
-    explanations, working code examples, and optional audio explanations for complex concepts."""),
-    instructions=dedent("""\
+    explanations, working code examples, and optional audio explanations for complex concepts.""")
+
+_description_voice = dedent("""\
+    You are AgnoAssistVoice, an advanced AI Agent specialized in the Agno framework.
+    Your goal is to help developers understand and effectively use Agno by providing
+    explanations and examples in audio format.""")
+
+_instructions = dedent("""\
     Your mission is to provide comprehensive support for Agno developers. Follow these steps to ensure the best possible response:
 
     1. **Analyze the request**
@@ -120,7 +128,16 @@ agno_support = Agent(
     - Knowledge base and memory management
     - Tool integration
     - Model support and configuration
-    - Best practices and common patterns"""),
+    - Best practices and common patterns""")
+
+
+# Create the agent
+agno_support = Agent(
+    name="Agno_Assist",
+    agent_id="agno_assist",
+    model=OpenAIChat(id="gpt-4o"),
+    description=_description,
+    instructions=_instructions,
     knowledge=agent_knowledge,
     tools=[
         PythonTools(base_dir=tmp_dir.joinpath("agents"), read_files=True),
@@ -139,8 +156,28 @@ agno_support = Agent(
     markdown=True,
 )
 
+agno_support_voice = Agent(
+    name="Agno_Assist_Voice",
+    agent_id="agno-assist-voice",
+    model=OpenAIChat(
+        id="gpt-4o-audio-preview",
+        modalities=["text", "audio"],
+        audio={"voice": "alloy", "format": "pcm16"},  # Wav not supported for streaming
+    ),
+    description=_description_voice,
+    instructions=_instructions,
+    knowledge=agent_knowledge,
+    tools=[PythonTools(base_dir=tmp_dir.joinpath("agents"), read_files=True)],
+    storage=SqliteAgentStorage(
+        table_name="agno_assist_sessions", db_file="tmp/agents.db"
+    ),
+    add_history_to_messages=True,
+    add_datetime_to_instructions=True,
+    markdown=True,
+)
+
 # Create and configure the playground app
-app = Playground(agents=[agno_support]).get_app()
+app = Playground(agents=[agno_support, agno_support_voice]).get_app()
 
 if __name__ == "__main__":
     load_kb = False

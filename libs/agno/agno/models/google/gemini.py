@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, Image, Video
 from agno.models.base import Model
-from agno.models.message import Message
+from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
@@ -21,11 +21,14 @@ try:
     from google.genai.errors import ClientError, ServerError
     from google.genai.types import (
         Content,
+        DynamicRetrievalConfig,
         File,
         FunctionDeclaration,
         GenerateContentConfig,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
+        GoogleSearch,
+        GoogleSearchRetrieval,
         Part,
         Schema,
         Tool,
@@ -37,18 +40,22 @@ except ImportError:
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     # Case 1: Image is a URL
     # Download the image from the URL and add it as base64 encoded data
-    if image.url is not None and image.image_url_content is not None:
-        try:
-            import base64
+    if image.url is not None:
+        content_bytes = image.image_url_content
+        if content_bytes is not None:
+            try:
+                import base64
 
-            content_bytes = image.image_url_content
-            image_data = {
-                "mime_type": "image/jpeg",
-                "data": base64.b64encode(content_bytes).decode("utf-8"),
-            }
-            return image_data
-        except Exception as e:
-            logger.warning(f"Failed to download image from {image}: {e}")
+                image_data = {
+                    "mime_type": "image/jpeg",
+                    "data": base64.b64encode(content_bytes).decode("utf-8"),
+                }
+                return image_data
+            except Exception as e:
+                logger.warning(f"Failed to download image from {image}: {e}")
+                return None
+        else:
+            logger.warning(f"Unsupported image format: {image}")
             return None
 
     # Case 2: Image is a local path
@@ -145,13 +152,6 @@ def _format_function_definitions(tools_list):
 
 
 @dataclass
-class GeminiResponseUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-
-
-@dataclass
 class Gemini(Model):
     """
     Gemini model class for Google's Generative AI models.
@@ -171,13 +171,14 @@ class Gemini(Model):
 
     supports_structured_outputs: bool = True
 
-    assistant_message_role: str = "model"
-
     # Request parameters
     function_declarations: Optional[List[Any]] = None
     generation_config: Optional[Any] = None
     safety_settings: Optional[List[Any]] = None
     generative_model_kwargs: Optional[Dict[str, Any]] = None
+    search: bool = False
+    grounding: bool = False
+    grounding_dynamic_threshold: Optional[float] = None
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -201,6 +202,14 @@ class Gemini(Model):
 
     # Gemini client
     client: Optional[GeminiClient] = None
+
+    # The role to map the message role to.
+    role_map = {
+        "system": "system",
+        "user": "user",
+        "model": "assistant",
+        "tool": "tool",
+    }
 
     def get_client(self) -> GeminiClient:
         """
@@ -279,7 +288,27 @@ class Gemini(Model):
             config["response_mime_type"] = "application/json"  # type: ignore
             config["response_schema"] = self.response_format
 
-        if self._tools:
+        if self.grounding and self.search:
+            logger.info("Both grounding and search are enabled. Grounding will take precedence.")
+            self.search = False
+
+        if self.grounding:
+            logger.info("Grounding enabled. External tools will be disabled.")
+            config["tools"] = [
+                Tool(
+                    google_search=GoogleSearchRetrieval(
+                        dynamic_retrieval_config=DynamicRetrievalConfig(
+                            dynamic_threshold=self.grounding_dynamic_threshold
+                        )
+                    )
+                ),
+            ]
+
+        elif self.search:
+            logger.info("Search enabled. External tools will be disabled.")
+            config["tools"] = [Tool(google_search=GoogleSearch())]
+
+        elif self._tools:
             config["tools"] = [_format_function_definitions(self._tools)]
 
         config = {k: v for k, v in config.items() if v is not None}
@@ -303,7 +332,6 @@ class Gemini(Model):
             GenerateContentResponse: The response from the model.
         """
         formatted_messages, system_message = self._format_messages(messages)
-
         request_kwargs = self._get_request_kwargs(system_message)
         try:
             return self.get_client().models.generate_content(
@@ -313,10 +341,12 @@ class Gemini(Model):
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]):
         """
@@ -340,10 +370,12 @@ class Gemini(Model):
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]):
         """
@@ -361,10 +393,12 @@ class Gemini(Model):
             )
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]):
         """
@@ -384,10 +418,12 @@ class Gemini(Model):
                 yield chunk
         except (ClientError, ServerError) as e:
             logger.error(f"Error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(
+                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             logger.error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(e, self.name, self.id) from e
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message]):
         """
@@ -404,13 +440,15 @@ class Gemini(Model):
                 system_message = message.content
                 continue
 
+            role = "model" if role == "assistant" else role
+
             # Add content to the message for the model
             content = message.content
             # Initialize message_parts to be used for Gemini
             message_parts: List[Any] = []
 
             # Function calls
-            if (not content or message.role == "model") and message.tool_calls:
+            if (not content or role == "model") and message.tool_calls:
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_call(
@@ -419,7 +457,7 @@ class Gemini(Model):
                         )
                     )
             # Function results
-            elif message.role == "tool" and message.tool_calls:
+            elif role == "tool" and message.tool_calls:
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_response(
@@ -604,12 +642,19 @@ class Gemini(Model):
         """
         combined_content: List = []
         combined_function_result: List = []
+        message_metrics = MessageMetrics()
         if len(function_call_results) > 0:
             for result in function_call_results:
                 combined_content.append(result.content)
                 combined_function_result.append({"tool_name": result.tool_name, "content": result.content})
+                message_metrics += result.metrics
 
-        messages.append(Message(role="tool", content=combined_content, tool_calls=combined_function_result))
+        if combined_content:
+            messages.append(
+                Message(
+                    role="tool", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
+                )
+            )
 
     def parse_provider_response(self, response: GenerateContentResponse) -> ModelResponse:
         """
@@ -629,7 +674,7 @@ class Gemini(Model):
 
             # Add role
             if response_message.role is not None:
-                model_response.role = response_message.role
+                model_response.role = self.role_map[response_message.role]
 
             # Add content
             if response_message.parts is not None:
@@ -655,11 +700,11 @@ class Gemini(Model):
         # Extract usage metadata if present
         if hasattr(response, "usage_metadata") and response.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response.usage_metadata
-            model_response.response_usage = GeminiResponseUsage(
-                input_tokens=usage.prompt_token_count or 0,
-                output_tokens=usage.candidates_token_count or 0,
-                total_tokens=usage.total_token_count or 0,
-            )
+            model_response.response_usage = {
+                "input_tokens": usage.prompt_token_count or 0,
+                "output_tokens": usage.candidates_token_count or 0,
+                "total_tokens": usage.total_token_count or 0,
+            }
 
         return model_response
 
@@ -667,6 +712,10 @@ class Gemini(Model):
         model_response = ModelResponse()
 
         response_message: Content = response_delta.candidates[0].content
+
+        # Add role
+        if response_message.role is not None:
+            model_response.role = self.role_map[response_message.role]
 
         if response_message.parts is not None:
             for part in response_message.parts:
@@ -691,10 +740,10 @@ class Gemini(Model):
         # Extract usage metadata if present
         if hasattr(response_delta, "usage_metadata") and response_delta.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response_delta.usage_metadata
-            model_response.response_usage = GeminiResponseUsage(
-                input_tokens=usage.prompt_token_count or 0,
-                output_tokens=usage.candidates_token_count or 0,
-                total_tokens=usage.total_token_count or 0,
-            )
+            model_response.response_usage = {
+                "input_tokens": usage.prompt_token_count or 0,
+                "output_tokens": usage.candidates_token_count or 0,
+                "total_tokens": usage.total_token_count or 0,
+            }
 
         return model_response

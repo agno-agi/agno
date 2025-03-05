@@ -26,6 +26,7 @@ from agno.playground.schemas import (
     WorkflowSessionResponse,
     WorkflowsGetResponse,
 )
+from agno.run.response import RunEvent
 from agno.storage.agent.session import AgentSession
 from agno.storage.workflow.session import WorkflowSession
 from agno.utils.log import logger
@@ -99,22 +100,48 @@ def get_async_playground_router(
         audio: Optional[List[Audio]] = None,
         videos: Optional[List[Video]] = None,
     ) -> AsyncGenerator:
-        run_response = await agent.arun(
-            message,
-            images=images,
-            audio=audio,
-            videos=videos,
-            stream=True,
-            stream_intermediate_steps=True,
-        )
-        async for run_response_chunk in run_response:
-            run_response_chunk = cast(RunResponse, run_response_chunk)
-            yield run_response_chunk.to_json()
+        try:
+            run_response = await agent.arun(
+                message,
+                images=images,
+                audio=audio,
+                videos=videos,
+                stream=True,
+                stream_intermediate_steps=True,
+            )
+            async for run_response_chunk in run_response:
+                run_response_chunk = cast(RunResponse, run_response_chunk)
+                yield run_response_chunk.to_json()
+        except Exception as e:
+            error_response = RunResponse(
+                content=str(e),
+                event=RunEvent.run_error,
+            )
+            yield error_response.to_json()
+            return
 
     async def process_image(file: UploadFile) -> Image:
         content = file.file.read()
 
         return Image(content=content)
+
+    async def process_audio(file: UploadFile) -> Audio:
+        content = file.file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Empty file")
+        format = None
+        if file.filename and "." in file.filename:
+            format = file.filename.split(".")[-1].lower()
+        elif file.content_type:
+            format = file.content_type.split("/")[-1]
+
+        return Audio(content=content, format=format)
+
+    async def process_video(file: UploadFile) -> Video:
+        content = file.file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Empty file")
+        return Video(content=content, format=file.content_type)
 
     @playground_router.post("/agents/{agent_id}/runs")
     async def create_agent_run(
@@ -148,15 +175,43 @@ def get_async_playground_router(
             new_agent_instance.monitoring = False
 
         base64_images: List[Image] = []
-
+        base64_audios: List[Audio] = []
+        base64_videos: List[Video] = []
         if files:
             for file in files:
+                logger.info(f"Processing file: {file.content_type}")
                 if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
                     try:
                         base64_image = await process_image(file)
                         base64_images.append(base64_image)
                     except Exception as e:
                         logger.error(f"Error processing image {file.filename}: {e}")
+                        continue
+                elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
+                    try:
+                        base64_audio = await process_audio(file)
+                        base64_audios.append(base64_audio)
+                    except Exception as e:
+                        logger.error(f"Error processing audio {file.filename}: {e}")
+                        continue
+                elif file.content_type in [
+                    "video/x-flv",
+                    "video/quicktime",
+                    "video/mpeg",
+                    "video/mpegs",
+                    "video/mpgs",
+                    "video/mpg",
+                    "video/mpg",
+                    "video/mp4",
+                    "video/webm",
+                    "video/wmv",
+                    "video/3gpp",
+                ]:
+                    try:
+                        base64_video = await process_video(file)
+                        base64_videos.append(base64_video)
+                    except Exception as e:
+                        logger.error(f"Error processing video {file.filename}: {e}")
                         continue
                 else:
                     # Check for knowledge base before processing documents
@@ -214,7 +269,13 @@ def get_async_playground_router(
 
         if stream:
             return StreamingResponse(
-                chat_response_streamer(new_agent_instance, message, images=base64_images if base64_images else None),
+                chat_response_streamer(
+                    new_agent_instance,
+                    message,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
+                ),
                 media_type="text/event-stream",
             )
         else:
@@ -223,10 +284,12 @@ def get_async_playground_router(
                 await new_agent_instance.arun(
                     message=message,
                     images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
                     stream=False,
                 ),
             )
-            return run_response
+            return run_response.to_dict()
 
     @playground_router.get("/agents/{agent_id}/sessions")
     async def get_all_agent_sessions(agent_id: str, user_id: str = Query(..., min_length=1)):

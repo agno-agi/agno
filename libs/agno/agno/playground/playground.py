@@ -56,7 +56,7 @@ class Playground:
         async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
             return JSONResponse(
                 status_code=exc.status_code,
-                content={"message": str(exc.detail)},
+                content={"detail": str(exc.detail)},
             )
 
         async def general_exception_handler(request: Request, call_next):
@@ -64,8 +64,8 @@ class Playground:
                 return await call_next(request)
             except Exception as e:
                 return JSONResponse(
-                    status_code=500,
-                    content={"message": str(e)},
+                    status_code=e.status_code if hasattr(e, "status_code") else 500,
+                    content={"detail": str(e)},
                 )
 
         self.api_app.middleware("http")(general_exception_handler)
