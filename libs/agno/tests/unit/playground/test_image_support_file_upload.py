@@ -12,6 +12,7 @@ from agno.agent import Agent
 from agno.media import Image
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground
+from agno.run.response import RunResponse
 
 # --- Fixtures ---
 
@@ -34,7 +35,7 @@ def mock_agent():
         model=OpenAIChat(id="gpt-4"),
     )
     # Create mock run method
-    mock_run = Mock(return_value={"status": "ok", "response": "Mocked response"})
+    mock_run = Mock(return_value=RunResponse(content="Mocked response"))
     agent.run = mock_run
 
     # Create a copy of the agent that will be returned by deep_copy
