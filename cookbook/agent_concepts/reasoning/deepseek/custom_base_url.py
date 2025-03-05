@@ -12,11 +12,11 @@ reasoning_agent = Agent(
     model=DeepSeek(
         id="deepseek-v3", 
         base_url=base_url,
-        api_key=getenv("ALIYUN_API_KEY")),
+        api_key=os.getenv("ALIYUN_API_KEY")),
     reasoning_model=DeepSeek(
         id="deepseek-r1", 
         base_url=base_url,
-        api_key=getenv("ALIYUN_API_KEY")),
+        api_key=os.getenv("ALIYUN_API_KEY")),
     markdown=True,
 )
 reasoning_agent.print_response(task, stream=True)
