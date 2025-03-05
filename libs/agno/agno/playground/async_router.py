@@ -289,7 +289,7 @@ def get_async_playground_router(
                     stream=False,
                 ),
             )
-            return run_response
+            return run_response.to_dict()
 
     @playground_router.get("/agents/{agent_id}/sessions")
     async def get_all_agent_sessions(agent_id: str, user_id: str = Query(..., min_length=1)):
