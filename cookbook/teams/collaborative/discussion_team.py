@@ -1,7 +1,6 @@
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.arxiv import ArxivTools
