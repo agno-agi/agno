@@ -2741,6 +2741,7 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)],
                     reasoning_agent_messages=[groq_reasoning_message],
                 )
+
             # Use o-3 or OpenAILike with deepseek model for reasoning
             elif (reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")) or (
                 isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower()
