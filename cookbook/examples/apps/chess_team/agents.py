@@ -96,17 +96,14 @@ def get_chess_team(
         Team instance configured for chess gameplay
     """
     try:
-        # Parse model providers and names
         white_provider, white_name = white_model.split(":")
         black_provider, black_name = black_model.split(":")
         master_provider, master_name = master_model.split(":")
 
-        # Create model instances
         white_piece_model = get_model_for_provider(white_provider, white_name)
         black_piece_model = get_model_for_provider(black_provider, black_name)
         master_model = get_model_for_provider(master_provider, master_name)
 
-        # Create agents
         white_piece_agent = Agent(
             name="white_piece_agent",
             role="White Piece Strategist",
@@ -129,42 +126,34 @@ def get_chess_team(
             debug_mode=debug_mode,
         )
 
-        master_agent = Agent(
-            name="master_agent",
-            role="Chess Master",
-            description="""You are a chess master overseeing the game. Your responsibilities:
-                    1. Analyze the current board state to determine if the game has ended
-                    2. Check for checkmate, stalemate, draw by repetition, or insufficient material
-                    3. Provide commentary on the current state of the game
-                    4. Evaluate the position and suggest who has an advantage
-                    
-                    Respond with a JSON object containing:
-                    {
-                        "game_over": true/false,
-                        "result": "white_win"/"black_win"/"draw"/null,
-                    }""",
-            model=master_model,
-            debug_mode=debug_mode,
-        )
-
-        # Create and return the team
         return Team(
             name="Chess Team",
-            mode="coordinator",
+            mode="router",
             model=master_model,
             success_criteria="The game is completed with a win, loss, or draw",
-            members=[white_piece_agent, black_piece_agent, master_agent],
+            members=[white_piece_agent, black_piece_agent],
             instructions=[
-                "You are the chess game coordinator.",
-                "Manage the game state and coordinate between the white player, black player, and master agent.",
-                "When receiving a task, check the 'current_player' in the context to determine which agent should handle it.",
-                "For white_piece_agent and black_piece_agent, forward the task to get their move.",
-                "For master_agent, forward the task to get position analysis.",
-                "Track the game state and determine when the game is over.",
-                "Ensure all moves are valid according to chess rules.",
+                "You are the chess game coordinator and master analyst.",
+                "Your role is to coordinate between two player agents and provide game analysis:",
+                "1. white_piece_agent - Makes moves for white pieces",
+                "2. black_piece_agent - Makes moves for black pieces",
+                "",
+                "When receiving a task:",
+                "1. Check the 'current_player' in the context",
+                "2. If current_player is white_piece_agent or black_piece_agent:",
+                "   - Forward the move request to that agent",
+                "   - Return their move response directly without modification",
+                "3. If no current_player is specified:",
+                "   - This indicates a request for position analysis",
+                "   - Analyze the position yourself and respond with a JSON object:",
+                "   {",
+                "       'game_over': true/false,",
+                "       'result': 'white_win'/'black_win'/'draw'/null,",
+                "   }",
+                "",
+                "Do not modify player agent responses.",
+                "For analysis requests, provide detailed evaluation of the position.",
             ],
-            # send_team_context_to_members=True,
-            # update_team_context=True,
             show_tool_calls=True,
             debug_mode=debug_mode,
             markdown=True,

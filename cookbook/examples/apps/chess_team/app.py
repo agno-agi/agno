@@ -347,20 +347,29 @@ Do not include any other text in your response."""
                     # Check game state after move
                     game_over, state_info = st.session_state.game_board.get_game_state()
 
-                    # If game is not over, get analysis from master agent through team
+                    # If game is not over, get analysis from coordinator after black's move
                     if not game_over and move_number % 2 == 0:  # After black's move
                         analysis_message = f"""\
 Current board state (FEN): {fen}
 Board visualization:
 {board_state}
 
-Analyze the current position and provide your evaluation."""
+Last move: {move_str} ({move_description})
+
+Analyze the current position and provide your evaluation.
+Respond with a JSON object containing:
+{{
+    "game_over": false,
+    "result": null,
+    "reason": null,
+    "commentary": "Your analysis of the position",
+    "advantage": "white"/"black"/"equal"
+}}"""
 
                         st.session_state.team.run(
                             message=analysis_message,
                             stream=False,
                             context={
-                                "current_player": "master_agent",
                                 "board_state": board_state,
                                 "last_move": move_str,
                                 "last_move_description": move_description,

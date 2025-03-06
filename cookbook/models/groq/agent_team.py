@@ -1,9 +1,8 @@
 from agno.agent import Agent
 from agno.models.groq import Groq
+from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
-from agno.team.team import Team
-
 
 web_agent = Agent(
     name="Web Agent",
@@ -38,7 +37,7 @@ agent_team = Team(
     send_team_context_to_members=True,
     send_team_member_interactions_to_members=False,
     update_team_context=True,
-    show_members_responses=False, # Comment to hide responses from team members
+    show_members_responses=False,  # Comment to hide responses from team members
 )
 
 # Give the team a task
