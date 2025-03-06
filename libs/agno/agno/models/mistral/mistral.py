@@ -62,6 +62,7 @@ def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
 
 def _format_messages(messages: List[Message]) -> List[MistralMessage]:
     mistral_messages: List[MistralMessage] = []
+    
     for message in messages:
         mistral_message: MistralMessage
         if message.role == "user":
@@ -75,7 +76,10 @@ def _format_messages(messages: List[Message]) -> List[MistralMessage]:
             else:
                 mistral_message = UserMessage(role="user", content=message.content)
         elif message.role == "assistant":
-            if message.tool_calls is not None:
+            if message.reasoning_content is not None:
+                message.role = "user"
+                mistral_message = UserMessage(role="user", content=message.content)
+            elif message.tool_calls is not None:
                 mistral_message = AssistantMessage(
                     role="assistant", content=message.content, tool_calls=message.tool_calls
                 )
@@ -87,6 +91,7 @@ def _format_messages(messages: List[Message]) -> List[MistralMessage]:
             mistral_message = ToolMessage(name="tool", content=message.content, tool_call_id=message.tool_call_id)
         else:
             raise ValueError(f"Unknown role: {message.role}")
+
         mistral_messages.append(mistral_message)
     return mistral_messages
 
@@ -397,7 +402,9 @@ class MistralChat(Model):
         model_response = ModelResponse()
 
         delta_message: DeltaMessage = response_delta.data.choices[0].delta
-        model_response.role = delta_message.role  # type: ignore
+        if delta_message.role is not None and not isinstance(delta_message.role, Unset):
+            model_response.role = delta_message.role  # type: ignore
+
         if (
             delta_message.content is not None
             and not isinstance(delta_message.content, Unset)
