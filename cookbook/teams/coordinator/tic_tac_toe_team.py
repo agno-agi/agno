@@ -8,7 +8,7 @@ from agno.team.team import Team
 player_1 = Agent(
     name="Player 1",
     role="Play Tic Tac Toe",
-    model=OpenAIChat(id="gpt-4.5-preview"),
+    model=OpenAIChat(id="gpt-4o"),
     add_name_to_instructions=True,
     instructions=dedent("""
     You are a Tic Tac Toe player.

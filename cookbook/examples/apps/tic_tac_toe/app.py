@@ -62,7 +62,7 @@ def main():
         selected_p_x = st.selectbox(
             "Select Player X",
             list(model_options.keys()),
-            index=list(model_options.keys()).index("gpt-4.5"),
+            index=list(model_options.keys()).index("gpt-4o"),
             key="model_p1",
         )
         selected_p_o = st.selectbox(
