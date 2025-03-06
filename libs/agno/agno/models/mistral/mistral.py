@@ -62,7 +62,7 @@ def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
 
 def _format_messages(messages: List[Message]) -> List[MistralMessage]:
     mistral_messages: List[MistralMessage] = []
-    
+
     for message in messages:
         mistral_message: MistralMessage
         if message.role == "user":
