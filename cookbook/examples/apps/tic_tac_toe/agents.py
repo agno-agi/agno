@@ -106,6 +106,7 @@ def get_tic_tac_toe_team(
         player_x = Agent(
             name="Player X",
             role="X Player",
+            model=x_model,
             description=dedent("""\
                 You are Player X in a Tic Tac Toe game. Your goal is to win by placing three X's in a row.
 
@@ -129,13 +130,13 @@ def get_tic_tac_toe_team(
                 - Block your opponent's potential winning moves
                 - Create opportunities for multiple winning paths
                 - Pay attention to the valid moves and avoid illegal moves"""),
-            model=x_model,
             debug_mode=debug_mode,
         )
 
         player_o = Agent(
             name="Player O",
             role="O Player",
+            model=o_model,
             description=dedent("""\
                 You are Player O in a Tic Tac Toe game. Your goal is to win by placing three O's in a row.
 
@@ -159,13 +160,12 @@ def get_tic_tac_toe_team(
                 - Block your opponent's potential winning moves
                 - Create opportunities for multiple winning paths
                 - Pay attention to the valid moves and avoid illegal moves"""),
-            model=o_model,
             debug_mode=debug_mode,
         )
 
         return Team(
             name="Tic Tac Toe Team",
-            mode="router",
+            mode="coordinator",
             model=referee_model,
             success_criteria="The game is completed with a win, loss, or draw",
             members=[player_x, player_o],
@@ -177,10 +177,13 @@ def get_tic_tac_toe_team(
                 "",
                 "When receiving a task:",
                 "1. Check the 'current_player' in the context",
-                "2. If current_player is Player X or Player O:",
-                "   - Forward the move request to that agent",
-                "   - Return their move response directly without modification",
-                "3. If no current_player is specified:",
+                "2. If current_player is Player X:",
+                "   - Forward the request to Player X agent",
+                "   - Return their move response directly",
+                "3. If current_player is Player O:",
+                "   - Forward the request to Player O agent",
+                "   - Return their move response directly",
+                "4. If no current_player is specified:",
                 "   - This indicates a request for game state analysis",
                 "   - Analyze the position yourself and respond with a JSON object:",
                 "   {",
@@ -194,6 +197,7 @@ def get_tic_tac_toe_team(
             debug_mode=debug_mode,
             markdown=True,
             show_members_responses=True,
+            send_team_context_to_members=True,
         )
 
     except Exception as e:
