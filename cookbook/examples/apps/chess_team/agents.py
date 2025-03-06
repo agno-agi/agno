@@ -8,10 +8,10 @@ and a master agent overseeing the game. Move validation is handled by python-che
 Usage Examples:
 ---------------
 1. Quick game with default settings:
-   agents = get_chess_teams()
+   team = get_chess_team()
 
 2. Game with debug mode off:
-   agents = get_chess_teams(debug_mode=False)
+   team = get_chess_team(debug_mode=False)
 
 The game integrates:
   - Multiple AI models (Claude, GPT-4, etc.)
@@ -22,13 +22,14 @@ The game integrates:
 
 import sys
 from pathlib import Path
-from typing import Dict
+from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
+from agno.team.team import Team
 from agno.utils.log import logger
 
 project_root = str(Path(__file__).parent.parent.parent.parent)
@@ -66,6 +67,7 @@ def get_model_for_provider(provider: str, model_name: str):
             return Claude(
                 id="claude-3-7-sonnet-20250219",
                 max_tokens=8192,
+                thinking={"type": "enabled", "budget_tokens": 4096},
             )
         else:
             return Claude(id=model_name)
@@ -75,14 +77,14 @@ def get_model_for_provider(provider: str, model_name: str):
         raise ValueError(f"Unsupported model provider: {provider}")
 
 
-def get_chess_teams(
+def get_chess_team(
     white_model: str = "openai:gpt-4o",
     black_model: str = "anthropic:claude-3-7-sonnet",
     master_model: str = "openai:gpt-4o",
     debug_mode: bool = True,
-) -> Dict[str, Agent]:
+) -> Team:
     """
-    Returns a dictionary of chess agents with specific roles.
+    Returns a chess team with specialized agents for white pieces, black pieces, and game master.
 
     Args:
         white_model: Model for white piece strategy
@@ -91,7 +93,7 @@ def get_chess_teams(
         debug_mode: Enable logging and debug features
 
     Returns:
-        Dictionary of configured agents
+        Team instance configured for chess gameplay
     """
     try:
         # Parse model providers and names
@@ -107,6 +109,7 @@ def get_chess_teams(
         # Create agents
         white_piece_agent = Agent(
             name="white_piece_agent",
+            role="White Piece Strategist",
             description="""You are a chess strategist for white pieces. Given a list of legal moves,
                     analyze them and choose the best one based on standard chess strategy.
                     Consider piece development, center control, and king safety.
@@ -117,6 +120,7 @@ def get_chess_teams(
 
         black_piece_agent = Agent(
             name="black_piece_agent",
+            role="Black Piece Strategist",
             description="""You are a chess strategist for black pieces. Given a list of legal moves,
                     analyze them and choose the best one based on standard chess strategy.
                     Consider piece development, center control, and king safety.
@@ -127,6 +131,7 @@ def get_chess_teams(
 
         master_agent = Agent(
             name="master_agent",
+            role="Chess Master",
             description="""You are a chess master overseeing the game. Your responsibilities:
                     1. Analyze the current board state to determine if the game has ended
                     2. Check for checkmate, stalemate, draw by repetition, or insufficient material
@@ -137,19 +142,35 @@ def get_chess_teams(
                     {
                         "game_over": true/false,
                         "result": "white_win"/"black_win"/"draw"/null,
-                        "reason": "explanation if game is over",
-                        "commentary": "brief analysis of the position",
-                        "advantage": "white"/"black"/"equal"
                     }""",
             model=master_model,
             debug_mode=debug_mode,
         )
 
-        return {
-            "white_piece_agent": white_piece_agent,
-            "black_piece_agent": black_piece_agent,
-            "master_agent": master_agent,
-        }
+        # Create and return the team
+        return Team(
+            name="Chess Team",
+            mode="coordinator",
+            model=master_model,
+            success_criteria="The game is completed with a win, loss, or draw",
+            members=[white_piece_agent, black_piece_agent, master_agent],
+            instructions=[
+                "You are the chess game coordinator.",
+                "Manage the game state and coordinate between the white player, black player, and master agent.",
+                "When receiving a task, check the 'current_player' in the context to determine which agent should handle it.",
+                "For white_piece_agent and black_piece_agent, forward the task to get their move.",
+                "For master_agent, forward the task to get position analysis.",
+                "Track the game state and determine when the game is over.",
+                "Ensure all moves are valid according to chess rules.",
+            ],
+            # send_team_context_to_members=True,
+            # update_team_context=True,
+            show_tool_calls=True,
+            debug_mode=debug_mode,
+            markdown=True,
+            show_members_responses=True,
+        )
+
     except Exception as e:
-        logger.error(f"Error initializing agents: {str(e)}")
+        logger.error(f"Error initializing chess team: {str(e)}")
         raise

@@ -4,7 +4,7 @@ from typing import Dict, List
 import chess
 import nest_asyncio
 import streamlit as st
-from agents import get_chess_teams
+from agents import get_chess_team
 from agno.utils.log import logger
 from utils import (
     CUSTOM_CSS,
@@ -12,7 +12,6 @@ from utils import (
     ChessBoard,
     display_board,
     display_move_history,
-    is_claude_thinking_model,
     parse_move,
     show_agent_status,
 )
@@ -107,20 +106,25 @@ def main():
     # App header
     ####################################################################
     st.markdown(
-        "<h1 class='main-title'>Chess Team Battle</h1>",
+        "<h1 class='main-title'>♟️ Chess Team Battle</h1>",
         unsafe_allow_html=True,
     )
 
-    ####################################################################
     # Initialize session state
-    ####################################################################
     if "game_started" not in st.session_state:
         st.session_state.game_started = False
+    if "game_paused" not in st.session_state:
         st.session_state.game_paused = False
+    if "move_history" not in st.session_state:
         st.session_state.move_history = []
 
+    ####################################################################
+    # Sidebar controls
+    ####################################################################
     with st.sidebar:
-        st.markdown("### Game Controls")
+        st.markdown("### Game Settings")
+
+        # Model selection
         model_options = {
             "gpt-4o": "openai:gpt-4o",
             "o3-mini": "openai:o3-mini",
@@ -164,7 +168,7 @@ def main():
         with col1:
             if not st.session_state.game_started:
                 if st.button("▶️ Start Game"):
-                    st.session_state.agents = get_chess_teams(
+                    st.session_state.team = get_chess_team(
                         white_model=model_options[selected_white],
                         black_model=model_options[selected_black],
                         master_model=model_options[selected_master],
@@ -186,7 +190,7 @@ def main():
         with col2:
             if st.session_state.game_started:
                 if st.button("🔄 New Game"):
-                    st.session_state.agents = get_chess_teams(
+                    st.session_state.team = get_chess_team(
                         white_model=model_options[selected_white],
                         black_model=model_options[selected_black],
                         master_model=model_options[selected_master],
@@ -267,19 +271,13 @@ def main():
             board_state = st.session_state.game_board.get_board_state()
             fen = st.session_state.game_board.get_fen()
 
-            # Get move from current player agent
-            current_agent = (
-                st.session_state.agents["white_piece_agent"]
-                if current_color == WHITE
-                else st.session_state.agents["black_piece_agent"]
+            # Get move from current player agent through team
+            current_agent_name = (
+                "white_piece_agent" if current_color == WHITE else "black_piece_agent"
             )
 
-            kwargs = {"stream": False}
-            if is_claude_thinking_model(current_agent):
-                kwargs["thinking"] = {"type": "enabled", "budget_tokens": 4096}
-
-            response = current_agent.run(
-                f"""\
+            # Create the task message for the team
+            task_message = f"""\
 Current board state (FEN): {fen}
 Board visualization:
 {board_state}
@@ -289,8 +287,16 @@ Legal moves available:
 
 Choose your next move from the legal moves above.
 Respond with ONLY your chosen move in UCI notation (e.g., 'e2e4').
-Do not include any other text in your response.""",
-                **kwargs,
+Do not include any other text in your response."""
+
+            response = st.session_state.team.run(
+                message=task_message,
+                stream=False,
+                context={
+                    "current_player": current_agent_name,
+                    "board_state": board_state,
+                    "legal_moves": legal_moves,
+                },
             )
 
             try:
@@ -341,16 +347,25 @@ Do not include any other text in your response.""",
                     # Check game state after move
                     game_over, state_info = st.session_state.game_board.get_game_state()
 
-                    # If game is not over, get analysis from master agent
+                    # If game is not over, get analysis from master agent through team
                     if not game_over and move_number % 2 == 0:  # After black's move
-                        master_agent = st.session_state.agents["master_agent"]
+                        analysis_message = f"""\
+Current board state (FEN): {fen}
+Board visualization:
+{board_state}
 
-                        kwargs = {"stream": False}
-                        if is_claude_thinking_model(master_agent):
-                            kwargs["thinking"] = {
-                                "type": "enabled",
-                                "budget_tokens": 4096,
-                            }
+Analyze the current position and provide your evaluation."""
+
+                        st.session_state.team.run(
+                            message=analysis_message,
+                            stream=False,
+                            context={
+                                "current_player": "master_agent",
+                                "board_state": board_state,
+                                "last_move": move_str,
+                                "last_move_description": move_description,
+                            },
+                        )
 
                     if game_over:
                         result = state_info.get("result", "")
@@ -375,8 +390,8 @@ Do not include any other text in your response.""",
                     st.rerun()
                 else:
                     logger.error(f"Invalid move attempt: {message}")
-                    response = current_agent.run(
-                        f"""\
+                    st.session_state.team.run(
+                        message=f"""\
 Invalid move: {message}
 
 Current board state (FEN): {fen}
@@ -390,6 +405,12 @@ Please choose a valid move from the list above.
 Respond with ONLY your chosen move in UCI notation (e.g., 'e2e4').
 Do not include any other text in your response.""",
                         stream=False,
+                        context={
+                            "current_player": current_agent_name,
+                            "board_state": board_state,
+                            "legal_moves": legal_moves,
+                            "last_error": message,
+                        },
                     )
                     st.rerun()
 
