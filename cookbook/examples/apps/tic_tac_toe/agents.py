@@ -191,7 +191,6 @@ def get_tic_tac_toe_team(
                 "Do not modify player agent responses.",
                 "For analysis requests, provide detailed evaluation of the game state.",
             ],
-            show_tool_calls=True,
             debug_mode=debug_mode,
             markdown=True,
             show_members_responses=True,
