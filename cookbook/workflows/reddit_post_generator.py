@@ -1,6 +1,7 @@
 from agno.agent import Agent
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reddit import RedditTools
+from agno.team.team import Team
 
 web_searcher = Agent(
     name="Web Searcher",
@@ -34,8 +35,9 @@ reddit_agent = Agent(
     show_tool_calls=True,
 )
 
-post_team = Agent(
-    team=[web_searcher, reddit_agent],
+post_team = Team(
+    members=[web_searcher, reddit_agent],
+    mode="coordinator",
     instructions=[
         "Work together to create engaging and informative Reddit posts",
         "Start by researching the topic thoroughly using web searches",
@@ -44,6 +46,10 @@ post_team = Agent(
     ],
     show_tool_calls=True,
     markdown=True,
+    success_criteria="A post on Reddit with a title and content that is engaging and informative in the subreddit.",
+    send_team_context_to_members=True,
+    send_team_member_interactions_to_members=False,
+    update_team_context=True,
 )
 
 post_team.print_response(
