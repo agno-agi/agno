@@ -225,7 +225,7 @@ class PgVector(VectorDb):
 
     def doc_exists(self, document: Document) -> bool:
         """
-        Check if a document exists in the table.
+        Check if a document with the same content hash exists in the table.
 
         Args:
             document (Document): The document to check.
