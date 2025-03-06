@@ -165,7 +165,7 @@ def get_tic_tac_toe_team(
 
         return Team(
             name="Tic Tac Toe Team",
-            mode="coordinator",
+            mode="router",
             model=referee_model,
             success_criteria="The game is completed with a win, loss, or draw",
             members=[player_x, player_o],
