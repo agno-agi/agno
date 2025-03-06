@@ -4,7 +4,7 @@
 
 ### 1. [Install](https://lmstudio.ai/) LMStudio and download a model
 
-Run your chat model using LMStudio. For the examples below make sure to get `qwen2.5-7b-instruct-1m`.
+Run your chat model using LMStudio. For the examples below make sure to get `qwen2.5-7b-instruct-1m`. Please also make sure that the status is set to `Running` and the model is reachable at `http://127.0.0.1:1234/v1`.
 
 ### 2. Create and activate a virtual environment
 
