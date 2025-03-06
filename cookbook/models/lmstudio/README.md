@@ -64,3 +64,9 @@ python cookbook/models/lmstudio/knowledge.py
 ```shell
 python cookbook/models/lmstudio/memory.py
 ```
+
+### 10. Run Agent that takes image as input
+
+```shell
+python cookbook/models/lmstudio/image_agent.py
+```

@@ -1,0 +1,56 @@
+---
+title: Async Streaming Agent
+---
+
+## Code
+
+```python cookbook/models/lmstudio/async_basic_stream.py
+import asyncio
+
+from agno.agent import Agent, RunResponse
+from agno.models.lmstudio import LMStudio
+
+agent = Agent(
+    model=LMStudio(id="qwen2.5-7b-instruct-1m"), debug_mode=True, markdown=True
+)
+
+# Get the response in a variable
+# run_response: Iterator[RunResponse] = agent.run("Share a 2 sentence horror story", stream=True)
+# for chunk in run_response:
+#     print(chunk.content)
+
+# Print the response in the terminal
+asyncio.run(agent.aprint_response("Share a 2 sentence horror story", stream=True))
+```
+
+## Usage
+
+<Steps>
+  <Snippet file="create-venv-step.mdx" />
+
+{" "}
+
+<Step title="Install LM Studio">
+  Install LM Studio from [here](https://lmstudio.ai/download) and download the
+  model you want to use.
+</Step>
+
+{" "}
+
+<Step title="Install libraries">```bash pip install -U agno ```</Step>
+
+  <Step title="Run Agent">
+    <CodeGroup>
+    ```bash Mac
+    python cookbook/models/lmstudio/async_basic_stream.py
+    ```
+
+    ```bash Windows
+    python cookbook\models\lmstudio\async_basic_stream.py
+    ```
+    </CodeGroup>
+
+  </Step>
+</Steps>
+
+This example combines asynchronous execution with streaming. It creates an agent with `debug_mode=True` for additional logging and uses the asynchronous API with streaming to get and display responses as they're generated.
