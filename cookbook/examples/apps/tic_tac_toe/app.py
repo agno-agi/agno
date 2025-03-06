@@ -1,6 +1,6 @@
 import nest_asyncio
 import streamlit as st
-from agents import get_tic_tac_toe_players
+from agents import get_tic_tac_toe_team
 from agno.utils.log import logger
 from utils import (
     CUSTOM_CSS,
@@ -69,6 +69,12 @@ def main():
             index=list(model_options.keys()).index("claude-3.7"),
             key="model_p2",
         )
+        selected_referee = st.selectbox(
+            "Select Referee",
+            list(model_options.keys()),
+            index=list(model_options.keys()).index("gpt-4o"),
+            key="model_referee",
+        )
 
         ################################################################
         # Game controls
@@ -77,12 +83,11 @@ def main():
         with col1:
             if not st.session_state.game_started:
                 if st.button("▶️ Start Game"):
-                    st.session_state.player_x, st.session_state.player_o = (
-                        get_tic_tac_toe_players(
-                            model_x=model_options[selected_p_x],
-                            model_o=model_options[selected_p_o],
-                            debug_mode=True,
-                        )
+                    st.session_state.team = get_tic_tac_toe_team(
+                        model_x=model_options[selected_p_x],
+                        model_o=model_options[selected_p_o],
+                        referee_model=model_options[selected_referee],
+                        debug_mode=True,
                     )
                     st.session_state.game_board = TicTacToeBoard()
                     st.session_state.game_started = True
@@ -100,12 +105,11 @@ def main():
         with col2:
             if st.session_state.game_started:
                 if st.button("🔄 New Game"):
-                    st.session_state.player_x, st.session_state.player_o = (
-                        get_tic_tac_toe_players(
-                            model_x=model_options[selected_p_x],
-                            model_o=model_options[selected_p_o],
-                            debug_mode=True,
-                        )
+                    st.session_state.team = get_tic_tac_toe_team(
+                        model_x=model_options[selected_p_x],
+                        model_o=model_options[selected_p_o],
+                        referee_model=model_options[selected_referee],
+                        debug_mode=True,
                     )
                     st.session_state.game_board = TicTacToeBoard()
                     st.session_state.game_paused = False
@@ -117,7 +121,7 @@ def main():
     ####################################################################
     if st.session_state.game_started:
         st.markdown(
-            f"<h3 style='color:#87CEEB; text-align:center;'>{selected_p_x} vs {selected_p_o}</h3>",
+            f"<h3 style='color:#87CEEB; text-align:center;'>{selected_p_x} vs {selected_p_o} (Referee: {selected_referee})</h3>",
             unsafe_allow_html=True,
         )
 
@@ -166,18 +170,22 @@ def main():
             )
 
             valid_moves = st.session_state.game_board.get_valid_moves()
+            current_player_name = "Player X" if current_player == "X" else "Player O"
 
-            current_agent = (
-                st.session_state.player_x
-                if current_player == "X"
-                else st.session_state.player_o
-            )
-            response = current_agent.run(
+            context = {
+                "current_player": current_player_name,
+                "board_state": st.session_state.game_board.get_board_state(),
+                "valid_moves": valid_moves,
+            }
+
+            # Get move from the team
+            response = st.session_state.team.run(
                 f"""\
-Current board state:\n{st.session_state.game_board.get_board_state()}\n
-Available valid moves (row, col): {valid_moves}\n
+Current board state:\n{context['board_state']}\n
+Available valid moves (row, col): {context['valid_moves']}\n
 Choose your next move from the valid moves above.
 Respond with ONLY two numbers for row and column, e.g. "1 2".""",
+                context=context,
                 stream=False,
             )
 
@@ -217,14 +225,21 @@ Respond with ONLY two numbers for row and column, e.g. "1 2".""",
                     st.rerun()
                 else:
                     logger.error(f"Invalid move attempt: {message}")
-                    response = current_agent.run(
+                    context = {
+                        "current_player": current_player_name,
+                        "board_state": st.session_state.game_board.get_board_state(),
+                        "valid_moves": valid_moves,
+                        "error_message": message,
+                    }
+                    response = st.session_state.team.run(
                         f"""\
 Invalid move: {message}
 
-Current board state:\n{st.session_state.game_board.get_board_state()}\n
-Available valid moves (row, col): {valid_moves}\n
+Current board state:\n{context['board_state']}\n
+Available valid moves (row, col): {context['valid_moves']}\n
 Please choose a valid move from the list above.
 Respond with ONLY two numbers for row and column, e.g. "1 2".""",
+                        context=context,
                         stream=False,
                     )
                     st.rerun()
@@ -246,6 +261,7 @@ Respond with ONLY two numbers for row and column, e.g. "1 2".""",
     **Current Players:**
     * 🔵 Player X: `{selected_p_x}`
     * 🔴 Player O: `{selected_p_o}`
+    * 🎯 Referee: `{selected_referee}`
 
     **How it Works:**
     Each Agent analyzes the board and employs strategic thinking to:
