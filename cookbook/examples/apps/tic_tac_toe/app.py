@@ -1,3 +1,4 @@
+import re
 import nest_asyncio
 import streamlit as st
 from agents import get_tic_tac_toe_team
@@ -40,6 +41,7 @@ def main():
         st.session_state.game_started = False
         st.session_state.game_paused = False
         st.session_state.move_history = []
+        st.session_state.error_state = False
 
     with st.sidebar:
         st.markdown("### Game Controls")
@@ -83,17 +85,24 @@ def main():
         with col1:
             if not st.session_state.game_started:
                 if st.button("▶️ Start Game"):
-                    st.session_state.team = get_tic_tac_toe_team(
-                        model_x=model_options[selected_p_x],
-                        model_o=model_options[selected_p_o],
-                        referee_model=model_options[selected_referee],
-                        debug_mode=True,
-                    )
-                    st.session_state.game_board = TicTacToeBoard()
-                    st.session_state.game_started = True
-                    st.session_state.game_paused = False
-                    st.session_state.move_history = []
-                    st.rerun()
+                    try:
+                        st.session_state.team = get_tic_tac_toe_team(
+                            model_x=model_options[selected_p_x],
+                            model_o=model_options[selected_p_o],
+                            referee_model=model_options[selected_referee],
+                            debug_mode=True,
+                        )
+                        st.session_state.game_board = TicTacToeBoard()
+                        st.session_state.game_started = True
+                        st.session_state.game_paused = False
+                        st.session_state.move_history = []
+                        st.session_state.error_state = False
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to initialize game: {str(e)}")
+                        st.session_state.error_state = True
+                        st.session_state.game_started = False
+                        return
             else:
                 game_over, _ = st.session_state.game_board.get_game_state()
                 if not game_over:
@@ -105,16 +114,23 @@ def main():
         with col2:
             if st.session_state.game_started:
                 if st.button("🔄 New Game"):
-                    st.session_state.team = get_tic_tac_toe_team(
-                        model_x=model_options[selected_p_x],
-                        model_o=model_options[selected_p_o],
-                        referee_model=model_options[selected_referee],
-                        debug_mode=True,
-                    )
-                    st.session_state.game_board = TicTacToeBoard()
-                    st.session_state.game_paused = False
-                    st.session_state.move_history = []
-                    st.rerun()
+                    try:
+                        st.session_state.team = get_tic_tac_toe_team(
+                            model_x=model_options[selected_p_x],
+                            model_o=model_options[selected_p_o],
+                            referee_model=model_options[selected_referee],
+                            debug_mode=True,
+                        )
+                        st.session_state.game_board = TicTacToeBoard()
+                        st.session_state.game_paused = False
+                        st.session_state.move_history = []
+                        st.session_state.error_state = False
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to initialize game: {str(e)}")
+                        st.session_state.error_state = True
+                        st.session_state.game_started = False
+                        return
 
     ####################################################################
     # Header showing current models
@@ -128,7 +144,7 @@ def main():
     ####################################################################
     # Main game area
     ####################################################################
-    if st.session_state.game_started:
+    if st.session_state.game_started and not st.session_state.error_state:
         game_over, status = st.session_state.game_board.get_game_state()
 
         display_board(st.session_state.game_board)
@@ -177,24 +193,54 @@ def main():
                 "current_player": current_player_name,
                 "board_state": str(st.session_state.game_board.get_board_state()),
                 "valid_moves": [list(move) for move in valid_moves],  # Convert tuples to lists
+                "game_state": {
+                    "current_player": current_player_name,
+                    "board": str(st.session_state.game_board.get_board_state()),
+                    "valid_moves": [list(move) for move in valid_moves],
+                }
             }
 
             # Get move from the team
-            try:
-                response = st.session_state.team.run(
-                    f"""\
+            max_retries = 3
+            retry_count = 0
+            last_error = None
+
+            while retry_count < max_retries:
+                try:
+                    # Add retry information to context if this is a retry
+                    if retry_count > 0:
+                        context["retry_info"] = {
+                            "attempt": retry_count + 1,
+                            "max_attempts": max_retries,
+                            "last_error": str(last_error)
+                        }
+                        prompt = f"""\
 Current board state:\n{context['board_state']}\n
 Available valid moves (row, col): {context['valid_moves']}\n
+You are {current_player_name}. This is attempt {retry_count + 1} of {max_retries}.
+Previous attempt failed because: {last_error}
 Choose your next move from the valid moves above.
-Respond with ONLY two numbers for row and column, e.g. "1 2".""",
-                    context=context,
-                    stream=False,
-                )
+Respond with ONLY two numbers for row and column, e.g. "1 2"."""
+                    else:
+                        prompt = f"""\
+Current board state:\n{context['board_state']}\n
+Available valid moves (row, col): {context['valid_moves']}\n
+You are {current_player_name}. Choose your next move from the valid moves above.
+Respond with ONLY two numbers for row and column, e.g. "1 2"."""
 
-                try:
-                    import re
+                    response = st.session_state.team.run(
+                        prompt,
+                        context=context,
+                        stream=False,
+                    )
 
-                    numbers = re.findall(r"\d+", response.content if response else "")
+                    if not response or not response.content:
+                        raise Exception("No response received from agent")
+
+                    numbers = re.findall(r"\d+", response.content)
+                    if len(numbers) < 2:
+                        raise Exception("Invalid move format received from agent")
+
                     row, col = map(int, numbers[:2])
                     success, message = st.session_state.game_board.make_move(row, col)
 
@@ -225,38 +271,39 @@ Respond with ONLY two numbers for row and column, e.g. "1 2".""",
                                 st.info(f"🤝 Game Over! {status}")
                             st.session_state.game_paused = True
                         st.rerun()
+                        break  # Exit the retry loop on success
                     else:
-                        logger.error(f"Invalid move attempt: {message}")
-                        # Create new context for retry - using only serializable data
-                        context = {
-                            "current_player": current_player_name,
-                            "board_state": str(st.session_state.game_board.get_board_state()),
-                            "valid_moves": [list(move) for move in valid_moves],
-                            "error_message": str(message),
-                        }
-                        response = st.session_state.team.run(
-                            f"""\
-Invalid move: {message}
-
-Current board state:\n{context['board_state']}\n
-Available valid moves (row, col): {context['valid_moves']}\n
-Please choose a valid move from the list above.
-Respond with ONLY two numbers for row and column, e.g. "1 2".""",
-                            context=context,
-                            stream=False,
-                        )
-                        st.rerun()
+                        last_error = message
+                        retry_count += 1
+                        if retry_count >= max_retries:
+                            raise Exception(f"Failed after {max_retries} attempts. Last error: {message}")
+                        logger.warning(f"Invalid move attempt {retry_count}: {message}. Retrying...")
+                        continue
 
                 except Exception as e:
-                    logger.error(f"Error processing move: {str(e)}")
-                    st.error(f"Error processing move: {str(e)}")
-                    st.rerun()
-            except Exception as e:
-                logger.error(f"Team run error: {str(e)}")
-                st.error(f"Team run error: {str(e)}")
-                st.rerun()
+                    last_error = str(e)
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        logger.error(f"Error processing move after {max_retries} attempts: {str(e)}")
+                        st.error(f"Error processing move after {max_retries} attempts: {str(e)}")
+                        st.session_state.error_state = True
+                        st.session_state.game_paused = True
+                        return
+                    logger.warning(f"Error on attempt {retry_count}: {str(e)}. Retrying...")
+                    continue
+
+            # If we get here with retry_count >= max_retries, it means all retries failed
+            if retry_count >= max_retries:
+                logger.error(f"Failed to make a valid move after {max_retries} attempts")
+                st.error(f"Failed to make a valid move after {max_retries} attempts")
+                st.session_state.error_state = True
+                st.session_state.game_paused = True
+                return
     else:
-        st.info("👈 Press 'Start Game' to begin!")
+        if st.session_state.error_state:
+            st.error("Game stopped due to an error. Please start a new game.")
+        else:
+            st.info("👈 Press 'Start Game' to begin!")
 
     ####################################################################
     # About section

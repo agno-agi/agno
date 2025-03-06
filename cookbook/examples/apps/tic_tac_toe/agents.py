@@ -165,7 +165,7 @@ def get_tic_tac_toe_team(
 
         return Team(
             name="Tic Tac Toe Team",
-            mode="router",
+            mode="coordinator",
             model=referee_model,
             success_criteria="The game is completed with a win, loss, or draw",
             members=[player_x, player_o],
@@ -177,10 +177,10 @@ def get_tic_tac_toe_team(
                 "",
                 "When receiving a task:",
                 "1. Check the 'current_player' in the context",
-                "2. If current_player is Player X:",
+                "2. If the current player is 'Player X':",
                 "   - Forward the request to Player X agent",
                 "   - Return their move response directly",
-                "3. If current_player is Player O:",
+                "3. If the current player is 'Player O':",
                 "   - Forward the request to Player O agent",
                 "   - Return their move response directly",
                 "4. If no current_player is specified:",
@@ -191,13 +191,19 @@ def get_tic_tac_toe_team(
                 "       'result': 'X_win'/'O_win'/'draw'/null,",
                 "   }",
                 "",
-                "Do not modify player agent responses.",
-                "For analysis requests, provide detailed evaluation of the game state.",
+                "IMPORTANT:",
+                "- The current_player will be provided in the context",
+                "- Do not ask for the current player, it's already in the context",
+                "- Forward the entire context to the player agents",
+                "- Do not modify player agent responses",
+                "- For analysis requests, provide detailed evaluation of the game state.",
             ],
             debug_mode=debug_mode,
             markdown=True,
             show_members_responses=True,
             send_team_context_to_members=True,
+            add_context=True,
+            select_team_context_to_send_to_members=False,
         )
 
     except Exception as e:
