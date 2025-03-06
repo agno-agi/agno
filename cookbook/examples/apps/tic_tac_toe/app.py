@@ -172,81 +172,88 @@ def main():
             valid_moves = st.session_state.game_board.get_valid_moves()
             current_player_name = "Player X" if current_player == "X" else "Player O"
 
+            # Create the context for the team - using only serializable data
             context = {
                 "current_player": current_player_name,
-                "board_state": st.session_state.game_board.get_board_state(),
-                "valid_moves": valid_moves,
+                "board_state": str(st.session_state.game_board.get_board_state()),
+                "valid_moves": [list(move) for move in valid_moves],  # Convert tuples to lists
             }
 
             # Get move from the team
-            response = st.session_state.team.run(
-                f"""\
+            try:
+                response = st.session_state.team.run(
+                    f"""\
 Current board state:\n{context['board_state']}\n
 Available valid moves (row, col): {context['valid_moves']}\n
 Choose your next move from the valid moves above.
 Respond with ONLY two numbers for row and column, e.g. "1 2".""",
-                context=context,
-                stream=False,
-            )
+                    context=context,
+                    stream=False,
+                )
 
-            try:
-                import re
+                try:
+                    import re
 
-                numbers = re.findall(r"\d+", response.content if response else "")
-                row, col = map(int, numbers[:2])
-                success, message = st.session_state.game_board.make_move(row, col)
+                    numbers = re.findall(r"\d+", response.content if response else "")
+                    row, col = map(int, numbers[:2])
+                    success, message = st.session_state.game_board.make_move(row, col)
 
-                if success:
-                    move_number = len(st.session_state.move_history) + 1
-                    st.session_state.move_history.append(
-                        {
-                            "number": move_number,
-                            "player": f"Player {player_num} ({current_model_name})",
-                            "move": f"{row},{col}",
+                    if success:
+                        move_number = len(st.session_state.move_history) + 1
+                        st.session_state.move_history.append(
+                            {
+                                "number": move_number,
+                                "player": f"Player {player_num} ({current_model_name})",
+                                "move": f"{row},{col}",
+                            }
+                        )
+
+                        logger.info(
+                            f"Move {move_number}: Player {player_num} ({current_model_name}) placed at position ({row}, {col})"
+                        )
+                        logger.info(
+                            f"Board state:\n{st.session_state.game_board.get_board_state()}"
+                        )
+
+                        # Check game state after move
+                        game_over, status = st.session_state.game_board.get_game_state()
+                        if game_over:
+                            logger.info(f"Game Over - {status}")
+                            if "wins" in status:
+                                st.success(f"🏆 Game Over! {status}")
+                            else:
+                                st.info(f"🤝 Game Over! {status}")
+                            st.session_state.game_paused = True
+                        st.rerun()
+                    else:
+                        logger.error(f"Invalid move attempt: {message}")
+                        # Create new context for retry - using only serializable data
+                        context = {
+                            "current_player": current_player_name,
+                            "board_state": str(st.session_state.game_board.get_board_state()),
+                            "valid_moves": [list(move) for move in valid_moves],
+                            "error_message": str(message),
                         }
-                    )
-
-                    logger.info(
-                        f"Move {move_number}: Player {player_num} ({current_model_name}) placed at position ({row}, {col})"
-                    )
-                    logger.info(
-                        f"Board state:\n{st.session_state.game_board.get_board_state()}"
-                    )
-
-                    # Check game state after move
-                    game_over, status = st.session_state.game_board.get_game_state()
-                    if game_over:
-                        logger.info(f"Game Over - {status}")
-                        if "wins" in status:
-                            st.success(f"🏆 Game Over! {status}")
-                        else:
-                            st.info(f"🤝 Game Over! {status}")
-                        st.session_state.game_paused = True
-                    st.rerun()
-                else:
-                    logger.error(f"Invalid move attempt: {message}")
-                    context = {
-                        "current_player": current_player_name,
-                        "board_state": st.session_state.game_board.get_board_state(),
-                        "valid_moves": valid_moves,
-                        "error_message": message,
-                    }
-                    response = st.session_state.team.run(
-                        f"""\
+                        response = st.session_state.team.run(
+                            f"""\
 Invalid move: {message}
 
 Current board state:\n{context['board_state']}\n
 Available valid moves (row, col): {context['valid_moves']}\n
 Please choose a valid move from the list above.
 Respond with ONLY two numbers for row and column, e.g. "1 2".""",
-                        context=context,
-                        stream=False,
-                    )
-                    st.rerun()
+                            context=context,
+                            stream=False,
+                        )
+                        st.rerun()
 
+                except Exception as e:
+                    logger.error(f"Error processing move: {str(e)}")
+                    st.error(f"Error processing move: {str(e)}")
+                    st.rerun()
             except Exception as e:
-                logger.error(f"Error processing move: {str(e)}")
-                st.error(f"Error processing move: {str(e)}")
+                logger.error(f"Team run error: {str(e)}")
+                st.error(f"Team run error: {str(e)}")
                 st.rerun()
     else:
         st.info("👈 Press 'Start Game' to begin!")
