@@ -47,7 +47,7 @@ class Function(BaseModel):
     # The function to be called.
     entrypoint: Optional[Callable] = None
     # If True, the entrypoint processing is skipped and the Function is used as is.
-    skip_processing: bool = False
+    skip_entrypoint_processing: bool = False
     # If True, the arguments are sanitized before being passed to the function.
     sanitize_arguments: bool = True
     # If True, the function call will show the result along with sending it to the model.
@@ -136,7 +136,7 @@ class Function(BaseModel):
 
         from agno.utils.json_schema import get_json_schema
 
-        if self.skip_processing:
+        if self.skip_entrypoint_processing:
             return
 
         if self.entrypoint is None:

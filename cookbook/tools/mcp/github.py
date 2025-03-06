@@ -12,8 +12,10 @@ Example prompts to try:
 - "Find issues labeled as bugs"
 - "Show me contributor activity"
 
-Run: `pip install agno mcp` to install the dependencies
+Run: `pip install agno mcp openai` to install the dependencies
 Environment variables needed:
+- Create a GitHub personal access token following these steps:
+    - https://github.com/modelcontextprotocol/servers/tree/main/src/github#setup
 - GITHUB_TOKEN: Your GitHub personal access token
 """
 
@@ -39,8 +41,6 @@ async def create_github_agent(session):
         instructions=dedent("""\
             You are a GitHub assistant. Help users explore repositories and their activity.
 
-            - Navigate issues and pull requests to answer questions
-            - Provide clear context about repository activity
             - Use headings to organize your responses
             - Be concise and focus on relevant information\
         """),
@@ -51,14 +51,14 @@ async def create_github_agent(session):
 
 async def run_agent(message: str) -> None:
     """Run the GitHub agent with the given message."""
-    if not os.getenv("GITHUB_TOKEN"):
+    github_token = os.getenv("GITHUB_TOKEN")
+    if not github_token:
         raise ValueError("GITHUB_TOKEN environment variable is required")
 
     # Initialize the MCP server
     server_params = StdioServerParameters(
         command="npx",
         args=["-y", "@modelcontextprotocol/server-github"],
-        env={"GITHUB_PERSONAL_ACCESS_TOKEN": os.getenv("GITHUB_TOKEN")},
     )
 
     # Create a client session to connect to the MCP server
@@ -72,13 +72,8 @@ async def run_agent(message: str) -> None:
 
 # Example usage
 if __name__ == "__main__":
-    # Basic example - exploring issues
-    # asyncio.run(run_agent("List open issues in this repository"))
-
     # Pull request example
-    asyncio.run(
-        run_agent("Show me recent pull requests and summarize their changes")
-    )
+    asyncio.run(run_agent("Summarize 2 most recent pull requests in agno-agi/agno"))
 
 
 # More example prompts to explore:

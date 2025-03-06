@@ -40,6 +40,7 @@ async def create_filesystem_agent(session):
             You are a filesystem assistant. Help users explore files and directories.
 
             - Navigate the filesystem to answer questions
+            - Use the list_allowed_directories tool to find directories that you can access
             - Provide clear context about files you examine
             - Use headings to organize your responses
             - Be concise and focus on relevant information\

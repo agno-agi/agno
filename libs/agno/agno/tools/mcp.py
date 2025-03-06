@@ -60,8 +60,8 @@ class MCPTools(Toolkit):
                         description=tool.description,
                         parameters=tool.inputSchema,
                         entrypoint=entrypoint,
-                        # Set skip_processing to True to avoid processing the entrypoint
-                        skip_processing=True,
+                        # Set skip_entrypoint_processing to True to avoid processing the entrypoint
+                        skip_entrypoint_processing=True,
                     )
 
                     # Register the Function with the toolkit
