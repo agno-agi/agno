@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.hackernews import HackerNewsTools
-
+from agno.team.team import Team
 
 @pytest.mark.skip("Test is flaky with current team implementation")
 def test_structured_output():
@@ -29,15 +29,16 @@ def test_structured_output():
         structured_outputs=True,
     )
 
-    hn_team = Agent(
+    hn_team = Team(
         name="Hackernews Team",
         model=OpenAIChat("gpt-4o"),
-        team=[hn_researcher],
+        members=[hn_researcher],
         instructions=[
             "First, search hackernews for what the user is asking about.",
             "Finally, provide a thoughtful and engaging summary.",
             "Only return valid JSON",
         ],
+        mode="coordinator",
         response_model=Article,
         structured_outputs=True,
         show_tool_calls=True,
@@ -70,14 +71,15 @@ def test_response_model():
         response_model=HackerNewsArticle,
     )
 
-    hn_team = Agent(
+    hn_team = Team(
         name="Hackernews Team",
         model=OpenAIChat("gpt-4o"),
-        team=[hn_researcher],
+        members=[hn_researcher],
         instructions=[
             "First, search hackernews for what the user is asking about.",
             "Finally, provide a thoughtful and engaging summary.",
         ],
+        mode="coordinator",
         response_model=Article,
         show_tool_calls=True,
         markdown=True,
