@@ -214,7 +214,7 @@ class LanceDb(VectorDb):
         if len(documents) <= 0:
             logger.info("No documents to insert")
             return
-        
+
         logger.info(f"Inserting {len(documents)} documents")
         data = []
 
