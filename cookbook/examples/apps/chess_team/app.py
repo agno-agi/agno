@@ -109,8 +109,9 @@ def main():
         "<h1 class='main-title'>♟️ Chess Team Battle</h1>",
         unsafe_allow_html=True,
     )
-
+    ####################################################################
     # Initialize session state
+    ####################################################################
     if "game_started" not in st.session_state:
         st.session_state.game_started = False
     if "game_paused" not in st.session_state:
