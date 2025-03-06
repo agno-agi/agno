@@ -245,6 +245,7 @@ module = [
   "langchain.*",
   "llama_index.*",
   "mem0.*",
+  "mcp.*",
   "memory_profiler.*",
   "mistralai.*",
   "mlx_whisper.*",
