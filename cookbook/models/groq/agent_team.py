@@ -36,7 +36,7 @@ agent_team = Team(
     show_tool_calls=True,  # Comment to hide transfer of tasks between agents
     markdown=True,
     send_team_context_to_members=True,
-    send_team_member_interactions_to_xmembers=False,
+    send_team_member_interactions_to_members=False,
     update_team_context=True,
     show_members_responses=False, # Comment to hide responses from team members
 )
