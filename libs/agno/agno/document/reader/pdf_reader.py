@@ -1,10 +1,10 @@
 import asyncio
 from pathlib import Path
-from time import sleep
 from typing import IO, Any, List, Union
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
+from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 from agno.utils.log import logger
 
 try:
@@ -161,7 +161,6 @@ class PDFReader(BasePDFReader):
             return self._build_chunked_documents(documents)
         return documents
 
-
 class PDFUrlReader(BasePDFReader):
     """Reader for PDF files from URL"""
 
@@ -171,27 +170,9 @@ class PDFUrlReader(BasePDFReader):
 
         from io import BytesIO
 
-        import httpx
-
         logger.info(f"Reading: {url}")
         # Retry the request up to 3 times with exponential backoff
-        for attempt in range(3):
-            try:
-                response = httpx.get(url)
-                break
-            except httpx.RequestError as e:
-                if attempt == 2:  # Last attempt
-                    logger.error(f"Failed to fetch PDF after 3 attempts: {e}")
-                    raise
-                wait_time = 2**attempt  # Exponential backoff: 1, 2, 4 seconds
-                logger.warning(f"Request failed, retrying in {wait_time} seconds...")
-                sleep(wait_time)
-
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
-            raise
+        response = fetch_with_retry(url)
 
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
@@ -209,7 +190,7 @@ class PDFUrlReader(BasePDFReader):
         if self.chunk:
             return self._build_chunked_documents(documents)
         return documents
-
+    
     async def async_read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
@@ -225,23 +206,7 @@ class PDFUrlReader(BasePDFReader):
 
         async with httpx.AsyncClient() as client:
             # Retry the request up to 3 times with exponential backoff
-            for attempt in range(3):
-                try:
-                    response = await client.get(url)
-                    break
-                except httpx.RequestError as e:
-                    if attempt == 2:  # Last attempt
-                        logger.error(f"Failed to fetch PDF after 3 attempts: {e}")
-                        raise
-                    wait_time = 2**attempt
-                    logger.warning(f"Request failed, retrying in {wait_time} seconds...")
-                    await asyncio.sleep(wait_time)
-
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
-                raise
+            response = await async_fetch_with_retry(url, client=client)
 
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
@@ -265,8 +230,7 @@ class PDFUrlReader(BasePDFReader):
         if self.chunk:
             return self._build_chunked_documents(documents)
         return documents
-
-
+    
 class PDFImageReader(BasePDFReader):
     """Reader for PDF files with text and images extraction"""
 
