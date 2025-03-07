@@ -1,6 +1,6 @@
 import json
 import os
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -87,7 +87,7 @@ class TodoistTools(Toolkit):
                 content=content, project_id=project_id, due_string=due_string, priority=priority, labels=labels or []
             )
             # Convert task to a dictionary and handle the Due object
-            task_dict = {
+            task_dict: Dict[str, Any] = {
                 "id": task.id,
                 "content": task.content,
                 "description": task.description,
@@ -118,7 +118,7 @@ class TodoistTools(Toolkit):
         """Get a specific task by ID."""
         try:
             task = self.api.get_task(task_id)
-            task_dict = {
+            task_dict: Dict[str, Any] = {
                 "id": task.id,
                 "content": task.content,
                 "description": task.description,
@@ -157,8 +157,9 @@ class TodoistTools(Toolkit):
             str: JSON string containing the updated task
         """
         try:
-            task = self.api.update_task(task_id=task_id, **kwargs)
-            task_dict = {
+            self.api.update_task(task_id=task_id, **kwargs)
+            task = self.api.get_task(task_id)
+            task_dict: Dict[str, Any] = {
                 "id": task.id,
                 "content": task.content,
                 "description": task.description,
@@ -209,7 +210,7 @@ class TodoistTools(Toolkit):
             tasks = self.api.get_tasks()
             tasks_list = []
             for task in tasks:
-                task_dict = {
+                task_dict: Dict[str, Any] = {
                     "id": task.id,
                     "content": task.content,
                     "description": task.description,

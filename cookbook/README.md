@@ -12,7 +12,7 @@ The concepts cookbook walks through the core concepts of Agno.
 - [RAG](./agent_concepts/rag)
 - [Knowledge](./agent_concepts/knowledge)
 - [Memory](./agent_concepts/memory)
-- [Storage](./agent_concepts/storage)
+- [Storage](storage)
 - [Tools](./agent_concepts/tools)
 - [Reasoning](./agent_concepts/reasoning)
 - [Vector DBs](./agent_concepts/vector_dbs)

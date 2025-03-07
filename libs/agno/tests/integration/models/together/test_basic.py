@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
 from agno.models.together import Together
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.storage.sqlite import SqliteStorage
 
 
 def _assert_metrics(response: RunResponse):
@@ -143,7 +143,7 @@ def test_response_model():
 def test_history():
     agent = Agent(
         model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
-        storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,

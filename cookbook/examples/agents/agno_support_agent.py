@@ -31,7 +31,6 @@ from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.url import UrlKnowledge
 from agno.models.openai import OpenAIChat
 from agno.storage.agent.sqlite import SqliteAgentStorage
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.python import PythonTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 from rich import print
@@ -75,9 +74,7 @@ def initialize_knowledge_base(load_knowledge: bool = False):
 
 def get_agent_storage():
     """Return agent storage for session management"""
-    return SqliteAgentStorage(
-        table_name="agno_assist_sessions", db_file="tmp/agents.db"
-    )
+    return SqliteAgentStorage(table_name="agno_assist_sessions", db_file="tmp/agents.db")
 
 
 def create_agent(

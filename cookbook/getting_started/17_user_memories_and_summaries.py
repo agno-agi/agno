@@ -29,7 +29,7 @@ import typer
 from agno.agent import Agent, AgentMemory
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.models.openai import OpenAIChat
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.storage.sqlite import SqliteStorage
 from rich.console import Console
 from rich.json import JSON
 from rich.panel import Panel
@@ -43,9 +43,7 @@ def create_agent(user: str = "user"):
     new = typer.confirm("Do you want to start a new session?")
 
     # Initialize storage for both agent sessions and memories
-    agent_storage = SqliteAgentStorage(
-        table_name="agent_memories", db_file="tmp/agents.db"
-    )
+    agent_storage = SqliteStorage(table_name="agent_memories", db_file="tmp/agents.db")
 
     if not new:
         existing_sessions = agent_storage.get_all_session_ids(user)

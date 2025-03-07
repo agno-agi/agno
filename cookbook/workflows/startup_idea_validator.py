@@ -50,7 +50,7 @@ from typing import Iterator, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.storage.workflow.sqlite import SqliteWorkflowStorage
+from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
@@ -264,7 +264,7 @@ if __name__ == "__main__":
     startup_idea_validator = StartupIdeaValidator(
         description="Startup Idea Validator",
         session_id=f"validate-startup-idea-{url_safe_idea}",
-        storage=SqliteWorkflowStorage(
+        storage=SqliteStorage(
             table_name="validate_startup_ideas_workflow",
             db_file="tmp/agno_workflows.db",
         ),

@@ -23,7 +23,7 @@ from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.openai import OpenAIChat
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 from rich import print
@@ -41,7 +41,7 @@ agent_knowledge = PDFUrlKnowledgeBase(
 # if agent_knowledge is not None:
 #     agent_knowledge.load()
 
-agent_storage = SqliteAgentStorage(table_name="recipe_agent", db_file="tmp/agents.db")
+agent_storage = SqliteStorage(table_name="recipe_agent", db_file="tmp/agents.db")
 
 
 def recipe_agent(user: str = "user"):

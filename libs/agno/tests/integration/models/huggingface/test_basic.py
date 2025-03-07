@@ -9,7 +9,7 @@ from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.manager import MemoryManager
 from agno.memory.summarizer import MemorySummarizer
 from agno.models.huggingface import HuggingFace
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 
@@ -145,7 +145,7 @@ def test_structured_output():
 def test_history():
     agent = Agent(
         model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
-        storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,
@@ -171,7 +171,7 @@ def test_persistent_memory():
         instructions=[
             "You can search the internet with DuckDuckGo.",
         ],
-        storage=SqliteAgentStorage(table_name="chat_agent", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(table_name="chat_agent", db_file="tmp/agent_storage.db"),
         add_datetime_to_instructions=True,
         add_history_to_messages=True,
         num_history_responses=15,

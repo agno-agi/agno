@@ -3,7 +3,7 @@
 from os import getenv
 
 from agno.agent import Agent
-from agno.storage.agent.singlestore import SingleStoreAgentStorage
+from agno.storage.singlestore import SingleStoreStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from sqlalchemy.engine import create_engine
 
@@ -27,7 +27,7 @@ db_engine = create_engine(db_url)
 
 # Create an agent with SingleStore storage
 agent = Agent(
-    storage=SingleStoreAgentStorage(
+    storage=SingleStoreStorage(
         table_name="agent_sessions", db_engine=db_engine, schema=DATABASE
     ),
     tools=[DuckDuckGoTools()],

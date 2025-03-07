@@ -5,7 +5,7 @@ from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.memory import AgentMemory
 from agno.memory.db.postgres import PgMemoryDb
 from agno.models.google import Gemini
-from agno.storage.agent.postgres import PostgresAgentStorage
+from agno.storage.postgres import PostgresStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.pgvector import PgVector
 
@@ -21,7 +21,7 @@ agent = Agent(
     model=Gemini(id="gemini-2.0-flash-exp"),
     tools=[DuckDuckGoTools()],
     knowledge=knowledge_base,
-    storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
+    storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
     # Store the memories and summary in a database
     memory=AgentMemory(
         db=PgMemoryDb(table_name="agent_memory", db_url=db_url),
