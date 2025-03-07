@@ -13,6 +13,7 @@ class FileTools(Toolkit):
         save_files: bool = True,
         read_files: bool = True,
         list_files: bool = True,
+        search_files: bool = True,
     ):
         super().__init__(name="file_tools")
 
@@ -23,6 +24,8 @@ class FileTools(Toolkit):
             self.register(self.read_file)
         if list_files:
             self.register(self.list_files)
+        if search_files:
+            self.register(self.search_files)
 
     def save_file(self, contents: str, file_name: str, overwrite: bool = True) -> str:
         """Saves the contents to a file called `file_name` and returns the file name if successful.
@@ -39,7 +42,7 @@ class FileTools(Toolkit):
                 file_path.parent.mkdir(parents=True, exist_ok=True)
             if file_path.exists() and not overwrite:
                 return f"File {file_name} already exists"
-            file_path.write_text(contents)
+            file_path.write_text(contents, encoding="utf-8")
             logger.info(f"Saved: {file_path}")
             return str(file_name)
         except Exception as e:
@@ -55,7 +58,7 @@ class FileTools(Toolkit):
         try:
             logger.info(f"Reading file: {file_name}")
             file_path = self.base_dir.joinpath(file_name)
-            contents = file_path.read_text()
+            contents = file_path.read_text(encoding="utf-8")
             return str(contents)
         except Exception as e:
             logger.error(f"Error reading file: {e}")
@@ -72,3 +75,16 @@ class FileTools(Toolkit):
         except Exception as e:
             logger.error(f"Error reading files: {e}")
             return f"Error reading files: {e}"
+
+    def search_files(self, pattern) -> list[Path]:
+        """Searches for files in the base directory that match the pattern
+
+        :param pattern: The pattern to search for, e.g. "*.txt", "file*.csv", "**/*.py".
+        :return: A list of files that match the pattern
+        """
+        try:
+            logger.info(f"Searching files in {self.base_dir} with pattern {pattern}")
+            return list(self.base_dir.glob(pattern))
+        except Exception as e:
+            logger.error(f"Error searching files: {e}")
+            return []
