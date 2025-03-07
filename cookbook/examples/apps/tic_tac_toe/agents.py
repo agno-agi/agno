@@ -28,7 +28,7 @@ from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
-from agno.team.team import Team
+from agno.team import Team
 from agno.utils.log import logger
 
 project_root = str(Path(__file__).parent.parent.parent.parent)

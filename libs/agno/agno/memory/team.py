@@ -50,6 +50,7 @@ class TeamMemory:
 
     # True when memory is being updated
     updating_memory: bool = False
+
     # If True, update the system message when it changes
     update_system_message_on_change: bool = True
 

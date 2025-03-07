@@ -37,6 +37,7 @@ agent_team = Team(
     send_team_context_to_members=True,
     send_team_member_interactions_to_members=False,
     update_team_context=True,
+    debug_mode=True,
     show_members_responses=False,  # Comment to hide responses from team members
 )
 

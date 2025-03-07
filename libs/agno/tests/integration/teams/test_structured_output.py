@@ -8,7 +8,6 @@ from agno.models.openai import OpenAIChat
 from agno.tools.hackernews import HackerNewsTools
 from agno.team.team import Team
 
-@pytest.mark.skip("Test is flaky with current team implementation")
 def test_structured_output():
     class Article(BaseModel):
         title: str
@@ -40,12 +39,11 @@ def test_structured_output():
         ],
         mode="coordinator",
         response_model=Article,
-        structured_outputs=True,
         show_tool_calls=True,
         markdown=True,
     )
 
-    response = hn_team.run("Write an article about the top 2 stories on hackernews", stream=True)
+    response = hn_team.run("Write an article about the top 2 stories on hackernews")
 
     assert isinstance(response.content, Article)
     assert response.content.title is not None
@@ -81,11 +79,12 @@ def test_response_model():
         ],
         mode="coordinator",
         response_model=Article,
+        json_response_mode=True,
         show_tool_calls=True,
         markdown=True,
     )
 
-    response = hn_team.run("Write an article about the top 2 stories on hackernews", stream=True)
+    response = hn_team.run("Write an article about the top 2 stories on hackernews")
 
     assert isinstance(response.content, Article)
     assert response.content.title is not None

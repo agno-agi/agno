@@ -572,7 +572,7 @@ class Team:
 
         # 3. Update TeamRunResponse
         # Handle structured outputs
-        if self.response_model is not None and not self.json_response_mode and model_response.parsed is not None:
+        if (self.response_model is not None) and (not self.json_response_mode) and (model_response.parsed is not None):
             # Update the run_response content with the structured output
             run_response.content = model_response.parsed
             # Update the run_response content_type with the structured output class name
