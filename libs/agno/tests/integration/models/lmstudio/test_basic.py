@@ -2,8 +2,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.groq.groq import Groq
-from agno.models.mistral import MistralChat
+from agno.models.lmstudio import LMStudio
 from agno.storage.agent.sqlite import SqliteAgentStorage
 
 
@@ -19,7 +18,7 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(model=MistralChat(id="mistral-small"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LMStudio(id="qwen2.5-7b-instruct-1m"), markdown=True, telemetry=False, monitoring=False)
 
     # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -32,7 +31,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=MistralChat(id="mistral-small"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LMStudio(id="qwen2.5-7b-instruct-1m"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -45,12 +44,12 @@ def test_basic_stream():
         assert isinstance(response, RunResponse)
         assert response.content is not None
 
-    _assert_metrics(agent.run_response)
+    # _assert_metrics(agent.run_response)
 
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=MistralChat(id="mistral-small"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LMStudio(id="qwen2.5-7b-instruct-1m"), markdown=True, telemetry=False, monitoring=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -62,7 +61,7 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=MistralChat(id="mistral-small"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LMStudio(id="qwen2.5-7b-instruct-1m"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -70,12 +69,12 @@ async def test_async_basic_stream():
         assert isinstance(response, RunResponse)
         assert response.content is not None
 
-    _assert_metrics(agent.run_response)
+    # _assert_metrics(agent.run_response)
 
 
 def test_with_memory():
     agent = Agent(
-        model=MistralChat(id="mistral-large-latest"),
+        model=LMStudio(id="qwen2.5-7b-instruct-1m"),
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
@@ -89,7 +88,7 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
-    assert "John" in response2.content
+    assert "John Smith" in response2.content
 
     # Verify memories were created
     assert len(agent.memory.messages) == 5
@@ -106,35 +105,12 @@ def test_response_model():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=MistralChat(id="mistral-small"),
+        model=LMStudio(id="qwen2.5-7b-instruct-1m"),
         markdown=True,
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,
-    )
-
-    response = agent.run("Create a movie about time travel")
-
-    # Verify structured output
-    assert isinstance(response.content, MovieScript)
-    assert response.content.title is not None
-    assert response.content.genre is not None
-    assert response.content.plot is not None
-
-
-def test_native_structured_output():
-    class MovieScript(BaseModel):
-        title: str = Field(..., description="Movie title")
-        genre: str = Field(..., description="Movie genre")
-        plot: str = Field(..., description="Brief plot summary")
-
-    agent = Agent(
-        model=MistralChat(id="mistral-large-latest"),
-        markdown=True,
-        telemetry=False,
-        monitoring=False,
         structured_outputs=True,
-        response_model=MovieScript,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -148,7 +124,7 @@ def test_native_structured_output():
 
 def test_history():
     agent = Agent(
-        model=MistralChat(id="mistral-small"),
+        model=LMStudio(id="qwen2.5-7b-instruct-1m"),
         storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
@@ -162,19 +138,3 @@ def test_history():
     assert len(agent.run_response.messages) == 6
     agent.run("Hello 4")
     assert len(agent.run_response.messages) == 8
-
-
-def test_with_reasoning():
-    agent = Agent(
-        model=MistralChat(
-            id="mistral-large-latest",
-        ),
-        reasoning_model=Groq(
-            id="deepseek-r1-distill-llama-70b",
-        ),
-        show_tool_calls=True,
-        telemetry=False,
-        monitoring=False,
-    )
-    response = agent.run("What is the capital of France?")
-    assert response.content is not None

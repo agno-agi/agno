@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.1.8"
+version = "1.1.9"
 description = "Agno: a lightweight framework for building multi-modal Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -66,6 +66,7 @@ todoist = ["todoist-api-python"]
 elevenlabs = ["elevenlabs"]
 fal = ["fal_client"]
 webex = ["webexpythonsdk"]
+mcp = ["mcp"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -105,13 +106,11 @@ models = [
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
-  "agno[ibm]"
 ]
 
 # All tools
 tools = [
   "agno[exa]",
-  "agno[yfinance]",
   "agno[ddg]",
   "agno[duckdb]",
   "agno[newspaper]",
@@ -124,6 +123,7 @@ tools = [
   "agno[elevenlabs]",
   "agno[fal]",
   "agno[webex]",
+  "agno[mcp]",
 ]
 
 # All storage
@@ -159,7 +159,8 @@ tests = [
     "agno[knowledge]",
     "agno[performance]",
     "agno[cookbooks]",
-    "twine", "build"
+    "twine",
+    "build",
 ]
 
 [project.scripts]
@@ -244,6 +245,7 @@ module = [
   "langchain.*",
   "llama_index.*",
   "mem0.*",
+  "mcp.*",
   "memory_profiler.*",
   "mistralai.*",
   "mlx_whisper.*",
