@@ -1,4 +1,3 @@
-import httpx
 from agno.agent import Agent
 from agno.media import File
 from agno.models.google import Gemini
