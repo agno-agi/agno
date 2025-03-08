@@ -20,12 +20,20 @@ class ApiRoutes:
     TEAM_READ_ALL: str = "/v1/team/read/all"
 
     # Agent paths
-    AGENT_SESSION_CREATE: str = "/v1/agent/session/create"
-    AGENT_RUN_CREATE: str = "/v1/agent/run/create"
+    AGENT_SESSION_CREATE: str = "/v1/agent-sessions"
+    AGENT_RUN_CREATE: str = "/v1/agent-runs"
+
+    # Team paths
+    TEAM_SESSION_CREATE: str = "/v1/team-sessions"
+    TEAM_RUN_CREATE: str = "/v1/team-runs"
 
     # Telemetry paths
+    # TODO: Update to use the new telemetry paths
     AGENT_TELEMETRY_SESSION_CREATE: str = "/v1/telemetry/agent/session/create"
     AGENT_TELEMETRY_RUN_CREATE: str = "/v1/telemetry/agent/run/create"
+
+    TEAM_TELEMETRY_SESSION_CREATE: str = "/v1/telemetry/team-sessions"
+    TEAM_TELEMETRY_RUN_CREATE: str = "/v1/telemetry/team-runs"
 
     # Playground paths
     PLAYGROUND_ENDPOINT_CREATE: str = "/v1/playground/endpoint/create"

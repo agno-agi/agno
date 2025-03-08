@@ -78,8 +78,6 @@ class AgentMemory(BaseModel):
         _memory_dict = self.model_dump(
             exclude_none=True,
             include={
-                "runs",
-                "messages",
                 "update_system_message_on_change",
                 "create_session_summary",
                 "update_session_summary_after_run",
@@ -130,11 +128,6 @@ class AgentMemory(BaseModel):
             else:
                 # Add the system message to the messages list
                 self.messages.insert(0, message)
-
-    def add_message(self, message: Message) -> None:
-        """Add a Message to the messages list."""
-        self.messages.append(message)
-        logger.debug("Added Message to AgentMemory")
 
     def add_messages(self, messages: List[Message]) -> None:
         """Add a list of messages to the messages list."""

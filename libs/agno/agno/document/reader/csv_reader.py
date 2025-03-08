@@ -54,6 +54,17 @@ class CSVReader(Reader):
 class CSVUrlReader(Reader):
     """Reader for CSV files"""
 
+    _csv_reader: CSVReader
+
+    @property
+    def csv_reader(self) -> CSVReader:
+        if self._csv_reader is None:
+            self._csv_reader = CSVReader(chunk=self.chunk, 
+                         chunk_size=self.chunk_size, 
+                         chunking_strategy=self.chunking_strategy,
+                         separators=self.separators)
+        return self._csv_reader
+
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No URL provided")
@@ -89,7 +100,7 @@ class CSVUrlReader(Reader):
         file_obj = io.BytesIO(response.content)
         file_obj.name = filename
 
-        documents = CSVReader().read(file=file_obj)
+        documents = self.csv_reader.read(file=file_obj)
 
         file_obj.close()
 

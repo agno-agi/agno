@@ -1,34 +1,67 @@
-from typing import Dict, List, Optional
-
-from httpx import Response
-
-from agno.api.api import api, invalid_response
+from agno.api.api import api
 from agno.api.routes import ApiRoutes
-from agno.api.schemas.team import TeamSchema
-from agno.api.schemas.user import UserSchema
+from agno.api.schemas.team import TeamRunCreate, TeamSessionCreate
+from agno.cli.settings import agno_cli_settings
 from agno.utils.log import logger
 
 
-def get_teams_for_user(user: UserSchema) -> Optional[List[TeamSchema]]:
-    logger.debug("--**-- Reading teams for user")
+def create_team_session(session: TeamSessionCreate, monitor: bool = False) -> None:
+    if not agno_cli_settings.api_enabled:
+        return
+
+    logger.debug("--**-- Logging Team Session")
     with api.AuthenticatedClient() as api_client:
         try:
-            r: Response = api_client.post(
-                ApiRoutes.TEAM_READ_ALL,
-                json={
-                    "user": user.model_dump(include={"id_user", "email"}),
-                },
-                timeout=2.0,
+            api_client.post(
+                ApiRoutes.TEAM_SESSION_CREATE if monitor else ApiRoutes.TEAM_TELEMETRY_SESSION_CREATE,
+                json={"session": session.model_dump(exclude_none=True)},
             )
-            if invalid_response(r):
-                return None
-
-            response_json: Optional[List[Dict]] = r.json()
-            if response_json is None:
-                return None
-
-            teams: List[TeamSchema] = [TeamSchema.model_validate(team) for team in response_json]
-            return teams
         except Exception as e:
-            logger.debug(f"Could not read teams: {e}")
-    return None
+            logger.debug(f"Could not create Team session: {e}")
+    return
+
+
+def create_team_run(run: TeamRunCreate, monitor: bool = False) -> None:
+    if not agno_cli_settings.api_enabled:
+        return
+
+    logger.debug("--**-- Logging Team Run")
+    with api.AuthenticatedClient() as api_client:
+        try:
+            api_client.post(
+                ApiRoutes.TEAM_RUN_CREATE if monitor else ApiRoutes.TEAM_TELEMETRY_RUN_CREATE,
+                json={"run": run.model_dump(exclude_none=True)},
+            )
+        except Exception as e:
+            logger.debug(f"Could not create Team run: {e}")
+    return
+
+
+async def acreate_team_session(session: TeamSessionCreate, monitor: bool = False) -> None:
+    if not agno_cli_settings.api_enabled:
+        return
+
+    logger.debug("--**-- Logging Team Session")
+    async with api.AuthenticatedAsyncClient() as api_client:
+        try:
+            await api_client.post(
+                ApiRoutes.TEAM_SESSION_CREATE if monitor else ApiRoutes.TEAM_TELEMETRY_SESSION_CREATE,
+                json={"session": session.model_dump(exclude_none=True)},
+            )
+        except Exception as e:
+            logger.debug(f"Could not create Team session: {e}")
+
+
+async def acreate_team_run(run: TeamRunCreate, monitor: bool = False) -> None:
+    if not agno_cli_settings.api_enabled:
+        return
+
+    logger.debug("--**-- Logging Team Run")
+    async with api.AuthenticatedAsyncClient() as api_client:
+        try:
+            await api_client.post(
+                ApiRoutes.TEAM_RUN_CREATE if monitor else ApiRoutes.TEAM_TELEMETRY_RUN_CREATE,
+                json={"run": run.model_dump(exclude_none=True)},
+            )
+        except Exception as e:
+            logger.debug(f"Could not create Team run: {e}")

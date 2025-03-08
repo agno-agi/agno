@@ -5,18 +5,18 @@ from typing import Any, Dict, Optional
 from git import List
 
 from agno.models.anthropic import Claude as AnthropicClaude
-from agno.utils.log import logger
+from agno.utils.log import get_logger
 
 try:
     from anthropic import AnthropicBedrock, AsyncAnthropicBedrock
 except ImportError:
-    logger.error("`anthropic[bedrock]` not installed. Please install it via `pip install anthropic[bedrock]`.")
+    get_logger().error("`anthropic[bedrock]` not installed. Please install it via `pip install anthropic[bedrock]`.")
     raise
 
 try:
     from boto3.session import Session
 except ImportError:
-    logger.error("`boto3` not installed. Please install it via `pip install boto3`.")
+    get_logger().error("`boto3` not installed. Please install it via `pip install boto3`.")
     raise
 
 

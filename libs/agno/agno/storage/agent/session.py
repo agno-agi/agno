@@ -32,10 +32,6 @@ class AgentSession:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
-    def monitoring_data(self) -> Dict[str, Any]:
-        monitoring_data = asdict(self)
-        return monitoring_data
-
     def telemetry_data(self) -> Dict[str, Any]:
         return {
             "model": self.agent_data.get("model") if self.agent_data else None,

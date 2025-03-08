@@ -91,6 +91,10 @@ class Video(BaseModel):
             "format": self.format,
         }
         return {k: v for k, v in response_dict.items() if v is not None}
+    
+    @classmethod
+    def from_artifact(cls, artifact: VideoArtifact) -> "Video":
+        return cls(url=artifact.url)
 
 
 class Audio(BaseModel):
@@ -157,6 +161,10 @@ class Audio(BaseModel):
         }
 
         return {k: v for k, v in response_dict.items() if v is not None}
+
+    @classmethod
+    def from_artifact(cls, artifact: AudioArtifact) -> "Audio":
+        return cls(url=artifact.url, content=artifact.base64_audio, format=artifact.mime_type)
 
 
 class AudioResponse(BaseModel):
@@ -255,3 +263,7 @@ class Image(BaseModel):
         }
 
         return {k: v for k, v in response_dict.items() if v is not None}
+    
+    @classmethod
+    def from_artifact(cls, artifact: ImageArtifact) -> "Image":
+        return cls(url=artifact.url)

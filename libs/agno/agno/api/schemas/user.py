@@ -20,3 +20,16 @@ class EmailPasswordAuthSchema(BaseModel):
     email: str
     password: str
     auth_source: str = "cli"
+
+
+class TeamSchema(BaseModel):
+    """Schema for team data returned by the API."""
+
+    id_team: str
+    name: str
+    url: str
+
+
+class TeamIdentifier(BaseModel):
+    id_team: Optional[str] = None
+    team_url: Optional[str] = None

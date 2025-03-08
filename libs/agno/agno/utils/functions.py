@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, Optional
 
 from agno.tools.function import Function, FunctionCall
-from agno.utils.log import logger
+from agno.utils.log import get_logger
 
 
 def get_function_call(
@@ -11,6 +11,7 @@ def get_function_call(
     call_id: Optional[str] = None,
     functions: Optional[Dict[str, Function]] = None,
 ) -> Optional[FunctionCall]:
+    logger = get_logger()
     logger.debug(f"Getting function {name}")
     if functions is None:
         return None
