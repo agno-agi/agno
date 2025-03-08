@@ -3,8 +3,6 @@ from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.tools.api import ApiTools
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.yfinance import YFinanceTools
 
 agent_storage: str = "tmp/agents.db"
 
@@ -23,4 +21,4 @@ api_agent = Agent(
 app = Playground(agents=[api_agent]).get_app()
 
 if __name__ == "__main__":
-    serve_playground_app("playground:app", reload=True)
+    serve_playground_app("api_calling_agent:app", reload=True)
