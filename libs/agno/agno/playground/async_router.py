@@ -292,7 +292,7 @@ def get_async_playground_router(
             return run_response.to_dict()
 
     @playground_router.get("/agents/{agent_id}/sessions")
-    async def get_all_agent_sessions(agent_id: str, user_id: str = Query(..., min_length=1)):
+    async def get_all_agent_sessions(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         logger.debug(f"AgentSessionsRequest: {agent_id} {user_id}")
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
@@ -316,7 +316,7 @@ def get_async_playground_router(
         return agent_sessions
 
     @playground_router.get("/agents/{agent_id}/sessions/{session_id}")
-    async def get_agent_session(agent_id: str, session_id: str, user_id: str = Query(..., min_length=1)):
+    async def get_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         logger.debug(f"AgentSessionsRequest: {agent_id} {user_id} {session_id}")
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
@@ -350,7 +350,7 @@ def get_async_playground_router(
         return JSONResponse(status_code=404, content="Session not found.")
 
     @playground_router.delete("/agents/{agent_id}/sessions/{session_id}")
-    async def delete_agent_session(agent_id: str, session_id: str, user_id: str = Query(..., min_length=1)):
+    async def delete_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
             return JSONResponse(status_code=404, content="Agent not found.")
@@ -427,7 +427,7 @@ def get_async_playground_router(
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
     @playground_router.get("/workflows/{workflow_id}/sessions", response_model=List[WorkflowSessionResponse])
-    async def get_all_workflow_sessions(workflow_id: str, user_id: str = Query(..., min_length=1)):
+    async def get_all_workflow_sessions(workflow_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, workflows)
         if not workflow:
@@ -457,7 +457,9 @@ def get_async_playground_router(
         ]
 
     @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}")
-    async def get_workflow_session(workflow_id: str, session_id: str, user_id: str = Query(..., min_length=1)):
+    async def get_workflow_session(
+        workflow_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)
+    ):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, workflows)
         if not workflow:
