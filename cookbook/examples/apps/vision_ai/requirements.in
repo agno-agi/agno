@@ -1,9 +1,10 @@
 agno
 openai
-pandas
+google-genai
 pgvector
 psycopg[binary]
 simplejson
 sqlalchemy
 streamlit
+duckduckgo-search
 nest_asyncio

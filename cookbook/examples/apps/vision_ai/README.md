@@ -1,11 +1,11 @@
-# VisioAI 🖼️
-VisioAI is a **smart image analysis agent** that extracts structured insights from images using AI-powered **object detection, OCR, and scene recognition**.
+# VisionAI 🖼️
+VisionAI is a **smart image analysis agent** that extracts structured insights from images using AI-powered **object detection, OCR, and scene recognition**.
 
 The system is designed with two separate agents:
 - **Image Processing Agent**: Extracts structured insights based on the uploaded image and user instructions.
 - **Chat Agent**: Answers follow-up questions using the last extracted insights and (optionally) web search via DuckDuckGo.
 
-VisioAI allows users to interact with images in **Auto, Manual, and Hybrid modes**, offering a powerful and flexible workflow.
+VisionAI allows users to interact with images in **Auto, Manual, and Hybrid modes**, offering a powerful and flexible workflow.
 
 ---
 
@@ -23,12 +23,12 @@ source .venv/bin/activate
 ### 2. Install libraries
 
 ```shell
-pip install -r cookbook/examples/apps/visio_ai/requirements.txt
+pip install -r cookbook/examples/apps/vision_ai/requirements.txt
 ```
 
 ### 3. Run PgVector
 
-Let's use Postgres for storing our data, but the VisioAI Agent should work with any database.
+Let's use Postgres for storing our data, but the VisionAI Agent should work with any database.
 
 > Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) first.
 
@@ -66,13 +66,13 @@ Other API keys are optional, but if you'd like to test:
 export GOOGLE_API_KEY=***
 ```
 
-### 5. Run VisioAI Agent
+### 5. Run VisionAI Agent
 
 ```shell
-streamlit run cookbook/examples/apps/visio_ai/app.py
+streamlit run cookbook/examples/apps/vision_ai/app.py
 ```
 
-- Open [localhost:8501](http://localhost:8501) to view the VisioAI Agent.
+- Open [localhost:8501](http://localhost:8501) to view the VisionAI Agent.
 
 ### 6. Features
 

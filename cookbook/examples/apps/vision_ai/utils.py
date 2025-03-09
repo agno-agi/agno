@@ -8,17 +8,13 @@ from agno.utils.log import logger
 from agents import image_processing_agent
 
 
-def add_message(
-    role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None
-) -> None:
+def add_message(role: str, content: str) -> None:
     """Safely add a message to the session state."""
     if "messages" not in st.session_state or not isinstance(
         st.session_state["messages"], list
     ):
         st.session_state["messages"] = []
-    st.session_state["messages"].append(
-        {"role": role, "content": content, "tool_calls": tool_calls}
-    )
+    st.session_state["messages"].append({"role": role, "content": content})
 
 
 def restart_agent():

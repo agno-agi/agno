@@ -8,14 +8,12 @@ from config import db_url
 
 def image_processing_agent(
     model,
-    user_id: Optional[str] = None,
     enable_search: bool = False,
 ) -> Agent:
     tools = [DuckDuckGoTools()] if enable_search else []
     extraction_agent = Agent(
         name="image_analysis_agent",
         model=model,
-        user_id=user_id,
         tools=tools,
         storage=PostgresAgentStorage(db_url=db_url, table_name="image_analysis_runs"),
         markdown=True,
@@ -26,14 +24,12 @@ def image_processing_agent(
 
 def chat_followup_agent(
     model,
-    user_id: Optional[str] = None,
     enable_search: bool = False,
 ) -> Agent:
     tools = [DuckDuckGoTools()] if enable_search else []
     followup_agent = Agent(
         name="image_chat_followup_agent",
         model=model,
-        user_id=user_id,
         tools=tools,
         storage=PostgresAgentStorage(
             db_url=db_url, table_name="image_analysis_followup"
