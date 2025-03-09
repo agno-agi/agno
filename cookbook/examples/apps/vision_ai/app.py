@@ -3,12 +3,12 @@ import time
 from pathlib import Path
 
 import streamlit as st
+from agents import chat_followup_agent, image_processing_agent
 from agno.media import Image
 from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
 from dotenv import load_dotenv
-from agents import chat_followup_agent, image_processing_agent
 from prompt import extraction_prompt
 from utils import (
     about_widget,
@@ -81,9 +81,9 @@ def main():
             ["Auto", "Manual", "Hybrid"],
             index=0,
             help="Select how the image analysis should be performed:\n"
-                 "- **Auto**: Fully automated image data extraction.\n"
-                 "- **Manual**: User provides extraction instructions.\n"
-                 "- **Hybrid**: A mix of both, user input with automation."
+            "- **Auto**: Fully automated image data extraction.\n"
+            "- **Manual**: User provides extraction instructions.\n"
+            "- **Hybrid**: A mix of both, user input with automation.",
         )
 
         # Web Search Option (Enable/Disable DuckDuckGo)
@@ -91,9 +91,7 @@ def main():
         enable_search = True if enable_search_option == "Yes" else False
 
         # Session Management
-        session_id = st.text_input(
-            "📂 Session ID", value="session_1"
-        )
+        session_id = st.text_input("📂 Session ID", value="session_1")
 
     ####################################################################
     # Store selections in session_state
@@ -105,7 +103,10 @@ def main():
     ####################################################################
     # Ensure Model is Initialized Properly
     ####################################################################
-    if "model_instance" not in st.session_state or st.session_state["model_choice"] != model_choice:
+    if (
+        "model_instance" not in st.session_state
+        or st.session_state["model_choice"] != model_choice
+    ):
         if model_choice == "OpenAI":
             model = OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY)
         else:
@@ -125,13 +126,9 @@ def main():
         or st.session_state["enable_search"] != enable_search
     ):
         logger.info("---*--- Updating Agents ---*---")
-        image_agent = image_processing_agent(
-            model=model, enable_search=enable_search
-        )
+        image_agent = image_processing_agent(model=model, enable_search=enable_search)
         st.session_state["image_agent"] = image_agent
-        chat_agent = chat_followup_agent(
-            model=model, enable_search=enable_search
-        )
+        chat_agent = chat_followup_agent(model=model, enable_search=enable_search)
         st.session_state["chat_agent"] = chat_agent
         st.session_state["enable_search"] = enable_search
 
@@ -186,7 +183,10 @@ def main():
         if (
             image_path
             and (mode == "Auto" or instruction)
-            and ("last_image_response" not in st.session_state or st.session_state["last_extracted_image"] != image_path)
+            and (
+                "last_image_response" not in st.session_state
+                or st.session_state["last_extracted_image"] != image_path
+            )
         ):
             with st.spinner("📤 Processing Image! Extracting image data..."):
                 extracted_data = image_agent.run(

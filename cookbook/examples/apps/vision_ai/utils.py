@@ -1,11 +1,11 @@
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
+from agents import image_processing_agent
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
-from agents import image_processing_agent
 
 
 def add_message(role: str, content: str) -> None:
