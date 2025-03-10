@@ -28,6 +28,7 @@ class Cassandra(VectorDb):
             from agno.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
+            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
         self.table_name: str = table_name
         self.embedder: Embedder = embedder
         self.session = session

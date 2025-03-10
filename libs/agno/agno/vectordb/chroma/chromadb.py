@@ -13,7 +13,6 @@ except ImportError:
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.embedder.openai import OpenAIEmbedder
 from agno.reranker.base import Reranker
 from agno.utils.log import logger
 from agno.vectordb.base import VectorDb
@@ -24,7 +23,7 @@ class ChromaDb(VectorDb):
     def __init__(
         self,
         collection: str,
-        embedder: Embedder = OpenAIEmbedder(),
+        embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         path: str = "tmp/chromadb",
         persistent_client: bool = False,
@@ -35,8 +34,12 @@ class ChromaDb(VectorDb):
         self.collection_name: str = collection
 
         # Embedder for embedding the document contents
-        self.embedder: Embedder = embedder
+        if embedder is None:
+            from agno.embedder.openai import OpenAIEmbedder
 
+            embedder = OpenAIEmbedder()
+            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
+        self.embedder: Embedder = embedder
         # Distance metric
         self.distance: Distance = distance
 
