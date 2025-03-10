@@ -1,0 +1,10 @@
+agno
+openai
+google-genai
+pgvector
+psycopg[binary]
+simplejson
+sqlalchemy
+streamlit
+duckduckgo-search
+nest_asyncio
