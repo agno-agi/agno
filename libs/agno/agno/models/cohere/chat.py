@@ -9,7 +9,6 @@ from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
-from agno.utils.openai import images_to_message
 
 try:
     from cohere import AsyncClientV2 as CohereAsyncClient
@@ -81,7 +80,6 @@ def _format_messages(messages: List[Message]) -> List[Dict[str, Any]]:
         }
 
         if message.images is not None and len(message.images) > 0:
-
             # Ignore non-string message content
             if isinstance(message.content, str):
                 message_content_with_image = _format_images_for_message(message=message, images=message.images)

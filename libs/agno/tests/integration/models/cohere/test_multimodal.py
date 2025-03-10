@@ -1,19 +1,20 @@
 from pathlib import Path
+
 import pytest
 
 from agno.agent.agent import Agent
-from agno.media import Audio, Image
+from agno.media import Image
 from agno.models.cohere.chat import Cohere
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 
 def test_image_input():
     agent = Agent(
-        model=Cohere(id="c4ai-aya-vision-8b"), 
+        model=Cohere(id="c4ai-aya-vision-8b"),
         add_history_to_messages=True,
-        markdown=True, 
-        telemetry=False, 
-        monitoring=False
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
     )
 
     response = agent.run(
@@ -63,7 +64,11 @@ def test_image_input_local_file():
 @pytest.mark.skip(reason="Image with tool call is not supported yet.")
 def test_image_input_with_tool_call():
     agent = Agent(
-        model=Cohere(id="c4ai-aya-vision-8b"), tools=[DuckDuckGoTools()], markdown=True, telemetry=False, monitoring=False
+        model=Cohere(id="c4ai-aya-vision-8b"),
+        tools=[DuckDuckGoTools()],
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
     )
 
     response = agent.run(
