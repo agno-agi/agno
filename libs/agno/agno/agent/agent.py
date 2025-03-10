@@ -21,6 +21,7 @@ from typing import (
     overload,
 )
 from uuid import uuid4
+import warnings
 
 from pydantic import BaseModel
 
@@ -196,6 +197,8 @@ class Agent:
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
     structured_outputs: bool = False
+    # If True, the response from the Model is returned as JSON that is then parsed into a Pydantic model
+    json_response_mode: bool = False
     # Save the response to a file
     save_response_to_file: Optional[str] = None
 
@@ -287,7 +290,8 @@ class Agent:
         exponential_backoff: bool = False,
         response_model: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
-        structured_outputs: bool = False,
+        structured_outputs: Optional[bool] = None,
+        json_response_mode: bool = False,
         save_response_to_file: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
@@ -368,7 +372,17 @@ class Agent:
         self.exponential_backoff = exponential_backoff
         self.response_model = response_model
         self.parse_response = parse_response
-        self.structured_outputs = structured_outputs
+
+        if structured_outputs is not None:
+            warnings.warn(
+                "The 'structured_outputs' parameter is deprecated and will be removed in a future version. "
+                "Please use the new 'json_response_mode' approach instead.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            self.structured_outputs = structured_outputs
+
+        self.json_response_mode = json_response_mode
         self.save_response_to_file = save_response_to_file
 
         self.stream = stream
@@ -632,27 +646,31 @@ class Agent:
                             }
                             # Process tool calls
                             for tool_call_dict in tool_calls_list:
-                                tool_call_id = tool_call_dict.get("tool_call_id")
+                                tool_call_id = (
+                                    tool_call_dict["tool_call_id"] if "tool_call_id" in tool_call_dict else None
+                                )
                                 index = tool_call_index_map.get(tool_call_id)
                                 if index is not None:
                                     self.run_response.tools[index] = tool_call_dict
                         else:
                             self.run_response.tools = tool_calls_list
 
-                        if self.stream_intermediate_steps:
-                            yield self.create_run_response(
-                                content=model_response_chunk.content,
-                                event=RunEvent.tool_call_completed,
-                            )
+                    if self.stream_intermediate_steps:
+                        yield self.create_run_response(
+                            content=model_response_chunk.content,
+                            event=RunEvent.tool_call_completed,
+                        )
         else:
             # Get the model response
             model_response = self.model.response(messages=run_messages.messages)
             # Handle structured outputs
-            if self.response_model is not None and self.structured_outputs and model_response.parsed is not None:
-                # Update the run_response content with the structured output
-                self.run_response.content = model_response.parsed
-                # Update the run_response content_type with the structured output class name
-                self.run_response.content_type = self.response_model.__name__
+            if self.response_model is not None and model_response.parsed is not None:
+                # We get native structured outputs from the model
+                if self.model.structured_outputs:
+                    # Update the run_response content with the structured output
+                    self.run_response.content = model_response.parsed
+                    # Update the run_response content_type with the structured output class name
+                    self.run_response.content_type = self.response_model.__name__
             else:
                 # Update the run_response content with the model response content
                 self.run_response.content = model_response.content
@@ -867,11 +885,9 @@ class Agent:
                         )
                     )
 
-                    # If the model natively supports structured outputs, the content is already in the structured format
-                    if self.structured_outputs:
-                        # Do a final check confirming the content is in the response_model format
-                        if isinstance(run_response.content, self.response_model):
-                            return run_response
+                    # Do a final check confirming the content is in the response_model format
+                    if isinstance(run_response.content, self.response_model):
+                        return run_response
 
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
@@ -1112,7 +1128,9 @@ class Agent:
                         if self.run_response.tools:
                             # Create a mapping of tool_call_id to index
                             tool_call_index_map = {
-                                tc["tool_call_id"]: i for i, tc in enumerate(self.run_response.tools)
+                                tc["tool_call_id"]: i
+                                for i, tc in enumerate(self.run_response.tools)
+                                if tc.get("tool_call_id") is not None
                             }
                             # Process tool calls
                             for tool_call_dict in tool_calls_list:
@@ -1134,11 +1152,13 @@ class Agent:
             # Get the model response
             model_response = await self.model.aresponse(messages=run_messages.messages)
             # Handle structured outputs
-            if self.response_model is not None and self.structured_outputs and model_response.parsed is not None:
-                # Update the run_response content with the structured output
-                self.run_response.content = model_response.parsed
-                # Update the run_response content_type with the structured output class name
-                self.run_response.content_type = self.response_model.__name__
+            if self.response_model is not None and model_response.parsed is not None:
+                # We get native structured outputs from the model
+                if self.model.structured_outputs:
+                    # Update the run_response content with the structured output
+                    self.run_response.content = model_response.parsed
+                    # Update the run_response content_type with the structured output class name
+                    self.run_response.content_type = self.response_model.__name__
             else:
                 # Update the run_response content with the model response content
                 self.run_response.content = model_response.content
@@ -1320,11 +1340,9 @@ class Agent:
                         **kwargs,
                     ).__anext__()
 
-                    # If the model natively supports structured outputs, the content is already in the structured format
-                    if self.structured_outputs:
-                        # Do a final check confirming the content is in the response_model format
-                        if isinstance(run_response.content, self.response_model):
-                            return run_response
+                    # Do a final check confirming the content is in the response_model format
+                    if isinstance(run_response.content, self.response_model):
+                        return run_response
 
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
@@ -1465,9 +1483,10 @@ class Agent:
             agent_tools = self.get_tools()
             if agent_tools is not None and len(agent_tools) > 0:
                 logger.debug("Processing tools for model")
-                # Check if we need strict mode for the model
+
+                # Check if we need strict mode for the functions for the model
                 strict = False
-                if self.response_model is not None and self.structured_outputs and model.supports_structured_outputs:
+                if self.response_model is not None and (self.structured_outputs or (not self.json_response_mode)) and model.supports_native_structured_outputs:
                     strict = True
 
                 self._tools_for_model = []
@@ -1532,14 +1551,33 @@ class Agent:
 
         # Update the response_format on the Model
         if self.response_model is not None:
-            # This will pass the pydantic model to the model
-            if self.structured_outputs and self.model.supports_structured_outputs:
-                logger.debug("Setting Model.response_format to Agent.response_model")
-                self.model.response_format = self.response_model
-                self.model.structured_outputs = True
+
+            if self.model.supports_native_structured_outputs:
+                if (not self.json_response_mode or self.structured_outputs):
+                    logger.debug("Setting Model.response_format to Agent.response_model")
+                    self.model.response_format = self.response_model
+                    self.model.structured_outputs = True
+                else:
+                    logger.debug("Model does not support native structured outputs")
+                    self.model.response_format = {"type": "json_object"}
+                    self.model.structured_outputs = False
+            elif self.model.supports_json_schema_outputs:
+                if self.json_response_mode or (not self.structured_outputs):
+                    logger.debug("Setting Model.response_format to JSON response mode")
+                    self.model.response_format = {"type": "json_schema", "json_schema": {"name": self.response_model.__name__, "schema": self.response_model.model_json_schema()}}
+                    self.model.structured_outputs = False
+                else:
+                    self.model.response_format = None
+                    self.model.structured_outputs = False
             else:
-                # Otherwise we just want JSON
-                self.model.response_format = {"type": "json_object"}
+                if self.json_response_mode or (not self.structured_outputs):
+                    logger.debug("Setting Model.response_format to JSON response mode")
+                    self.model.response_format = {"type": "json_object"}
+                    self.model.structured_outputs = False
+                else:
+                    self.model.response_format = None
+                    self.model.structured_outputs = False
+
         else:
             self.model.response_format = None
 
@@ -1946,7 +1984,7 @@ class Agent:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
 
             # Add the JSON output prompt if response_model is provided and structured_outputs is False
-            if self.response_model is not None and not self.structured_outputs:
+            if self.response_model is not None and (self.json_response_mode or self.structured_outputs is False):
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
             return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
@@ -2087,7 +2125,7 @@ class Agent:
                     )
 
         # Add the JSON output prompt if response_model is provided and structured_outputs is False
-        if self.response_model is not None and not self.structured_outputs:
+        if self.response_model is not None and (self.json_response_mode or self.structured_outputs is False):
             system_message_content += f"{self.get_json_output_prompt()}"
 
         # Return the system message
@@ -2916,7 +2954,7 @@ class Agent:
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    structured_outputs=self.structured_outputs,
+                    json_response_mode=self.json_response_mode or (not self.structured_outputs),
                     monitoring=self.monitoring,
                 )
 
@@ -3098,7 +3136,7 @@ class Agent:
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    structured_outputs=self.structured_outputs,
+                    json_response_mode=self.json_response_mode or (not self.structured_outputs),
                     monitoring=self.monitoring,
                 )
 

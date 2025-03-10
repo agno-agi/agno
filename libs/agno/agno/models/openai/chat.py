@@ -41,7 +41,7 @@ class OpenAIChat(Model):
     id: str = "gpt-4o"
     name: str = "OpenAIChat"
     provider: str = "OpenAI"
-    supports_structured_outputs: bool = True
+    supports_native_structured_outputs: bool = True
 
     # Request parameters
     store: Optional[bool] = None

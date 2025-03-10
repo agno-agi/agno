@@ -83,7 +83,6 @@ class ResearchReportGenerator(Workflow):
         Avoid opinion pieces and non-authoritative sources.\
         """),
         response_model=SearchResults,
-        structured_outputs=True,
     )
 
     article_scraper: Agent = Agent(
@@ -104,7 +103,6 @@ class ResearchReportGenerator(Workflow):
         Format everything in clean markdown for optimal readability.\
         """),
         response_model=ScrapedArticle,
-        structured_outputs=True,
     )
 
     writer: Agent = Agent(

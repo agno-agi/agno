@@ -37,7 +37,6 @@ structured_output_agent = Agent(
     model=OpenAIChat(id="gpt-4o-2024-08-06"),
     description="You write movie scripts.",
     response_model=MovieScript,
-    structured_outputs=True,
 )
 
 

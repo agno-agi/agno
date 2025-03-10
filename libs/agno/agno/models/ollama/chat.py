@@ -41,7 +41,7 @@ class Ollama(Model):
     name: str = "Ollama"
     provider: str = "Ollama"
 
-    supports_structured_outputs: bool = True
+    supports_native_structured_outputs: bool = True
 
     # Request parameters
     format: Optional[Any] = None
