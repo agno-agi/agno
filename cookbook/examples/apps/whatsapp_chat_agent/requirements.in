@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-dotenv
+requests
+yfinance
+openai
+agno
+python-multipart
+aiohttp
+SQLAlchemy
