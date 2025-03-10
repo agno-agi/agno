@@ -77,6 +77,7 @@ pgvector = ["pgvector"]
 chromadb = ["chromadb"]
 lancedb = ["lancedb", "tantivy"]
 qdrant = ["qdrant-client"]
+couchbase = ["couchbase"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
@@ -138,6 +139,7 @@ vectordbs = [
   "agno[chromadb]",
   "agno[lancedb]",
   "agno[qdrant]",
+  "agno[couchbase]",
   "agno[cassandra]",
   "agno[mongodb]",
   "agno[singlestore]"
@@ -299,5 +301,6 @@ module = [
   "wikipedia.*",
   "yfinance.*",
   "youtube_transcript_api.*",
+  "couchbase.*",
 ]
 ignore_missing_imports = true
