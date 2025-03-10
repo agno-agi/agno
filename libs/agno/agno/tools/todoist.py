@@ -1,6 +1,6 @@
 import json
 import os
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -87,7 +87,7 @@ class TodoistTools(Toolkit):
                 content=content, project_id=project_id, due_string=due_string, priority=priority, labels=labels or []
             )
             # Convert task to a dictionary and handle the Due object
-            task_dict = {
+            task_dict: Dict[str, Any] = {
                 "id": task.id,
                 "content": task.content,
                 "description": task.description,
@@ -118,7 +118,7 @@ class TodoistTools(Toolkit):
         """Get a specific task by ID."""
         try:
             task = self.api.get_task(task_id)
-            task_dict = {
+            task_dict: Dict[str, Any] = {
                 "id": task.id,
                 "content": task.content,
                 "description": task.description,
@@ -145,7 +145,14 @@ class TodoistTools(Toolkit):
             logger.error(f"Failed to get task: {str(e)}")
             return json.dumps({"error": str(e)})
 
-    def update_task(self, task_id: str, **kwargs) -> str:
+    def update_task(
+        self,
+        task_id: str,
+        content: Optional[str] = None,
+        due_string: Optional[str] = None,
+        priority: Optional[int] = None,
+        labels: Optional[List[str]] = None,
+    ) -> str:
         """
         Update an existing task.
 
@@ -157,30 +164,10 @@ class TodoistTools(Toolkit):
             str: JSON string containing the updated task
         """
         try:
-            task = self.api.update_task(task_id=task_id, **kwargs)
-            task_dict = {
-                "id": task.id,
-                "content": task.content,
-                "description": task.description,
-                "project_id": task.project_id,
-                "section_id": task.section_id,
-                "parent_id": task.parent_id,
-                "order": task.order,
-                "priority": task.priority,
-                "url": task.url,
-                "comment_count": task.comment_count,
-                "creator_id": task.creator_id,
-                "created_at": task.created_at,
-                "labels": task.labels,
-            }
-            if task.due:
-                task_dict["due"] = {
-                    "date": task.due.date,
-                    "string": task.due.string,
-                    "datetime": task.due.datetime,
-                    "timezone": task.due.timezone,
-                }
-            return json.dumps(task_dict)
+            task = self.api.update_task(
+                task_id=task_id, content=content, due_string=due_string, priority=priority, labels=labels
+            )
+            return json.dumps(task.__dict__)
         except Exception as e:
             logger.error(f"Failed to update task: {str(e)}")
             return json.dumps({"error": str(e)})
@@ -209,7 +196,7 @@ class TodoistTools(Toolkit):
             tasks = self.api.get_tasks()
             tasks_list = []
             for task in tasks:
-                task_dict = {
+                task_dict: Dict[str, Any] = {
                     "id": task.id,
                     "content": task.content,
                     "description": task.description,

@@ -130,29 +130,44 @@ def test_get_task_success(todoist_tools, mock_todoist_api):
 
 def test_update_task_success(todoist_tools, mock_todoist_api):
     """Test successful task update."""
-    mock_task = Mock()
-    mock_task.id = "123"
-    mock_task.content = "Updated Task"
-    mock_task.description = "Updated Description"
-    mock_task.project_id = "project_1"
-    mock_task.section_id = None
-    mock_task.parent_id = None
-    mock_task.order = 1
-    mock_task.priority = 1
-    mock_task.url = "https://todoist.com/task/123"
-    mock_task.comment_count = 0
-    mock_task.creator_id = "user_1"
-    mock_task.created_at = "2024-01-01T10:00:00Z"
-    mock_task.labels = []
-    mock_task.due = None
+    # Create a simple object to represent the task
+    class MockTask:
+        def __init__(self):
+            self.__dict__ = {
+                "id": "123",
+                "content": "Updated Task",
+                "description": "Updated Description",
+                "project_id": "project_1",
+                "section_id": None,
+                "parent_id": None,
+                "order": 1,
+                "priority": 1,
+                "url": "https://todoist.com/task/123",
+                "comment_count": 0,
+                "creator_id": "user_1",
+                "created_at": "2024-01-01T10:00:00Z",
+                "labels": [],
+                "due": None
+            }
 
+    mock_task = MockTask()
     mock_todoist_api.update_task.return_value = mock_task
 
     result = todoist_tools.update_task("123", content="Updated Task")
     result_data = json.loads(result)
 
     assert result_data["id"] == "123"
-    mock_todoist_api.update_task.assert_called_once_with(task_id="123", content="Updated Task")
+    assert result_data["content"] == "Updated Task"
+    assert result_data["project_id"] == "project_1"
+    
+    # Verify the API was called with correct parameters
+    mock_todoist_api.update_task.assert_called_once_with(
+        task_id="123",
+        content="Updated Task",
+        due_string=None,
+        priority=None,
+        labels=None
+    )
 
 
 def test_close_task_success(todoist_tools, mock_todoist_api):
