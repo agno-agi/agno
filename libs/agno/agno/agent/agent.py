@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -21,7 +22,6 @@ from typing import (
     overload,
 )
 from uuid import uuid4
-import warnings
 
 from pydantic import BaseModel
 
@@ -378,7 +378,7 @@ class Agent:
                 "The 'structured_outputs' parameter is deprecated and will be removed in a future version. "
                 "Please use the new 'json_response_mode' approach instead.",
                 DeprecationWarning,
-                stacklevel=2
+                stacklevel=2,
             )
             self.structured_outputs = structured_outputs
 
@@ -1486,7 +1486,11 @@ class Agent:
 
                 # Check if we need strict mode for the functions for the model
                 strict = False
-                if self.response_model is not None and (self.structured_outputs or (not self.json_response_mode)) and model.supports_native_structured_outputs:
+                if (
+                    self.response_model is not None
+                    and (self.structured_outputs or (not self.json_response_mode))
+                    and model.supports_native_structured_outputs
+                ):
                     strict = True
 
                 self._tools_for_model = []
@@ -1551,9 +1555,8 @@ class Agent:
 
         # Update the response_format on the Model
         if self.response_model is not None:
-
             if self.model.supports_native_structured_outputs:
-                if (not self.json_response_mode or self.structured_outputs):
+                if not self.json_response_mode or self.structured_outputs:
                     logger.debug("Setting Model.response_format to Agent.response_model")
                     self.model.response_format = self.response_model
                     self.model.structured_outputs = True
@@ -1564,7 +1567,13 @@ class Agent:
             elif self.model.supports_json_schema_outputs:
                 if self.json_response_mode or (not self.structured_outputs):
                     logger.debug("Setting Model.response_format to JSON response mode")
-                    self.model.response_format = {"type": "json_schema", "json_schema": {"name": self.response_model.__name__, "schema": self.response_model.model_json_schema()}}
+                    self.model.response_format = {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": self.response_model.__name__,
+                            "schema": self.response_model.model_json_schema(),
+                        },
+                    }
                     self.model.structured_outputs = False
                 else:
                     self.model.response_format = None

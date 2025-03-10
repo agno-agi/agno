@@ -124,6 +124,7 @@ def test_response_model():
     assert response.content.genre is not None
     assert response.content.plot is not None
 
+
 def test_json_response_mode():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
@@ -146,6 +147,7 @@ def test_json_response_mode():
     assert response.content.genre is not None
     assert response.content.plot is not None
 
+
 def test_structured_outputs_deprecated():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
@@ -167,6 +169,7 @@ def test_structured_outputs_deprecated():
     assert response.content.title is not None
     assert response.content.genre is not None
     assert response.content.plot is not None
+
 
 def test_history():
     agent = Agent(

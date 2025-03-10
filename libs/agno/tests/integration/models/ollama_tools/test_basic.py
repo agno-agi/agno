@@ -96,7 +96,9 @@ def test_response_model():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=OllamaTools(id="mistral"), markdown=True, telemetry=False, monitoring=False, response_model=MovieScript)
+    agent = Agent(
+        model=OllamaTools(id="mistral"), markdown=True, telemetry=False, monitoring=False, response_model=MovieScript
+    )
 
     response = agent.run("Create a movie about time travel")
 
@@ -128,6 +130,7 @@ def test_json_response_mode():
     assert response.content.title is not None
     assert response.content.genre is not None
     assert response.content.plot is not None
+
 
 def test_structured_outputs_deprecated():
     class MovieScript(BaseModel):
