@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import litellm
 
-from agno.models.base import Message, Model
+from agno.models.base import Message
 from agno.models.base import ModelResponse as AgnoModelResponse
 from agno.models.openai.like import OpenAILike
 from agno.utils.log import logger
