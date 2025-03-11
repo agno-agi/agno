@@ -152,38 +152,22 @@ class TodoistTools(Toolkit):
         Args:
             task_id: The ID of the task to update
             **kwargs: Any task properties to update (content, due_string, priority, etc.)
+                If a nested 'kwargs' dictionary is provided, its contents will be used instead.
 
         Returns:
-            str: JSON string containing the updated task
+            str: JSON string containing success status
         """
         try:
-            task = self.api.update_task(task_id=task_id, **kwargs)
-            task_dict = {
-                "id": task.id,
-                "content": task.content,
-                "description": task.description,
-                "project_id": task.project_id,
-                "section_id": task.section_id,
-                "parent_id": task.parent_id,
-                "order": task.order,
-                "priority": task.priority,
-                "url": task.url,
-                "comment_count": task.comment_count,
-                "creator_id": task.creator_id,
-                "created_at": task.created_at,
-                "labels": task.labels,
-            }
-            if task.due:
-                task_dict["due"] = {
-                    "date": task.due.date,
-                    "string": task.due.string,
-                    "datetime": task.due.datetime,
-                    "timezone": task.due.timezone,
-                }
-            return json.dumps(task_dict)
+            # Check if there's a nested kwargs dictionary and use it if present
+            if len(kwargs) == 1 and "kwargs" in kwargs and isinstance(kwargs["kwargs"], dict):
+                kwargs = kwargs["kwargs"]
+
+            success = self.api.update_task(task_id=task_id, **kwargs)
+            return json.dumps({"success": success})
         except Exception as e:
-            logger.error(f"Failed to update task: {str(e)}")
-            return json.dumps({"error": str(e)})
+            error_msg = str(e)
+            logger.error(f"Failed to update task: {error_msg}")
+            return json.dumps({"error": error_msg})
 
     def close_task(self, task_id: str) -> str:
         """Mark a task as completed."""
