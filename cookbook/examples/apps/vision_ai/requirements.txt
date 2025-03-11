@@ -39,6 +39,8 @@ docstring-parser==0.16
     # via agno
 duckduckgo-search==7.5.1
     # via -r requirements.in
+eval-type-backport==0.2.2
+    # via mistralai
 gitdb==4.0.12
     # via gitpython
 gitpython==3.1.44
@@ -57,6 +59,7 @@ httpx==0.28.1
     # via
     #   agno
     #   google-genai
+    #   mistralai
     #   openai
 idna==3.10
     # via
@@ -67,8 +70,10 @@ jinja2==3.1.6
     # via
     #   altair
     #   pydeck
-jiter==0.8.2
+jiter==0.9.0
     # via openai
+jsonpath-python==1.0.6
+    # via mistralai
 jsonschema==4.23.0
     # via altair
 jsonschema-specifications==2024.10.1
@@ -81,7 +86,11 @@ markupsafe==3.0.2
     # via jinja2
 mdurl==0.1.2
     # via markdown-it-py
-narwhals==1.29.1
+mistralai==1.5.1
+    # via -r requirements.in
+mypy-extensions==1.0.0
+    # via typing-inspect
+narwhals==1.30.0
     # via altair
 nest-asyncio==1.6.0
     # via -r requirements.in
@@ -123,6 +132,7 @@ pydantic==2.10.6
     # via
     #   agno
     #   google-genai
+    #   mistralai
     #   openai
     #   pydantic-settings
 pydantic-core==2.27.2
@@ -134,7 +144,9 @@ pydeck==0.9.1
 pygments==2.19.1
     # via rich
 python-dateutil==2.9.0.post0
-    # via pandas
+    # via
+    #   mistralai
+    #   pandas
 python-dotenv==1.0.1
     # via
     #   agno
@@ -205,6 +217,9 @@ typing-extensions==4.12.2
     #   sqlalchemy
     #   streamlit
     #   typer
+    #   typing-inspect
+typing-inspect==0.9.0
+    # via mistralai
 tzdata==2025.1
     # via pandas
 urllib3==2.3.0

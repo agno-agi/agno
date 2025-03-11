@@ -5,9 +5,9 @@ from pathlib import Path
 import streamlit as st
 from agents import chat_followup_agent, image_processing_agent
 from agno.media import Image
-from agno.models.openai import OpenAIChat
 from agno.models.google import Gemini
 from agno.models.mistral.mistral import MistralChat
+from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
 from dotenv import load_dotenv
 from prompt import extraction_prompt
@@ -89,9 +89,9 @@ def main():
             ["Auto", "Manual", "Hybrid"],
             index=0,
             help="Select how the image analysis should be performed:\n"
-                 "- **Auto**: Fully automated image data extraction.\n"
-                 "- **Manual**: User provides extraction instructions.\n"
-                 "- **Hybrid**: A mix of both, user input with automation.",
+            "- **Auto**: Fully automated image data extraction.\n"
+            "- **Manual**: User provides extraction instructions.\n"
+            "- **Hybrid**: A mix of both, user input with automation.",
         )
 
         # Web Search Option (Enable/Disable DuckDuckGo)
@@ -107,10 +107,7 @@ def main():
     ####################################################################
     # Ensure Model is Initialized Properly
     ####################################################################
-    if (
-        "model_instance" not in st.session_state
-        or old_model_choice != model_choice
-    ):
+    if "model_instance" not in st.session_state or old_model_choice != model_choice:
         if model_choice == "OpenAI":
             model = OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY)
         elif model_choice == "Gemini":
@@ -120,7 +117,7 @@ def main():
         st.session_state["model_instance"] = model
         st.session_state["model_choice"] = model_choice
     else:
-        model = st.session_state["model_instance"]\
+        model = st.session_state["model_instance"]
 
     ####################################################################
     # Modify Agents Without Creating New Session
@@ -182,8 +179,10 @@ def main():
             if (
                 image_path
                 and (mode == "Auto" or instruction)
-                and ("last_image_response" not in st.session_state
-                     or st.session_state["last_extracted_image"] != image_path)
+                and (
+                    "last_image_response" not in st.session_state
+                    or st.session_state["last_extracted_image"] != image_path
+                )
             ):
                 with st.spinner("📤 Processing Image! Extracting image data..."):
                     extracted_data = image_agent.run(
