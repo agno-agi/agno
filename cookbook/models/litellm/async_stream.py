@@ -8,7 +8,6 @@ openai_agent = Agent(
         name="LiteLLM",
     ),
     markdown=True,
-    debug_mode=True
 )
 
 # Print the response in the terminal

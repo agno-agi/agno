@@ -8,7 +8,6 @@ openai_agent = Agent(
         name="LiteLLM",
     ),
     markdown=True,
-    debug_mode=True
 )
 
 asyncio.run(openai_agent.aprint_response("Share a 2 sentence horror story"))

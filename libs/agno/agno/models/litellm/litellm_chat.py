@@ -104,14 +104,14 @@ class LiteLLM(Model):
 
     def invoke(self, messages: List[Message]) -> Any:
         """Sends a chat completion request to the LiteLLM API."""
-        completion_kwargs = self.request_kwargs.copy()
+        completion_kwargs = self.request_kwargs
         completion_kwargs["messages"] = self._format_messages(messages)
 
         return litellm.completion(**completion_kwargs)
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
         """Sends a streaming chat completion request to the LiteLLM API."""
-        completion_kwargs = self.request_kwargs.copy()
+        completion_kwargs = self.request_kwargs
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
 
@@ -119,14 +119,14 @@ class LiteLLM(Model):
 
     async def ainvoke(self, messages: List[Message]) -> Any:
         """Sends an asynchronous chat request to the LiteLLM API."""
-        completion_kwargs = self.request_kwargs.copy()
+        completion_kwargs = self.request_kwargs
         completion_kwargs["messages"] = self._format_messages(messages)
 
         return await litellm.acompletion(**completion_kwargs)
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """Sends an asynchronous streaming chat request to the LiteLLM API."""
-        completion_kwargs = self.request_kwargs.copy()
+        completion_kwargs = self.request_kwargs
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
 
