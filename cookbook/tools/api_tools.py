@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.tools.api import ApiTools
+from agno.tools.api import CustomApiTools
 
 """
 Args:
@@ -12,7 +12,7 @@ Args:
     timeout (int): Request timeout in seconds
 """
 agent = Agent(
-    tools=[ApiTools(base_url="https://dog.ceo/api", make_request=True)],
+    tools=[CustomApiTools(base_url="https://dog.ceo/api", make_request=True)],
     show_tool_calls=True,
     markdown=True,
 )

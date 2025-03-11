@@ -11,7 +11,7 @@ except ImportError:
     raise ImportError("`requests` not installed. Please install using `pip install requests`")
 
 
-class ApiTools(Toolkit):
+class CustomApiTools(Toolkit):
     def __init__(
         self,
         base_url: Optional[str] = None,
@@ -23,18 +23,6 @@ class ApiTools(Toolkit):
         timeout: int = 30,
         make_request: bool = True,
     ):
-        """Initialize API Tools with configuration.
-
-        Args:
-            base_url (Optional[str]): Base URL for API calls
-            username (Optional[str]): Username for basic authentication
-            password (Optional[str]): Password for basic authentication
-            api_key (Optional[str]): API key for authentication
-            headers (Optional[Dict[str, str]]): Default headers to include in requests
-            verify_ssl (bool): Whether to verify SSL certificates
-            timeout (int): Request timeout in seconds
-            make_request (bool): Whether to register the make_request function
-        """
         super().__init__(name="api_tools")
 
         self.base_url = base_url
