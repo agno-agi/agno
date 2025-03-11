@@ -65,6 +65,12 @@ def main():
         st.session_state["last_image_response"] = None
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
+    if "extract_triggered" not in st.session_state:
+        st.session_state["extract_triggered"] = False
+
+    old_model_choice = st.session_state.get("model_choice", None)
+    old_enable_search = st.session_state.get("enable_search", None)
+    print(old_model_choice, old_enable_search)
 
     ####################################################################
     # Sidebar Configuration
@@ -83,9 +89,9 @@ def main():
             ["Auto", "Manual", "Hybrid"],
             index=0,
             help="Select how the image analysis should be performed:\n"
-            "- **Auto**: Fully automated image data extraction.\n"
-            "- **Manual**: User provides extraction instructions.\n"
-            "- **Hybrid**: A mix of both, user input with automation.",
+                 "- **Auto**: Fully automated image data extraction.\n"
+                 "- **Manual**: User provides extraction instructions.\n"
+                 "- **Hybrid**: A mix of both, user input with automation.",
         )
 
         # Web Search Option (Enable/Disable DuckDuckGo)
@@ -103,7 +109,7 @@ def main():
     ####################################################################
     if (
         "model_instance" not in st.session_state
-        or st.session_state["model_choice"] != model_choice
+        or old_model_choice != model_choice
     ):
         if model_choice == "OpenAI":
             model = OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY)
@@ -114,7 +120,7 @@ def main():
         st.session_state["model_instance"] = model
         st.session_state["model_choice"] = model_choice
     else:
-        model = st.session_state["model_instance"]
+        model = st.session_state["model_instance"]\
 
     ####################################################################
     # Modify Agents Without Creating New Session
@@ -122,10 +128,12 @@ def main():
     if (
         "image_agent" not in st.session_state
         or "chat_agent" not in st.session_state
-        or st.session_state["model_choice"] != model_choice
-        or st.session_state["enable_search"] != enable_search
+        or old_model_choice != model_choice
+        or old_enable_search != enable_search
     ):
         logger.info("---*--- Updating Agents ---*---")
+        logger.info(f"---*--- Model ---*--- {model.id}")
+        logger.info(f"---*--- Search Enabled ---*--- {enable_search}")
         image_agent = image_processing_agent(model=model, enable_search=enable_search)
         st.session_state["image_agent"] = image_agent
         chat_agent = chat_followup_agent(model=model, enable_search=enable_search)
@@ -149,7 +157,7 @@ def main():
         "📤 Upload an Image (Max: 20MB) 📷", type=["png", "jpg", "jpeg"]
     )
     image_path = None
-    # Check file size
+
     if uploaded_file:
         temp_dir = Path("temp_images")
         temp_dir.mkdir(exist_ok=True)
@@ -169,40 +177,39 @@ def main():
         else:
             instruction = None
 
-        # Run Image Processing Agent after Image Upload & Instruction Input
-        if (
-            image_path
-            and (mode == "Auto" or instruction)
-            and (
-                "last_image_response" not in st.session_state
-                or st.session_state["last_extracted_image"] != image_path
-            )
-        ):
-            with st.spinner("📤 Processing Image! Extracting image data..."):
-                extracted_data = image_agent.run(
-                    extraction_prompt,
-                    images=[Image(filepath=image_path)],
-                    instructions=instruction if instruction else None,
-                )
+        # ADD Extract Data Button
+        if st.button("🔍 Extract Data"):
+            if (
+                image_path
+                and (mode == "Auto" or instruction)
+                and ("last_image_response" not in st.session_state
+                     or st.session_state["last_extracted_image"] != image_path)
+            ):
+                with st.spinner("📤 Processing Image! Extracting image data..."):
+                    extracted_data = image_agent.run(
+                        extraction_prompt,
+                        images=[Image(filepath=image_path)],
+                        instructions=instruction if instruction else None,
+                    )
 
-            # Store last extracted response for chat follow-ups
-            st.session_state["last_image_response"] = extracted_data.content
-            st.session_state["last_extracted_image"] = image_path
+                # Store last extracted response for chat follow-ups
+                st.session_state["last_image_response"] = extracted_data.content
+                st.session_state["last_extracted_image"] = image_path
 
-            # Create a temporary success message container
-            success_message = st.empty()
-            success_message.success("✅ Image processing completed successfully!")
+                # Create a temporary success message container
+                success_message = st.empty()
+                success_message.success("✅ Image processing completed successfully!")
 
-            logger.info(f"Extracted Data Response: {extracted_data.content}")
+                logger.info(f"Extracted Data Response: {extracted_data.content}")
 
-            # Wait for 1 seconds, then clear the success message
-            time.sleep(1)
-            success_message.empty()
+                # Wait for 1 seconds, then clear the success message
+                time.sleep(1)
+                success_message.empty()
 
-    # Display Extracted Image Data Persistently (Fixes JSON Disappearing Issue)
-    if st.session_state["last_image_response"]:
-        st.write("### Extracted Image Insights:")
-        st.write(st.session_state["last_image_response"])
+        # Display Extracted Image Data Persistently
+        if st.session_state["last_image_response"]:
+            st.write("### Extracted Image Insights:")
+            st.write(st.session_state["last_image_response"])
 
     ####################################################################
     # Follow-up Chat Section
