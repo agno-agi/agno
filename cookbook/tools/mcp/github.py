@@ -73,7 +73,11 @@ async def run_agent(message: str) -> None:
 # Example usage
 if __name__ == "__main__":
     # Pull request example
-    asyncio.run(run_agent("Summarize 2 most recent pull requests in agno-agi/agno"))
+    asyncio.run(
+        run_agent(
+            "Tell me about Agno. Github repo: https://github.com/agno-agi/agno. You can read the README for more information."
+        )
+    )
 
 
 # More example prompts to explore:
