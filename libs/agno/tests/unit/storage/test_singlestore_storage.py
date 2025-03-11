@@ -16,16 +16,25 @@ def mock_engine():
 @pytest.fixture
 def mock_session():
     """Create a mock SQLAlchemy session."""
-    session = MagicMock()
+    session_factory = MagicMock()
     session_instance = MagicMock()
-    session.begin.return_value.__enter__.return_value = session_instance
-    return session, session_instance
+    
+    # Set up the context manager behavior
+    context_manager = MagicMock()
+    context_manager.__enter__ = MagicMock(return_value=session_instance)
+    context_manager.__exit__ = MagicMock(return_value=None)
+    
+    # Make the session factory's begin() return the context manager
+    session_factory.begin = MagicMock(return_value=context_manager)
+    
+    return session_factory, session_instance
 
 
 @pytest.fixture
 def agent_storage(mock_engine, mock_session):
     """Create a SingleStoreStorage instance for agent mode with mocked components."""
-    with patch("agno.storage.singlestore.sessionmaker", return_value=MagicMock(return_value=mock_session[0])):
+    session_factory, session_instance = mock_session
+    with patch("agno.storage.singlestore.sessionmaker", return_value=session_factory):
         with patch("agno.storage.singlestore.inspect", return_value=MagicMock()):
             storage = SingleStoreStorage(
                 table_name="agent_sessions",
@@ -35,13 +44,14 @@ def agent_storage(mock_engine, mock_session):
             )
             # Mock table_exists to return True
             storage.table_exists = MagicMock(return_value=True)
-            return storage, mock_session[1]
+            return storage, session_instance
 
 
 @pytest.fixture
 def workflow_storage(mock_engine, mock_session):
     """Create a SingleStoreStorage instance for workflow mode with mocked components."""
-    with patch("agno.storage.singlestore.sessionmaker", return_value=MagicMock(return_value=mock_session[0])):
+    session_factory, session_instance = mock_session
+    with patch("agno.storage.singlestore.sessionmaker", return_value=session_factory):
         with patch("agno.storage.singlestore.inspect", return_value=MagicMock()):
             storage = SingleStoreStorage(
                 table_name="workflow_sessions",
@@ -51,7 +61,7 @@ def workflow_storage(mock_engine, mock_session):
             )
             # Mock table_exists to return True
             storage.table_exists = MagicMock(return_value=True)
-            return storage, mock_session[1]
+            return storage, session_instance
 
 
 def test_initialization():
@@ -171,58 +181,100 @@ def test_get_all_sessions(agent_storage):
     """Test retrieving all sessions."""
     storage, mock_session = agent_storage
     
-    # Create mock sessions
-    sessions = [
-        AgentSession(
-            session_id=f"session-{i}",
-            agent_id=f"agent-{i % 2 + 1}",
-            user_id=f"user-{i % 2 + 1}",
-        )
-        for i in range(4)
-    ]
+    # Create mock sessions with proper _mapping attribute
+    mock_rows = []
+    for i in range(4):
+        mock_row = MagicMock()
+        session_data = {
+            "session_id": f"session-{i}",
+            "agent_id": f"agent-{i % 2 + 1}",
+            "user_id": f"user-{i % 2 + 1}",
+            "memory": {},
+            "agent_data": {},
+            "session_data": {},
+            "extra_data": {},
+            "created_at": 1000000,
+            "updated_at": None
+        }
+        mock_row._mapping = session_data
+        mock_row.session_id = session_data["session_id"]
+        mock_rows.append(mock_row)
     
-    # Mock the get_all_sessions method directly
-    original_get_all_sessions = storage.get_all_sessions
-    storage.get_all_sessions = MagicMock(return_value=sessions)
+    # Mock the execute result
+    mock_result = MagicMock()
+    mock_result.fetchall.return_value = mock_rows
+    mock_session.execute.return_value = mock_result
     
-    # Test get_all_sessions
+    # Test get_all_sessions without filters
     result = storage.get_all_sessions()
     assert len(result) == 4
+    assert all(isinstance(s, AgentSession) for s in result)
     
-    # Test filtering by user_id
-    user1_sessions = [s for s in sessions if s.user_id == "user-1"]
-    storage.get_all_sessions = MagicMock(return_value=user1_sessions)
+    # Reset mock for user_id filter test
+    mock_session.reset_mock()
+    mock_rows_filtered = [row for row in mock_rows if row._mapping["user_id"] == "user-1"]
+    mock_result = MagicMock()
+    mock_result.fetchall.return_value = mock_rows_filtered
+    mock_session.execute.return_value = mock_result
     
     result = storage.get_all_sessions(user_id="user-1")
     assert len(result) == 2
     assert all(s.user_id == "user-1" for s in result)
     
-    # Test filtering by agent_id
-    agent1_sessions = [s for s in sessions if s.agent_id == "agent-1"]
-    storage.get_all_sessions = MagicMock(return_value=agent1_sessions)
+    # Reset mock for agent_id filter test
+    mock_session.reset_mock()
+    mock_rows_filtered = [row for row in mock_rows if row._mapping["agent_id"] == "agent-1"]
+    mock_result = MagicMock()
+    mock_result.fetchall.return_value = mock_rows_filtered
+    mock_session.execute.return_value = mock_result
     
     result = storage.get_all_sessions(entity_id="agent-1")
     assert len(result) == 2
     assert all(s.agent_id == "agent-1" for s in result)
-    
-    # Restore original method
-    storage.get_all_sessions = original_get_all_sessions
 
 
 def test_get_all_session_ids(agent_storage):
     """Test retrieving all session IDs."""
     storage, mock_session = agent_storage
     
-    # Mock the get_all_session_ids method directly
-    original_get_all_session_ids = storage.get_all_session_ids
-    storage.get_all_session_ids = MagicMock(return_value=["session-1", "session-2", "session-3"])
+    # Create mock rows with session_id attribute
+    mock_rows = []
+    for i in range(3):
+        mock_row = MagicMock()
+        mock_row.session_id = f"session-{i+1}"
+        mock_rows.append(mock_row)
     
-    # Test get_all_session_ids
+    # Mock the execute result
+    mock_result = MagicMock()
+    mock_result.fetchall.return_value = mock_rows
+    mock_session.execute.return_value = mock_result
+    
+    # Test get_all_session_ids without filters
     result = storage.get_all_session_ids()
     assert result == ["session-1", "session-2", "session-3"]
+    assert mock_session.execute.called
     
-    # Restore original method
-    storage.get_all_session_ids = original_get_all_session_ids
+    # Reset mock for user_id filter test
+    mock_session.reset_mock()
+    mock_rows_filtered = mock_rows[:2]  # Only return first two sessions
+    mock_result = MagicMock()
+    mock_result.fetchall.return_value = mock_rows_filtered
+    mock_session.execute.return_value = mock_result
+    
+    result = storage.get_all_session_ids(user_id="test-user")
+    assert result == ["session-1", "session-2"]
+    assert mock_session.execute.called
+    
+    # Reset mock for entity_id filter test
+    mock_session.reset_mock()
+    mock_rows_filtered = mock_rows[2:]  # Only return last session
+    mock_result = MagicMock()
+    mock_result.fetchall.return_value = mock_rows_filtered
+    mock_session.execute.return_value = mock_result
+    
+    result = storage.get_all_session_ids(entity_id="test-agent")
+    assert result == ["session-3"]
+    assert mock_session.execute.called
 
 
 def test_table_exists(agent_storage):
