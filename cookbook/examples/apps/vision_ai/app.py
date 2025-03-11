@@ -5,8 +5,9 @@ from pathlib import Path
 import streamlit as st
 from agents import chat_followup_agent, image_processing_agent
 from agno.media import Image
-from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
+from agno.models.google import Gemini
+from agno.models.mistral.mistral import MistralChat
 from agno.utils.log import logger
 from dotenv import load_dotenv
 from prompt import extraction_prompt
@@ -19,6 +20,7 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 
 # Streamlit App Configuration
 st.set_page_config(
@@ -72,7 +74,7 @@ def main():
 
         # Model Selection
         model_choice = st.selectbox(
-            "🔍 Select Model Provider", ["OpenAI", "Gemini"], index=0
+            "🔍 Select Model Provider", ["OpenAI", "Gemini", "Mistral"], index=0
         )
 
         # Mode Selection
@@ -90,15 +92,11 @@ def main():
         enable_search_option = st.radio("🌐 Enable Web Search?", ["Yes", "No"], index=1)
         enable_search = True if enable_search_option == "Yes" else False
 
-        # Session Management
-        session_id = st.text_input("📂 Session ID", value="session_1")
-
     ####################################################################
     # Store selections in session_state
     ####################################################################
     st.session_state["model_choice"] = model_choice
     st.session_state["enable_search"] = enable_search
-    st.session_state["session_id"] = session_id
 
     ####################################################################
     # Ensure Model is Initialized Properly
@@ -109,8 +107,10 @@ def main():
     ):
         if model_choice == "OpenAI":
             model = OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY)
-        else:
+        elif model_choice == "Gemini":
             model = Gemini(id="gemini-2.0-flash", api_key=GOOGLE_API_KEY)
+        else:
+            model = MistralChat(id="pixtral-12b-2409", api_key=MISTRAL_API_KEY)
         st.session_state["model_instance"] = model
         st.session_state["model_choice"] = model_choice
     else:
@@ -139,17 +139,7 @@ def main():
     ####################################################################
     # Load Runs from Memory (Chat History)
     ####################################################################
-    agent_runs = image_agent.memory.runs
-    if len(agent_runs) > 0:
-        logger.debug("Loading run history")
-        st.session_state["messages"] = []
-        for _run in agent_runs:
-            if _run.message is not None:
-                add_message(_run.message.role, _run.message.content)
-            if _run.response is not None:
-                add_message("assistant", _run.response.content)
-    else:
-        logger.debug("No run history found")
+    if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
     ####################################################################
