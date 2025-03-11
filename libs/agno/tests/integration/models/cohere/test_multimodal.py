@@ -32,11 +32,10 @@ def test_image_input():
 def test_image_input_bytes():
     agent = Agent(model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False, monitoring=False)
 
-    image_path = Path(__file__).parent.joinpath("../sample_image.jpg")
+    image_path = Path(__file__).parent.parent.joinpath("sample_image.jpg")
 
     # Read the image file content as bytes
-    with open(image_path, "rb") as img_file:
-        image_bytes = img_file.read()
+    image_bytes = image_path.read_bytes()
 
     response = agent.run(
         "Tell me about this image.",
@@ -50,7 +49,7 @@ def test_image_input_bytes():
 def test_image_input_local_file():
     agent = Agent(model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False, monitoring=False)
 
-    image_path = Path(__file__).parent.joinpath("../sample_image.jpg")
+    image_path = Path(__file__).parent.parent.joinpath("sample_image.jpg")
 
     response = agent.run(
         "Tell me about this image.",
