@@ -8,8 +8,8 @@ from agno.tools.slack import SlackTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.pgvector.pgvector import PgVector
 
-knowledge_base = PDFKnowledgeBase(
-    path="data/compliance_report.pdf",
+compliance_knowledge_base = PDFKnowledgeBase(
+    path="cookbook/teams/coordinator/data/compliance_report.pdf",
     vector_db=PgVector(
         table_name="autonomous_startup_team",
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
@@ -17,10 +17,19 @@ knowledge_base = PDFKnowledgeBase(
     reader=PDFReader(chunk=True),
 )
 
-knowledge_base.load(recreate=False)
+compliance_knowledge_base.load(recreate=False)
+
+buzzai_knowledge_base = PDFKnowledgeBase(
+    path="cookbook/teams/coordinator/data/buzzai.pdf",
+    vector_db=PgVector(
+        table_name="autonomous_startup_team",
+        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+    ),
+)
+
+buzzai_knowledge_base.load(recreate=False)
 
 support_channel = "testing"
-
 sales_channel = "testing"
 
 
@@ -29,7 +38,7 @@ legal_compliance_agent = Agent(
     role="Legal Compliance",
     model=OpenAIChat("gpt-4o"),
     tools=[ExaTools()],
-    knowledge=knowledge_base,
+    knowledge=compliance_knowledge_base,
     instructions=[
         "You are the Legal Compliance Agent of a startup, responsible for ensuring legal and regulatory compliance.",
         "Key Responsibilities:",
@@ -50,6 +59,7 @@ product_manager_agent = Agent(
     name="Product Manager Agent",
     role="Product Manager",
     model=OpenAIChat("gpt-4o"),
+    knowledge=buzzai_knowledge_base,
     instructions=[
         "You are the Product Manager of a startup, responsible for product strategy and execution.",
         "Key Responsibilities:",
@@ -73,6 +83,7 @@ market_research_agent = Agent(
     role="Market Research",
     model=OpenAIChat("gpt-4o"),
     tools=[DuckDuckGoTools(), ExaTools()],
+    knowledge=buzzai_knowledge_base,
     instructions=[
         "You are the Market Research Agent of a startup, responsible for market intelligence and analysis.",
         "Key Responsibilities:",
@@ -94,6 +105,7 @@ sales_agent = Agent(
     role="Sales",
     model=OpenAIChat("gpt-4o"),
     tools=[SlackTools()],
+    knowledge=buzzai_knowledge_base,
     instructions=[
         "You are the Sales & Partnerships Agent of a startup, responsible for driving revenue growth and strategic partnerships.",
         "Key Responsibilities:",
@@ -120,6 +132,7 @@ financial_analyst_agent = Agent(
     name="Financial Analyst Agent",
     role="Financial Analyst",
     model=OpenAIChat("gpt-4o"),
+    knowledge=buzzai_knowledge_base,
     tools=[YFinanceTools()],
     instructions=[
         "You are the Financial Analyst of a startup, responsible for financial planning and analysis.",
@@ -142,6 +155,7 @@ customer_support_agent = Agent(
     name="Customer Support Agent",
     role="Customer Support",
     model=OpenAIChat("gpt-4o"),
+    knowledge=buzzai_knowledge_base,
     tools=[SlackTools()],
     instructions=[
         "You are the Customer Support Agent of a startup, responsible for handling customer inquiries and maintaining customer satisfaction.",
@@ -159,6 +173,7 @@ autonomous_startup_team = Team(
     model=OpenAIChat("gpt-4o"),
     instructions=[
         "You are the CEO of a startup, responsible for overall leadership and success.",
+        " Always transfer task to product manager agent so it can search the knowledge base.",
         "Key Responsibilities:",
         "1. Set and communicate company vision and strategy",
         "2. Coordinate and prioritize team activities",
@@ -211,46 +226,58 @@ autonomous_startup_team.print_response(
 )
 
 
-partnership_details = """
-
-I hope this email finds you well. My name is John Doe, and I am the Business Development Manager at TechSavvy Solutions, a leading provider of AI-powered automation tools designed to enhance workflow efficiency for businesses.
-
-We have been following InnovateAI's impressive work in AI-driven analytics, and we believe that a partnership between our companies could bring mutual benefits. Our goal is to integrate InnovateAI's predictive analytics engine into our automation platform to provide users with deeper insights and smarter automation features.
-
-Proposal Overview:
-
-We propose a strategic partnership where TechSavvy Solutions and InnovateAI collaborate to:
-    • Integrate AI capabilities: Leverage InnovateAI's data analytics engine within our platform.
-    • Co-marketing efforts: Joint promotions, webinars, and case studies.
-    • Revenue sharing model: A mutually beneficial revenue-sharing agreement.
-    • Product enhancement: Work together on feature development and user experience improvements.
-
-Requirements & Expectations:
-
-To make this partnership successful, we propose the following collaboration terms:
-    1. Technical Collaboration: Our development teams will work together to integrate and test the AI features.
-    2. Marketing & Branding: Joint PR efforts, including social media promotions and content collaborations.
-    3. Revenue Sharing: A 70-30 split on revenue generated through the integrated solution (negotiable).
-    4. Support & Maintenance: A dedicated team from both sides for ongoing support and upgrades.
-    5. Legal & Compliance: A formal agreement outlining IP rights, confidentiality, and liability clauses.
-
-Next Steps:
-
-If this proposal aligns with InnovateAI's goals, we would love to schedule a call to discuss the details further. Please let us know a convenient time for your team next week.
-
-We are excited about the potential of this partnership and look forward to working together.
-
-Looking forward to your response.
-
-Best regards,
-John Doe
-Business Development Manager
-TechSavvy Solutions
-📧 john.doe@techsavvy.com | 📞 +1 234 567 890
-"""
-
 autonomous_startup_team.print_response(
-    message=f"I wanna partnership with you, here are the details {partnership_details}, use sales agent to send it to the sales channel {sales_channel}",
+    message="Give me good marketing campaign for buzzai?",
     stream=True,
     stream_intermediate_steps=True,
 )
+
+autonomous_startup_team.print_response(
+    message="What is my company and what are the monetization strategies?",
+    stream=True,
+    stream_intermediate_steps=True,
+)
+
+# partnership_details = """
+
+# I hope this email finds you well. My name is John Doe, and I am the Business Development Manager at TechSavvy Solutions, a leading provider of AI-powered automation tools designed to enhance workflow efficiency for businesses.
+
+# We have been following InnovateAI's impressive work in AI-driven analytics, and we believe that a partnership between our companies could bring mutual benefits. Our goal is to integrate InnovateAI's predictive analytics engine into our automation platform to provide users with deeper insights and smarter automation features.
+
+# Proposal Overview:
+
+# We propose a strategic partnership where TechSavvy Solutions and InnovateAI collaborate to:
+#     • Integrate AI capabilities: Leverage InnovateAI's data analytics engine within our platform.
+#     • Co-marketing efforts: Joint promotions, webinars, and case studies.
+#     • Revenue sharing model: A mutually beneficial revenue-sharing agreement.
+#     • Product enhancement: Work together on feature development and user experience improvements.
+
+# Requirements & Expectations:
+
+# To make this partnership successful, we propose the following collaboration terms:
+#     1. Technical Collaboration: Our development teams will work together to integrate and test the AI features.
+#     2. Marketing & Branding: Joint PR efforts, including social media promotions and content collaborations.
+#     3. Revenue Sharing: A 70-30 split on revenue generated through the integrated solution (negotiable).
+#     4. Support & Maintenance: A dedicated team from both sides for ongoing support and upgrades.
+#     5. Legal & Compliance: A formal agreement outlining IP rights, confidentiality, and liability clauses.
+
+# Next Steps:
+
+# If this proposal aligns with InnovateAI's goals, we would love to schedule a call to discuss the details further. Please let us know a convenient time for your team next week.
+
+# We are excited about the potential of this partnership and look forward to working together.
+
+# Looking forward to your response.
+
+# Best regards,
+# John Doe
+# Business Development Manager
+# TechSavvy Solutions
+# 📧 john.doe@techsavvy.com | 📞 +1 234 567 890
+# """
+
+# autonomous_startup_team.print_response(
+#     message=f"I wanna partnership with you, here are the details {partnership_details}, use sales agent to send it to the sales channel {sales_channel}",
+#     stream=True,
+#     stream_intermediate_steps=True,
+# )
