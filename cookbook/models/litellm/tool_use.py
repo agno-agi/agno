@@ -1,9 +1,9 @@
 from agno.agent import Agent
-from agno.models.litellm import LiteLLMSDK
+from agno.models.litellm import LiteLLM
 from agno.tools.yfinance import YFinanceTools
 
 openai_agent = Agent(
-    model=LiteLLMSDK(
+    model=LiteLLM(
         id="gpt-4o",
         name="LiteLLM",
     ),

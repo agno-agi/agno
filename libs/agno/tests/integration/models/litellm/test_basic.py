@@ -1,7 +1,7 @@
 import pytest
 
 from agno.agent import Agent, RunResponse
-from agno.models.litellm import LiteLLMSDK
+from agno.models.litellm import LiteLLM
 from agno.utils.log import logger
 
 
@@ -30,7 +30,8 @@ def _assert_metrics(response: RunResponse):
 
 def test_basic():
     """Test basic functionality with LiteLLM"""
-    agent = Agent(model=LiteLLMSDK(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLM(id="gpt-4o"), markdown=True,
+                  telemetry=False, monitoring=False)
 
     # Get the response
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -43,8 +44,8 @@ def test_basic():
 
 
 def test_basic_stream():
-    """Test streaming functionality with LiteLLMSDK"""
-    agent = Agent(model=LiteLLMSDK(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    """Test streaming functionality with LiteLLM"""
+    agent = Agent(model=LiteLLM(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -62,8 +63,8 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    """Test async functionality with LiteLLMSDK"""
-    agent = Agent(model=LiteLLMSDK(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    """Test async functionality with LiteLLM"""
+    agent = Agent(model=LiteLLM(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -75,8 +76,8 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    """Test async streaming functionality with LiteLLMSDK"""
-    agent = Agent(model=LiteLLMSDK(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    """Test async streaming functionality with LiteLLM"""
+    agent = Agent(model=LiteLLM(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
