@@ -12,23 +12,21 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 from agno.tools.youtube import YouTubeTools
-from agno.tools.todoist import TodoistTools
+
 agent_storage_file: str = "tmp/agents.db"
 image_agent_storage_file: str = "tmp/image_agent.db"
 
 
 simple_agent = Agent(
     name="Simple Agent",
-    role="Use the Todoist API to create, update, and close tasks",
+    role="Answer basic questions",
     agent_id="simple-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[TodoistTools()],
     storage=SqliteAgentStorage(table_name="simple_agent", db_file=agent_storage_file),
     add_history_to_messages=True,
     num_history_responses=3,
     add_datetime_to_instructions=True,
     markdown=True,
-    debug_mode=True,
 )
 
 web_agent = Agent(
