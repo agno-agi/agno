@@ -21,7 +21,7 @@ class OpenRouter(OpenAILike):
 
     id: str = "gpt-4o"
     name: str = "OpenRouter"
-    provider: str = "OpenRouter: " + id
+    provider: str = "OpenRouter"
 
     api_key: Optional[str] = getenv("OPENROUTER_API_KEY")
     base_url: str = "https://openrouter.ai/api/v1"

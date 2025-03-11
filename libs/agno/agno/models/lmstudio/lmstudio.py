@@ -17,6 +17,6 @@ class LMStudio(OpenAILike):
 
     id: str = "qwen2.5-7b-instruct-1m"
     name: str = "LMStudio"
-    provider: str = "LMStudio " + id
+    provider: str = "LMStudio"
 
     base_url: str = "http://127.0.0.1:1234/v1"
