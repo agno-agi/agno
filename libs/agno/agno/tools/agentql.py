@@ -2,6 +2,7 @@ from os import getenv
 from typing import Optional
 
 from agno.tools import Toolkit
+from agno.utils.log import logger
 
 try:
     import agentql
@@ -12,7 +13,7 @@ except ImportError:
 
 class AgentQLTools(Toolkit):
     def __init__(
-        self, api_key: Optional[str] = None, scrape: bool = True, custom_scrape: bool = False, agentql_query: str = ""
+        self, api_key: Optional[str] = None, scrape: bool = True, agentql_query: str = ""
     ):
         super().__init__(name="agentql_tools")
 
@@ -25,7 +26,8 @@ class AgentQLTools(Toolkit):
         if scrape:
             self.register(self.scrape_website)
 
-        if custom_scrape:
+        if agentql_query:
+            logger.info("Custom AgentQL query provided. Registering custom scrape function.")
             self.register(self.custom_scrape_website)
 
     def scrape_website(self, url: str) -> str:
