@@ -115,10 +115,13 @@ agent_team = Team(
 )
 
 # Use web and finance agents to answer the question
-agent_team.print_response(
-    "Calculate the sum of 10 and 20 and give write something about how you did the calculation", stream=True
-)
+# agent_team.print_response(
+#     "Calculate the sum of 10 and 20 and give write something about how you did the calculation", stream=True
+# )
 
+agent_team.print_response(
+    "Summarize analyst recommendations and share the latest news for NVDA", stream=True
+)
 # image_path = Path(__file__).parent.joinpath("sample.jpg")
 # # Use image agent to analyze the image
 # agent_team.print_response(
