@@ -1,8 +1,11 @@
 import time
-from typing import List, Literal, Optional, Union
+from typing import List, Literal, Optional
 
+from agno.storage.base import Storage
+from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.workflow import WorkflowSession
+from agno.utils.log import logger
 
 try:
     from sqlalchemy.dialects import postgresql
@@ -14,9 +17,6 @@ try:
     from sqlalchemy.types import BigInteger, String
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
-
-from agno.storage.base import Storage
-from agno.utils.log import logger
 
 
 class PostgresStorage(Storage):
@@ -148,18 +148,23 @@ class PostgresStorage(Storage):
             bool: True if the table exists, False otherwise.
         """
         try:
-            # Refresh inspector to ensure we have the latest metadata
-            self.inspector = inspect(self.db_engine)
-
-            # Check both schema and table existence
-            if self.schema is not None:
-                # First check if schema exists
-                schemas = self.inspector.get_schema_names()
-                if self.schema not in schemas:
-                    logger.debug(f"Schema '{self.schema}' does not exist")
-                    return False
-
-            exists = self.inspector.has_table(self.table.name, schema=self.schema)
+            # Use a direct SQL query to check if the table exists
+            with self.Session() as sess:
+                if self.schema is not None:
+                    exists_query = text(
+                        "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
+                    )
+                    exists = sess.execute(
+                        exists_query, {"schema": self.schema, "table": self.table_name}
+                    ).scalar() is not None
+                else:
+                    exists_query = text(
+                        "SELECT 1 FROM information_schema.tables WHERE table_name = :table"
+                    )
+                    exists = sess.execute(
+                        exists_query, {"table": self.table_name}
+                    ).scalar() is not None
+                
             logger.debug(f"Table '{self.table.fullname}' does {'not' if not exists else ''} exist")
             return exists
 
@@ -171,6 +176,7 @@ class PostgresStorage(Storage):
         """
         Create the table if it does not exist.
         """
+        self.table: Table = self.get_table()
         if not self.table_exists():
             try:
                 with self.Session() as sess, sess.begin():
@@ -179,13 +185,53 @@ class PostgresStorage(Storage):
                         sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
 
                 logger.debug(f"Creating table: {self.table_name}")
-                # Create table with new indexes
-                self.table.create(self.db_engine, checkfirst=True)
+                
+                # First create the table without indexes
+                table_without_indexes = Table(
+                    self.table_name,
+                    MetaData(schema=self.schema),
+                    *[c.copy() for c in self.table.columns],
+                    schema=self.schema
+                )
+                table_without_indexes.create(self.db_engine, checkfirst=True)
+                
+                # Then create each index individually with error handling
+                for idx in self.table.indexes:
+                    try:
+                        idx_name = idx.name
+                        logger.debug(f"Creating index: {idx_name}")
+                        
+                        # Check if index already exists
+                        with self.Session() as sess:
+                            if self.schema:
+                                exists_query = text(
+                                    "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND indexname = :index_name"
+                                )
+                                exists = sess.execute(
+                                    exists_query, {"schema": self.schema, "index_name": idx_name}
+                                ).scalar() is not None
+                            else:
+                                exists_query = text(
+                                    "SELECT 1 FROM pg_indexes WHERE indexname = :index_name"
+                                )
+                                exists = sess.execute(
+                                    exists_query, {"index_name": idx_name}
+                                ).scalar() is not None
+                        
+                        if not exists:
+                            idx.create(self.db_engine)
+                        else:
+                            logger.debug(f"Index {idx_name} already exists, skipping creation")
+                            
+                    except Exception as e:
+                        # Log the error but continue with other indexes
+                        logger.warning(f"Error creating index {idx.name}: {e}")
+                        
             except Exception as e:
                 logger.error(f"Could not create table: '{self.table.fullname}': {e}")
                 raise
 
-    def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Union[AgentSession, WorkflowSession]]:
+    def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Session]:
         """
         Read an Session from the database.
 
@@ -250,9 +296,7 @@ class PostgresStorage(Storage):
             self.create()
         return []
 
-    def get_all_sessions(
-        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
-    ) -> List[Union[AgentSession, WorkflowSession]]:
+    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
         """
         Get all sessions, optionally filtered by user_id and/or entity_id.
 
@@ -261,7 +305,7 @@ class PostgresStorage(Storage):
             entity_id (Optional[str]): The ID of the agent / workflow to filter by.
 
         Returns:
-            List[Union[AgentSession, WorkflowSession]]: List of Session objects matching the criteria.
+            List[Session]: List of Session objects matching the criteria.
         """
         try:
             with self.Session() as sess, sess.begin():
@@ -292,18 +336,16 @@ class PostgresStorage(Storage):
             self.create()
         return []
 
-    def upsert(
-        self, session: Union[AgentSession, WorkflowSession], create_and_retry: bool = True
-    ) -> Optional[Union[AgentSession, WorkflowSession]]:
+    def upsert(self, session: Session, create_and_retry: bool = True) -> Optional[Session]:
         """
         Insert or update an Session in the database.
 
         Args:
-            session (Union[AgentSession, WorkflowSession]): The session data to upsert.
+            session (Session): The session data to upsert.
             create_and_retry (bool): Retry upsert if table does not exist.
 
         Returns:
-            Optional[Union[AgentSession, WorkflowSession]]: The upserted Session, or None if operation failed.
+            Optional[Session]: The upserted Session, or None if operation failed.
         """
         try:
             with self.Session() as sess, sess.begin():
@@ -400,7 +442,11 @@ class PostgresStorage(Storage):
         """
         if self.table_exists():
             logger.debug(f"Deleting table: {self.table_name}")
-            self.table.drop(self.db_engine)
+            # Drop with checkfirst=True to avoid errors if the table doesn't exist
+            self.table.drop(self.db_engine, checkfirst=True)
+            # Clear metadata to ensure indexes are recreated properly
+            self.metadata = MetaData(schema=self.schema)
+            self.table = self.get_table()
 
     def upgrade_schema(self) -> None:
         """

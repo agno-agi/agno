@@ -1,1 +1,1 @@
-from agno.storage.json import JsonStorage as JsonAgentStorage  # type: ignore
+from agno.storage.json import JsonStorage as JsonAgentStorage  # noqa: F401

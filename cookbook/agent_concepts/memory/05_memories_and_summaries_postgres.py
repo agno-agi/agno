@@ -21,7 +21,9 @@ agent = Agent(
         create_session_summary=True,
     ),
     # Store agent sessions in a database
-    storage=PostgresAgentStorage(table_name="personalized_agent_sessions", db_url=db_url),
+    storage=PostgresAgentStorage(
+        table_name="personalized_agent_sessions", db_url=db_url
+    ),
     # Show debug logs so, you can see the memory being created
     # debug_mode=True,
 )

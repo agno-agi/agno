@@ -35,7 +35,9 @@ agent = Agent(
         update_session_summary_after_run=True,
     ),
     # Store agent sessions in a database, that persists between runs
-    storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+    storage=SqliteAgentStorage(
+        table_name="agent_sessions", db_file="tmp/agent_storage.db"
+    ),
     # add_history_to_messages=true adds the chat history to the messages sent to the Model.
     add_history_to_messages=True,
     # Number of historical responses to add to the messages.

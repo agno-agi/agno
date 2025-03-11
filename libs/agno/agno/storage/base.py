@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Literal, Optional
 
-from agno.storage.session.base import Session
+from agno.storage.session import Session
 
 
 class Storage(ABC):

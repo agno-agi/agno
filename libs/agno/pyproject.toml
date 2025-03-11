@@ -71,6 +71,7 @@ mcp = ["mcp"]
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary", "psycopg"]
+sqlite = ["sqlalchemy"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
@@ -130,6 +131,7 @@ tools = [
 storage = [
   "agno[sql]",
   "agno[postgres]",
+  "agno[sqlite]",
 ]
 
 # All vector databases

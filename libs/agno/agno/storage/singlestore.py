@@ -1,21 +1,23 @@
 import json
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, List, Literal, Optional
+
+from agno.storage.base import Storage
+from agno.storage.session import Session
+from agno.storage.session.agent import AgentSession
+from agno.storage.session.workflow import WorkflowSession
+from agno.utils.log import logger
 
 try:
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.engine.row import Row
     from sqlalchemy.inspection import inspect
-    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.orm import Session as SqlSession
+    from sqlalchemy.orm import sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
     from sqlalchemy.sql.expression import select, text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed")
-
-from agno.storage.base import Storage
-from agno.storage.session.agent import AgentSession
-from agno.storage.session.workflow import WorkflowSession
-from agno.utils.log import logger
 
 
 class SingleStoreStorage(Storage):
@@ -66,60 +68,52 @@ class SingleStoreStorage(Storage):
         self.auto_upgrade_schema: bool = auto_upgrade_schema
 
         # Database session
-        self.Session: sessionmaker[Session] = sessionmaker(bind=self.db_engine)
+        self.SqlSession: sessionmaker[SqlSession] = sessionmaker(bind=self.db_engine)
         # Database table for storage
         self.table: Table = self.get_table()
 
-    def get_table_v1(self) -> Table:
-        if self.mode == "agent":
-            return Table(
-                self.table_name,
-                self.metadata,
-                # Session UUID: Primary Key
-                Column("session_id", mysql.TEXT, primary_key=True),
-                # ID of the agent that this session is associated with
-                Column("agent_id", mysql.TEXT),
-                # ID of the user interacting with this agent
-                Column("user_id", mysql.TEXT),
-                # Agent memory
-                Column("memory", mysql.JSON),
-                # Agent Data
-                Column("agent_data", mysql.JSON),
-                # Session Data
-                Column("session_data", mysql.JSON),
-                # Extra Data stored with this agent
-                Column("extra_data", mysql.JSON),
-                # The Unix timestamp of when this session was created.
-                Column("created_at", mysql.BIGINT),
-                # The Unix timestamp of when this session was last updated.
-                Column("updated_at", mysql.BIGINT),
-                extend_existing=True,
-            )
-        else:
-            return Table(
-                self.table_name,
-                self.metadata,
-                # Session UUID: Primary Key
-                Column("session_id", mysql.TEXT, primary_key=True),
-                # ID of the workflow that this session is associated with
-                Column("workflow_id", mysql.TEXT),
-                # ID of the user interacting with this workflow
-                Column("user_id", mysql.TEXT),
-                # Workflow memory
-                Column("memory", mysql.JSON),
-                # Workflow Data
-                Column("workflow_data", mysql.JSON),
-                # Session Data
-                Column("session_data", mysql.JSON),
-                # Extra Data stored with this workflow
-                Column("extra_data", mysql.JSON),
-                # The Unix timestamp of when this session was created.
-                Column("created_at", mysql.BIGINT),
-                # The Unix timestamp of when this session was last updated.
-                Column("updated_at", mysql.BIGINT),
-                extend_existing=True,
-            )
+    @property
+    def mode(self) -> Literal["agent", "workflow"]:
+        """Get the mode of the storage."""
+        return super().mode
 
+    @mode.setter
+    def mode(self, value: Optional[Literal["agent", "workflow"]]) -> None:
+        """Set the mode and refresh the table if mode changes."""
+        super(SingleStoreStorage, type(self)).mode.fset(self, value)  # type: ignore
+        if value is not None:
+            self.table = self.get_table()
+
+    def get_table_v1(self) -> Table:
+
+        common_columns = [
+            Column("session_id", mysql.TEXT, primary_key=True),
+            Column("user_id", mysql.TEXT),
+            Column("memory", mysql.JSON),
+            Column("session_data", mysql.JSON),
+            Column("extra_data", mysql.JSON),
+            Column("created_at", mysql.BIGINT),
+            Column("updated_at", mysql.BIGINT),
+        ]
+
+        if self.mode == "agent":
+            specific_columns = [
+                Column("agent_id", mysql.TEXT),
+                Column("agent_data", mysql.JSON),
+            ]
+        else:
+            specific_columns = [
+                Column("workflow_id", mysql.TEXT),
+                Column("workflow_data", mysql.JSON),
+            ]
+
+        # Create table with all columns
+        table = Table(
+            self.table_name, self.metadata, *common_columns, *specific_columns, extend_existing=True, schema=self.schema
+        )
+
+        return table
+    
     def get_table(self) -> Table:
         if self.schema_version == 1:
             return self.get_table_v1()
@@ -135,11 +129,12 @@ class SingleStoreStorage(Storage):
             return False
 
     def create(self) -> None:
+        self.table: Table = self.get_table()
         if not self.table_exists():
             logger.info(f"\nCreating table: {self.table_name}\n")
             self.table.create(self.db_engine)
 
-    def _read(self, session: Session, session_id: str, user_id: Optional[str] = None) -> Optional[Row[Any]]:
+    def _read(self, session: SqlSession, session_id: str, user_id: Optional[str] = None) -> Optional[Row[Any]]:
         stmt = select(self.table).where(self.table.c.session_id == session_id)
         if user_id is not None:
             stmt = stmt.where(self.table.c.user_id == user_id)
@@ -152,8 +147,8 @@ class SingleStoreStorage(Storage):
             self.create()
         return None
 
-    def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Union[AgentSession, WorkflowSession]]:
-        with self.Session.begin() as sess:
+    def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Session]:
+        with self.SqlSession.begin() as sess:
             existing_row: Optional[Row[Any]] = self._read(session=sess, session_id=session_id, user_id=user_id)
             if existing_row is not None:
                 if self.mode == "agent":
@@ -165,7 +160,7 @@ class SingleStoreStorage(Storage):
     def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
         session_ids: List[str] = []
         try:
-            with self.Session.begin() as sess:
+            with self.SqlSession.begin() as sess:
                 # get all session_ids for this user
                 stmt = select(self.table)
                 if user_id is not None:
@@ -186,12 +181,10 @@ class SingleStoreStorage(Storage):
             logger.error(f"An unexpected error occurred: {str(e)}")
         return session_ids
 
-    def get_all_sessions(
-        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
-    ) -> List[Union[AgentSession, WorkflowSession]]:
-        sessions: List[Union[AgentSession, WorkflowSession]] = []
+    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
+        sessions: List[Session] = []
         try:
-            with self.Session.begin() as sess:
+            with self.SqlSession.begin() as sess:
                 # get all sessions for this user
                 stmt = select(self.table)
                 if user_id is not None:
@@ -219,12 +212,12 @@ class SingleStoreStorage(Storage):
             logger.debug(f"Table does not exist: {self.table.name}")
         return sessions
 
-    def upsert(self, session: Union[AgentSession, WorkflowSession]) -> Optional[Union[AgentSession, WorkflowSession]]:
+    def upsert(self, session: Session) -> Optional[Session]:
         """
         Create a new session if it does not exist, otherwise update the existing session.
         """
 
-        with self.Session.begin() as sess:
+        with self.SqlSession.begin() as sess:
             # Create an insert statement using MySQL's ON DUPLICATE KEY UPDATE syntax
             if self.mode == "agent":
                 upsert_sql = text(
@@ -356,7 +349,7 @@ class SingleStoreStorage(Storage):
             logger.warning("No session_id provided for deletion.")
             return
 
-        with self.Session() as sess, sess.begin():
+        with self.SqlSession() as sess, sess.begin():
             try:
                 # Delete the session with the given session_id
                 delete_stmt = self.table.delete().where(self.table.c.session_id == session_id)

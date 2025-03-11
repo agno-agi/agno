@@ -1,9 +1,10 @@
 import time
 from dataclasses import asdict
 from decimal import Decimal
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional
 
 from agno.storage.base import Storage
+from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import logger
@@ -63,6 +64,19 @@ class DynamoDbStorage(Storage):
         if self.create_table_if_not_exists:
             self.create()
         logger.debug(f"Initialized DynamoDbStorage with table '{self.table_name}'")
+
+    @property
+    def mode(self) -> Literal["agent", "workflow"]:
+        """Get the mode of the storage."""
+        return super().mode
+
+    @mode.setter
+    def mode(self, value: Optional[Literal["agent", "workflow"]]) -> None:
+        """Set the mode and refresh the table if mode changes."""
+        super(DynamoDbStorage, type(self)).mode.fset(self, value)  # type: ignore
+        if value is not None:
+            if self.create_table_if_not_exists:
+                self.create()
 
     def create(self) -> None:
         """
@@ -152,7 +166,7 @@ class DynamoDbStorage(Storage):
         except Exception as e:
             logger.error(f"Exception during table creation: {e}")
 
-    def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Union[AgentSession, WorkflowSession]]:
+    def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Session]:
         """
         Read and return a Session from the database.
 
@@ -161,7 +175,7 @@ class DynamoDbStorage(Storage):
             user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
-            Optional[Union[AgentSession, WorkflowSession]]: Session object if found, None otherwise.
+            Optional[Session]: Session object if found, None otherwise.
         """
         try:
             key = {"session_id": session_id}
@@ -229,9 +243,7 @@ class DynamoDbStorage(Storage):
             logger.error(f"Error retrieving session IDs: {e}")
         return session_ids
 
-    def get_all_sessions(
-        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
-    ) -> List[Union[AgentSession, WorkflowSession]]:
+    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
         """
         Retrieve all sessions, optionally filtered by user_id and/or entity_id.
 
@@ -240,9 +252,9 @@ class DynamoDbStorage(Storage):
             entity_id (Optional[str], optional): Entity ID to filter by. Defaults to None.
 
         Returns:
-            List[Union[AgentSession, WorkflowSession]]: List of AgentSession or WorkflowSession objects matching the criteria.
+            List[Session]: List of AgentSession or WorkflowSession objects matching the criteria.
         """
-        sessions: List[Union[AgentSession, WorkflowSession]] = []
+        sessions: List[Session] = []
         try:
             if user_id is not None:
                 if self.mode == "agent":
@@ -262,7 +274,7 @@ class DynamoDbStorage(Storage):
                 items = response.get("Items", [])
                 for item in items:
                     item = self._deserialize_item(item)
-                    _session: Optional[Union[AgentSession, WorkflowSession]] = None
+                    _session: Optional[Session] = None
                     if self.mode == "agent":
                         _session = AgentSession.from_dict(item)
                     else:
@@ -311,15 +323,15 @@ class DynamoDbStorage(Storage):
             logger.error(f"Error retrieving sessions: {e}")
         return sessions
 
-    def upsert(self, session: Union[AgentSession, WorkflowSession]) -> Optional[Union[AgentSession, WorkflowSession]]:
+    def upsert(self, session: Session) -> Optional[Session]:
         """
         Create or update a Session in the database.
 
         Args:
-            session (Union[AgentSession, WorkflowSession]): The session data to upsert.
+            session (Session): The session data to upsert.
 
         Returns:
-            Optional[Union[AgentSession, WorkflowSession]]: The upserted Session, or None if operation failed.
+            Optional[Session]: The upserted Session, or None if operation failed.
         """
         try:
             item = asdict(session)

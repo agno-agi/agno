@@ -17,7 +17,9 @@ from rich.panel import Panel
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     # Store agent sessions in a database
-    storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+    storage=SqliteAgentStorage(
+        table_name="agent_sessions", db_file="tmp/agent_storage.db"
+    ),
     # Set add_history_to_messages=true to add the previous chat history to the messages sent to the Model.
     add_history_to_messages=True,
     # Number of historical responses to add to the messages.

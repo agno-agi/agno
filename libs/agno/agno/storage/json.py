@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Literal, Optional, Union
 
 from agno.storage.base import Storage
+from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import logger
@@ -27,7 +28,7 @@ class JsonStorage(Storage):
         if not self.dir_path.exists():
             self.dir_path.mkdir(parents=True, exist_ok=True)
 
-    def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Union[AgentSession, WorkflowSession]]:
+    def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Session]:
         """Read an AgentSession from storage."""
         try:
             with open(self.dir_path / f"{session_id}.json", "r", encoding="utf-8") as f:
@@ -67,16 +68,14 @@ class JsonStorage(Storage):
                     session_ids.append(data["session_id"])
         return session_ids
 
-    def get_all_sessions(
-        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
-    ) -> List[Union[AgentSession, WorkflowSession]]:
+    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
         """Get all sessions, optionally filtered by user_id and/or entity_id."""
-        sessions: List[Union[AgentSession, WorkflowSession]] = []
+        sessions: List[Session] = []
         for file in self.dir_path.glob("*.json"):
             with open(file, "r", encoding="utf-8") as f:
                 data = self.deserialize(f.read())
                 if user_id or entity_id:
-                    _session: Optional[Union[AgentSession, WorkflowSession]] = None
+                    _session: Optional[Session] = None
 
                     if user_id and entity_id:
                         if self.mode == "agent" and data["agent_id"] == entity_id and data["user_id"] == user_id:
@@ -108,7 +107,7 @@ class JsonStorage(Storage):
                         sessions.append(_session)
         return sessions
 
-    def upsert(self, session: Union[AgentSession, WorkflowSession]) -> Optional[Union[AgentSession, WorkflowSession]]:
+    def upsert(self, session: Session) -> Optional[Session]:
         """Insert or update a Session in storage."""
         try:
             data = asdict(session)

@@ -1,6 +1,12 @@
 from datetime import datetime, timezone
-from typing import List, Literal, Optional, Union
+from typing import List, Literal, Optional
 from uuid import UUID
+
+from agno.storage.base import Storage
+from agno.storage.session import Session
+from agno.storage.session.agent import AgentSession
+from agno.storage.session.workflow import WorkflowSession
+from agno.utils.log import logger
 
 try:
     from pymongo import MongoClient
@@ -9,11 +15,6 @@ try:
     from pymongo.errors import PyMongoError
 except ImportError:
     raise ImportError("`pymongo` not installed. Please install it with `pip install pymongo`")
-
-from agno.storage.base import Storage
-from agno.storage.session.agent import AgentSession
-from agno.storage.session.workflow import WorkflowSession
-from agno.utils.log import logger
 
 
 class MongoDbStorage(Storage):
@@ -64,13 +65,13 @@ class MongoDbStorage(Storage):
             logger.error(f"Error creating indexes: {e}")
             raise
 
-    def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Union[AgentSession, WorkflowSession]]:
+    def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Session]:
         """Read a Session from MongoDB
         Args:
             session_id: ID of the session to read
             user_id: ID of the user to read
         Returns:
-            Optional[Union[AgentSession, WorkflowSession]]: The session if found, otherwise None
+            Optional[Session]: The session if found, otherwise None
         """
         try:
             query = {"session_id": session_id}
@@ -115,15 +116,13 @@ class MongoDbStorage(Storage):
             logger.error(f"Error getting session IDs: {e}")
             return []
 
-    def get_all_sessions(
-        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
-    ) -> List[Union[AgentSession, WorkflowSession]]:
+    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
         """Get all sessions matching the criteria
         Args:
             user_id: ID of the user to read
             entity_id: ID of the agent / workflow to read
         Returns:
-            List[Union[AgentSession, WorkflowSession]]: List of sessions
+            List[Session]: List of sessions
         """
         try:
             query = {}
@@ -136,7 +135,7 @@ class MongoDbStorage(Storage):
                     query["workflow_id"] = entity_id
 
             cursor = self.collection.find(query).sort("created_at", -1)
-            sessions: List[Union[AgentSession, WorkflowSession]] = []
+            sessions: List[Session] = []
             for doc in cursor:
                 # Remove MongoDB _id before converting to AgentSession
                 doc.pop("_id", None)
@@ -153,15 +152,13 @@ class MongoDbStorage(Storage):
             logger.error(f"Error getting sessions: {e}")
             return []
 
-    def upsert(
-        self, session: Union[AgentSession, WorkflowSession], create_and_retry: bool = True
-    ) -> Optional[Union[AgentSession, WorkflowSession]]:
+    def upsert(self, session: Session, create_and_retry: bool = True) -> Optional[Session]:
         """Upsert a session
         Args:
-            session (Union[AgentSession, WorkflowSession]): The session to upsert
+            session (Session): The session to upsert
             create_and_retry (bool): Whether to create a new session if the session_id already exists
         Returns:
-            Optional[Union[AgentSession, WorkflowSession]]: The upserted session, otherwise None
+            Optional[Session]: The upserted session, otherwise None
         """
         try:
             # Convert session to dict and add timestamps

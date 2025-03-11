@@ -1,1 +1,1 @@
-from agno.storage.mongodb import MongoDbStorage as MongoDbWorkflowStorage  # type: ignore
+from agno.storage.mongodb import MongoDbStorage as MongoDbWorkflowStorage  # noqa: F401
