@@ -1,7 +1,7 @@
 import json
+from contextlib import contextmanager
 from os import getenv
 from typing import Any, Dict, Optional
-from contextlib import contextmanager
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -9,14 +9,14 @@ from agno.utils.log import logger
 try:
     from browserbase import Browserbase
 except ImportError:
-    raise ImportError(
-        "`browserbase` not installed. Please install using `pip install browserbase`")
+    raise ImportError("`browserbase` not installed. Please install using `pip install browserbase`")
 
 try:
-    from playwright.sync_api import sync_playwright, Page, Browser
+    from playwright.sync_api import Browser, Page, sync_playwright
 except ImportError:
     raise ImportError(
-        "`playwright` not installed. Please install using `pip install playwright` and run `playwright install`")
+        "`playwright` not installed. Please install using `pip install playwright` and run `playwright install`"
+    )
 
 
 class BrowserbaseTools(Toolkit):
@@ -24,22 +24,17 @@ class BrowserbaseTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         project_id: Optional[str] = None,
-        api_url: Optional[str] = "https://api.browserbase.com",
     ):
         super().__init__(name="browserbase_tools")
         self.api_key: Optional[str] = api_key or getenv("BROWSERBASE_API_KEY")
-        self.project_id: Optional[str] = project_id or getenv(
-            "BROWSERBASE_PROJECT_ID")
+        self.project_id: Optional[str] = project_id or getenv("BROWSERBASE_PROJECT_ID")
 
         if not self.api_key:
-            logger.error(
-                "BROWSERBASE_API_KEY not set. Please set the BROWSERBASE_API_KEY environment variable.")
+            logger.error("BROWSERBASE_API_KEY not set. Please set the BROWSERBASE_API_KEY environment variable.")
         if not self.project_id:
-            logger.error(
-                "BROWSERBASE_PROJECT_ID not set. Please set the BROWSERBASE_PROJECT_ID environment variable.")
+            logger.error("BROWSERBASE_PROJECT_ID not set. Please set the BROWSERBASE_PROJECT_ID environment variable.")
 
-        self.app: Browserbase = Browserbase(
-            api_key=self.api_key)
+        self.app: Browserbase = Browserbase(api_key=self.api_key)
 
         self._playwright = None
         self._browser = None
@@ -56,8 +51,7 @@ class BrowserbaseTools(Toolkit):
         """Initialize browser connection if not already initialized."""
         if not self._playwright:
             self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.connect_over_cdp(
-                connect_url)
+            self._browser = self._playwright.chromium.connect_over_cdp(connect_url)
             context = self._browser.contexts[0]
             self._page = context.pages[0] or context.new_page()
 
@@ -79,10 +73,7 @@ class BrowserbaseTools(Toolkit):
         """
         # Create a new session with default settings
         session = self.app.sessions.create(project_id=self.project_id)
-        return json.dumps({
-            "session_id": session.id,
-            "connect_url": session.connect_url
-        })
+        return json.dumps({"session_id": session.id, "connect_url": session.connect_url})
 
     def navigate_to(self, connect_url: str, url: str) -> str:
         """Navigates to a URL in the given session.
@@ -97,11 +88,7 @@ class BrowserbaseTools(Toolkit):
         try:
             self._initialize_browser(connect_url)
             self._page.goto(url, wait_until="networkidle")
-            result = {
-                "status": "complete",
-                "title": self._page.title(),
-                "url": url
-            }
+            result = {"status": "complete", "title": self._page.title(), "url": url}
             return json.dumps(result)
         except Exception as e:
             self._cleanup()
@@ -121,10 +108,7 @@ class BrowserbaseTools(Toolkit):
         try:
             self._initialize_browser(connect_url)
             self._page.screenshot(path=path, full_page=full_page)
-            return json.dumps({
-                "status": "success",
-                "path": path
-            })
+            return json.dumps({"status": "success", "path": path})
         except Exception as e:
             self._cleanup()
             raise e
@@ -162,15 +146,13 @@ class BrowserbaseTools(Toolkit):
                 # Try to delete the session, but don't worry if it fails
                 self.app.sessions.delete(session_id)
             except Exception as e:
-                logger.debug(
-                    f"Session {session_id} may have already been closed: {str(e)}")
+                logger.debug(f"Session {session_id} may have already been closed: {str(e)}")
 
-            return json.dumps({
-                "status": "closed",
-                "message": "Browser resources cleaned up. Session will auto-close if not already closed."
-            })
+            return json.dumps(
+                {
+                    "status": "closed",
+                    "message": "Browser resources cleaned up. Session will auto-close if not already closed.",
+                }
+            )
         except Exception as e:
-            return json.dumps({
-                "status": "warning",
-                "message": f"Cleanup completed with warning: {str(e)}"
-            })
+            return json.dumps({"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"})

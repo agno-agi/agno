@@ -1,61 +1,39 @@
-from agno.tools.browserbase import BrowserbaseTools
-import json
 from os import getenv
 
+from agno.agent import Agent
+from agno.tools.browserbase import BrowserbaseTools
 
-def main():
-    # Initialize the Browserbase tools
-    browserbase = BrowserbaseTools(
-        api_key=getenv("BROWSERBASE_API_KEY"),
-        project_id=getenv("BROWSERBASE_PROJECT_ID")
-    )
-
-    # Create a new browser session
-    print("Creating browser session...")
-    session_response = json.loads(browserbase.create_session())
-
-    session_id = session_response["session_id"]
-    connect_url = session_response["connect_url"]
-    print(f"Session created with ID: {session_id}")
-
-    try:
-        # Navigate to a website
-        url = "https://news.ycombinator.com"
-        print(f"\nNavigating to {url}...")
-        nav_result = json.loads(browserbase.navigate_to(connect_url, url))
-        print(f"Page title: {nav_result['title']}")
-
-        # Take a screenshot
-        print("\nTaking screenshot...")
-        screenshot_result = json.loads(
-            browserbase.screenshot(
-                connect_url, "hn_screenshot.png", full_page=True)
+agent = Agent(
+    name="Web Automation Assistant",
+    tools=[
+        BrowserbaseTools(
+            api_key=getenv("BROWSERBASE_API_KEY"),
+            project_id=getenv("BROWSERBASE_PROJECT_ID"),
         )
-        print(f"Screenshot saved to: {screenshot_result['path']}")
+    ],
+    instructions=[
+        "You are a web automation assistant that can help with:",
+        "1. Capturing screenshots of websites",
+        "2. Extracting content from web pages",
+        "3. Monitoring website changes",
+        "4. Taking visual snapshots of responsive layouts",
+        "5. Automated web testing and verification",
+    ],
+    show_tool_calls=True,
+    markdown=True,
+    debug_mode=True,
+)
 
-        # Get page content
-        print("\nGetting page content...")
-        content = browserbase.get_page_content(connect_url)
-        print(f"Page content length: {len(content)} characters")
+# Content Extraction and SS
+agent.print_response("""
+    Go to https://news.ycombinator.com and extract:
+    1. The page title
+    3. Take a screenshot of the top stories section
+""")
 
-    except Exception as e:
-        print(f"An error occurred: {str(e)}")
-
-    finally:
-        # Close the session
-        print("\nClosing browser session...")
-        close_result = json.loads(browserbase.close_session(session_id))
-        print(f"Session closed with status: {close_result['status']}")
-        print(f"View replay at https://browserbase.com/sessions/{session_id}")
-
-
-if __name__ == "__main__":
-    # Check for required environment variables
-    if not getenv("BROWSERBASE_API_KEY"):
-        print("Please set BROWSERBASE_API_KEY environment variable")
-        exit(1)
-    if not getenv("BROWSERBASE_PROJECT_ID"):
-        print("Please set BROWSERBASE_PROJECT_ID environment variable")
-        exit(1)
-
-    main()
+# agent.print_response("""
+#     Visit https://quotes.toscrape.com and:
+#     1. Extract the first 5 quotes and their authors
+#     2. Navigate to page 2
+#     3. Extract the first 5 quotes from page 2
+# """)
