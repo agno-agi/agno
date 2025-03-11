@@ -3,7 +3,7 @@ from pathlib import Path
 import requests
 
 
-def download_image(url, save_path):
+def download_image(url: str, save_path: str) -> bool:
     """
     Downloads an image from the specified URL and saves it to the given local path.
     Parameters:
