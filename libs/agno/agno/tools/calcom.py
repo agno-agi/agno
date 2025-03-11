@@ -38,10 +38,8 @@ class CalComTools(Toolkit):
         event_type_str = getenv("CALCOM_EVENT_TYPE_ID")
         if event_type_id is not None:
             self.event_type_id = int(event_type_id)
-        elif event_type_str is not None:
-            self.event_type_id = int(event_type_str)
         else:
-            self.event_type_id = 0
+            self.event_type_id = int(event_type_str) if event_type_str is not None else 0
 
         if not self.api_key:
             logger.error("CALCOM_API_KEY not set. Please set the CALCOM_API_KEY environment variable.")
