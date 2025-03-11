@@ -75,7 +75,7 @@ postgres = ["psycopg-binary", "psycopg"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb", "tantivy"]
+lancedb = ["lancedb==0.20.0", "tantivy"]
 qdrant = ["qdrant-client"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
@@ -202,6 +202,7 @@ exclude = ["tests*"]
 
 [[tool.mypy.overrides]]
 module = [
+  "agentql.*",
   "altair.*",
   "anthropic.*",
   "apify_client.*",
@@ -260,6 +261,7 @@ module = [
   "PIL.*",
   "pinecone_text.*",
   "pinecone.*",
+  "playwright.sync_api.*",
   "psycopg.*",
   "psycopg2.*",
   "pyarrow.*",
