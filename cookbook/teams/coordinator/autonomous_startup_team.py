@@ -1,23 +1,12 @@
-# 1. CEO Agent (Leader) – Sets vision, prioritizes tasks, and makes strategic decisions.
-# 2. Product Manager Agent – Defines product roadmap, gathers user feedback, and refines features.
-# 3. Marketing Manager Agent – Develops branding, runs campaigns, and tracks audience engagement.
-# 4. Designer Agent – Creates UI/UX mockups, branding assets, and product visuals.
-# 5. Financial Analyst Agent – Handles revenue projections, pricing strategies, and investor reports.
-# 6.  Market Research Agent – Analyzes industry trends, competitors, and customer demands.
-# 7. Legal Compliance Agent – Ensures contracts, policies, and regulations are met.
-# 8. Sales & Partnerships Agent – Identifies leads, negotiates deals, and tracks conversions.
-# 9.  Customer Support Agent – Engages with users, handles tickets, and improves customer satisfaction.
-
-
 from agno.agent import Agent
+from agno.knowledge.pdf import PDFKnowledgeBase, PDFReader
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.yfinance import YFinanceTools
 from agno.tools.exa import ExaTools
-from agno.knowledge.pdf import PDFKnowledgeBase , PDFReader
-from agno.vectordb.pgvector.pgvector import PgVector
 from agno.tools.slack import SlackTools
+from agno.tools.yfinance import YFinanceTools
+from agno.vectordb.pgvector.pgvector import PgVector
 
 knowledge_base = PDFKnowledgeBase(
     path="data/compliance_report.pdf",
@@ -30,7 +19,9 @@ knowledge_base = PDFKnowledgeBase(
 
 knowledge_base.load(recreate=False)
 
-support_channel = "test"
+support_channel = "testing"
+
+sales_channel = "testing"
 
 
 legal_compliance_agent = Agent(
@@ -98,27 +89,31 @@ market_research_agent = Agent(
     markdown=True,
 )
 
-# sales_agent = Agent(
-#     name="Sales Agent",
-#     role="Sales",
-#     model=OpenAIChat("gpt-4o"),
-#     tools=[DuckDuckGoTools(), ExaTools()],
-#     instructions=[
-#         "You are the Sales Agent of a startup, responsible for revenue generation and client relationships.",
-#         "Key Responsibilities:",
-#         "1. Develop and execute sales strategies",
-#         "2. Identify and qualify potential leads",
-#         "3. Build and maintain relationships with key clients",
-#         "4. Create compelling sales presentations and proposals",
-#         "5. Negotiate contracts and close deals",
-#         "6. Track sales metrics and pipeline",
-#         "7. Collaborate with marketing on lead generation",
-#         "8. Provide market feedback to product team",
-#         "9. Maintain accurate sales forecasts",
-#     ],
-#     add_datetime_to_instructions=True,
-#     markdown=True,
-# )
+sales_agent = Agent(
+    name="Sales Agent",
+    role="Sales",
+    model=OpenAIChat("gpt-4o"),
+    tools=[SlackTools()],
+    instructions=[
+        "You are the Sales & Partnerships Agent of a startup, responsible for driving revenue growth and strategic partnerships.",
+        "Key Responsibilities:",
+        "1. Identify and qualify potential partnership and business opportunities",
+        "2. Evaluate partnership proposals and negotiate terms",
+        "3. Maintain relationships with existing partners and clients",
+        "5. Collaborate with Legal Compliance Agent on contract reviews",
+        "6. Work with Product Manager on feature requests from partners",
+        f"7. Document and communicate all partnership details in #{sales_channel} channel",
+        "",
+        "Communication Guidelines:",
+        "1. Always respond professionally and promptly to partnership inquiries",
+        "2. Include all relevant details when sharing partnership opportunities",
+        "3. Highlight potential risks and benefits in partnership proposals",
+        "4. Maintain clear documentation of all discussions and agreements",
+        "5. Ensure proper handoff to relevant team members when needed",
+    ],
+    add_datetime_to_instructions=True,
+    markdown=True,
+)
 
 
 financial_analyst_agent = Agent(
@@ -150,39 +145,7 @@ customer_support_agent = Agent(
     tools=[SlackTools()],
     instructions=[
         "You are the Customer Support Agent of a startup, responsible for handling customer inquiries and maintaining customer satisfaction.",
-        "Key Responsibilities:",
-        "1. Answer Questions:",
-        "   - Respond to general startup and product inquiries",
-        "   - Provide clear and accurate information about our services",
-        "   - Maintain a knowledge base of common questions and answers",
-        "",
-        "2. Issue Management:",
-        "   - For bug reports: Forward to support channel with prefix 'BUG:'",
-        "   - For feature requests: Forward to support channel with prefix 'FEATURE:'",
-        "   - For new deals/sales opportunities: Forward to support channel with prefix 'DEAL:'",
-        "",
-        "3. Slack Communication Protocol:",
-        f"   - Channel: {support_channel}",
-        "   - Format messages as:",
-        "     ```",
-        "     Type: [BUG/FEATURE/DEAL]",
-        "     Priority: [High/Medium/Low]",
-        "     Description: [Detailed description]",
-        "     Customer: [Customer information]",
-        "     Action Required: [Next steps or required actions]",
-        "     ```",
-        "",
-        "4. Response Guidelines:",
-        "   - Acknowledge all inquiries within first response",
-        "   - Use professional and friendly tone",
-        "   - Provide clear next steps or expectations",
-        "   - Follow up on escalated issues",
-        "",
-        "5. Priority Levels:",
-        "   - High: System-critical issues, potential revenue impact",
-        "   - Medium: Functional issues, feature requests from key clients",
-        "   - Low: Minor issues, general feedback",
-        "",
+        f"When a user reports an issue or issue or the question you cannot answer, always send it to the #{support_channel} Slack channel with all relevant details.",
         "Always maintain a professional and helpful demeanor while ensuring proper routing of issues to the right channels.",
     ],
     add_datetime_to_instructions=True,
@@ -203,6 +166,8 @@ autonomous_startup_team = Team(
         "4. Evaluate opportunities and risks",
         "5. Manage resource allocation",
         "6. Drive growth and innovation",
+        "7. When a customer asks for help or reports an issue, immediately delegate to the Customer Support Agent",
+        "8. When any partnership, sales, or business development inquiries come in, immediately delegate to the Sales Agent",
         "",
         "Team Coordination Guidelines:",
         "1. Product Development:",
@@ -225,28 +190,67 @@ autonomous_startup_team = Team(
         "",
         "Always maintain a balanced view of short-term execution and long-term strategy.",
     ],
+    members=[
+        product_manager_agent,
+        market_research_agent,
+        financial_analyst_agent,
+        legal_compliance_agent,
+        customer_support_agent,
+        sales_agent,
+    ],
     add_datetime_to_instructions=True,
     markdown=True,
-    members=[product_manager_agent, market_research_agent, financial_analyst_agent, legal_compliance_agent, customer_support_agent],
+    debug_mode=True,
+    show_members_responses=True,
 )
-
-# autonomous_startup_team.print_response(
-#     message="I want to start a startup that sells AI agents to businesses. What is the best way to do this?",
-#     stream=True,
-#     stream_intermediate_steps=True,
-# )
-
-# autonomous_startup_team.print_response(
-#     message="I want to start a startup that sells AI agents to businesses. What is the best way to do this?, Make sure we are compliant with all legal requirements",
-#     stream=True,
-#     stream_intermediate_steps=True,
-# )
 
 autonomous_startup_team.print_response(
-    message="I?",
+    message="I want to start a startup that sells AI agents to businesses. What is the best way to do this?",
     stream=True,
     stream_intermediate_steps=True,
-    show_tool_calls=True,
 )
 
 
+partnership_details = """
+
+I hope this email finds you well. My name is John Doe, and I am the Business Development Manager at TechSavvy Solutions, a leading provider of AI-powered automation tools designed to enhance workflow efficiency for businesses.
+
+We have been following InnovateAI's impressive work in AI-driven analytics, and we believe that a partnership between our companies could bring mutual benefits. Our goal is to integrate InnovateAI's predictive analytics engine into our automation platform to provide users with deeper insights and smarter automation features.
+
+Proposal Overview:
+
+We propose a strategic partnership where TechSavvy Solutions and InnovateAI collaborate to:
+    • Integrate AI capabilities: Leverage InnovateAI's data analytics engine within our platform.
+    • Co-marketing efforts: Joint promotions, webinars, and case studies.
+    • Revenue sharing model: A mutually beneficial revenue-sharing agreement.
+    • Product enhancement: Work together on feature development and user experience improvements.
+
+Requirements & Expectations:
+
+To make this partnership successful, we propose the following collaboration terms:
+    1. Technical Collaboration: Our development teams will work together to integrate and test the AI features.
+    2. Marketing & Branding: Joint PR efforts, including social media promotions and content collaborations.
+    3. Revenue Sharing: A 70-30 split on revenue generated through the integrated solution (negotiable).
+    4. Support & Maintenance: A dedicated team from both sides for ongoing support and upgrades.
+    5. Legal & Compliance: A formal agreement outlining IP rights, confidentiality, and liability clauses.
+
+Next Steps:
+
+If this proposal aligns with InnovateAI's goals, we would love to schedule a call to discuss the details further. Please let us know a convenient time for your team next week.
+
+We are excited about the potential of this partnership and look forward to working together.
+
+Looking forward to your response.
+
+Best regards,
+John Doe
+Business Development Manager
+TechSavvy Solutions
+📧 john.doe@techsavvy.com | 📞 +1 234 567 890
+"""
+
+autonomous_startup_team.print_response(
+    message=f"I wanna partnership with you, here are the details {partnership_details}, use sales agent to send it to the sales channel {sales_channel}",
+    stream=True,
+    stream_intermediate_steps=True,
+)
