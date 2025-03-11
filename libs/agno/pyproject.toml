@@ -75,7 +75,7 @@ postgres = ["psycopg-binary", "psycopg"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb", "tantivy"]
+lancedb = ["lancedb==0.20.0", "tantivy"]
 qdrant = ["qdrant-client"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
