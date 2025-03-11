@@ -1,6 +1,6 @@
 import json
 import os
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -61,6 +61,32 @@ class TodoistTools(Toolkit):
         if get_projects:
             self.register(self.get_projects)
 
+    def _task_to_dict(self, task: Any) -> Dict[str, Any]:
+        """Convert a Todoist task to a dictionary with proper typing."""
+        task_dict: Dict[str, Any] = {
+            "id": task.id,
+            "content": task.content,
+            "description": task.description,
+            "project_id": task.project_id,
+            "section_id": task.section_id,
+            "parent_id": task.parent_id,
+            "order": task.order,
+            "priority": task.priority,
+            "url": task.url,
+            "comment_count": task.comment_count,
+            "creator_id": task.creator_id,
+            "created_at": task.created_at,
+            "labels": task.labels,
+        }
+        if task.due:
+            task_dict["due"] = {
+                "date": task.due.date,
+                "string": task.due.string,
+                "datetime": task.due.datetime,
+                "timezone": task.due.timezone,
+            }
+        return task_dict
+
     def create_task(
         self,
         content: str,
@@ -87,28 +113,7 @@ class TodoistTools(Toolkit):
                 content=content, project_id=project_id, due_string=due_string, priority=priority, labels=labels or []
             )
             # Convert task to a dictionary and handle the Due object
-            task_dict = {
-                "id": task.id,
-                "content": task.content,
-                "description": task.description,
-                "project_id": task.project_id,
-                "section_id": task.section_id,
-                "parent_id": task.parent_id,
-                "order": task.order,
-                "priority": task.priority,
-                "url": task.url,
-                "comment_count": task.comment_count,
-                "creator_id": task.creator_id,
-                "created_at": task.created_at,
-                "labels": task.labels,
-            }
-            if task.due:
-                task_dict["due"] = {
-                    "date": task.due.date,
-                    "string": task.due.string,
-                    "datetime": task.due.datetime,
-                    "timezone": task.due.timezone,
-                }
+            task_dict = self._task_to_dict(task)
             return json.dumps(task_dict)
         except Exception as e:
             logger.error(f"Failed to create task: {str(e)}")
@@ -118,28 +123,7 @@ class TodoistTools(Toolkit):
         """Get a specific task by ID."""
         try:
             task = self.api.get_task(task_id)
-            task_dict = {
-                "id": task.id,
-                "content": task.content,
-                "description": task.description,
-                "project_id": task.project_id,
-                "section_id": task.section_id,
-                "parent_id": task.parent_id,
-                "order": task.order,
-                "priority": task.priority,
-                "url": task.url,
-                "comment_count": task.comment_count,
-                "creator_id": task.creator_id,
-                "created_at": task.created_at,
-                "labels": task.labels,
-            }
-            if task.due:
-                task_dict["due"] = {
-                    "date": task.due.date,
-                    "string": task.due.string,
-                    "datetime": task.due.datetime,
-                    "timezone": task.due.timezone,
-                }
+            task_dict = self._task_to_dict(task)
             return json.dumps(task_dict)
         except Exception as e:
             logger.error(f"Failed to get task: {str(e)}")
@@ -193,28 +177,7 @@ class TodoistTools(Toolkit):
             tasks = self.api.get_tasks()
             tasks_list = []
             for task in tasks:
-                task_dict = {
-                    "id": task.id,
-                    "content": task.content,
-                    "description": task.description,
-                    "project_id": task.project_id,
-                    "section_id": task.section_id,
-                    "parent_id": task.parent_id,
-                    "order": task.order,
-                    "priority": task.priority,
-                    "url": task.url,
-                    "comment_count": task.comment_count,
-                    "creator_id": task.creator_id,
-                    "created_at": task.created_at,
-                    "labels": task.labels,
-                }
-                if task.due:
-                    task_dict["due"] = {
-                        "date": task.due.date,
-                        "string": task.due.string,
-                        "datetime": task.due.datetime,
-                        "timezone": task.due.timezone,
-                    }
+                task_dict = self._task_to_dict(task)
                 tasks_list.append(task_dict)
             return json.dumps(tasks_list)
         except Exception as e:
