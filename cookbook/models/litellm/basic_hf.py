@@ -2,13 +2,13 @@ from agno.agent import Agent
 from agno.models.litellm import LiteLLMSDK
 from agno.tools.duckduckgo import DuckDuckGoTools
 
+
 openai_agent = Agent(
     model=LiteLLMSDK(
-        id="gpt-4o",
-        name="LiteLLM",
+        id="huggingface/mistralai/Mistral-7B-Instruct-v0.2",
+        top_p=0.95,
     ),
     markdown=True,
-    tools=[DuckDuckGoTools()]
 )
 
-openai_agent.print_response("What's the age of Elon Musk")
+openai_agent.print_response("Whats happening in France?")
