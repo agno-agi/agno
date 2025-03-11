@@ -190,7 +190,6 @@ class LiteLLM(Model):
                 "total_tokens": response.usage.total_tokens
             }
 
-        model_response.raw = response
         return model_response
 
     def parse_provider_response_delta(self, response_delta: Any) -> ModelResponse:
@@ -216,5 +215,4 @@ class LiteLLM(Model):
                             }
                         })
 
-        model_response.raw = response_delta
         return model_response
