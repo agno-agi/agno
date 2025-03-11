@@ -148,7 +148,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=Together(id="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"),
-        json_response_mode=True,
+        response_format="json",
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,

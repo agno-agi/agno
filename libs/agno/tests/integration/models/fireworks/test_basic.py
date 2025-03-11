@@ -149,7 +149,7 @@ def test_json_response_mode():
     agent = Agent(
         model=Fireworks(id="accounts/fireworks/models/llama-v3p1-405b-instruct"),
         response_model=MovieScript,
-        json_response_mode=True,
+        response_format="json",
         telemetry=False,
         monitoring=False,
     )

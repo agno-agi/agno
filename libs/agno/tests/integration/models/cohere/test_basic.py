@@ -129,7 +129,7 @@ def test_json_response_mode():
     agent = Agent(
         model=Cohere(id="command-r-08-2024"),
         response_model=MovieScript,
-        json_response_mode=True,
+        response_format="json",
         telemetry=False,
         monitoring=False,
     )

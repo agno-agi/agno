@@ -197,8 +197,8 @@ class Agent:
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
     structured_outputs: bool = False
-    # If True, the response from the Model is returned as JSON that is then parsed into a Pydantic model
-    json_response_mode: bool = False
+    # Sets the response_format mode of the model, i.e. to either respond with a Pydantic model or with JSON.
+    response_format: Literal["structured", "json"] = "structured"
     # Save the response to a file
     save_response_to_file: Optional[str] = None
 
@@ -291,7 +291,7 @@ class Agent:
         response_model: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
         structured_outputs: Optional[bool] = None,
-        json_response_mode: bool = False,
+        response_format: Literal["structured", "json"] = "structured",
         save_response_to_file: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
@@ -376,13 +376,13 @@ class Agent:
         if structured_outputs is not None:
             warnings.warn(
                 "The 'structured_outputs' parameter is deprecated and will be removed in a future version. "
-                "Please use the new 'json_response_mode' approach instead.",
+                "Please use the new 'response_format' parameter instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
             self.structured_outputs = structured_outputs
 
-        self.json_response_mode = json_response_mode
+        self.response_format = response_format
         self.save_response_to_file = save_response_to_file
 
         self.stream = stream
@@ -1488,7 +1488,7 @@ class Agent:
                 strict = False
                 if (
                     self.response_model is not None
-                    and (self.structured_outputs or (not self.json_response_mode))
+                    and (self.structured_outputs or (self.response_format == "structured"))
                     and model.supports_native_structured_outputs
                 ):
                     strict = True
@@ -1556,7 +1556,7 @@ class Agent:
         # Update the response_format on the Model
         if self.response_model is not None:
             if self.model.supports_native_structured_outputs:
-                if not self.json_response_mode or self.structured_outputs:
+                if self.response_format == "structured" or self.structured_outputs:
                     logger.debug("Setting Model.response_format to Agent.response_model")
                     self.model.response_format = self.response_model
                     self.model.structured_outputs = True
@@ -1565,7 +1565,7 @@ class Agent:
                     self.model.response_format = {"type": "json_object"}
                     self.model.structured_outputs = False
             elif self.model.supports_json_schema_outputs:
-                if self.json_response_mode or (not self.structured_outputs):
+                if self.response_format == "json" or (not self.structured_outputs):
                     logger.debug("Setting Model.response_format to JSON response mode")
                     self.model.response_format = {
                         "type": "json_schema",
@@ -1579,7 +1579,7 @@ class Agent:
                     self.model.response_format = None
                     self.model.structured_outputs = False
             else:
-                if self.json_response_mode or (not self.structured_outputs):
+                if self.response_format == "json" or (not self.structured_outputs):
                     logger.debug("Setting Model.response_format to JSON response mode")
                     self.model.response_format = {"type": "json_object"}
                     self.model.structured_outputs = False
@@ -1993,7 +1993,7 @@ class Agent:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
 
             # Add the JSON output prompt if response_model is provided and structured_outputs is False
-            if self.response_model is not None and (self.json_response_mode or self.structured_outputs is False):
+            if self.response_model is not None and (self.response_format == "json" or self.structured_outputs is False):
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
             return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
@@ -2134,7 +2134,7 @@ class Agent:
                     )
 
         # Add the JSON output prompt if response_model is provided and structured_outputs is False
-        if self.response_model is not None and (self.json_response_mode or self.structured_outputs is False):
+        if self.response_model is not None and (self.response_format == "json" or self.structured_outputs is False):
             system_message_content += f"{self.get_json_output_prompt()}"
 
         # Return the system message
@@ -2958,12 +2958,15 @@ class Agent:
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
+                response_format: Literal["structured", "json"] = self.response_format
+                if self.structured_outputs is not None:
+                    response_format = "structured" if self.structured_outputs else "json"  # type: ignore
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    json_response_mode=self.json_response_mode or (not self.structured_outputs),
+                    response_format=response_format,
                     monitoring=self.monitoring,
                 )
 
@@ -3140,12 +3143,15 @@ class Agent:
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
+                response_format: Literal["structured", "json"] = self.response_format
+                if self.structured_outputs is not None:
+                    response_format = "structured" if self.structured_outputs else "json"  # type: ignore
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    json_response_mode=self.json_response_mode or (not self.structured_outputs),
+                    response_format=response_format,
                     monitoring=self.monitoring,
                 )
 

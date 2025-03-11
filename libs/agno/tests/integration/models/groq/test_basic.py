@@ -133,7 +133,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=Groq(id="mixtral-8x7b-32768"),
-        json_response_mode=True,
+        response_format="json",
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,

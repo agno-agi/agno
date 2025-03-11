@@ -130,7 +130,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=MistralChat(id="mistral-small"),
-        json_response_mode=True,
+        response_format="json",
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,

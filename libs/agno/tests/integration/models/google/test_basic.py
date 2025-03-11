@@ -199,7 +199,7 @@ def test_json_response_mode():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
         response_model=MovieScript,
-        json_response_mode=True,
+        response_format="json",
         telemetry=False,
         monitoring=False,
     )

@@ -107,7 +107,7 @@ def test_json_response_mode():
     agent = Agent(
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
         response_model=MovieScript,
-        json_response_mode=True,
+        response_format="json",
         telemetry=False,
         monitoring=False,
     )

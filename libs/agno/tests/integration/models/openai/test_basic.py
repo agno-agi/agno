@@ -144,7 +144,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        json_response_mode=True,
+        response_format="json",
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,

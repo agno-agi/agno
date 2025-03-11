@@ -128,7 +128,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=OpenRouter(id="anthropic/claude-3-sonnet"),
-        json_response_mode=True,
+        response_format="json",
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,
