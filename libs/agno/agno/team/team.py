@@ -1687,6 +1687,8 @@ class Team:
     def _get_members_system_message_content(self) -> str:
         system_message_content = ""
         for idx, member in enumerate(self.members):
+            if isinstance(member, Team):
+                continue
             system_message_content += f" - Agent {idx + 1}:\n"
             if member.name is not None:
                 system_message_content += f"   - Name: {member.name}\n"
