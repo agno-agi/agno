@@ -59,6 +59,12 @@ writer_agent = Agent(
     ],
 )
 
+audio_agent = Agent(
+    name="Audio Agent",
+    role="Analyze audio",
+    model=Gemini(id="gemini-2.0-flash-exp"),
+)
+
 calculator_agent = Agent(
     name="Calculator Agent",
     model=OpenAIChat(id="gpt-4o"),
@@ -96,13 +102,6 @@ calculator_writer_team = Team(
     debug_mode=True,
     show_members_responses=True,
 )
-
-audio_agent = Agent(
-    name="Audio Agent",
-    role="Analyze audio",
-    model=Gemini(id="gemini-2.0-flash-exp"),
-)
-
 
 agent_team = Team(
     name="Agent Team",
