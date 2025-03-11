@@ -43,13 +43,13 @@ class LiteLLM(Model):
                 logger.warning(
                     "LITELLM_API_KEY not set. Please set the LITELLM_API_KEY environment variable.")
 
-    def invoke(self, messages: List[Message]) -> Any:
-        """Sends a chat completion request to the LiteLLM API."""
-        # Format messages properly including tool calls and results
+    def _format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
+        """Format messages for LiteLLM API."""
         formatted_messages = []
         for m in messages:
-            msg = {"role": m.role, "content": m.content if m.content is not None else ""}
-            
+            msg = {"role": m.role,
+                   "content": m.content if m.content is not None else ""}
+
             # Handle tool calls in assistant messages
             if m.role == "assistant" and m.tool_calls:
                 msg["tool_calls"] = [{
@@ -60,108 +60,86 @@ class LiteLLM(Model):
                         "arguments": tc["function"]["arguments"]
                     }
                 } for i, tc in enumerate(m.tool_calls)]
-                
+
             # Handle tool responses
             if m.role == "tool":
                 msg["tool_call_id"] = m.tool_call_id
                 msg["name"] = m.name
-                
+
             formatted_messages.append(msg)
 
-        completion_kwargs = {
+        return formatted_messages
+
+    @property
+    def request_kwargs(self) -> Dict[str, Any]:
+        """
+        Returns keyword arguments for API requests.
+
+        Returns:
+            Dict[str, Any]: The API kwargs for the model.
+        """
+        base_params: Dict[str, Any] = {
             "model": self.model_name,
-            "messages": formatted_messages,
             "temperature": self.temperature,
             "top_p": self.top_p,
         }
 
         if self.max_tokens:
-            completion_kwargs["max_tokens"] = self.max_tokens
+            base_params["max_tokens"] = self.max_tokens
         if self.api_key:
-            completion_kwargs["api_key"] = self.api_key
+            base_params["api_key"] = self.api_key
         if self.api_base:
-            completion_kwargs["api_base"] = self.api_base
+            base_params["api_base"] = self.api_base
         if self._tools:
-            completion_kwargs["tools"] = self._tools
-            completion_kwargs["tool_choice"] = "auto"
+            base_params["tools"] = self._tools
+            base_params["tool_choice"] = "auto"
+
+        # Add additional request params if provided
+        request_params: Dict[str, Any] = {
+            k: v for k, v in base_params.items() if v is not None}
+        if self.request_params:
+            request_params.update(self.request_params)
+
+        return request_params
+
+    def invoke(self, messages: List[Message]) -> Any:
+        """Sends a chat completion request to the LiteLLM API."""
+        completion_kwargs = self.request_kwargs.copy()
+        completion_kwargs["messages"] = self._format_messages(messages)
 
         return litellm.completion(**completion_kwargs)
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
         """Sends a streaming chat completion request to the LiteLLM API."""
-        formatted_messages = [
-            {"role": m.role, "content": m.content} for m in messages]
-
-        completion_kwargs = {
-            "model": self.model_name,
-            "messages": formatted_messages,
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "stream": True
-        }
-
-        if self.max_tokens:
-            completion_kwargs["max_tokens"] = self.max_tokens
-        if self.api_key:
-            completion_kwargs["api_key"] = self.api_key
-        if self.api_base:
-            completion_kwargs["api_base"] = self.api_base
-        if self._tools:
-            completion_kwargs["tools"] = self._tools
-            completion_kwargs["tool_choice"] = "auto"
+        completion_kwargs = self.request_kwargs.copy()
+        completion_kwargs["messages"] = self._format_messages(messages)
+        completion_kwargs["stream"] = True
 
         return litellm.completion(**completion_kwargs)
 
     async def ainvoke(self, messages: List[Message]) -> Any:
         """Sends an asynchronous chat request to the LiteLLM API."""
-        formatted_messages = [
-            {"role": m.role, "content": m.content} for m in messages]
-
-        completion_kwargs = {
-            "model": self.model_name,
-            "messages": formatted_messages,
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-        }
-
-        if self.max_tokens:
-            completion_kwargs["max_tokens"] = self.max_tokens
-        if self.api_key:
-            completion_kwargs["api_key"] = self.api_key
-        if self.api_base:
-            completion_kwargs["api_base"] = self.api_base
-        if self._tools:
-            completion_kwargs["tools"] = self._tools
-            completion_kwargs["tool_choice"] = "auto"
+        completion_kwargs = self.request_kwargs.copy()
+        completion_kwargs["messages"] = self._format_messages(messages)
 
         return await litellm.acompletion(**completion_kwargs)
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """Sends an asynchronous streaming chat request to the LiteLLM API."""
-        formatted_messages = [
-            {"role": m.role, "content": m.content} for m in messages]
+        completion_kwargs = self.request_kwargs.copy()
+        completion_kwargs["messages"] = self._format_messages(messages)
+        completion_kwargs["stream"] = True
 
-        completion_kwargs = {
-            "model": self.model_name,
-            "messages": formatted_messages,
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "stream": True
-        }
-
-        if self.max_tokens:
-            completion_kwargs["max_tokens"] = self.max_tokens
-        if self.api_key:
-            completion_kwargs["api_key"] = self.api_key
-        if self.api_base:
-            completion_kwargs["api_base"] = self.api_base
-        if self._tools:
-            completion_kwargs["tools"] = self._tools
-            completion_kwargs["tool_choice"] = "auto"
-
-        async for chunk in await litellm.acompletion(**completion_kwargs):
-            yield chunk
-
+        try:
+            # litellm.acompletion returns a coroutine that resolves to an async iterator
+            # We need to await it first to get the actual async iterator
+            async_stream = await litellm.acompletion(**completion_kwargs)
+            async for chunk in async_stream:
+                yield chunk
+        except Exception as e:
+            logger.error(f"Error in streaming response: {e}")
+            raise
+        
     def parse_provider_response(self, response: Any) -> ModelResponse:
         """Parse the provider response."""
         model_response = ModelResponse()
