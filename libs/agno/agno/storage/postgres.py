@@ -154,17 +154,14 @@ class PostgresStorage(Storage):
                     exists_query = text(
                         "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
                     )
-                    exists = sess.execute(
-                        exists_query, {"schema": self.schema, "table": self.table_name}
-                    ).scalar() is not None
-                else:
-                    exists_query = text(
-                        "SELECT 1 FROM information_schema.tables WHERE table_name = :table"
+                    exists = (
+                        sess.execute(exists_query, {"schema": self.schema, "table": self.table_name}).scalar()
+                        is not None
                     )
-                    exists = sess.execute(
-                        exists_query, {"table": self.table_name}
-                    ).scalar() is not None
-                
+                else:
+                    exists_query = text("SELECT 1 FROM information_schema.tables WHERE table_name = :table")
+                    exists = sess.execute(exists_query, {"table": self.table_name}).scalar() is not None
+
             logger.debug(f"Table '{self.table.fullname}' does {'not' if not exists else ''} exist")
             return exists
 
@@ -176,7 +173,7 @@ class PostgresStorage(Storage):
         """
         Create the table if it does not exist.
         """
-        self.table: Table = self.get_table()
+        self.table = self.get_table()
         if not self.table_exists():
             try:
                 with self.Session() as sess, sess.begin():
@@ -185,48 +182,45 @@ class PostgresStorage(Storage):
                         sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
 
                 logger.debug(f"Creating table: {self.table_name}")
-                
+
                 # First create the table without indexes
                 table_without_indexes = Table(
                     self.table_name,
                     MetaData(schema=self.schema),
                     *[c.copy() for c in self.table.columns],
-                    schema=self.schema
+                    schema=self.schema,
                 )
                 table_without_indexes.create(self.db_engine, checkfirst=True)
-                
+
                 # Then create each index individually with error handling
                 for idx in self.table.indexes:
                     try:
                         idx_name = idx.name
                         logger.debug(f"Creating index: {idx_name}")
-                        
+
                         # Check if index already exists
                         with self.Session() as sess:
                             if self.schema:
                                 exists_query = text(
                                     "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND indexname = :index_name"
                                 )
-                                exists = sess.execute(
-                                    exists_query, {"schema": self.schema, "index_name": idx_name}
-                                ).scalar() is not None
-                            else:
-                                exists_query = text(
-                                    "SELECT 1 FROM pg_indexes WHERE indexname = :index_name"
+                                exists = (
+                                    sess.execute(exists_query, {"schema": self.schema, "index_name": idx_name}).scalar()
+                                    is not None
                                 )
-                                exists = sess.execute(
-                                    exists_query, {"index_name": idx_name}
-                                ).scalar() is not None
-                        
+                            else:
+                                exists_query = text("SELECT 1 FROM pg_indexes WHERE indexname = :index_name")
+                                exists = sess.execute(exists_query, {"index_name": idx_name}).scalar() is not None
+
                         if not exists:
                             idx.create(self.db_engine)
                         else:
                             logger.debug(f"Index {idx_name} already exists, skipping creation")
-                            
+
                     except Exception as e:
                         # Log the error but continue with other indexes
                         logger.warning(f"Error creating index {idx.name}: {e}")
-                        
+
             except Exception as e:
                 logger.error(f"Could not create table: '{self.table.fullname}': {e}")
                 raise

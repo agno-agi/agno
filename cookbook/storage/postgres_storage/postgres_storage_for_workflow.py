@@ -10,8 +10,8 @@ from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.workflow import Workflow
 
-
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
 
 class HackerNewsReporter(Workflow):
     description: str = (

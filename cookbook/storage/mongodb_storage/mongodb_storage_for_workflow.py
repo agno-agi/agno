@@ -10,8 +10,8 @@ from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.workflow import Workflow
 
-
 db_url = "mongodb://localhost:27017"
+
 
 class HackerNewsReporter(Workflow):
     description: str = (

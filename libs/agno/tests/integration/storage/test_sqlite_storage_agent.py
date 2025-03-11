@@ -1,10 +1,11 @@
 import os
-import pytest
 import uuid
 
+import pytest
+
 from agno.agent import Agent
-from agno.storage.sqlite import SqliteStorage
 from agno.storage.session.agent import AgentSession
+from agno.storage.sqlite import SqliteStorage
 
 
 @pytest.fixture
@@ -148,4 +149,4 @@ def test_drop_storage(agent_with_storage, agent_storage):
     agent_storage.drop()
 
     # Verify no sessions remain
-    assert len(agent_storage.get_all_session_ids()) == 0 
+    assert len(agent_storage.get_all_session_ids()) == 0

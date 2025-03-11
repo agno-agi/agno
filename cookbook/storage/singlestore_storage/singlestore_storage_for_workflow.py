@@ -1,14 +1,14 @@
 import json
-from os import getenv
 import os
+from os import getenv
 from typing import Iterator
 
-from agno.utils.certs import download_cert
 import httpx
 from agno.agent import Agent
 from agno.run.response import RunResponse
 from agno.storage.singlestore import SingleStoreStorage
 from agno.tools.newspaper4k import Newspaper4kTools
+from agno.utils.certs import download_cert
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.workflow import Workflow
@@ -93,14 +93,15 @@ if __name__ == "__main__":
 
     # Download the certificate if SSL_CERT is not provided
     if not SSL_CERT:
-        SSL_CERT = download_cert(cert_url="https://portal.singlestore.com/static/ca/singlestore_bundle.pem", filename="singlestore_bundle.pem")
+        SSL_CERT = download_cert(
+            cert_url="https://portal.singlestore.com/static/ca/singlestore_bundle.pem",
+            filename="singlestore_bundle.pem",
+        )
         if SSL_CERT:
             os.environ["SINGLESTORE_SSL_CERT"] = SSL_CERT
 
     # SingleStore DB URL
-    db_url = (
-        f"mysql+pymysql://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/{DATABASE}?charset=utf8mb4"
-    )
+    db_url = f"mysql+pymysql://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/{DATABASE}?charset=utf8mb4"
     if SSL_CERT:
         db_url += f"&ssl_ca={SSL_CERT}&ssl_verify_cert=true"
 
@@ -109,8 +110,12 @@ if __name__ == "__main__":
     # Run workflow
     report: Iterator[RunResponse] = HackerNewsReporter(
         storage=SingleStoreStorage(
-            table_name="workflow_sessions", mode="workflow", db_engine=db_engine, schema=DATABASE
-        ), debug_mode=False
+            table_name="workflow_sessions",
+            mode="workflow",
+            db_engine=db_engine,
+            schema=DATABASE,
+        ),
+        debug_mode=False,
     ).run(num_stories=5)
     # Print the report
     pprint_run_response(report, markdown=True, show_time=True)

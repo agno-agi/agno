@@ -1,10 +1,11 @@
 import os
+
 import pytest
 
 from agno.agent import Agent
 from agno.run.response import RunResponse
-from agno.storage.sqlite import SqliteStorage
 from agno.storage.session.workflow import WorkflowSession
+from agno.storage.sqlite import SqliteStorage
 from agno.workflow import Workflow
 
 
@@ -205,4 +206,4 @@ def test_workflow_rename(workflow_with_storage, workflow_storage):
     # Verify workflow was renamed
     stored_session = workflow_storage.read(session_id)
     assert stored_session is not None
-    assert stored_session.workflow_data.get("name") == "My Renamed Workflow" 
+    assert stored_session.workflow_data.get("name") == "My Renamed Workflow"

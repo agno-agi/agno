@@ -12,9 +12,7 @@ except ImportError:
 
 
 class AgentQLTools(Toolkit):
-    def __init__(
-        self, api_key: Optional[str] = None, scrape: bool = True, agentql_query: str = ""
-    ):
+    def __init__(self, api_key: Optional[str] = None, scrape: bool = True, agentql_query: str = ""):
         super().__init__(name="agentql_tools")
 
         self.api_key = api_key or getenv("AGENTQL_API_KEY")

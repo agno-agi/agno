@@ -85,7 +85,6 @@ class SingleStoreStorage(Storage):
             self.table = self.get_table()
 
     def get_table_v1(self) -> Table:
-
         common_columns = [
             Column("session_id", mysql.TEXT, primary_key=True),
             Column("user_id", mysql.TEXT),
@@ -113,7 +112,7 @@ class SingleStoreStorage(Storage):
         )
 
         return table
-    
+
     def get_table(self) -> Table:
         if self.schema_version == 1:
             return self.get_table_v1()
@@ -129,7 +128,7 @@ class SingleStoreStorage(Storage):
             return False
 
     def create(self) -> None:
-        self.table: Table = self.get_table()
+        self.table = self.get_table()
         if not self.table_exists():
             logger.info(f"\nCreating table: {self.table_name}\n")
             self.table.create(self.db_engine)

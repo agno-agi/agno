@@ -123,7 +123,14 @@ class SqliteStorage(Storage):
             ]
 
         # Create table with all columns
-        table = Table(self.table_name, self.metadata, *common_columns, *specific_columns, extend_existing=True, sqlite_autoincrement=True,)
+        table = Table(
+            self.table_name,
+            self.metadata,
+            *common_columns,
+            *specific_columns,
+            extend_existing=True,
+            sqlite_autoincrement=True,
+        )
 
         return table
 
@@ -165,16 +172,40 @@ class SqliteStorage(Storage):
         """
         Create the table if it doesn't exist.
         """
-        self.table: Table = self.get_table()
+        self.table = self.get_table()
         if not self.table_exists():
             logger.debug(f"Creating table: {self.table.name}")
             try:
-                # Create schema if it doesn't exist
-                with self.SqlSession() as sess, sess.begin():
-                    # SQLite doesn't support schemas, so we'll just create the table
-                    # Use checkfirst=True to avoid errors if the table already exists
-                    self.table.create(self.db_engine, checkfirst=True)
-                    sess.commit()
+                # First create the table without indexes
+                table_without_indexes = Table(
+                    self.table_name,
+                    MetaData(),
+                    *[c.copy() for c in self.table.columns],
+                )
+                table_without_indexes.create(self.db_engine, checkfirst=True)
+
+                # Then create each index individually with error handling
+                for idx in self.table.indexes:
+                    try:
+                        idx_name = idx.name
+                        logger.debug(f"Creating index: {idx_name}")
+
+                        # Check if index already exists using SQLite's schema table
+                        with self.SqlSession() as sess:
+                            exists_query = text(
+                                "SELECT 1 FROM sqlite_master WHERE type='index' AND name=:index_name"
+                            )
+                            exists = sess.execute(exists_query, {"index_name": idx_name}).scalar() is not None
+
+                        if not exists:
+                            idx.create(self.db_engine)
+                        else:
+                            logger.debug(f"Index {idx_name} already exists, skipping creation")
+
+                    except Exception as e:
+                        # Log the error but continue with other indexes
+                        logger.warning(f"Error creating index {idx.name}: {e}")
+
             except Exception as e:
                 logger.error(f"Error creating table: {e}")
                 raise
