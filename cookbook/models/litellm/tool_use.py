@@ -4,9 +4,7 @@ from agno.tools.yfinance import YFinanceTools
 
 openai_agent = Agent(
     model=LiteLLMSDK(
-        # id="gpt-4o",
-        id="huggingface/mistralai/Mistral-7B-Instruct-v0.2",
-        top_p=0.95,
+        id="gpt-4o",
         name="LiteLLM",
     ),
     markdown=True,
