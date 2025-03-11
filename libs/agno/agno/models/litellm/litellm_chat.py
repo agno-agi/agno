@@ -45,11 +45,11 @@ class LiteLLMSDK(Model):
 
     def __post_init__(self):
         """
-            Initialize the model after the dataclass initialization.
-            
-            For Huggingface, we need to use the model name directly
-            LiteLLM expects Huggingface models to be formatted as: "huggingface/mistralai/Mistral-7B-Instruct-v0.2"
-            But internally it needs to use just "mistralai/Mistral-7B-Instruct-v0.2"
+        Initialize the model after the dataclass initialization.
+
+        For Huggingface, we need to use the model name directly
+        LiteLLM expects Huggingface models to be formatted as: "huggingface/mistralai/Mistral-7B-Instruct-v0.2"
+        But internally it needs to use just "mistralai/Mistral-7B-Instruct-v0.2"
         """
         super().__post_init__()
         # Handle Huggingface models
@@ -60,14 +60,12 @@ class LiteLLMSDK(Model):
             logger.info(f"Using Huggingface model: {self.model_name}")
         else:
             self.model_name = self.id
-        
+
         # Set up API key from environment variable if not already set
         if not self.api_key:
             self.api_key = getenv("LITELLM_API_KEY")
             if not self.api_key:
-                logger.warning(
-                    "LITELLM_API_KEY not set. Please set the LITELLM_API_KEY environment variable."
-                )
+                logger.warning("LITELLM_API_KEY not set. Please set the LITELLM_API_KEY environment variable.")
 
     @property
     def request_kwargs(self) -> Dict[str, Any]:
@@ -108,8 +106,7 @@ class LiteLLMSDK(Model):
             base_params["api_base"] = self.api_base
 
         # Create request_kwargs dict with non-None values
-        request_kwargs = {k: v for k,
-                          v in base_params.items() if v is not None}
+        request_kwargs = {k: v for k, v in base_params.items() if v is not None}
 
         # Add additional request params if provided
         if self.request_params:
@@ -149,25 +146,16 @@ class LiteLLMSDK(Model):
             # Add image content
             for image in message.images:
                 if image.url is not None:
-                    content_parts.append({
-                        "type": "image_url",
-                        "image_url": {"url": image.url}
-                    })
+                    content_parts.append({"type": "image_url", "image_url": {"url": image.url}})
                 elif image.filepath is not None:
-                    content_parts.append({
-                        "type": "image_url",
-                        "image_url": {"url": f"file://{image.filepath}"}
-                    })
+                    content_parts.append({"type": "image_url", "image_url": {"url": f"file://{image.filepath}"}})
                 elif image.content is not None and isinstance(image.content, bytes):
                     import base64
-                    base64_image = base64.b64encode(
-                        image.content).decode('utf-8')
-                    content_parts.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        }
-                    })
+
+                    base64_image = base64.b64encode(image.content).decode("utf-8")
+                    content_parts.append(
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                    )
 
             # Replace content with content parts
             if content_parts:
@@ -299,8 +287,7 @@ class LiteLLMSDK(Model):
                         "name": tool_call.function.name,
                         "arguments": tool_call.function.arguments,
                     }
-                    model_response.tool_calls.append(
-                        {"type": "function", "function": function_def})
+                    model_response.tool_calls.append({"type": "function", "function": function_def})
 
         # Get response usage
         if hasattr(response, "usage"):
@@ -351,8 +338,7 @@ class LiteLLMSDK(Model):
                             function_def["arguments"] = tool_call.function.arguments
 
                         if function_def:
-                            model_response.tool_calls.append(
-                                {"type": "function", "function": function_def})
+                            model_response.tool_calls.append({"type": "function", "function": function_def})
 
         # Store the raw response
         model_response.raw = response_delta

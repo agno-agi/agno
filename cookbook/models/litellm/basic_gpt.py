@@ -1,7 +1,6 @@
 from agno.agent import Agent
 from agno.models.litellm import LiteLLMSDK
 
-
 openai_agent = Agent(
     model=LiteLLMSDK(
         id="gpt-4o",

@@ -8,7 +8,7 @@ openai_agent = Agent(
         name="LiteLLM",
     ),
     markdown=True,
-    tools=[DuckDuckGoTools()]
+    tools=[DuckDuckGoTools()],
 )
 
 openai_agent.print_response("What's the age of Elon Musk")

@@ -25,30 +25,26 @@ def _assert_metrics(response: RunResponse):
 
     # The total should be at least the sum of input and output
     # (Note: sometimes there might be small discrepancies in how these are calculated)
-    assert total_tokens >= input_tokens + \
-        output_tokens - 5  # Allow small margin of error
+    assert total_tokens >= input_tokens + output_tokens - 5  # Allow small margin of error
 
 
 def test_basic():
     """Test basic functionality with LiteLLM"""
-    agent = Agent(model=LiteLLMSDK(id="gpt-4o"), markdown=True,
-                  telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMSDK(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
 
     # Get the response
     response: RunResponse = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None
     assert len(response.messages) == 3
-    assert [m.role for m in response.messages] == [
-        "system", "user", "assistant"]
+    assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
     _assert_metrics(response)
 
 
 def test_basic_stream():
     """Test streaming functionality with LiteLLMSDK"""
-    agent = Agent(model=LiteLLMSDK(id="gpt-4o"), markdown=True,
-                  telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMSDK(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -67,23 +63,20 @@ def test_basic_stream():
 @pytest.mark.asyncio
 async def test_async_basic():
     """Test async functionality with LiteLLMSDK"""
-    agent = Agent(model=LiteLLMSDK(id="gpt-4o"), markdown=True,
-                  telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMSDK(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
     assert len(response.messages) == 3
-    assert [m.role for m in response.messages] == [
-        "system", "user", "assistant"]
+    assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
 
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     """Test async streaming functionality with LiteLLMSDK"""
-    agent = Agent(model=LiteLLMSDK(id="gpt-4o"), markdown=True,
-                  telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMSDK(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
