@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Union
 
 import httpx
-
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
@@ -201,15 +200,15 @@ class OpenAIResponses(Model):
                 base_params["text"] = {"format": {"type": "json_object"}}
 
         # Filter out None values
-        request_params = {k: v for k, v in base_params.items() if v is not None}
+        request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
 
         if self.web_search:
-            request_params.setdefault("tools", [])
+            request_params.setdefault("tools", [])  # type: ignore
             request_params["tools"].append({"type": "web_search_preview"})
 
         # Add tools
         if self._functions is not None and len(self._functions) > 0:
-            request_params.setdefault("tools", [])
+            request_params.setdefault("tools", [])  # type: ignore
             for function in self._functions.values():
                 function_dict = function.to_dict()
                 for prop in function_dict["parameters"]["properties"].values():
@@ -452,7 +451,7 @@ class OpenAIResponses(Model):
                 stream=True,
                 **self.request_kwargs,
             )
-            async for chunk in async_stream:
+            async for chunk in async_stream:  # type: ignore
                 yield chunk
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
@@ -519,7 +518,7 @@ class OpenAIResponses(Model):
 
         if response.error:
             raise ModelProviderError(
-                message=response.error.get("message", "Unknown model error"),
+                message=response.error.message,
                 model_name=self.name,
                 model_id=self.id,
             )
@@ -611,7 +610,7 @@ class OpenAIResponses(Model):
 
         elif stream_event.type == "response.output_item.done" and tool_use:
             model_response = ModelResponse()
-            model_response.tool_calls = tool_use
+            model_response.tool_calls = [tool_use]
             if assistant_message.tool_calls is None:
                 assistant_message.tool_calls = []
             assistant_message.tool_calls.append(tool_use)
