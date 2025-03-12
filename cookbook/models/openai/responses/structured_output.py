@@ -29,9 +29,9 @@ class MovieScript(BaseModel):
 
 # Agent that uses JSON mode
 json_mode_agent = Agent(
-    model=OpenAIResponses(id="gpt-4o" , response_format=MovieScript , structured_outputs=True),
+    model=OpenAIResponses(id="gpt-4o" ),
     description="You write movie scripts.",
-    # response_model=MovieScript,
+    response_model=MovieScript,
     structured_outputs=True,
 )
 
@@ -39,8 +39,8 @@ json_mode_agent = Agent(
 structured_output_agent = Agent(
     model=OpenAIResponses(id="gpt-4o-2024-08-06"),
     description="You write movie scripts.",
-    # response_model=MovieScript,
-    # structured_outputs=True,
+    response_model=MovieScript,
+    structured_outputs=True,
 )
 
 

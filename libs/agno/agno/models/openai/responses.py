@@ -70,7 +70,6 @@ class OpenAIResponses(Model):
     metadata: Optional[Dict[str, Any]] = None
     store: Optional[bool] = None
     reasoning_effort: Optional[str] = None
-    reasoning_summary: Optional[str] = None
 
     # Built-in tools
     web_search: bool = False
@@ -184,19 +183,20 @@ class OpenAIResponses(Model):
             "metadata": self.metadata,
             "store": self.store,
         }
-        if self.reasoning_effort is not None or self.reasoning_summary is not None:
+        if self.reasoning_effort is not None:
             base_params["reasoning"] = {
                 "effort": self.reasoning_effort,
-                "summary": self.reasoning_summary,
             }
 
         if self.response_format is not None:
             if self.structured_outputs:
+                schema = self.response_format.model_json_schema()
+                schema["additionalProperties"] = False
                 base_params["text"] = {
                     "format": {
                         "type": "json_schema",
-                        "name": self.response_model.__name__,
-                        "schema": self.response_model.model_json_schema(),
+                        "name": self.response_format.__name__,
+                        "schema": schema,
                         "strict": True,
                     }
                 }
@@ -212,16 +212,20 @@ class OpenAIResponses(Model):
             request_params["tools"].append({"type": "web_search_preview"})
 
         # Add tools
-        if self._tools is not None and len(self._tools) > 0:
+        if self._functions is not None and len(self._functions) > 0:
             request_params.setdefault("tools", [])
-            request_params["tools"].extend(self._tools)
-
+            for function in self._functions.values():
+                function_dict = function.to_dict()
+                for prop in function_dict["parameters"]["properties"].values():
+                    if isinstance(prop["type"], list):
+                        prop["type"] = prop["type"][0]
+                request_params["tools"].append({"type": "function", **function_dict})
         if self.tool_choice is not None:
             request_params["tool_choice"] = self.tool_choice
 
         return request_params
 
-    def _format_message(self, message: Message) -> Dict[str, Any]:
+    def _format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
         """
         Format a message into the format expected by OpenAI.
 
@@ -231,35 +235,56 @@ class OpenAIResponses(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        message_dict: Dict[str, Any] = {
-            "role": self.role_map[message.role],
-            "content": message.content,
-        }
-        message_dict = {k: v for k, v in message_dict.items() if v is not None}
+        formatted_messages: List[Dict[str, Any]] = []
+        for message in messages:
 
-        # Ignore non-string message content
-        # because we assume that the images/audio are already added to the message
-        if message.images is not None and len(message.images) > 0:
-            # Ignore non-string message content
-            # because we assume that the images/audio are already added to the message
-            if isinstance(message.content, str):
-                message_dict["content"] = [{"type": "input_text", "text": message.content}]
-                if message.images is not None:
-                    message_dict["content"].extend(images_to_message(images=message.images))
+            if message.role in ["user", "system"]:
+                message_dict: Dict[str, Any] = {
+                    "role": self.role_map[message.role],
+                    "content": message.content,
+                }
+                message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-        # TODO: File support
+                # Ignore non-string message content
+                # because we assume that the images/audio are already added to the message
+                if message.images is not None and len(message.images) > 0:
+                    # Ignore non-string message content
+                    # because we assume that the images/audio are already added to the message
+                    if isinstance(message.content, str):
+                        message_dict["content"] = [{"type": "input_text", "text": message.content}]
+                        if message.images is not None:
+                            message_dict["content"].extend(images_to_message(images=message.images))
 
-        if message.audio is not None:
-            logger.warning("Audio input is currently unsupported.")
+                # TODO: File support
 
-        if message.videos is not None:
-            logger.warning("Video input is currently unsupported.")
+                if message.audio is not None:
+                    logger.warning("Audio input is currently unsupported.")
 
-        # OpenAI expects the tool_calls to be None if empty, not an empty list
-        if message.tool_calls is not None and len(message.tool_calls) == 0:
-            message_dict["tool_calls"] = None
+                if message.videos is not None:
+                    logger.warning("Video input is currently unsupported.")
 
-        return message_dict
+                formatted_messages.append(message_dict)
+
+            else:
+                # OpenAI expects the tool_calls to be None if empty, not an empty list
+                if message.tool_calls is not None and len(message.tool_calls) > 0:
+                    for tool_call in message.tool_calls:
+                        formatted_messages.append({
+                            "type": "function_call",
+                            "id": tool_call["id"],
+                            "call_id": tool_call["call_id"],
+                            "name": tool_call["function"]["name"],
+                            "arguments": tool_call["function"]["arguments"],
+                            "status": "completed"
+                        })
+
+                if message.role == "tool":
+                    formatted_messages.append({
+                        "type": "function_call_output",
+                        "call_id": message.tool_call_id,
+                        "output": message.content
+                    })
+        return formatted_messages
 
     def invoke(self, messages: List[Message]) -> Response:
         """
@@ -275,7 +300,7 @@ class OpenAIResponses(Model):
 
             return self.get_client().responses.create(
                 model=self.id,
-                input=[self._format_message(m) for m in messages],  # type: ignore
+                input=self._format_messages(messages),  # type: ignore
                 **self.request_kwargs,
             )
         except RateLimitError as e:
@@ -327,7 +352,7 @@ class OpenAIResponses(Model):
 
             return await self.get_async_client().responses.create(
                 model=self.id,
-                input=[self._format_message(m) for m in messages],  # type: ignore
+                input=self._format_messages(messages),  # type: ignore
                 **self.request_kwargs,
             )
         except RateLimitError as e:
@@ -376,9 +401,10 @@ class OpenAIResponses(Model):
             Iterator[ResponseStreamEvent]: An iterator of response stream events.
         """
         try:
+
             yield from self.get_client().responses.create(
                 model=self.id,
-                input=[self._format_message(m) for m in messages],  # type: ignore
+                input=self._format_messages(messages),  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )  # type: ignore
@@ -430,7 +456,7 @@ class OpenAIResponses(Model):
         try:
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
-                input=[self._format_message(m) for m in messages],  # type: ignore
+                input=self._format_messages(messages),  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )
@@ -470,6 +496,22 @@ class OpenAIResponses(Model):
         except Exception as e:
             logger.error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+    
+    def format_function_call_results(
+        self, messages: List[Message], function_call_results: List[Message], tool_call_ids: List[str]
+    ) -> None:
+        """
+        Handle the results of function calls.
+
+        Args:
+            messages (List[Message]): The list of conversation messages.
+            function_call_results (List[Message]): The results of the function calls.
+            tool_ids (List[str]): The tool ids.
+        """
+        if len(function_call_results) > 0:
+            for _fc_message_index, _fc_message in enumerate(function_call_results):
+                _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
+                messages.append(_fc_message)
 
     def parse_provider_response(self, response: Response) -> ModelResponse:
         """
@@ -492,7 +534,6 @@ class OpenAIResponses(Model):
         
         # Add role
         model_response.role = "assistant"
-
         for output in response.output:
             if output.type == "message":
                 if model_response.content is None:
@@ -507,10 +548,18 @@ class OpenAIResponses(Model):
                 model_response.tool_calls.append(
                     {
                         "id": output.id,
-                        "name": output.name,
-                        "arguments": output.arguments,
+                        "call_id": output.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": output.name,
+                            "arguments": output.arguments,
+                        }
                     }
                 )
+
+                model_response.extra = model_response.extra or {}
+                model_response.extra.setdefault("tool_call_ids", []).append(output.call_id)
+        
 
         # i.e. we asked for reasoning, so we need to add the reasoning content
         if self.reasoning_effort:
@@ -521,49 +570,6 @@ class OpenAIResponses(Model):
 
         return model_response
 
-
-
-    # Override base method
-    @staticmethod
-    def parse_tool_calls(tool_calls_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Build tool calls from streamed tool call data.
-
-        Args:
-            tool_calls_data (List[Dict[str, Any]]): The tool call data to build from.
-
-        Returns:
-            List[Dict[str, Any]]: The built tool calls.
-        """
-        tool_calls: List[Dict[str, Any]] = []
-        for _tool_call in tool_calls_data:
-            _index = _tool_call.index or 0
-            _tool_call_id = _tool_call.id
-            _tool_call_type = _tool_call.type
-            _function_name = _tool_call.function.name if _tool_call.function else None
-            _function_arguments = _tool_call.function.arguments if _tool_call.function else None
-
-            if len(tool_calls) <= _index:
-                tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
-            tool_call_entry = tool_calls[_index]
-            if not tool_call_entry:
-                tool_call_entry["id"] = _tool_call_id
-                tool_call_entry["type"] = _tool_call_type
-                tool_call_entry["function"] = {
-                    "name": _function_name or "",
-                    "arguments": _function_arguments or "",
-                }
-            else:
-                if _function_name:
-                    tool_call_entry["function"]["name"] += _function_name
-                if _function_arguments:
-                    tool_call_entry["function"]["arguments"] += _function_arguments
-                if _tool_call_id:
-                    tool_call_entry["id"] = _tool_call_id
-                if _tool_call_type:
-                    tool_call_entry["type"] = _tool_call_type
-        return tool_calls
-    
 
     def _process_stream_response(
         self,
@@ -584,7 +590,7 @@ class OpenAIResponses(Model):
         Returns:
             Tuple containing the ModelResponse to yield and updated tool_use dict
         """
-        model_response = ModelResponse()
+        model_response = None
 
         if stream_event.type == "response.created":
             # Update metrics
@@ -592,30 +598,44 @@ class OpenAIResponses(Model):
                 assistant_message.metrics.set_time_to_first_token()
 
         elif stream_event.type == "response.output_text.delta":
-
+            model_response = ModelResponse()
             # Add content
             model_response.content = stream_event.delta
             stream_data.response_content += stream_event.delta
+
+            if self.reasoning_effort:
+                model_response.reasoning_content = stream_event.delta
+                stream_data.response_thinking += stream_event.delta
 
         elif stream_event.type == "response.output_item.added":
             item = stream_event.item
             if item.type == "function_call":
                 tool_use = {
                     "id": item.id,
-                    "name": item.name,
-                    "arguments": item.arguments,
+                    "call_id": item.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": item.name,
+                        "arguments": item.arguments,
+                    }
                 }
 
         elif stream_event.type == "response.function_call_arguments.delta":
-            tool_use["arguments"] += stream_event.delta
+            tool_use["function"]["arguments"] += stream_event.delta
 
-        elif stream_event.type == "response.output_item.done":
+        elif stream_event.type == "response.output_item.done" and tool_use:
+            model_response = ModelResponse()
+            model_response.tool_calls = tool_use
             if assistant_message.tool_calls is None:
                 assistant_message.tool_calls = []
             assistant_message.tool_calls.append(tool_use)
+
+            stream_data.extra = stream_data.extra or {}
+            stream_data.extra.setdefault("tool_call_ids", []).append(tool_use["call_id"])
             tool_use = {}
 
         elif stream_event.type == "response.completed":
+            model_response = ModelResponse()
             # Add usage metrics if present
             if stream_event.response.usage is not None:
                 model_response.response_usage = stream_event.response.usage
