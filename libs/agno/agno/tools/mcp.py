@@ -118,7 +118,7 @@ class MCPTools(Toolkit):
 
                 return response_str.strip()
             except Exception as e:
-                logger.error(f"Failed to call MCP tool '{tool_name}': {e}")
+                logger.exception(f"Failed to call MCP tool '{tool_name}': {e}")
                 return f"Error: {e}"
 
         return partial(call_tool, tool_name=tool.name)
