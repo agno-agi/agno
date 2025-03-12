@@ -32,7 +32,6 @@ structured_output_agent = Agent(
     model=xAI(id="grok-2-latest"),
     description="You write movie scripts.",
     response_model=MovieScript,
-    structured_outputs=True,
 )
 
 # Run the agent synchronously

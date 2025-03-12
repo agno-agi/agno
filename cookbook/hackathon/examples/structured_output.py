@@ -39,7 +39,6 @@ json_mode_agent = Agent(
 structured_output_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     response_model=MovieScript,
-    structured_outputs=True,
 )
 
 if __name__ == "__main__":

@@ -107,9 +107,6 @@ class AzureAIFoundry(Model):
     client: Optional[ChatCompletionsClient] = None
     async_client: Optional[AsyncChatCompletionsClient] = None
 
-    # Internal parameters
-    structured_outputs: bool = False
-
     def _get_request_kwargs(self) -> Dict[str, Any]:
         """Get the parameters for creating an Azure AI request."""
         base_params = {

@@ -125,7 +125,7 @@ class MistralChat(Model):
     name: str = "MistralChat"
     provider: str = "Mistral"
 
-    supports_structured_outputs: bool = True
+    supports_native_structured_outputs: bool = True
 
     # -*- Request parameters
     temperature: Optional[float] = None
