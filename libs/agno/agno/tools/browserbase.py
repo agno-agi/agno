@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -37,13 +37,13 @@ class BrowserbaseTools(Toolkit):
         self.api_key = api_key or getenv("BROWSERBASE_API_KEY")
         if not self.api_key:
             raise ValueError(
-                f"BROWSERBASE_API_KEY is required. Please set the BROWSERBASE_API_KEY environment variable."
+                "BROWSERBASE_API_KEY is required. Please set the BROWSERBASE_API_KEY environment variable."
             )
 
         self.project_id = project_id or getenv("BROWSERBASE_PROJECT_ID")
         if not self.project_id:
             raise ValueError(
-                f"BROWSERBASE_PROJECT_ID is required. Please set the BROWSERBASE_PROJECT_ID environment variable."
+                "BROWSERBASE_PROJECT_ID is required. Please set the BROWSERBASE_PROJECT_ID environment variable."
             )
 
         self.base_url = base_url or getenv("BROWSERBASE_BASE_URL")

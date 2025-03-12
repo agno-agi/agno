@@ -2,13 +2,12 @@
 
 import json
 import os
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
-from playwright.sync_api import Browser, Page, BrowserContext
+from playwright.sync_api import Browser, BrowserContext, Page
 
 from agno.tools.browserbase import BrowserbaseTools
-
 
 TEST_API_KEY = os.environ.get("BROWSERBASE_API_KEY", "test_api_key")
 TEST_PROJECT_ID = os.environ.get("BROWSERBASE_PROJECT_ID", "test_project_id")
@@ -39,8 +38,7 @@ def mock_playwright():
         # Setup chromium browser
         mock_browser = Mock(spec=Browser)
         mock_playwright_instance.chromium = Mock()
-        mock_playwright_instance.chromium.connect_over_cdp = Mock(
-            return_value=mock_browser)
+        mock_playwright_instance.chromium.connect_over_cdp = Mock(return_value=mock_browser)
 
         # Setup browser context
         mock_context = Mock(spec=BrowserContext)
@@ -54,17 +52,14 @@ def mock_playwright():
             "playwright": mock_playwright_instance,
             "browser": mock_browser,
             "context": mock_context,
-            "page": mock_page
+            "page": mock_page,
         }
 
 
 @pytest.fixture
 def browserbase_tools(mock_browserbase):
     """Create a BrowserbaseTools instance with mocked dependencies."""
-    with patch.dict("os.environ", {
-        "BROWSERBASE_API_KEY": TEST_API_KEY,
-        "BROWSERBASE_PROJECT_ID": TEST_PROJECT_ID
-    }):
+    with patch.dict("os.environ", {"BROWSERBASE_API_KEY": TEST_API_KEY, "BROWSERBASE_PROJECT_ID": TEST_PROJECT_ID}):
         tools = BrowserbaseTools()
         # Directly set the app to our mock to avoid initialization issues
         tools.app = mock_browserbase
@@ -74,10 +69,9 @@ def browserbase_tools(mock_browserbase):
 def test_init_with_env_vars():
     """Test initialization with environment variables."""
     with patch("agno.tools.browserbase.Browserbase"):
-        with patch.dict("os.environ", {
-            "BROWSERBASE_API_KEY": TEST_API_KEY,
-            "BROWSERBASE_PROJECT_ID": TEST_PROJECT_ID
-        }, clear=True):  # Clear=True to ensure no other env vars leak in
+        with patch.dict(
+            "os.environ", {"BROWSERBASE_API_KEY": TEST_API_KEY, "BROWSERBASE_PROJECT_ID": TEST_PROJECT_ID}, clear=True
+        ):  # Clear=True to ensure no other env vars leak in
             tools = BrowserbaseTools()
             assert tools.api_key == TEST_API_KEY
             assert tools.project_id == TEST_PROJECT_ID
@@ -87,11 +81,7 @@ def test_init_with_env_vars():
 def test_init_with_params():
     """Test initialization with parameters."""
     with patch("agno.tools.browserbase.Browserbase"), patch.dict("os.environ", {}, clear=True):
-        tools = BrowserbaseTools(
-            api_key="param_api_key",
-            project_id="param_project_id",
-            base_url=TEST_BASE_URL
-        )
+        tools = BrowserbaseTools(api_key="param_api_key", project_id="param_project_id", base_url=TEST_BASE_URL)
         assert tools.api_key == "param_api_key"
         assert tools.project_id == "param_project_id"
         assert tools.base_url == TEST_BASE_URL
@@ -106,9 +96,9 @@ def test_init_with_missing_api_key():
 
 def test_init_with_missing_project_id():
     """Test initialization with missing project ID raises ValueError."""
-    with patch.dict("os.environ", {
-        "BROWSERBASE_API_KEY": TEST_API_KEY
-    }, clear=True), patch("agno.tools.browserbase.Browserbase"):
+    with patch.dict("os.environ", {"BROWSERBASE_API_KEY": TEST_API_KEY}, clear=True), patch(
+        "agno.tools.browserbase.Browserbase"
+    ):
         with pytest.raises(ValueError, match="BROWSERBASE_PROJECT_ID is required"):
             BrowserbaseTools()
 
@@ -127,8 +117,7 @@ def test_ensure_session(browserbase_tools, mock_browserbase):
     # Verify results
     assert browserbase_tools._session == mock_session
     assert browserbase_tools._connect_url == "ws://test.connect.url"
-    mock_browserbase.sessions.create.assert_called_once_with(
-        project_id=TEST_PROJECT_ID)
+    mock_browserbase.sessions.create.assert_called_once_with(project_id=TEST_PROJECT_ID)
 
     # Reset the mock and call again - should not create a new session
     mock_browserbase.sessions.create.reset_mock()
@@ -139,7 +128,7 @@ def test_ensure_session(browserbase_tools, mock_browserbase):
 def test_initialize_browser(browserbase_tools):
     """Test _initialize_browser method with connect_url."""
     # Mock the entire _initialize_browser method to avoid actual browser initialization
-    with patch.object(browserbase_tools, '_ensure_session'):
+    with patch.object(browserbase_tools, "_ensure_session"):
         # Set up a mock for the playwright instance
         mock_playwright = Mock()
         mock_browser = Mock()
@@ -156,8 +145,7 @@ def test_initialize_browser(browserbase_tools):
 
         # Set up the chromium connect_over_cdp method
         mock_playwright.chromium = Mock()
-        mock_playwright.chromium.connect_over_cdp = Mock(
-            return_value=mock_browser)
+        mock_playwright.chromium.connect_over_cdp = Mock(return_value=mock_browser)
 
         # Set up the sync_playwright().start() chain
         with patch("agno.tools.browserbase.sync_playwright") as mock_sync_playwright:
@@ -169,8 +157,7 @@ def test_initialize_browser(browserbase_tools):
 
             # Verify the connect_url was set
             assert browserbase_tools._connect_url == "ws://test.connect.url"
-            mock_playwright.chromium.connect_over_cdp.assert_called_once_with(
-                "ws://test.connect.url")
+            mock_playwright.chromium.connect_over_cdp.assert_called_once_with("ws://test.connect.url")
 
 
 def test_navigate_to(browserbase_tools, mock_playwright):
@@ -192,8 +179,7 @@ def test_navigate_to(browserbase_tools, mock_playwright):
     assert result_data["status"] == "complete"
     assert result_data["title"] == "Test Page Title"
     assert result_data["url"] == "https://example.com"
-    mock_page.goto.assert_called_once_with(
-        "https://example.com", wait_until="networkidle")
+    mock_page.goto.assert_called_once_with("https://example.com", wait_until="networkidle")
 
 
 def test_screenshot(browserbase_tools, mock_playwright):
@@ -210,8 +196,7 @@ def test_screenshot(browserbase_tools, mock_playwright):
     # Verify results
     assert result_data["status"] == "success"
     assert result_data["path"] == "/path/to/screenshot.png"
-    mock_playwright["page"].screenshot.assert_called_once_with(
-        path="/path/to/screenshot.png", full_page=True)
+    mock_playwright["page"].screenshot.assert_called_once_with(path="/path/to/screenshot.png", full_page=True)
 
 
 def test_get_page_content(browserbase_tools, mock_playwright):
@@ -257,8 +242,7 @@ def test_close_session_without_session_id(browserbase_tools, mock_browserbase):
 
     # Verify results
     assert result_data["status"] == "closed"
-    mock_browserbase.sessions.delete.assert_called_once_with(
-        "current_session_id")
+    mock_browserbase.sessions.delete.assert_called_once_with("current_session_id")
     assert browserbase_tools._session is None
     assert browserbase_tools._connect_url is None
 
@@ -266,8 +250,7 @@ def test_close_session_without_session_id(browserbase_tools, mock_browserbase):
 def test_close_session_with_exception(browserbase_tools, mock_browserbase):
     """Test close_session method when session deletion fails."""
     # Setup mock to raise exception
-    mock_browserbase.sessions.delete.side_effect = Exception(
-        "Session already closed")
+    mock_browserbase.sessions.delete.side_effect = Exception("Session already closed")
 
     # Call the method
     result = browserbase_tools.close_session("test_session_id")
