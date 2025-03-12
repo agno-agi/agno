@@ -2849,6 +2849,7 @@ class Agent:
 
     def reason(self, run_messages: RunMessages) -> Iterator[RunResponse]:
         from agno.models.openai.like import OpenAILike
+
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
@@ -3031,6 +3032,7 @@ class Agent:
 
     async def areason(self, run_messages: RunMessages) -> Any:
         from agno.models.openai.like import OpenAILike
+
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)

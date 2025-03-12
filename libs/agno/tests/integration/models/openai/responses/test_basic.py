@@ -16,7 +16,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 def _assert_metrics(response: RunResponse):
     """
     Assert that the response metrics are valid and consistent.
-    
+
     Args:
         response: The RunResponse to validate metrics for
     """
@@ -129,12 +129,15 @@ def test_with_memory():
 
 def test_structured_output():
     """Test structured output with Pydantic models."""
+
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), response_model=MovieScript, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-4o-mini"), response_model=MovieScript, telemetry=False, monitoring=False
+    )
 
     response = agent.run("Create a movie about time travel")
 
@@ -147,6 +150,7 @@ def test_structured_output():
 
 def test_structured_output_native():
     """Test native structured output with the responses API."""
+
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
@@ -220,4 +224,4 @@ def test_persistent_memory():
     )
 
     response = agent.run("What is current news in France?")
-    assert response.content is not None 
+    assert response.content is not None

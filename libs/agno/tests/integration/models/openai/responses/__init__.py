@@ -1,1 +1,1 @@
-"""Integration tests for OpenAI Responses API.""" 
+"""Integration tests for OpenAI Responses API."""

@@ -106,6 +106,7 @@ async def test_async_tool_use_stream():
 
 def test_tool_use_with_native_structured_outputs():
     """Test native structured outputs with tool use in the responses API."""
+
     class StockPrice(BaseModel):
         price: float = Field(..., description="The price of the stock")
         currency: str = Field(..., description="The currency of the stock")
@@ -171,6 +172,7 @@ def test_multiple_tool_calls():
 
 def test_tool_call_custom_tool_no_parameters():
     """Test custom tool with no parameters with the responses API."""
+
     def get_the_weather():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
@@ -233,7 +235,7 @@ def test_web_search_built_in_tool():
     assert response.content is not None
     assert "medal" in response.content.lower()
     # Check for typical web search result indicators
-    assert any(term in response.content.lower() for term in ["olympic", "games", "gold", "medal"]) 
+    assert any(term in response.content.lower() for term in ["olympic", "games", "gold", "medal"])
 
 
 def test_web_search_built_in_tool_stream():

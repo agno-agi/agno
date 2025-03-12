@@ -2,9 +2,8 @@ import os
 from pathlib import Path
 
 import streamlit as st
-from PIL import Image
-
 from geography_buddy import analyze_image
+from PIL import Image
 
 # Streamlit App Configuration
 st.set_page_config(

@@ -1,7 +1,5 @@
-import requests
-
 from agno.agent.agent import Agent
-from agno.media import Audio, Image
+from agno.media import Image
 from agno.models.openai.responses import OpenAIResponses
 from agno.tools.duckduckgo import DuckDuckGoTools
 
@@ -9,11 +7,11 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 def test_image_input():
     """Test image input with the responses API."""
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini"), 
-        tools=[DuckDuckGoTools()], 
-        markdown=True, 
-        telemetry=False, 
-        monitoring=False
+        model=OpenAIResponses(id="gpt-4o-mini"),
+        tools=[DuckDuckGoTools()],
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
     )
 
     response = agent.run(
@@ -24,6 +22,7 @@ def test_image_input():
     assert "golden" in response.content.lower()
     assert "bridge" in response.content.lower()
     assert "san francisco" in response.content.lower()
+
 
 def test_multimodal_with_tools():
     """Test multimodal input with tool use in the responses API."""
@@ -44,6 +43,6 @@ def test_multimodal_with_tools():
     # Verify content includes image analysis and tool usage
     assert "golden" in response.content.lower()
     assert "bridge" in response.content.lower()
-    
+
     # Check for tool call
-    assert any(msg.tool_calls for msg in response.messages if hasattr(msg, 'tool_calls') and msg.tool_calls) 
+    assert any(msg.tool_calls for msg in response.messages if hasattr(msg, "tool_calls") and msg.tool_calls)

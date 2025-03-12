@@ -1,9 +1,8 @@
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from agno.media import Audio, Image
+from agno.media import Image
 from agno.utils.log import logger
-
 
 
 def _process_bytes_image(image: bytes) -> Dict[str, Any]:
