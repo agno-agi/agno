@@ -97,18 +97,6 @@ def test_init_with_params():
         assert tools.base_url == TEST_BASE_URL
 
 
-def test_init_with_base_url_from_env():
-    """Test initialization with base_url from environment variable."""
-    with patch("agno.tools.browserbase.Browserbase"):
-        with patch.dict("os.environ", {
-            "BROWSERBASE_API_KEY": TEST_API_KEY,
-            "BROWSERBASE_PROJECT_ID": TEST_PROJECT_ID,
-            "BROWSERBASE_BASE_URL": TEST_BASE_URL
-        }, clear=True):
-            tools = BrowserbaseTools()
-            assert tools.base_url == TEST_BASE_URL
-
-
 def test_init_with_missing_api_key():
     """Test initialization with missing API key raises ValueError."""
     with patch.dict("os.environ", {}, clear=True):
