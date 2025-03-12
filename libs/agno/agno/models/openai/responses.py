@@ -3,6 +3,8 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Un
 
 import httpx
 
+from pydantic import BaseModel
+
 from agno.exceptions import ModelProviderError
 from agno.models.base import MessageData, Model
 from agno.models.message import Message
@@ -183,7 +185,7 @@ class OpenAIResponses(Model):
             }
 
         if self.response_format is not None:
-            if self.structured_outputs:
+            if self.structured_outputs and isinstance(self.response_format, BaseModel):
                 schema = self.response_format.model_json_schema()
                 schema["additionalProperties"] = False
                 base_params["text"] = {
