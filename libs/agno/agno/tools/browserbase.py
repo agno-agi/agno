@@ -71,8 +71,9 @@ class BrowserbaseTools(Toolkit):
         if not self._session:
             try:
                 self._session = self.app.sessions.create(project_id=self.project_id)
-                self._connect_url = self._session.connect_url
-                logger.debug(f"Created new session with ID: {self._session.id}")
+                self._connect_url = self._session.connect_url if self._session else "" # type: ignore
+                if self._session:
+                    logger.debug(f"Created new session with ID: {self._session.id}")
             except Exception as e:
                 logger.error(f"Failed to create session: {str(e)}")
                 raise
@@ -83,15 +84,16 @@ class BrowserbaseTools(Toolkit):
         Use provided connect_url or ensure we have a session with a connect_url
         """
         if connect_url:
-            self._connect_url = connect_url
+            self._connect_url = connect_url if connect_url else "" # type: ignore
         elif not self._connect_url:
             self._ensure_session()
 
         if not self._playwright:
             self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.connect_over_cdp(self._connect_url)
-            context = self._browser.contexts[0]
-            self._page = context.pages[0] or context.new_page()
+            if self._playwright:
+                self._browser = self._playwright.chromium.connect_over_cdp(self._connect_url)
+            context = self._browser.contexts[0] if self._browser else ""
+            self._page = context.pages[0] or context.new_page() # type: ignore
 
     def _cleanup(self):
         """Clean up browser resources."""
@@ -110,7 +112,7 @@ class BrowserbaseTools(Toolkit):
             Dictionary containing session details including session_id and connect_url.
         """
         self._ensure_session()
-        return {"session_id": self._session.id, "connect_url": self._session.connect_url}
+        return {"session_id": self._session.id if self._session else "", "connect_url": self._session.connect_url if self._session else ""}
 
     def navigate_to(self, url: str, connect_url: Optional[str] = None) -> str:
         """Navigates to a URL.
@@ -124,8 +126,9 @@ class BrowserbaseTools(Toolkit):
         """
         try:
             self._initialize_browser(connect_url)
-            self._page.goto(url, wait_until="networkidle")
-            result = {"status": "complete", "title": self._page.title(), "url": url}
+            if self._page:
+                self._page.goto(url, wait_until="networkidle")
+            result = {"status": "complete", "title": self._page.title() if self._page else "", "url": url}
             return json.dumps(result)
         except Exception as e:
             self._cleanup()
@@ -144,7 +147,8 @@ class BrowserbaseTools(Toolkit):
         """
         try:
             self._initialize_browser(connect_url)
-            self._page.screenshot(path=path, full_page=full_page)
+            if self._page:
+                self._page.screenshot(path=path, full_page=full_page)
             return json.dumps({"status": "success", "path": path})
         except Exception as e:
             self._cleanup()
@@ -161,7 +165,7 @@ class BrowserbaseTools(Toolkit):
         """
         try:
             self._initialize_browser(connect_url)
-            return self._page.content()
+            return self._page.content() if self._page else ""
         except Exception as e:
             self._cleanup()
             raise e
