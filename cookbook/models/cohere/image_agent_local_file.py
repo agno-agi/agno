@@ -12,7 +12,10 @@ agent = Agent(
 
 image_path = Path(__file__).parent.joinpath("sample.jpg")
 
-download_image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg", save_path=str(image_path))
+download_image(
+    url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg",
+    output_path=str(image_path),
+)
 
 agent.print_response(
     "Tell me about this image.",

@@ -114,13 +114,20 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
         path = Path(file.filepath) if isinstance(file.filepath, str) else file.filepath
         if path.exists() and path.is_file():
-            pdf_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
+            file_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
+            media_type = file.mime_type
+            if media_type is None:
+                import mimetypes
+
+                media_type = mimetypes.guess_type(file.filepath)[0]
+                if media_type != "application/pdf":
+                    logger.error(f"Unsupported file type: {media_type}")
             return {
                 "type": "document",
                 "source": {
                     "type": "base64",
-                    "media_type": "application/pdf",
-                    "data": pdf_data,
+                    "media_type": media_type,
+                    "data": file_data,
                 },
             }
         else:
