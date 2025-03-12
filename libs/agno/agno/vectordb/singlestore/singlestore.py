@@ -15,7 +15,6 @@ except ImportError:
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.embedder.openai import OpenAIEmbedder
 from agno.reranker.base import Reranker
 
 # from agno.vectordb.singlestore.index import Ivfflat, HNSWFlat
@@ -31,7 +30,7 @@ class SingleStore(VectorDb):
         schema: Optional[str] = "ai",
         db_url: Optional[str] = None,
         db_engine: Optional[Engine] = None,
-        embedder: Embedder = OpenAIEmbedder(),
+        embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         reranker: Optional[Reranker] = None,
         # index: Optional[Union[Ivfflat, HNSW]] = HNSW(),
@@ -48,8 +47,15 @@ class SingleStore(VectorDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = _engine
         self.metadata: MetaData = MetaData(schema=self.schema)
+
+        if embedder is None:
+            from agno.embedder.openai import OpenAIEmbedder
+
+            embedder = OpenAIEmbedder()
+            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
+
         self.distance: Distance = distance
         # self.index: Optional[Union[Ivfflat, HNSW]] = index
         self.Session: sessionmaker[Session] = sessionmaker(bind=self.db_engine)

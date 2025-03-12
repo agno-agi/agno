@@ -62,6 +62,7 @@ class LanceDb(VectorDb):
             from agno.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
+            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -214,7 +215,7 @@ class LanceDb(VectorDb):
         if len(documents) <= 0:
             logger.info("No documents to insert")
             return
-        
+
         logger.info(f"Inserting {len(documents)} documents")
         data = []
 
