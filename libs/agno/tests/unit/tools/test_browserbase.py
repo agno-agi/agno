@@ -2,13 +2,12 @@
 
 import json
 import os
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
-from playwright.sync_api import Browser, Page, BrowserContext, Playwright
+from playwright.sync_api import Browser, BrowserContext, Page, Playwright
 
 from agno.tools.browserbase import BrowserbaseTools
-
 
 # Get API key and project ID from environment for tests
 API_KEY = os.environ.get("BROWSERBASE_API_KEY", "test_api_key")
@@ -49,17 +48,14 @@ def mock_playwright():
             "playwright": mock_playwright_instance,
             "browser": mock_browser,
             "context": mock_context,
-            "page": mock_page
+            "page": mock_page,
         }
 
 
 @pytest.fixture
 def browserbase_tools(mock_browserbase):
     """Create a BrowserbaseTools instance with mocked dependencies."""
-    with patch.dict("os.environ", {
-        "BROWSERBASE_API_KEY": API_KEY,
-        "BROWSERBASE_PROJECT_ID": PROJECT_ID
-    }):
+    with patch.dict("os.environ", {"BROWSERBASE_API_KEY": API_KEY, "BROWSERBASE_PROJECT_ID": PROJECT_ID}):
         tools = BrowserbaseTools()
         # Directly set the app to our mock to avoid initialization issues
         tools.app = mock_browserbase
@@ -69,10 +65,9 @@ def browserbase_tools(mock_browserbase):
 def test_init_with_env_vars():
     """Test initialization with environment variables."""
     with patch("agno.tools.browserbase.Browserbase"):  # Mock to prevent actual API calls
-        with patch.dict("os.environ", {
-            "BROWSERBASE_API_KEY": "test_api_key",
-            "BROWSERBASE_PROJECT_ID": "test_project_id"
-        }):
+        with patch.dict(
+            "os.environ", {"BROWSERBASE_API_KEY": "test_api_key", "BROWSERBASE_PROJECT_ID": "test_project_id"}
+        ):
             tools = BrowserbaseTools()
             assert tools.api_key == "test_api_key"
             assert tools.project_id == "test_project_id"
@@ -81,8 +76,7 @@ def test_init_with_env_vars():
 def test_init_with_params():
     """Test initialization with parameters."""
     with patch("agno.tools.browserbase.Browserbase"):  # Mock to prevent actual API calls
-        tools = BrowserbaseTools(api_key="param_api_key",
-                                 project_id="param_project_id")
+        tools = BrowserbaseTools(api_key="param_api_key", project_id="param_project_id")
         assert tools.api_key == "param_api_key"
         assert tools.project_id == "param_project_id"
 
@@ -91,10 +85,7 @@ def test_real_env_vars_not_exposed():
     """Test that real API keys from .env are not exposed in tests."""
     # This test ensures we're not accidentally using real credentials in tests
     with patch("agno.tools.browserbase.Browserbase"):
-        with patch.dict("os.environ", {
-            "BROWSERBASE_API_KEY": API_KEY,
-            "BROWSERBASE_PROJECT_ID": PROJECT_ID
-        }):
+        with patch.dict("os.environ", {"BROWSERBASE_API_KEY": API_KEY, "BROWSERBASE_PROJECT_ID": PROJECT_ID}):
             with patch.object(BrowserbaseTools, "__init__", return_value=None) as mock_init:
                 BrowserbaseTools()
                 # Verify the init was called, but we're not actually using the real credentials
@@ -116,8 +107,7 @@ def test_create_session(browserbase_tools, mock_browserbase):
     # Verify results
     assert result_data["session_id"] == "test_session_id"
     assert result_data["connect_url"] == "ws://test.connect.url"
-    mock_browserbase.sessions.create.assert_called_once_with(
-        project_id=PROJECT_ID)
+    mock_browserbase.sessions.create.assert_called_once_with(project_id=PROJECT_ID)
 
 
 def test_navigate_to(browserbase_tools, mock_playwright):
@@ -132,16 +122,14 @@ def test_navigate_to(browserbase_tools, mock_playwright):
     browserbase_tools._playwright = mock_playwright["playwright"]
 
     # Call the method
-    result = browserbase_tools.navigate_to(
-        "ws://test.connect.url", "https://example.com")
+    result = browserbase_tools.navigate_to("ws://test.connect.url", "https://example.com")
     result_data = json.loads(result)
 
     # Verify results
     assert result_data["status"] == "complete"
     assert result_data["title"] == "Test Page Title"
     assert result_data["url"] == "https://example.com"
-    mock_page.goto.assert_called_once_with(
-        "https://example.com", wait_until="networkidle")
+    mock_page.goto.assert_called_once_with("https://example.com", wait_until="networkidle")
 
 
 def test_screenshot(browserbase_tools, mock_playwright):
@@ -152,15 +140,13 @@ def test_screenshot(browserbase_tools, mock_playwright):
     browserbase_tools._playwright = mock_playwright["playwright"]
 
     # Call the method
-    result = browserbase_tools.screenshot(
-        "ws://test.connect.url", "/path/to/screenshot.png", True)
+    result = browserbase_tools.screenshot("ws://test.connect.url", "/path/to/screenshot.png", True)
     result_data = json.loads(result)
 
     # Verify results
     assert result_data["status"] == "success"
     assert result_data["path"] == "/path/to/screenshot.png"
-    mock_playwright["page"].screenshot.assert_called_once_with(
-        path="/path/to/screenshot.png", full_page=True)
+    mock_playwright["page"].screenshot.assert_called_once_with(path="/path/to/screenshot.png", full_page=True)
 
 
 def test_get_page_content(browserbase_tools, mock_playwright):
@@ -196,8 +182,7 @@ def test_close_session(browserbase_tools, mock_browserbase):
 def test_close_session_with_exception(browserbase_tools, mock_browserbase):
     """Test close_session method when session deletion fails."""
     # Setup mock to raise exception
-    mock_browserbase.sessions.delete.side_effect = Exception(
-        "Session already closed")
+    mock_browserbase.sessions.delete.side_effect = Exception("Session already closed")
 
     # Call the method
     result = browserbase_tools.close_session("test_session_id")

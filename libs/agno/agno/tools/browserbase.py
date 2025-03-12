@@ -1,5 +1,4 @@
 import json
-from contextlib import contextmanager
 from os import getenv
 from typing import Any, Dict, Optional
 
@@ -12,7 +11,7 @@ except ImportError:
     raise ImportError("`browserbase` not installed. Please install using `pip install browserbase`")
 
 try:
-    from playwright.sync_api import Browser, Page, sync_playwright
+    from playwright.sync_api import sync_playwright
 except ImportError:
     raise ImportError(
         "`playwright` not installed. Please install using `pip install playwright` and run `playwright install`"
@@ -20,38 +19,58 @@ except ImportError:
 
 
 class BrowserbaseTools(Toolkit):
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        project_id: Optional[str] = None,
-    ):
+    def __init__(self):
         super().__init__(name="browserbase_tools")
-        self.api_key: Optional[str] = api_key or getenv("BROWSERBASE_API_KEY")
-        self.project_id: Optional[str] = project_id or getenv("BROWSERBASE_PROJECT_ID")
 
+        self.api_key = getenv("BROWSERBASE_API_KEY")
         if not self.api_key:
-            logger.error("BROWSERBASE_API_KEY not set. Please set the BROWSERBASE_API_KEY environment variable.")
-        if not self.project_id:
-            logger.error("BROWSERBASE_PROJECT_ID not set. Please set the BROWSERBASE_PROJECT_ID environment variable.")
+            raise ValueError(
+                f"{self.API_KEY_ENV_VAR} is required. Please set the {self.API_KEY_ENV_VAR} environment variable."
+            )
 
-        self.app: Browserbase = Browserbase(api_key=self.api_key)
+        self.project_id = getenv("BROWSERBASE_PROJECT_ID")
+        if not self.project_id:
+            raise ValueError(
+                f"{self.PROJECT_ID_ENV_VAR} is required. Please set the {self.PROJECT_ID_ENV_VAR} environment variable."
+            )
+
+        self.app = Browserbase(api_key=self.api_key)
 
         self._playwright = None
         self._browser = None
         self._page = None
+        self._session = None
+        self._connect_url = None
 
-        # Register the available functions
-        self.register(self.create_session)
         self.register(self.navigate_to)
         self.register(self.screenshot)
         self.register(self.get_page_content)
         self.register(self.close_session)
 
-    def _initialize_browser(self, connect_url: str):
-        """Initialize browser connection if not already initialized."""
+    def _ensure_session(self):
+        """Ensures a session exists, creating one if needed."""
+        if not self._session:
+            try:
+                self._session = self.app.sessions.create(project_id=self.project_id)
+                self._connect_url = self._session.connect_url
+                logger.debug(f"Created new session with ID: {self._session.id}")
+            except Exception as e:
+                logger.error(f"Failed to create session: {str(e)}")
+                raise
+
+    def _initialize_browser(self, connect_url: Optional[str] = None):
+        """
+        Initialize browser connection if not already initialized.
+        Use provided connect_url or ensure we have a session with a connect_url
+        """
+        if connect_url:
+            self._connect_url = connect_url
+        elif not self._connect_url:
+            self._ensure_session()
+
         if not self._playwright:
             self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.connect_over_cdp(connect_url)
+            self._browser = self._playwright.chromium.connect_over_cdp(self._connect_url)
             context = self._browser.contexts[0]
             self._page = context.pages[0] or context.new_page()
 
@@ -65,25 +84,24 @@ class BrowserbaseTools(Toolkit):
             self._playwright = None
         self._page = None
 
-    def create_session(self) -> str:
+    def _create_session(self) -> Dict[str, str]:
         """Creates a new browser session.
 
         Returns:
-            JSON string containing session details including session_id and connect_url.
+            Dictionary containing session details including session_id and connect_url.
         """
-        # Create a new session with default settings
-        session = self.app.sessions.create(project_id=self.project_id)
-        return json.dumps({"session_id": session.id, "connect_url": session.connect_url})
+        self._ensure_session()
+        return {"session_id": self._session.id, "connect_url": self._session.connect_url}
 
-    def navigate_to(self, connect_url: str, url: str) -> str:
-        """Navigates to a URL in the given session.
+    def navigate_to(self, url: str, connect_url: Optional[str] = None) -> str:
+        """Navigates to a URL.
 
         Args:
-            connect_url (str): The connection URL from the session
             url (str): The URL to navigate to
+            connect_url (str, optional): The connection URL from an existing session
 
         Returns:
-            JSON string with navigation result including page title
+            JSON string with navigation status
         """
         try:
             self._initialize_browser(connect_url)
@@ -94,13 +112,13 @@ class BrowserbaseTools(Toolkit):
             self._cleanup()
             raise e
 
-    def screenshot(self, connect_url: str, path: str, full_page: bool = True) -> str:
+    def screenshot(self, path: str, full_page: bool = True, connect_url: Optional[str] = None) -> str:
         """Takes a screenshot of the current page.
 
         Args:
-            connect_url (str): The connection URL from the session
             path (str): Where to save the screenshot
             full_page (bool): Whether to capture the full page
+            connect_url (str, optional): The connection URL from an existing session
 
         Returns:
             JSON string confirming screenshot was saved
@@ -113,11 +131,11 @@ class BrowserbaseTools(Toolkit):
             self._cleanup()
             raise e
 
-    def get_page_content(self, connect_url: str) -> str:
+    def get_page_content(self, connect_url: Optional[str] = None) -> str:
         """Gets the HTML content of the current page.
 
         Args:
-            connect_url (str): The connection URL from the session
+            connect_url (str, optional): The connection URL from an existing session
 
         Returns:
             The page HTML content
@@ -129,12 +147,10 @@ class BrowserbaseTools(Toolkit):
             self._cleanup()
             raise e
 
-    def close_session(self, session_id: str) -> str:
+    def close_session(self, session_id: Optional[str] = None) -> str:
         """Closes a browser session.
-
         Args:
-            session_id (str): The session ID to close
-
+            session_id (str, optional): The session ID to close. If not provided, will use the current session.
         Returns:
             JSON string with closure status
         """
@@ -142,11 +158,21 @@ class BrowserbaseTools(Toolkit):
             # First cleanup our local browser resources
             self._cleanup()
 
-            try:
-                # Try to delete the session, but don't worry if it fails
-                self.app.sessions.delete(session_id)
-            except Exception as e:
-                logger.debug(f"Session {session_id} may have already been closed: {str(e)}")
+            # Use provided session_id or fall back to the current session
+            session_id_to_close = session_id or (self._session.id if self._session else None)
+
+            if session_id_to_close:
+                try:
+                    self.app.sessions.delete(session_id_to_close)
+                    logger.debug(f"Closed session: {session_id_to_close}")
+                except Exception as e:
+                    logger.debug(f"Session {session_id_to_close} may have already been closed: {str(e)}")
+            else:
+                logger.warning("No session ID provided or available to close")
+
+            # Reset session state
+            self._session = None
+            self._connect_url = None
 
             return json.dumps(
                 {
