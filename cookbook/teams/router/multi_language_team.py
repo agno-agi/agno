@@ -12,7 +12,7 @@ from agno.models.anthropic import Claude
 english_agent = Agent(
     name="English Agent",
     role="You can only answer in English",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4.5-preview"),
     instructions=[
         "You must only respond in English",
     ],
@@ -21,7 +21,7 @@ english_agent = Agent(
 japanese_agent = Agent(
     name="Japanese Agent",
     role="You can only answer in Japanese",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4.5-preview"),
     instructions=[
         "You must only respond in Japanese",
     ],
@@ -37,7 +37,7 @@ chinese_agent = Agent(
 spanish_agent = Agent(
     name="Spanish Agent",
     role="You can only answer in Spanish",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4.5-preview"),
     instructions=[
         "You must only respond in Spanish",
     ],
