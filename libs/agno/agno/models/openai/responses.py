@@ -94,11 +94,11 @@ class OpenAIResponses(Model):
         Returns:
             Dict[str, Any]: Client parameters
         """
-        import os
+        from os import getenv
 
         # Fetch API key from env if not already set
         if not self.api_key:
-            self.api_key = os.getenv("OPENAI_API_KEY")
+            self.api_key = getenv("OPENAI_API_KEY")
             if not self.api_key:
                 logger.error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
 
@@ -526,12 +526,8 @@ class OpenAIResponses(Model):
         model_response.role = "assistant"
         for output in response.output:
             if output.type == "message":
-                if model_response.content is None:
-                    model_response.content = ""
                 # TODO: Support citations/annotations
-                for content in output.content:
-                    if content.type == "output_text":
-                        model_response.content += content.text
+                model_response.content = response.output_text
             elif output.type == "function_call":
                 if model_response.tool_calls is None:
                     model_response.tool_calls = []
