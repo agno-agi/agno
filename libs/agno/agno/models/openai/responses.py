@@ -40,7 +40,7 @@ class OpenAIResponses(Model):
     """
     Implementation for the OpenAI Responses API using direct chat completions.
 
-    For more information, see: https://platform.openai.com/docs/api-reference/chat
+    For more information, see: https://platform.openai.com/docs/api-reference/responses
     """
 
     id: str = "gpt-4o"
