@@ -1,3 +1,31 @@
+"""
+GitHub Authentication Setup Guide
+
+1. Getting Personal Access Token (PAT):
+   a. Navigate to GitHub Settings:
+      - Log into GitHub
+      - Click profile picture (top-right)
+      - Select "Settings"
+      - Go to "Developer settings" → "Personal access tokens" → "Tokens (classic)"
+
+   b. Generate New Token:
+      - Click "Generate new token (classic)"
+      - Add descriptive note
+      - Set expiration date
+      - Select scopes (minimum 'repo' access)
+      - Click "Generate token"
+      - IMPORTANT: Save token immediately - only shown once!
+
+2. Setting Environment Variables:
+
+   # For Public GitHub
+   export GITHUB_ACCESS_TOKEN="your_token_here"
+   export GITHUB_BASE_URL="https://api.github.com"
+
+   # For Enterprise GitHub
+   export GITHUB_BASE_URL="https://YOUR-ENTERPRISE-HOSTNAME/api/v3"
+"""
+
 from agno.agent import Agent
 from agno.tools.github import GithubTools
 

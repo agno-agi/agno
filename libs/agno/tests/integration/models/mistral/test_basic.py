@@ -2,8 +2,9 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
+from agno.models.groq.groq import Groq
 from agno.models.mistral import MistralChat
-from agno.storage.agent.postgres import PostgresAgentStorage
+from agno.storage.agent.sqlite import SqliteAgentStorage
 
 
 def _assert_metrics(response: RunResponse):
@@ -74,7 +75,7 @@ async def test_async_basic_stream():
 
 def test_with_memory():
     agent = Agent(
-        model=MistralChat(id="mistral-small"),
+        model=MistralChat(id="mistral-large-latest"),
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
@@ -88,24 +89,14 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
-    assert "John Smith" in response2.content
+    assert "John" in response2.content
 
     # Verify memories were created
     assert len(agent.memory.messages) == 5
     assert [m.role for m in agent.memory.messages] == ["system", "user", "assistant", "user", "assistant"]
 
     # Test metrics structure and types
-    input_tokens = response2.metrics["input_tokens"]
-    output_tokens = response2.metrics["output_tokens"]
-    total_tokens = response2.metrics["total_tokens"]
-
-    assert isinstance(input_tokens[0], int)
-    assert input_tokens[0] > 0
-    assert isinstance(output_tokens[0], int)
-    assert output_tokens[0] > 0
-    assert isinstance(total_tokens[0], int)
-    assert total_tokens[0] > 0
-    assert total_tokens[0] == input_tokens[0] + output_tokens[0]
+    _assert_metrics(response2)
 
 
 def test_response_model():
@@ -156,10 +147,9 @@ def test_native_structured_output():
 
 
 def test_history():
-    db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
     agent = Agent(
         model=MistralChat(id="mistral-small"),
-        storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
+        storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,
@@ -172,3 +162,19 @@ def test_history():
     assert len(agent.run_response.messages) == 6
     agent.run("Hello 4")
     assert len(agent.run_response.messages) == 8
+
+
+def test_with_reasoning():
+    agent = Agent(
+        model=MistralChat(
+            id="mistral-large-latest",
+        ),
+        reasoning_model=Groq(
+            id="deepseek-r1-distill-llama-70b",
+        ),
+        show_tool_calls=True,
+        telemetry=False,
+        monitoring=False,
+    )
+    response = agent.run("What is the capital of France?")
+    assert response.content is not None

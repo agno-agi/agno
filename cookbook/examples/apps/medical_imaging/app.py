@@ -75,17 +75,18 @@ def main():
 
                 with st.spinner("🔄 Analyzing image... Please wait."):
                     try:
-                        # Use AgnoImage for the agent
-                        agno_image = AgnoImage(filepath=image_path)
+                        # Read the image file as binary
+                        with open(image_path, "rb") as f:
+                            image_bytes = f.read()
+                        # creating an instance of Image
+                        agno_image = AgnoImage(content=image_bytes, format="png")
+
                         prompt = (
                             f"Analyze this medical image considering the following context: {additional_info}"
                             if additional_info
                             else "Analyze this medical image and provide detailed findings."
                         )
-                        response = agent.run(
-                            prompt,
-                            images=[agno_image],
-                        )
+                        response = agent.run(prompt, images=[agno_image])
                         st.markdown("### 📋 Analysis Results")
                         st.markdown("---")
                         if hasattr(response, "content"):
@@ -111,6 +112,7 @@ def main():
                     finally:
                         if os.path.exists(image_path):
                             os.remove(image_path)
+
     else:
         st.info("👆 Please upload a medical image to begin analysis")
 

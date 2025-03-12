@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -25,12 +26,6 @@ try:
     from huggingface_hub.errors import InferenceTimeoutError
 except (ModuleNotFoundError, ImportError):
     raise ImportError("`huggingface_hub` not installed. Please install using `pip install huggingface_hub`")
-
-
-@dataclass
-class StreamData:
-    response_content: str = ""
-    response_tool_calls: Optional[List[ChatCompletionStreamOutputDeltaToolCall]] = None
 
 
 @dataclass
@@ -170,8 +165,6 @@ class HuggingFace(Model):
             _request_params["max_tokens"] = self.max_tokens
         if self.presence_penalty is not None:
             _request_params["presence_penalty"] = self.presence_penalty
-        if self.response_format is not None:
-            _request_params["response_format"] = self.response_format
         if self.seed is not None:
             _request_params["seed"] = self.seed
         if self.stop is not None:
@@ -223,6 +216,31 @@ class HuggingFace(Model):
         cleaned_dict = {k: v for k, v in _dict.items() if v is not None}
         return cleaned_dict
 
+    def _format_message(self, message: Message) -> Dict[str, Any]:
+        """
+        Format a message into the format expected by HuggingFace.
+
+        Args:
+            message (Message): The message to format.
+
+        Returns:
+            Dict[str, Any]: The formatted message.
+        """
+        message_dict = {
+            "role": message.role,
+            "content": message.content if message.content is not None else "",
+            "name": message.name or message.tool_name,
+            "tool_call_id": message.tool_call_id,
+            "tool_calls": message.tool_calls,
+        }
+
+        message_dict = {k: v for k, v in message_dict.items() if v is not None}
+
+        if message.tool_calls is None or len(message.tool_calls) == 0:
+            message_dict["tool_calls"] = None
+
+        return message_dict
+
     def invoke(self, messages: List[Message]) -> Union[ChatCompletionOutput]:
         """
         Send a chat completion request to the HuggingFace Hub.
@@ -236,7 +254,7 @@ class HuggingFace(Model):
         try:
             return self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[m.serialize_for_model() for m in messages],
+                messages=[self._format_message(m) for m in messages],
                 **self.request_kwargs,
             )
         except InferenceTimeoutError as e:
@@ -260,7 +278,7 @@ class HuggingFace(Model):
             async with self.get_async_client() as client:
                 return await client.chat.completions.create(
                     model=self.id,
-                    messages=[m.serialize_for_model() for m in messages],
+                    messages=[self._format_message(m) for m in messages],
                     **self.request_kwargs,
                 )
         except InferenceTimeoutError as e:
@@ -283,7 +301,7 @@ class HuggingFace(Model):
         try:
             yield from self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[m.serialize_for_model() for m in messages],  # type: ignore
+                messages=[self._format_message(m) for m in messages],
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.request_kwargs,
@@ -309,7 +327,7 @@ class HuggingFace(Model):
             async with self.get_async_client() as client:
                 stream = await client.chat.completions.create(
                     model=self.id,
-                    messages=[m.serialize_for_model() for m in messages],
+                    messages=[self._format_message(m) for m in messages],
                     stream=True,
                     stream_options={"include_usage": True},
                     **self.request_kwargs,
@@ -378,6 +396,9 @@ class HuggingFace(Model):
 
         if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
             model_response.tool_calls = [asdict(t) for t in response_message.tool_calls]
+            for tool_call in model_response.tool_calls:
+                if isinstance(tool_call["function"]["arguments"], dict):
+                    tool_call["function"]["arguments"] = json.dumps(tool_call["function"]["arguments"])
 
         try:
             if (
@@ -409,6 +430,8 @@ class HuggingFace(Model):
             if response_delta_message.content is not None:
                 model_response.content = response_delta_message.content
             if response_delta_message.tool_calls is not None and len(response_delta_message.tool_calls) > 0:
-                model_response.tool_calls = response_delta_message.tool_calls  # type: ignore
+                model_response.tool_calls = [response_delta_message.tool_calls]  # type: ignore
+        if response_delta.usage is not None:
+            model_response.response_usage = response_delta.usage
 
         return model_response

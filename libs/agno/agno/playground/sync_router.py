@@ -121,6 +121,24 @@ def get_sync_playground_router(
             raise HTTPException(status_code=400, detail="Empty file")
         return Image(content=content)
 
+    def process_audio(file: UploadFile) -> Audio:
+        content = file.file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Empty file")
+        format = None
+        if file.filename and "." in file.filename:
+            format = file.filename.split(".")[-1].lower()
+        elif file.content_type:
+            format = file.content_type.split("/")[-1]
+
+        return Audio(content=content, format=format)
+
+    def process_video(file: UploadFile) -> Video:
+        content = file.file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Empty file")
+        return Video(content=content, format=file.content_type)
+
     @playground_router.post("/agents/{agent_id}/runs")
     def create_agent_run(
         agent_id: str,
@@ -154,6 +172,8 @@ def get_sync_playground_router(
             new_agent_instance.monitoring = False
 
         base64_images: List[Image] = []
+        base64_audios: List[Audio] = []
+        base64_videos: List[Video] = []
 
         if files:
             for file in files:
@@ -163,6 +183,32 @@ def get_sync_playground_router(
                         base64_images.append(base64_image)
                     except Exception as e:
                         logger.error(f"Error processing image {file.filename}: {e}")
+                        continue
+                elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
+                    try:
+                        base64_audio = process_audio(file)
+                        base64_audios.append(base64_audio)
+                    except Exception as e:
+                        logger.error(f"Error processing audio {file.filename}: {e}")
+                        continue
+                elif file.content_type in [
+                    "video/x-flv",
+                    "video/quicktime",
+                    "video/mpeg",
+                    "video/mpegs",
+                    "video/mpgs",
+                    "video/mpg",
+                    "video/mpg",
+                    "video/mp4",
+                    "video/webm",
+                    "video/wmv",
+                    "video/3gpp",
+                ]:
+                    try:
+                        base64_video = process_video(file)
+                        base64_videos.append(base64_video)
+                    except Exception as e:
+                        logger.error(f"Error processing video {file.filename}: {e}")
                         continue
                 else:
                     # Check for knowledge base before processing documents
@@ -219,7 +265,13 @@ def get_sync_playground_router(
 
         if stream:
             return StreamingResponse(
-                chat_response_streamer(new_agent_instance, message, images=base64_images if base64_images else None),
+                chat_response_streamer(
+                    new_agent_instance,
+                    message,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
+                ),
                 media_type="text/event-stream",
             )
         else:
@@ -228,13 +280,15 @@ def get_sync_playground_router(
                 new_agent_instance.run(
                     message=message,
                     images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
                     stream=False,
                 ),
             )
-            return run_response
+            return run_response.to_dict()
 
     @playground_router.get("/agents/{agent_id}/sessions")
-    def get_user_agent_sessions(agent_id: str, user_id: str = Query(..., min_length=1)):
+    def get_user_agent_sessions(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         logger.debug(f"AgentSessionsRequest: {agent_id} {user_id}")
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
@@ -258,7 +312,7 @@ def get_sync_playground_router(
         return agent_sessions
 
     @playground_router.get("/agents/{agent_id}/sessions/{session_id}")
-    def get_user_agent_session(agent_id: str, session_id: str, user_id: str = Query(..., min_length=1)):
+    def get_user_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         logger.debug(f"AgentSessionsRequest: {agent_id} {user_id} {session_id}")
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
@@ -292,7 +346,7 @@ def get_sync_playground_router(
         return JSONResponse(status_code=404, content="Session not found.")
 
     @playground_router.delete("/agents/{agent_id}/sessions/{session_id}")
-    def delete_agent_session(agent_id: str, session_id: str, user_id: str = Query(..., min_length=1)):
+    def delete_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
             return JSONResponse(status_code=404, content="Agent not found.")
@@ -364,7 +418,7 @@ def get_sync_playground_router(
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
     @playground_router.get("/workflows/{workflow_id}/sessions", response_model=List[WorkflowSessionResponse])
-    def get_all_workflow_sessions(workflow_id: str, user_id: str = Query(..., min_length=1)):
+    def get_all_workflow_sessions(workflow_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, workflows)
         if not workflow:
@@ -394,7 +448,7 @@ def get_sync_playground_router(
         ]
 
     @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}", response_model=WorkflowSession)
-    def get_workflow_session(workflow_id: str, session_id: str, user_id: str = Query(..., min_length=1)):
+    def get_workflow_session(workflow_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, workflows)
         if not workflow:

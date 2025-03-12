@@ -1,6 +1,6 @@
 agno
 anthropic
-dataclasses
+groq
 google-genai
 nest-asyncio
 ollama
@@ -11,4 +11,3 @@ pip-tools
 python-dotenv
 rich
 streamlit
-typing

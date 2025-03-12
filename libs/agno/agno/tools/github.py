@@ -24,7 +24,9 @@ class GithubTools(Toolkit):
         get_pull_request_changes: bool = True,
         create_issue: bool = True,
         create_repository: bool = True,
+        delete_repository: bool = False,
         get_repository_languages: bool = True,
+        list_branches: bool = True,
     ):
         super().__init__(name="github")
 
@@ -49,7 +51,10 @@ class GithubTools(Toolkit):
             self.register(self.create_issue)
         if create_repository:
             self.register(self.create_repository)
-
+        if delete_repository:
+            self.register(self.delete_repository)
+        if list_branches:
+            self.register(self.list_branches)
         if get_repository_languages:
             self.register(self.get_repository_languages)
 
@@ -573,4 +578,39 @@ class GithubTools(Toolkit):
             return json.dumps({"message": f"Issue #{issue_number} updated."}, indent=2)
         except GithubException as e:
             logger.error(f"Error editing issue: {e}")
+            return json.dumps({"error": str(e)})
+
+    def delete_repository(self, repo_name: str) -> str:
+        """Delete a repository (requires admin permissions).
+
+            Args:
+                repo_name (str): The full name of the repository to delete (e.g., 'owner/repo').
+
+        Returns:
+            A JSON-formatted string with success message or error.
+        """
+        logger.debug(f"Deleting repository: {repo_name}")
+        try:
+            repo = self.g.get_repo(repo_name)
+            repo.delete()
+            return json.dumps({"message": f"Repository {repo_name} deleted successfully"}, indent=2)
+        except GithubException as e:
+            logger.error(f"Error deleting repository: {e}")
+            return json.dumps({"error": str(e)})
+
+    def list_branches(self, repo_name: str) -> str:
+        """List all branches in a repository.
+
+        Args:
+            repo_name (str): Full repository name (e.g., 'owner/repo').
+
+        Returns:
+            JSON list of branch names.
+        """
+        try:
+            repo = self.g.get_repo(repo_name)
+            branches = [branch.name for branch in repo.get_branches()]
+            return json.dumps(branches, indent=2)
+        except GithubException as e:
+            logger.error(f"Error listing branches: {e}")
             return json.dumps({"error": str(e)})

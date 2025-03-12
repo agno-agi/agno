@@ -26,20 +26,24 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False
+    )
 
     # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None
     assert len(response.messages) == 3
-    assert [m.role for m in response.messages] == ["system", "user", "model"]
+    assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
     _assert_metrics(response)
 
 
 def test_basic_stream():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False
+    )
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -57,19 +61,23 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False
+    )
 
     response = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
     assert len(response.messages) == 3
-    assert [m.role for m in response.messages] == ["system", "user", "model"]
+    assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
 
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False
+    )
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -81,7 +89,13 @@ async def test_async_basic_stream():
 
 
 def test_exception_handling():
-    agent = Agent(model=Gemini(id="gemini-1.5-flash-made-up-id"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Gemini(id="gemini-1.5-flash-made-up-id"),
+        exponential_backoff=True,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     # Print the response in the terminal
     with pytest.raises(ModelProviderError) as exc:
@@ -95,6 +109,7 @@ def test_exception_handling():
 def test_with_memory():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
@@ -112,25 +127,16 @@ def test_with_memory():
 
     # Verify memories were created
     assert len(agent.memory.messages) == 5
-    assert [m.role for m in agent.memory.messages] == ["system", "user", "model", "user", "model"]
+    assert [m.role for m in agent.memory.messages] == ["system", "user", "assistant", "user", "assistant"]
 
     # Test metrics structure and types
-    input_tokens = response2.metrics["input_tokens"]
-    output_tokens = response2.metrics["output_tokens"]
-    total_tokens = response2.metrics["total_tokens"]
-
-    assert isinstance(input_tokens[0], int)
-    assert input_tokens[0] > 0
-    assert isinstance(output_tokens[0], int)
-    assert output_tokens[0] > 0
-    assert isinstance(total_tokens[0], int)
-    assert total_tokens[0] > 0
-    assert total_tokens[0] == input_tokens[0] + output_tokens[0]
+    _assert_metrics(response2)
 
 
 def test_persistent_memory():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
         tools=[DuckDuckGoTools()],
         markdown=True,
         show_tool_calls=True,
@@ -168,7 +174,13 @@ def test_structured_output():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=Gemini(id="gemini-1.5-flash"), response_model=MovieScript, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
+        response_model=MovieScript,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response = agent.run("Create a movie about time travel")
 
@@ -187,6 +199,7 @@ def test_structured_output_native():
 
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
         response_model=MovieScript,
         structured_outputs=True,
         telemetry=False,
@@ -220,6 +233,7 @@ def test_history():
     assert len(agent.run_response.messages) == 8
 
 
+@pytest.mark.skip(reason="Need to fix this by getting credentials in Github actions")
 def test_custom_client_params():
     generation_config = types.GenerateContentConfig(
         temperature=0,
@@ -255,8 +269,8 @@ def test_custom_client_params():
     agent = Agent(
         model=Gemini(
             id="gemini-1.5-flash",
+            exponential_backoff=True,
             vertexai=True,
-            project_id="394942673418",
             location="us-central1",
             generation_config=generation_config,
             safety_settings=safety_settings,
