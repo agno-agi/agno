@@ -234,8 +234,7 @@ def test_make_request_error_response(api_tools):
     mock_error_response.status_code = 404
     mock_error_response.ok = False
     mock_error_response.text = '{"status": "error", "message": "Breed not found"}'
-    mock_error_response.json.return_value = {
-        "status": "error", "message": "Breed not found"}
+    mock_error_response.json.return_value = {"status": "error", "message": "Breed not found"}
     mock_error_response.headers = {"Content-Type": "application/json"}
 
     with patch("requests.request", return_value=mock_error_response):
@@ -256,8 +255,7 @@ def test_make_request_json_decode_error(api_tools):
     mock_invalid_json.status_code = 200
     mock_invalid_json.ok = True
     mock_invalid_json.text = "Not a JSON response"
-    mock_invalid_json.json.side_effect = json.JSONDecodeError(
-        "Invalid JSON", "Not a JSON response", 0)
+    mock_invalid_json.json.side_effect = json.JSONDecodeError("Invalid JSON", "Not a JSON response", 0)
     mock_invalid_json.headers = {"Content-Type": "text/plain"}
 
     with patch("requests.request", return_value=mock_invalid_json):
@@ -273,9 +271,7 @@ def test_make_request_json_decode_error(api_tools):
 
 def test_make_request_network_error(api_tools):
     """Test request with network error."""
-    with patch(
-        "requests.request", side_effect=requests.exceptions.RequestException("Connection error")
-    ):
+    with patch("requests.request", side_effect=requests.exceptions.RequestException("Connection error")):
         result = api_tools.make_request(
             endpoint="/breeds/image/random",
             method="GET",
@@ -324,31 +320,3 @@ def test_make_request_all_http_methods(api_tools, mock_dog_image_response):
                 verify=True,
                 timeout=10,
             )
-
-
-def test_integration_dog_api():
-    """Integration test with actual Dog API (optional, can be skipped in CI)."""
-    # This test makes actual API calls - can be skipped in CI environments
-    # by using pytest.mark.skipif if needed
-    tools = CustomApiTools(base_url="https://dog.ceo/api")
-
-    # Test random image endpoint
-    image_result = tools.make_request(
-        endpoint="/breeds/image/random",
-        method="GET",
-    )
-    image_data = json.loads(image_result)
-    assert image_data["status_code"] == 200
-    assert "message" in image_data["data"]
-    assert "https://images.dog.ceo" in image_data["data"]["message"]
-
-    # Test breeds list endpoint
-    breeds_result = tools.make_request(
-        endpoint="/breeds/list/all",
-        method="GET",
-    )
-    breeds_data = json.loads(breeds_result)
-    assert breeds_data["status_code"] == 200
-    assert "message" in breeds_data["data"]
-    assert isinstance(breeds_data["data"]["message"], dict)
-    assert len(breeds_data["data"]["message"]) > 0
