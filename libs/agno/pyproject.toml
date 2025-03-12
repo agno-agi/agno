@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.1.9"
+version = "1.1.10"
 description = "Agno: a lightweight framework for building multi-modal Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -67,6 +67,7 @@ elevenlabs = ["elevenlabs"]
 fal = ["fal_client"]
 webex = ["webexpythonsdk"]
 mcp = ["mcp"]
+browserbase = ["browserbase", "playwright"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -75,7 +76,7 @@ postgres = ["psycopg-binary", "psycopg"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb", "tantivy"]
+lancedb = ["lancedb==0.20.0", "tantivy"]
 qdrant = ["qdrant-client"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
@@ -124,6 +125,7 @@ tools = [
   "agno[fal]",
   "agno[webex]",
   "agno[mcp]",
+  "agno[browserbase]",
 ]
 
 # All storage
@@ -202,6 +204,7 @@ exclude = ["tests*"]
 
 [[tool.mypy.overrides]]
 module = [
+  "agentql.*",
   "altair.*",
   "anthropic.*",
   "apify_client.*",
@@ -213,6 +216,7 @@ module = [
   "botocore.*",
   "bs4.*",
   "bson.*",
+  "browserbase.*",
   "cassio.*",
   "chonkie.*",
   "chromadb.*",
@@ -260,6 +264,7 @@ module = [
   "PIL.*",
   "pinecone_text.*",
   "pinecone.*",
+  "playwright.sync_api.*",
   "psycopg.*",
   "psycopg2.*",
   "pyarrow.*",

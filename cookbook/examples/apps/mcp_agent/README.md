@@ -30,6 +30,8 @@ UAgI (Universal Agent Interface) is a powerful agent application that leverages 
 - Only works with 1 MCP server at a time
 - Changing MCP servers resets the agent
 - Only supports 2 MCP servers at the moment
+- Chat history is broken
+- MCP Cleanup is not working, so memory leaks are possible
 
 ## 🚀 Quick Start
 
