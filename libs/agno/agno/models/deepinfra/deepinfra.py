@@ -22,7 +22,7 @@ class DeepInfra(OpenAILike):
 
     id: str = "meta-llama/Llama-2-70b-chat-hf"
     name: str = "DeepInfra"
-    provider: str = "DeepInfra " + id
+    provider: str = "DeepInfra"
 
     api_key: Optional[str] = getenv("DEEPINFRA_API_KEY", None)
     base_url: str = "https://api.deepinfra.com/v1/openai"

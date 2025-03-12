@@ -89,6 +89,7 @@ class Model(ABC):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
 
+
     def to_dict(self) -> Dict[str, Any]:
         fields = {"name", "id", "provider"}
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
@@ -161,6 +162,7 @@ class Model(ABC):
             ModelResponse: The model's response
         """
         logger.debug(f"---------- {self.get_provider()} Response Start ----------")
+        logger.debug(f"---------- Model: {self.id} ----------")
         self._log_messages(messages)
         model_response = ModelResponse()
 
@@ -223,6 +225,7 @@ class Model(ABC):
             ModelResponse: The model's response
         """
         logger.debug(f"---------- {self.get_provider()} Async Response Start ----------")
+        logger.debug(f"---------- Model: {self.id} ----------")
         self._log_messages(messages)
         model_response = ModelResponse()
 
@@ -460,6 +463,7 @@ class Model(ABC):
             Iterator[ModelResponse]: Iterator of model responses
         """
         logger.debug(f"---------- {self.get_provider()} Response Stream Start ----------")
+        logger.debug(f"---------- Model: {self.id} ----------")
         self._log_messages(messages)
 
         while True:
@@ -555,6 +559,7 @@ class Model(ABC):
             AsyncIterator[ModelResponse]: Async iterator of model responses
         """
         logger.debug(f"---------- {self.get_provider()} Async Response Stream Start ----------")
+        logger.debug(f"---------- Model: {self.id} ----------")
         self._log_messages(messages)
 
         while True:

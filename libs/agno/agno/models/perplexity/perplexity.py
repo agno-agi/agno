@@ -23,7 +23,7 @@ class Perplexity(OpenAILike):
 
     id: str = "sonar"
     name: str = "Perplexity"
-    provider: str = "Perplexity: " + id
+    provider: str = "Perplexity"
 
     api_key: Optional[str] = getenv("PERPLEXITY_API_KEY")
     base_url: str = "https://api.perplexity.ai/"
