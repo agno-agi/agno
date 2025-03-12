@@ -3,6 +3,23 @@ from os import getenv
 from agno.agent import Agent
 from agno.tools.browserbase import BrowserbaseTools
 
+# Browserbase Configuration
+# -------------------------------
+# These environment variables are required for the BrowserbaseTools to function properly.
+# You can set them in your .env file or export them directly in your terminal.
+
+# BROWSERBASE_API_KEY: Your API key from Browserbase dashboard
+#   - Required for authentication
+#   - Format: Starts with "bb_live_" or "bb_test_" followed by a unique string
+
+# BROWSERBASE_PROJECT_ID: The project ID from your Browserbase dashboard
+#   - Required to identify which project to use for browser sessions
+#   - Format: UUID string (8-4-4-4-12 format)
+
+# BROWSERBASE_BASE_URL: The Browserbase API endpoint
+#   - Optional: Defaults to https://api.browserbase.com if not specified
+#   - Only change this if you're using a custom API endpoint or proxy
+
 agent = Agent(
     name="Web Automation Assistant",
     tools=[BrowserbaseTools()],
