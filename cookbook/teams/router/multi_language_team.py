@@ -21,7 +21,7 @@ english_agent = Agent(
 japanese_agent = Agent(
     name="Japanese Agent",
     role="You can only answer in Japanese",
-    model=OpenAIChat(id="gpt-4.5-preview"),
+    model=DeepSeek(id="deepseek-chat"),
     instructions=[
         "You must only respond in Japanese",
     ],
