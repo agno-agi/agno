@@ -35,13 +35,13 @@ class BrowserbaseTools(Toolkit):
         self.api_key = api_key or getenv("BROWSERBASE_API_KEY")
         if not self.api_key:
             raise ValueError(
-                f"{self.API_KEY_ENV_VAR} is required. Please set the {self.API_KEY_ENV_VAR} environment variable."
+                f"BROWSERBASE_API_KEY is required. Please set the BROWSERBASE_API_KEY environment variable."
             )
 
         self.project_id = project_id or getenv("BROWSERBASE_PROJECT_ID")
         if not self.project_id:
             raise ValueError(
-                f"{self.PROJECT_ID_ENV_VAR} is required. Please set the {self.PROJECT_ID_ENV_VAR} environment variable."
+                f"BROWSERBASE_PROJECT_ID is required. Please set the BROWSERBASE_PROJECT_ID environment variable."
             )
 
         self.base_url = base_url or getenv("BROWSERBASE_BASE_URL")
