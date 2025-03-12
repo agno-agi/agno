@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agno.media import Audio, AudioResponse, Image, Video
+from agno.media import Audio, AudioResponse, File, Image, Video
 from agno.utils.log import get_logger
 from agno.utils.timer import Timer
 
@@ -141,6 +141,7 @@ class Message(BaseModel):
     audio: Optional[Sequence[Audio]] = None
     images: Optional[Sequence[Image]] = None
     videos: Optional[Sequence[Video]] = None
+    files: Optional[Sequence[File]] = None
 
     # Output from the models
     audio_output: Optional[AudioResponse] = None
@@ -295,6 +296,8 @@ class Message(BaseModel):
             _logger(f"Videos added: {len(self.videos)}")
         if self.audio:
             _logger(f"Audio Files added: {len(self.audio)}")
+        if self.files:
+            _logger(f"Files added: {len(self.files)}")
 
         metrics_header = ' TOOL METRICS ' if self.role == 'tool' else ' METRICS '
         if metrics and self.metrics is not None and self.metrics != MessageMetrics():

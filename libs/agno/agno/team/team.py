@@ -17,7 +17,7 @@ from agno.tools.function import Function, get_entrypoint_docstring
 from agno.agent import Agent
 from agno.agent.metrics import SessionMetrics
 from agno.exceptions import ModelProviderError, RunCancelledException
-from agno.media import Audio, AudioArtifact, AudioResponse, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
@@ -365,6 +365,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> TeamRunResponse: ...
 
@@ -379,6 +380,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> Iterator[TeamRunResponse]: ...
 
@@ -392,6 +394,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunResponse, Iterator[TeamRunResponse]]:
         """Run the Team and return the response."""
@@ -447,18 +450,18 @@ class Team:
                 _built_in_tools.append(self._get_team_history)
 
             if self.mode == "router":
-                user_message = self._get_user_message(message, audio=audio, images=images, videos=videos)
-                forward_task_func: Function = self.get_forward_task_function(message=user_message, stream=False, async_mode=False, images=images, videos=videos, audio=audio)
+                user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
+                forward_task_func: Function = self.get_forward_task_function(message=user_message, stream=False, async_mode=False, images=images, videos=videos, audio=audio, files=files)
                 _built_in_tools.append(forward_task_func)
                 self.model.tool_choice = "required"
             elif self.mode == "coordinator":
-                _built_in_tools.append(self.get_transfer_task_function(stream=False, async_mode=False, images=images, videos=videos, audio=audio))
+                _built_in_tools.append(self.get_transfer_task_function(stream=False, async_mode=False, images=images, videos=videos, audio=audio, files=files))
                 self.model.tool_choice = "auto"
 
                 if self.update_team_context:
                     _built_in_tools.append(self._set_team_context)
             elif self.mode == "collaborative":
-                run_member_agents_func = self.get_run_member_agents_function(stream=False, async_mode=False, images=images, videos=videos, audio=audio)
+                run_member_agents_func = self.get_run_member_agents_function(stream=False, async_mode=False, images=images, videos=videos, audio=audio, files=files)
                 _built_in_tools.append(run_member_agents_func)
                 self.model.tool_choice = "auto"
 
@@ -493,6 +496,7 @@ class Team:
                         audio=audio,
                         images=images,
                         videos=videos,
+                        files=files,
                         **kwargs,
                     )
 
@@ -861,6 +865,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> TeamRunResponse: ...
 
@@ -875,6 +880,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[TeamRunResponse]: ...
 
@@ -888,6 +894,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunResponse, AsyncIterator[TeamRunResponse]]:
         """Run the Team asynchronously and return the response."""
@@ -904,6 +911,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> TeamRunResponse:
         """Run the Team and return the response."""
@@ -918,6 +926,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[TeamRunResponse]:
         """Run the Team and return the response."""
@@ -941,6 +950,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> None:
         if not tags_to_include_in_markdown:
@@ -963,6 +973,7 @@ class Team:
                                         audio=audio,
                                         images=images,
                                         videos=videos,
+                                        files=files,
                                         **kwargs)
         else:
 
@@ -975,6 +986,7 @@ class Team:
                                 audio=audio,
                                 images=images,
                                 videos=videos,
+                                files=files,
                                 **kwargs)
 
     def _print_response(self,
@@ -987,6 +999,7 @@ class Team:
                         audio: Optional[Sequence[Audio]] = None,
                         images: Optional[Sequence[Image]] = None,
                         videos: Optional[Sequence[Video]] = None,
+                        files: Optional[Sequence[File]] = None,
                         **kwargs: Any,
                         ) -> None:
         import json
@@ -1024,6 +1037,7 @@ class Team:
                     audio=audio,
                     images=images,
                     videos=videos,
+                    files=files,
                     stream=False,
                     **kwargs,
                 )
@@ -1115,6 +1129,7 @@ class Team:
                                 audio: Optional[Sequence[Audio]] = None,
                                 images: Optional[Sequence[Image]] = None,
                                 videos: Optional[Sequence[Video]] = None,
+                                files: Optional[Sequence[File]] = None,
                                 **kwargs: Any,
                                ) -> None:
 
@@ -1154,7 +1169,7 @@ class Team:
 
             # Get response from the team
             stream_resp = self.run(
-                message=message, audio=audio, images=images, videos=videos, stream=True, **kwargs
+                message=message, audio=audio, images=images, videos=videos, files=files, stream=True, **kwargs
             )
             for resp in stream_resp:
                 if isinstance(resp, TeamRunResponse):
@@ -1270,6 +1285,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> None:
         pass
@@ -1842,6 +1858,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -1893,7 +1910,7 @@ class Team:
                 run_messages.messages += history_copy
 
         # 3.Add user message to run_messages
-        user_message = self._get_user_message(message, audio=audio, images=images, videos=videos)
+        user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
 
         # Add user message to run_messages
         if user_message is not None:
@@ -1907,7 +1924,8 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
-                **kwargs,):
+        files: Optional[Sequence[File]] = None,
+        **kwargs,):
 
         # Build user message if message is None, str or list
         if message is None or isinstance(message, str) or isinstance(message, list):
@@ -1932,6 +1950,7 @@ class Team:
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 **kwargs,
             )
 
@@ -2140,7 +2159,8 @@ class Team:
                                    async_mode: bool = False,
                                   images: Optional[List[Image]] = None,
                                   videos: Optional[List[Video]] = None,
-                                  audio: Optional[List[Audio]] = None) -> Function:
+                                  audio: Optional[List[Audio]] = None,
+                                  files: Optional[List[File]] = None) -> Function:
 
         def _run_member_agents(task_description: str, expected_output: Optional[str] = None) -> Iterator[str]:
             """
@@ -2185,12 +2205,12 @@ class Team:
             for member_agent_index, member_agent in enumerate(self.members):
 
                 if stream:
-                    member_agent_run_response_stream = member_agent.run(member_agent_task, images=images, videos=videos, audio=audio, stream=True)
+                    member_agent_run_response_stream = member_agent.run(member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True)
                     for member_agent_run_response_chunk in member_agent_run_response_stream:
                         check_if_run_cancelled(member_agent_run_response_chunk)
                         yield member_agent_run_response_chunk.content
                 else:
-                    member_agent_run_response = member_agent.run(member_agent_task, images=images, videos=videos, audio=audio, stream=False)
+                    member_agent_run_response = member_agent.run(member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False)
 
                     check_if_run_cancelled(member_agent_run_response)
 
@@ -2268,9 +2288,9 @@ class Team:
             tasks = []
             for member_agent_index, member_agent in enumerate(self.members):
                 if stream:
-                    task = member_agent.arun(member_agent_task, images=images, videos=videos, audio=audio, stream=True)
+                    task = member_agent.arun(member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True)
                 else:
-                    task = member_agent.arun(member_agent_task, images=images, videos=videos, audio=audio, stream=False)
+                    task = member_agent.arun(member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False)
                 tasks.append(task)
 
             # Gather and process responses
@@ -2328,7 +2348,8 @@ class Team:
                                    async_mode: bool = False,
                                   images: Optional[List[Image]] = None,
                                   videos: Optional[List[Video]] = None,
-                                  audio: Optional[List[Audio]] = None) -> Function:
+                                  audio: Optional[List[Audio]] = None,
+                                  files: Optional[List[File]] = None) -> Function:
         def _transfer_task_to_member(agent_name: str, task_description: str, expected_output: str) -> Iterator[str]:
             """
             Use this function to transfer a task to the nominated agent.
@@ -2376,12 +2397,12 @@ class Team:
             use_agent_logger()
 
             if stream:
-                member_agent_run_response_stream = member_agent.run(member_agent_task, images=images, videos=videos, audio=audio, stream=True)
+                member_agent_run_response_stream = member_agent.run(member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True)
                 for member_agent_run_response_chunk in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_response_chunk)
                     yield member_agent_run_response_chunk.content
             else:
-                member_agent_run_response = member_agent.run(member_agent_task, images=images, videos=videos, audio=audio, stream=False)
+                member_agent_run_response = member_agent.run(member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False)
 
                 check_if_run_cancelled(member_agent_run_response)
 
@@ -2464,12 +2485,12 @@ class Team:
             use_agent_logger()
 
             if stream:
-                member_agent_run_response_stream = await member_agent.arun(member_agent_task, images=images, videos=videos, audio=audio, stream=True)
+                member_agent_run_response_stream = await member_agent.arun(member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True)
                 for member_agent_run_response_chunk in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_response_chunk)
                     yield member_agent_run_response_chunk.content
             else:
-                member_agent_run_response = await member_agent.arun(member_agent_task, images=images, videos=videos, audio=audio, stream=False)
+                member_agent_run_response = await member_agent.arun(member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False)
                 check_if_run_cancelled(member_agent_run_response)
                 if member_agent_run_response.content is None:
                     yield "No response from the member agent."
@@ -2517,7 +2538,8 @@ class Team:
                                   async_mode: bool = False,
                                   images: Optional[Sequence[Image]] = None,
                                   videos: Optional[Sequence[Video]] = None,
-                                  audio: Optional[Sequence[Audio]] = None) -> Function:
+                                  audio: Optional[Sequence[Audio]] = None,
+                                  files: Optional[Sequence[File]] = None) -> Function:
         def _forward_task_to_member(agent_name: str, expected_output: Optional[str] = None) -> Iterator[str]:
             """
             Use this function to forward the request to the nominated agent.
@@ -2546,11 +2568,11 @@ class Team:
 
             # 2. Get the response from the member agent
             if stream:
-                member_agent_run_response_stream = member_agent.run(member_agent_task, images=images, videos=videos, audio=audio, stream=True)
+                member_agent_run_response_stream = member_agent.run(member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True)
                 for member_agent_run_response_chunk in member_agent_run_response_stream:
                     yield member_agent_run_response_chunk.content
             else:
-                member_agent_run_response = member_agent.run(member_agent_task, images=images, videos=videos, audio=audio, stream=False)
+                member_agent_run_response = member_agent.run(member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False)
                 if member_agent_run_response.content is None:
                     yield "No response from the member agent."
                 elif isinstance(member_agent_run_response.content, str):
@@ -2609,11 +2631,11 @@ class Team:
             if expected_output:
                 member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
             if stream:
-                member_agent_run_response_stream = await member_agent.arun(member_agent_task, images=images, videos=videos, audio=audio, stream=True)
+                member_agent_run_response_stream = await member_agent.arun(member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True)
                 for member_agent_run_response_chunk in member_agent_run_response_stream:
                     yield member_agent_run_response_chunk.content
             else:
-                member_agent_run_response = await member_agent.arun(member_agent_task, images=images, videos=videos, audio=audio, stream=False)
+                member_agent_run_response = await member_agent.arun(member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False)
                 if member_agent_run_response.content is None:
                     yield "No response from the member agent."
                 elif isinstance(member_agent_run_response.content, str):
@@ -2659,8 +2681,6 @@ class Team:
     # Logging
     ###########################################################################
 
-    # TODO: How should this work?
-
     def _create_run_data(self) -> Dict[str, Any]:
         """Create and return the run data dictionary."""
         run_response_format = "text"
@@ -2698,6 +2718,7 @@ class Team:
         if self.team_id is not None:
             team_data["team_id"] = self.team_id
         if self.members is not None:
+            # TODO: Need to indicate whether member is team or agent
             team_data["member_ids"] = [member.agent_id for member in self.members]
         if self.model is not None:
             team_data["model"] = self.model.to_dict()

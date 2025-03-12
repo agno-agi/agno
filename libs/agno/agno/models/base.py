@@ -89,7 +89,6 @@ class Model(ABC):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
 
-
     def to_dict(self) -> Dict[str, Any]:
         fields = {"name", "id", "provider"}
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
