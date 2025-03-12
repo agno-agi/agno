@@ -26,9 +26,9 @@ try:
 
     # Check version compatibility
     parsed_version = version.parse(openai_version)
-    if parsed_version.major == 0:
+    if parsed_version.major == 0 and parsed_version.minor < 66:
         import warnings
-        warnings.warn("OpenAI v1.x is recommended for the Responses API", UserWarning)
+        warnings.warn("OpenAI v1.66.0 or higher is recommended for the Responses API", UserWarning)
 
 except ImportError as e:
     # Handle different import error scenarios
