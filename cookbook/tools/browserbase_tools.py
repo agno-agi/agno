@@ -23,7 +23,7 @@ agent = Agent(
 # agent.print_response("""
 #     Go to https://news.ycombinator.com and extract:
 #     1. The page title
-#     3. Take a screenshot of the top stories section
+#     2. Take a screenshot of the top stories section
 # """)
 
 agent.print_response("""
