@@ -4,7 +4,7 @@ from pathlib import Path
 import streamlit as st
 from PIL import Image
 
-from cookbook.use_cases.apps.geobuddy.geography_buddy import analyze_image
+from geography_buddy import analyze_image
 
 # Streamlit App Configuration
 st.set_page_config(
