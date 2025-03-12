@@ -262,3 +262,23 @@ def test_web_search_built_in_tool_stream():
 
     assert "medal" in final_response.lower()
     assert any(term in final_response.lower() for term in ["olympic", "games", "gold", "medal"])
+
+
+def test_web_search_built_in_tool_with_other_tools():
+    """Test the built-in web search tool in the Responses API."""
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-4o-mini", web_search=True),
+        tools=[YFinanceTools()],
+        show_tool_calls=True,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run("What is the current price of TSLA and the latest news about it?")
+
+    tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
+    assert len(tool_calls) >= 1  # At least one message has tool calls
+    assert response.content is not None
+    assert "TSLA" in response.content 
+    assert "news" in response.content.lower()
