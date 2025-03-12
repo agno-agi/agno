@@ -5,30 +5,28 @@ from agno.embedder.base import Embedder
 from agno.utils.log import logger
 
 try:
-    from ollama import Client as OllamaClient
     import importlib.metadata as metadata
+
+    from ollama import Client as OllamaClient
     from packaging import version
 
     # Get installed Ollama version
     ollama_version = metadata.version("ollama")
-    
+
     # Check version compatibility (requires v0.3.x or higher)
     parsed_version = version.parse(ollama_version)
     if parsed_version.major == 0 and parsed_version.minor < 3:
         import warnings
+
         warnings.warn("Only Ollama v0.3.x and above are supported", UserWarning)
         raise RuntimeError("Incompatible Ollama version detected")
 
 except ImportError as e:
     # Handle different import error scenarios
     if "ollama" in str(e):
-        raise ImportError(
-            "Ollama not installed. Install with `pip install ollama`"
-        ) from e
+        raise ImportError("Ollama not installed. Install with `pip install ollama`") from e
     else:
-        raise ImportError(
-            "Missing dependencies. Install with `pip install packaging importlib-metadata`"
-        ) from e
+        raise ImportError("Missing dependencies. Install with `pip install packaging importlib-metadata`") from e
 
 except Exception as e:
     # Catch-all for unexpected errors
