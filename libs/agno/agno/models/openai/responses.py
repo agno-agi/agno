@@ -1,12 +1,13 @@
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Union
 import asyncio
+from agno.media import AudioResponse
 from agno.models.response import ModelResponse
 from agno.utils.openai_responses import images_to_message
 import httpx
 
 from agno.exceptions import ModelProviderError
-from agno.models.base import Model
+from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.utils.log import logger
 
@@ -67,6 +68,13 @@ class OpenAIResponses(Model):
     max_output_tokens: Optional[int] = None
     response_format: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None
+    store: Optional[bool] = None
+    reasoning_effort: Optional[str] = None
+    reasoning_summary: Optional[str] = None
+
+    # Built-in tools
+    web_search: bool = False
+
 
     # The role to map the message role to.
     role_map = {
@@ -173,9 +181,14 @@ class OpenAIResponses(Model):
             "temperature": self.temperature,
             "top_p": self.top_p,
             "max_output_tokens": self.max_output_tokens,
-            # "response_format": self.response_format,  # TODO: Add this back in
             "metadata": self.metadata,
+            "store": self.store,
         }
+        if self.reasoning_effort is not None or self.reasoning_summary is not None:
+            base_params["reasoning"] = {
+                "effort": self.reasoning_effort,
+                "summary": self.reasoning_summary,
+            }
 
         if self.response_format is not None:
             if self.structured_outputs:
@@ -194,12 +207,17 @@ class OpenAIResponses(Model):
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
 
+        if self.web_search:
+            request_params.setdefault("tools", [])
+            request_params["tools"].append({"type": "web_search_preview"})
+
         # Add tools
         if self._tools is not None and len(self._tools) > 0:
-            request_params["tools"] = self._tools
+            request_params.setdefault("tools", [])
+            request_params["tools"].extend(self._tools)
 
-            if self.tool_choice is not None:
-                request_params["tool_choice"] = self.tool_choice
+        if self.tool_choice is not None:
+            request_params["tool_choice"] = self.tool_choice
 
         return request_params
 
@@ -240,10 +258,6 @@ class OpenAIResponses(Model):
         # OpenAI expects the tool_calls to be None if empty, not an empty list
         if message.tool_calls is not None and len(message.tool_calls) == 0:
             message_dict["tool_calls"] = None
-
-        # Manually add the content field even if it is None
-        if message.content is None:
-            message_dict["content"] = None
 
         return message_dict
 
@@ -469,126 +483,175 @@ class OpenAIResponses(Model):
         """
         model_response = ModelResponse()
 
-        if hasattr(response, "error") and response.error:
+        if response.error:
             raise ModelProviderError(
                 message=response.error.get("message", "Unknown model error"),
                 model_name=self.name,
                 model_id=self.id,
             )
-
-        # Get response message
-        response_message = response.choices[0].message
-
-        # Parse structured outputs if enabled
-        try:
-            if (
-                self.response_format is not None
-                and self.structured_outputs
-                and issubclass(self.response_format, BaseModel)
-            ):
-                parsed_object = response_message.parsed  # type: ignore
-                if parsed_object is not None:
-                    model_response.parsed = parsed_object
-        except Exception as e:
-            logger.warning(f"Error retrieving structured outputs: {e}")
-
+        
         # Add role
-        if response_message.role is not None:
-            model_response.role = response_message.role
+        model_response.role = "assistant"
 
-        # Add content
-        if response_message.content is not None:
-            model_response.content = response_message.content
+        for output in response.output:
+            if output.type == "message":
+                if model_response.content is None:
+                    model_response.content = ""
+                # TODO: Support citations/annotations
+                for content in output.content:
+                    if content.type == "output_text":
+                        model_response.content += content.text
+            elif output.type == "function_call":
+                if model_response.tool_calls is None:
+                    model_response.tool_calls = []
+                model_response.tool_calls.append(
+                    {
+                        "id": output.id,
+                        "name": output.name,
+                        "arguments": output.arguments,
+                    }
+                )
 
-        # Add tool calls
-        if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
-            try:
-                model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
-            except Exception as e:
-                logger.warning(f"Error processing tool calls: {e}")
-
-        # Add audio transcript to content if available
-        response_audio: Optional[ChatCompletionAudio] = response_message.audio
-        if response_audio and response_audio.transcript and not model_response.content:
-            model_response.content = response_audio.transcript
-
-        # Add audio if present
-        if hasattr(response_message, "audio") and response_message.audio is not None:
-            # If the audio output modality is requested, we can extract an audio response
-            try:
-                if isinstance(response_message.audio, dict):
-                    model_response.audio = AudioResponse(
-                        id=response_message.audio.get("id"),
-                        content=response_message.audio.get("data"),
-                        expires_at=response_message.audio.get("expires_at"),
-                        transcript=response_message.audio.get("transcript"),
-                    )
-                else:
-                    model_response.audio = AudioResponse(
-                        id=response_message.audio.id,
-                        content=response_message.audio.data,
-                        expires_at=response_message.audio.expires_at,
-                        transcript=response_message.audio.transcript,
-                    )
-            except Exception as e:
-                logger.warning(f"Error processing audio: {e}")
-
-        if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
-            model_response.reasoning_content = response_message.reasoning_content
+        # i.e. we asked for reasoning, so we need to add the reasoning content
+        if self.reasoning_effort:
+            model_response.reasoning_content = response.output_text
 
         if response.usage is not None:
             model_response.response_usage = response.usage
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
+
+
+    # Override base method
+    @staticmethod
+    def parse_tool_calls(tool_calls_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Parse the OpenAI streaming response into a ModelResponse.
+        Build tool calls from streamed tool call data.
 
         Args:
-            response_delta: Raw response chunk from OpenAI
+            tool_calls_data (List[Dict[str, Any]]): The tool call data to build from.
 
         Returns:
-            ProviderResponse: Iterator of parsed response data
+            List[Dict[str, Any]]: The built tool calls.
+        """
+        tool_calls: List[Dict[str, Any]] = []
+        for _tool_call in tool_calls_data:
+            _index = _tool_call.index or 0
+            _tool_call_id = _tool_call.id
+            _tool_call_type = _tool_call.type
+            _function_name = _tool_call.function.name if _tool_call.function else None
+            _function_arguments = _tool_call.function.arguments if _tool_call.function else None
+
+            if len(tool_calls) <= _index:
+                tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
+            tool_call_entry = tool_calls[_index]
+            if not tool_call_entry:
+                tool_call_entry["id"] = _tool_call_id
+                tool_call_entry["type"] = _tool_call_type
+                tool_call_entry["function"] = {
+                    "name": _function_name or "",
+                    "arguments": _function_arguments or "",
+                }
+            else:
+                if _function_name:
+                    tool_call_entry["function"]["name"] += _function_name
+                if _function_arguments:
+                    tool_call_entry["function"]["arguments"] += _function_arguments
+                if _tool_call_id:
+                    tool_call_entry["id"] = _tool_call_id
+                if _tool_call_type:
+                    tool_call_entry["type"] = _tool_call_type
+        return tool_calls
+    
+
+    def _process_stream_response(
+        self,
+        stream_event: ResponseStreamEvent,
+        assistant_message: Message,
+        stream_data: MessageData,
+        tool_use: Dict[str, Any],
+    ) -> Tuple[Optional[ModelResponse], Dict[str, Any]]:
+        """
+        Common handler for processing stream responses from Cohere.
+
+        Args:
+            response: The streamed response from Cohere
+            assistant_message: The assistant message being built
+            stream_data: Data accumulated during streaming
+            tool_use: Current tool use data being built
+
+        Returns:
+            Tuple containing the ModelResponse to yield and updated tool_use dict
         """
         model_response = ModelResponse()
-        if response_delta.choices and len(response_delta.choices) > 0:
-            delta: ChoiceDelta = response_delta.choices[0].delta
+
+        if stream_event.type == "response.created":
+            # Update metrics
+            if not assistant_message.metrics.time_to_first_token:
+                assistant_message.metrics.set_time_to_first_token()
+
+        elif stream_event.type == "response.output_text.delta":
 
             # Add content
-            if delta.content is not None:
-                model_response.content = delta.content
+            model_response.content = stream_event.delta
+            stream_data.response_content += stream_event.delta
 
-            # Add tool calls
-            if delta.tool_calls is not None:
-                model_response.tool_calls = delta.tool_calls  # type: ignore
+        elif stream_event.type == "response.output_item.added":
+            item = stream_event.item
+            if item.type == "function_call":
+                tool_use = {
+                    "id": item.id,
+                    "name": item.name,
+                    "arguments": item.arguments,
+                }
 
-            # Add audio if present
-            if hasattr(delta, "audio") and delta.audio is not None:
-                try:
-                    if isinstance(delta.audio, dict):
-                        model_response.audio = AudioResponse(
-                            id=delta.audio.get("id"),
-                            content=delta.audio.get("data"),
-                            expires_at=delta.audio.get("expires_at"),
-                            transcript=delta.audio.get("transcript"),
-                            sample_rate=24000,
-                            mime_type="pcm16",
-                        )
-                    else:
-                        model_response.audio = AudioResponse(
-                            id=delta.audio.id,
-                            content=delta.audio.data,
-                            expires_at=delta.audio.expires_at,
-                            transcript=delta.audio.transcript,
-                            sample_rate=24000,
-                            mime_type="pcm16",
-                        )
-                except Exception as e:
-                    logger.warning(f"Error processing audio: {e}")
+        elif stream_event.type == "response.function_call_arguments.delta":
+            tool_use["arguments"] += stream_event.delta
 
-        # Add usage metrics if present
-        if response_delta.usage is not None:
-            model_response.response_usage = response_delta.usage
+        elif stream_event.type == "response.output_item.done":
+            if assistant_message.tool_calls is None:
+                assistant_message.tool_calls = []
+            assistant_message.tool_calls.append(tool_use)
+            tool_use = {}
 
-        return model_response
+        elif stream_event.type == "response.completed":
+            # Add usage metrics if present
+            if stream_event.response.usage is not None:
+                model_response.response_usage = stream_event.response.usage
+
+            self._add_usage_metrics_to_assistant_message(
+                assistant_message=assistant_message,
+                response_usage=model_response.response_usage,
+            )
+
+        return model_response, tool_use
+
+    def process_response_stream(
+        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
+    ) -> Iterator[ModelResponse]:
+        """Process the synchronous response stream."""
+        tool_use: Dict[str, Any] = {}
+
+        for stream_event in self.invoke_stream(messages=messages):
+            model_response, tool_use = self._process_stream_response(
+                stream_event=stream_event, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
+            )
+            if model_response is not None:
+                yield model_response
+
+    async def aprocess_response_stream(
+        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
+    ) -> AsyncIterator[ModelResponse]:
+        """Process the asynchronous response stream."""
+        tool_use: Dict[str, Any] = {}
+
+        async for stream_event in self.ainvoke_stream(messages=messages):
+            model_response, tool_use = self._process_stream_response(
+                stream_event=stream_event, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
+            )
+            if model_response is not None:
+                yield model_response
+
+    def parse_provider_response_delta(self, response: Any) -> ModelResponse:  # type: ignore
+        pass
