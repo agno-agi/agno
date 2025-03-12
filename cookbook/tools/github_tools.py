@@ -1,4 +1,4 @@
-'''
+"""
 GitHub Authentication Setup Guide
 
 1. Getting Personal Access Token (PAT):
@@ -17,15 +17,14 @@ GitHub Authentication Setup Guide
       - IMPORTANT: Save token immediately - only shown once!
 
 2. Setting Environment Variables:
-   
+
    # For Public GitHub
    export GITHUB_ACCESS_TOKEN="your_token_here"
    export GITHUB_BASE_URL="https://api.github.com"
 
    # For Enterprise GitHub
    export GITHUB_BASE_URL="https://YOUR-ENTERPRISE-HOSTNAME/api/v3"
-'''
-
+"""
 
 from agno.agent import Agent
 from agno.tools.github import GithubTools
