@@ -28,6 +28,8 @@ class BrowserbaseTools(Toolkit):
         """Initialize BrowserbaseTools.
 
         Args:
+            api_key (str, optional): Browserbase API key.
+            project_id (str, optional): Browserbase project ID.
             base_url (str, optional): Custom Browserbase API endpoint URL (NOT the target website URL). Only use this if you're using a self-hosted Browserbase instance or need to connect to a different region.
         """
         super().__init__(name="browserbase_tools")
