@@ -67,7 +67,6 @@ multi_language_team = Team(
     members=[english_agent, spanish_agent, japanese_agent, french_agent, german_agent,chinese_agent],
     show_tool_calls=True,
     markdown=True,
-    debug_mode=True,
     instructions=[
             "You are a language router that directs questions to the appropriate language agent.",
             "If the user asks in a language whose agent is not a team member, respond in English with:",
