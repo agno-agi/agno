@@ -19,22 +19,41 @@ except ImportError:
 
 
 class BrowserbaseTools(Toolkit):
-    def __init__(self):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        project_id: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ):
+        """Initialize BrowserbaseTools.
+
+        Args:
+            base_url (str, optional): Custom Browserbase API endpoint URL (NOT the target website URL).
+                                     Only use this if you're using a self-hosted Browserbase instance
+                                     or need to connect to a different region.
+        """
         super().__init__(name="browserbase_tools")
 
-        self.api_key = getenv("BROWSERBASE_API_KEY")
+        self.api_key = api_key or getenv("BROWSERBASE_API_KEY")
         if not self.api_key:
             raise ValueError(
                 f"{self.API_KEY_ENV_VAR} is required. Please set the {self.API_KEY_ENV_VAR} environment variable."
             )
 
-        self.project_id = getenv("BROWSERBASE_PROJECT_ID")
+        self.project_id = project_id or getenv("BROWSERBASE_PROJECT_ID")
         if not self.project_id:
             raise ValueError(
                 f"{self.PROJECT_ID_ENV_VAR} is required. Please set the {self.PROJECT_ID_ENV_VAR} environment variable."
             )
 
-        self.app = Browserbase(api_key=self.api_key)
+        self.base_url = base_url or getenv("BROWSERBASE_BASE_URL")
+
+        # Initialize the Browserbase client with optional base_url
+        if self.base_url:
+            self.app = Browserbase(api_key=self.api_key, base_url=self.base_url)
+            logger.debug(f"Using custom Browserbase API endpoint: {self.base_url}")
+        else:
+            self.app = Browserbase(api_key=self.api_key)
 
         self._playwright = None
         self._browser = None
