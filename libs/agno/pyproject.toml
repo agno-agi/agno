@@ -67,6 +67,7 @@ elevenlabs = ["elevenlabs"]
 fal = ["fal_client"]
 webex = ["webexpythonsdk"]
 mcp = ["mcp"]
+browserbase = ["browserbase", "playwright"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -124,6 +125,7 @@ tools = [
   "agno[fal]",
   "agno[webex]",
   "agno[mcp]",
+  "agno[browserbase]",
 ]
 
 # All storage
