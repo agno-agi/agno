@@ -428,8 +428,7 @@ class RedditTools(Toolkit):
             # Get the comment object
             comment = self.reddit.comment(id=comment_id)
             
-            if self.debug_mode:
-                logger.info(f"Comment details: Author: {comment.author}, Subreddit: {comment.subreddit.display_name}")
+            logger.debug(f"Comment details: Author: {comment.author}, Subreddit: {comment.subreddit.display_name}")
             
             # If subreddit was provided, verify we're in the right place
             if subreddit and comment.subreddit.display_name.lower() != subreddit.lower():
