@@ -33,8 +33,6 @@ class Citations(BaseModel):
 
     # URLs of the citations.
     urls: Optional[List[CitationUrl]] = None
-    # The document information of the citations.
-    document: Optional[Dict[str, Any]] = None
     # Metadata of the citations.
     metadata: Optional[Any] = None
 
