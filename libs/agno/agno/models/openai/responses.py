@@ -170,7 +170,7 @@ class OpenAIResponses(Model):
 
         # Set the response format
         if self.response_format is not None:
-            if self.structured_outputs and isinstance(self.response_format, BaseModel):
+            if self.structured_outputs and issubclass(self.response_format, BaseModel):
                 schema = self.response_format.model_json_schema()
                 schema["additionalProperties"] = False
                 base_params["text"] = {
