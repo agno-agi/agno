@@ -1,10 +1,6 @@
-import pytest
-from typing import List, Optional
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 
 def test_collaborative_team_basic():
@@ -13,16 +9,16 @@ def test_collaborative_team_basic():
         name="Agent 1",
         model=OpenAIChat("gpt-4o"),
         role="First perspective provider",
-        instructions="Provide a perspective on the given topic."
+        instructions="Provide a perspective on the given topic.",
     )
-    
+
     agent2 = Agent(
         name="Agent 2",
         model=OpenAIChat("gpt-4o"),
         role="Second perspective provider",
-        instructions="Provide a different perspective on the given topic."
+        instructions="Provide a different perspective on the given topic.",
     )
-    
+
     team = Team(
         name="Collaborative Team",
         mode="collaborative",
@@ -31,12 +27,12 @@ def test_collaborative_team_basic():
         instructions=[
             "Synthesize the perspectives from both team members.",
             "Provide a balanced view that incorporates insights from both perspectives.",
-            "Only ask the members once for their perspectives."
-        ]
+            "Only ask the members once for their perspectives.",
+        ],
     )
-    
+
     response = team.run("What are the pros and cons of remote work?")
-    
+
     assert response.content is not None
     assert isinstance(response.content, str)
     assert len(response.content) > 0
@@ -44,29 +40,20 @@ def test_collaborative_team_basic():
     assert len(response.tools) == 1
 
 
-
 def test_collaborative_team_with_structured_output():
     """Test collaborative team with structured output."""
     from pydantic import BaseModel
-    
+
     class DebateResult(BaseModel):
         topic: str
         perspective_one: str
         perspective_two: str
         conclusion: str
-    
-    agent1 = Agent(
-        name="Perspective One",
-        model=OpenAIChat("gpt-4o"),
-        role="First perspective provider"
-    )
-    
-    agent2 = Agent(
-        name="Perspective Two",
-        model=OpenAIChat("gpt-4o"),
-        role="Second perspective provider"
-    )
-    
+
+    agent1 = Agent(name="Perspective One", model=OpenAIChat("gpt-4o"), role="First perspective provider")
+
+    agent2 = Agent(name="Perspective Two", model=OpenAIChat("gpt-4o"), role="Second perspective provider")
+
     team = Team(
         name="Debate Team",
         mode="collaborative",
@@ -75,16 +62,16 @@ def test_collaborative_team_with_structured_output():
         instructions=[
             "Have both agents provide their perspectives on the topic.",
             "Synthesize their views into a balanced conclusion.",
-            "Only ask the members once for their perspectives."
+            "Only ask the members once for their perspectives.",
         ],
-        response_model=DebateResult
+        response_model=DebateResult,
     )
-    
+
     response = team.run("Is artificial general intelligence possible in the next decade?")
-    
+
     assert response.content is not None
     assert isinstance(response.content, DebateResult)
     assert response.content.topic is not None
     assert response.content.perspective_one is not None
     assert response.content.perspective_two is not None
-    assert response.content.conclusion is not None 
+    assert response.content.conclusion is not None

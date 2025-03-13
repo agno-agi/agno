@@ -195,7 +195,7 @@ class OpenAIChat(Model):
 
             if self.tool_choice is not None:
                 request_params["tool_choice"] = self.tool_choice
-        
+
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
@@ -290,7 +290,6 @@ class OpenAIChat(Model):
         # Manually add the content field even if it is None
         if message.content is None:
             message_dict["content"] = None
-
 
         return message_dict
 
@@ -660,7 +659,7 @@ class OpenAIChat(Model):
             response_delta: Raw response chunk from OpenAI
 
         Returns:
-            ProviderResponse: Iterator of parsed response data
+            ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
         if response_delta.choices and len(response_delta.choices) > 0:

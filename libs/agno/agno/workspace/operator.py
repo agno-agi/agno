@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, cast
 
 from rich.prompt import Prompt
 
-from agno.api.schemas.user import TeamSchema, TeamIdentifier
+from agno.api.schemas.user import TeamIdentifier, TeamSchema
 from agno.api.schemas.workspace import (
     WorkspaceCreate,
     WorkspaceEvent,
@@ -30,8 +30,8 @@ TEMPLATE_TO_NAME_MAP: Dict[WorkspaceStarterTemplate, str] = {
     WorkspaceStarterTemplate.agent_api: "agent-api",
 }
 TEMPLATE_TO_REPO_MAP: Dict[WorkspaceStarterTemplate, str] = {
-    WorkspaceStarterTemplate.agent_app: "https://github.com/agno-agi/agent-app.git",
-    WorkspaceStarterTemplate.agent_api: "https://github.com/agno-agi/agent-api.git",
+    WorkspaceStarterTemplate.agent_app: "https://github.com/agno-agi/app-ws-template",
+    WorkspaceStarterTemplate.agent_api: "https://github.com/agno-agi/api-ws-template",
 }
 
 

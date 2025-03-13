@@ -20,7 +20,7 @@ def get_default_reasoning_agent(
 ) -> Optional["Agent"]:  # type: ignore  # noqa: F821
     from agno.agent import Agent
 
-    agent =  Agent(
+    agent = Agent(
         model=reasoning_model,
         description="You are a meticulous and thoughtful assistant that solves a problem by thinking through it step-by-step.",
         instructions=[
@@ -75,4 +75,3 @@ def get_default_reasoning_agent(
     agent.model.show_tool_calls = False
 
     return agent
-

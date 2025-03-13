@@ -4,7 +4,7 @@ from httpx import Response
 
 from agno.api.api import api, invalid_response
 from agno.api.routes import ApiRoutes
-from agno.api.schemas.user import UserSchema, TeamSchema, TeamIdentifier
+from agno.api.schemas.user import TeamIdentifier, TeamSchema, UserSchema
 from agno.api.schemas.workspace import (
     WorkspaceCreate,
     WorkspaceEvent,

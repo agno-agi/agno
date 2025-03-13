@@ -1,4 +1,5 @@
 import re
+
 import nest_asyncio
 import streamlit as st
 from agents import get_tic_tac_toe_team
@@ -192,12 +193,14 @@ def main():
             context = {
                 "current_player": current_player_name,
                 "board_state": str(st.session_state.game_board.get_board_state()),
-                "valid_moves": [list(move) for move in valid_moves],  # Convert tuples to lists
+                "valid_moves": [
+                    list(move) for move in valid_moves
+                ],  # Convert tuples to lists
                 "game_state": {
                     "current_player": current_player_name,
                     "board": str(st.session_state.game_board.get_board_state()),
                     "valid_moves": [list(move) for move in valid_moves],
-                }
+                },
             }
 
             # Get move from the team
@@ -212,19 +215,19 @@ def main():
                         context["retry_info"] = {
                             "attempt": retry_count + 1,
                             "max_attempts": max_retries,
-                            "last_error": str(last_error)
+                            "last_error": str(last_error),
                         }
                         prompt = f"""\
-Current board state:\n{context['board_state']}\n
-Available valid moves (row, col): {context['valid_moves']}\n
+Current board state:\n{context["board_state"]}\n
+Available valid moves (row, col): {context["valid_moves"]}\n
 You are {current_player_name}. This is attempt {retry_count + 1} of {max_retries}.
 Previous attempt failed because: {last_error}
 Choose your next move from the valid moves above.
 Respond with ONLY two numbers for row and column, e.g. "1 2"."""
                     else:
                         prompt = f"""\
-Current board state:\n{context['board_state']}\n
-Available valid moves (row, col): {context['valid_moves']}\n
+Current board state:\n{context["board_state"]}\n
+Available valid moves (row, col): {context["valid_moves"]}\n
 You are {current_player_name}. Choose your next move from the valid moves above.
 Respond with ONLY two numbers for row and column, e.g. "1 2"."""
 
@@ -276,25 +279,37 @@ Respond with ONLY two numbers for row and column, e.g. "1 2"."""
                         last_error = message
                         retry_count += 1
                         if retry_count >= max_retries:
-                            raise Exception(f"Failed after {max_retries} attempts. Last error: {message}")
-                        logger.warning(f"Invalid move attempt {retry_count}: {message}. Retrying...")
+                            raise Exception(
+                                f"Failed after {max_retries} attempts. Last error: {message}"
+                            )
+                        logger.warning(
+                            f"Invalid move attempt {retry_count}: {message}. Retrying..."
+                        )
                         continue
 
                 except Exception as e:
                     last_error = str(e)
                     retry_count += 1
                     if retry_count >= max_retries:
-                        logger.error(f"Error processing move after {max_retries} attempts: {str(e)}")
-                        st.error(f"Error processing move after {max_retries} attempts: {str(e)}")
+                        logger.error(
+                            f"Error processing move after {max_retries} attempts: {str(e)}"
+                        )
+                        st.error(
+                            f"Error processing move after {max_retries} attempts: {str(e)}"
+                        )
                         st.session_state.error_state = True
                         st.session_state.game_paused = True
                         return
-                    logger.warning(f"Error on attempt {retry_count}: {str(e)}. Retrying...")
+                    logger.warning(
+                        f"Error on attempt {retry_count}: {str(e)}. Retrying..."
+                    )
                     continue
 
             # If we get here with retry_count >= max_retries, it means all retries failed
             if retry_count >= max_retries:
-                logger.error(f"Failed to make a valid move after {max_retries} attempts")
+                logger.error(
+                    f"Failed to make a valid move after {max_retries} attempts"
+                )
                 st.error(f"Failed to make a valid move after {max_retries} attempts")
                 st.session_state.error_state = True
                 st.session_state.game_paused = True

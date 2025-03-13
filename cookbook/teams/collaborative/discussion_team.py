@@ -36,7 +36,7 @@ hackernews_researcher = Agent(
 
 academic_paper_researcher = Agent(
     name="Academic Paper Researcher",
-    model=OpenAIChat("gpt-4o"), 
+    model=OpenAIChat("gpt-4o"),
     role="Research academic papers and scholarly content",
     tools=[GoogleSearchTools(), ArxivTools()],
     add_name_to_instructions=True,
@@ -69,7 +69,12 @@ agent_team = Team(
     name="Discussion Team",
     mode="collaborative",
     model=OpenAIChat("gpt-4o"),
-    members=[reddit_researcher, hackernews_researcher, academic_paper_researcher, twitter_researcher],
+    members=[
+        reddit_researcher,
+        hackernews_researcher,
+        academic_paper_researcher,
+        twitter_researcher,
+    ],
     instructions=[
         "You are a discussion master.",
         "You have to stop the discussion when you think the team has reached a consensus.",

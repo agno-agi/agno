@@ -255,6 +255,7 @@ class FunctionCall(BaseModel):
 
     # Error while parsing arguments or running the function.
     error: Optional[str] = None
+
     def get_call_str(self) -> str:
         """Returns a string representation of the function call."""
         import shutil

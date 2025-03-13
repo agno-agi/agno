@@ -1,7 +1,6 @@
 from textwrap import dedent
 
 import requests
-
 from agno.agent import Agent
 from agno.media import Audio, Image
 from agno.models.google.gemini import Gemini

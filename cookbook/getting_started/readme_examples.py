@@ -5,10 +5,11 @@ from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.openai import OpenAIChat
+from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb import LanceDb, SearchType
-from agno.team.team import Team
+
 # Level 0: Agents with no tools (basic inference tasks).
 level_0_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),

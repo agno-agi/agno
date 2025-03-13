@@ -37,21 +37,6 @@ def create_agent_run(run: AgentRunCreate, monitor: bool = False) -> None:
     return
 
 
-async def acreate_agent_session(session: AgentSessionCreate, monitor: bool = False) -> None:
-    if not agno_cli_settings.api_enabled:
-        return
-
-    logger.debug("--**-- Logging Agent Session (Async)")
-    async with api.AuthenticatedAsyncClient() as api_client:
-        try:
-            await api_client.post(
-                ApiRoutes.AGENT_SESSION_CREATE if monitor else ApiRoutes.AGENT_TELEMETRY_SESSION_CREATE,
-                json={"session": session.model_dump(exclude_none=True)},
-            )
-        except Exception as e:
-            logger.debug(f"Could not create Agent session: {e}")
-
-
 async def acreate_agent_run(run: AgentRunCreate, monitor: bool = False) -> None:
     if not agno_cli_settings.api_enabled:
         return

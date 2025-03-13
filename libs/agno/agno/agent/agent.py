@@ -21,32 +21,30 @@ from typing import (
     overload,
 )
 from uuid import uuid4
-import warnings
 
 from pydantic import BaseModel
 
 from agno.agent.metrics import SessionMetrics
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
-from agno.media import Audio, AudioArtifact, AudioResponse, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
-from agno.models.openai.like import OpenAILike
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
-from agno.storage.agent.base import AgentStorage
-from agno.storage.agent.session import AgentSession
+from agno.storage.base import Storage
+from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import get_logger, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.message import get_text_from_message
+from agno.utils.response import create_panel, escape_markdown_tags
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_structured_output
 from agno.utils.timer import Timer
-from agno.utils.response import create_panel, escape_markdown_tags
 
 
 @dataclass(init=False)
@@ -101,7 +99,7 @@ class Agent:
     references_format: Literal["json", "yaml"] = "json"
 
     # --- Agent Storage ---
-    storage: Optional[AgentStorage] = None
+    storage: Optional[Storage] = None
     # Extra data stored with this agent
     extra_data: Optional[Dict[str, Any]] = None
 
@@ -169,7 +167,6 @@ class Agent:
     # If True, add the session state variables in the user and system messages
     add_state_in_messages: bool = False
 
-
     # --- Extra Messages ---
     # A list of extra messages added after the system message and before the user message.
     # Use these for few-shot learning or to provide additional context to the Model.
@@ -224,6 +221,9 @@ class Agent:
     # Separator between responses from the team
     team_response_separator: str = "\n"
 
+    # Internal indicator to signify when it is a member of a team
+    is_member_of_team: bool = False
+
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
@@ -254,7 +254,7 @@ class Agent:
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
-        storage: Optional[AgentStorage] = None,
+        storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
         show_tool_calls: bool = False,
@@ -377,16 +377,8 @@ class Agent:
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
 
-        # Handle deprecation warning for team parameter
-        if team is not None:
-            warnings.warn(
-                "The 'team' parameter is deprecated and will be removed in a future version. "
-                "Please use the new 'Team' class instead.",
-                DeprecationWarning,
-                stacklevel=2
-            )
         self.team = team
-        
+
         self.team_data = team_data
         self.role = role
         self.respond_directly = respond_directly
@@ -438,6 +430,13 @@ class Agent:
         else:
             set_log_level_to_info()
 
+    def set_storage_mode(self):
+        if self.storage is not None:
+            if self.storage.mode in ["workflow", "team"]:
+                get_logger().warning("You cannot use storage in both agent mode")
+
+            self.storage.mode = "agent"
+
     def set_monitoring(self) -> None:
         """Override monitoring and telemetry settings based on environment variables."""
 
@@ -451,6 +450,7 @@ class Agent:
             self.telemetry = telemetry_env.lower() == "true"
 
     def initialize_agent(self) -> None:
+        self.set_storage_mode()
         self.set_debug()
         self.set_agent_id()
         self.set_session_id()
@@ -462,11 +462,10 @@ class Agent:
     @property
     def is_streamable(self) -> bool:
         return self.response_model is None
-    
+
     @property
     def has_team(self) -> bool:
         return self.team is not None and len(self.team) > 0
-
 
     def _run(
         self,
@@ -476,6 +475,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         **kwargs: Any,
@@ -522,7 +522,7 @@ class Agent:
 
         # 4. Prepare run messages
         run_messages: RunMessages = self.get_run_messages(
-            message=message, audio=audio, images=images, videos=videos, messages=messages, **kwargs
+            message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
         if len(run_messages.messages) == 0:
             logger.error("No messages to be sent to the model.")
@@ -816,6 +816,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
@@ -831,6 +832,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
@@ -845,6 +847,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
@@ -877,6 +880,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -916,6 +920,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -928,6 +933,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -957,7 +963,6 @@ class Agent:
                 )
                 return cancelled_response
 
-
         # If we get here, all retries failed
         if last_exception is not None:
             logger.error(
@@ -975,6 +980,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         **kwargs: Any,
@@ -1021,7 +1027,7 @@ class Agent:
 
         # 4. Prepare run messages
         run_messages: RunMessages = self.get_run_messages(
-            message=message, audio=audio, images=images, videos=videos, messages=messages, **kwargs
+            message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
         if len(run_messages.messages) == 0:
             logger.error("No messages to be sent to the model.")
@@ -1313,6 +1319,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
@@ -1343,6 +1350,7 @@ class Agent:
                         audio=audio,
                         images=images,
                         videos=videos,
+                        files=files,
                         messages=messages,
                         stream_intermediate_steps=stream_intermediate_steps,
                         **kwargs,
@@ -1381,6 +1389,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -1393,6 +1402,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -1487,7 +1497,7 @@ class Agent:
                 agent_tools.append(self.search_knowledge_base)
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
-        
+
         # Add transfer tools
         if self.has_team:
             for agent_index, agent in enumerate(self.team):
@@ -1669,6 +1679,7 @@ class Agent:
             session_id=self.session_id,
             agent_id=self.agent_id,
             user_id=self.user_id,
+            is_member_of_team=self.is_member_of_team,
             memory=self.memory.to_dict() if self.memory is not None else None,
             agent_data=self.get_agent_data(),
             session_data=self.get_session_data(),
@@ -1681,6 +1692,7 @@ class Agent:
         from agno.memory.memory import Memory
         from agno.memory.summary import SessionSummary
         from agno.utils.merge_dict import merge_dictionaries
+
         logger = get_logger()
 
         # Get the agent_id, user_id and session_id from the database
@@ -1796,7 +1808,7 @@ class Agent:
             Optional[AgentSession]: The loaded AgentSession or None if not found.
         """
         if self.storage is not None and self.session_id is not None:
-            self.agent_session = self.storage.read(session_id=self.session_id)
+            self.agent_session = cast(AgentSession, self.storage.read(session_id=self.session_id))
             if self.agent_session is not None:
                 self.load_agent_session(session=self.agent_session)
             self.load_user_memories()
@@ -1809,7 +1821,7 @@ class Agent:
             Optional[AgentSession]: The saved AgentSession or None if not saved.
         """
         if self.storage is not None:
-            self.agent_session = self.storage.upsert(session=self.get_agent_session())
+            self.agent_session = cast(AgentSession, self.storage.upsert(session=self.get_agent_session()))
         return self.agent_session
 
     def add_introduction(self, introduction: str) -> None:
@@ -1822,7 +1834,8 @@ class Agent:
                 self.memory.add_run(
                     AgentRun(
                         response=RunResponse(
-                            content=introduction, messages=[Message(role=self.model.assistant_message_role, content=introduction)]
+                            content=introduction,
+                            messages=[Message(role=self.model.assistant_message_role, content=introduction)],
                         )
                     )
                 )
@@ -1860,7 +1873,7 @@ class Agent:
                 if self.agent_session is None:
                     raise Exception("Failed to create new AgentSession in storage")
                 get_logger().debug(f"-*- Created AgentSession: {self.agent_session.session_id}")
-                self.log_agent_session()
+                self._log_agent_session()
         return self.session_id
 
     def new_session(self) -> None:
@@ -2144,6 +2157,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent.
@@ -2201,13 +2215,20 @@ class Agent:
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 **kwargs,
             )
 
         # 2. If create_default_user_message is False or message is a list, return the message as is.
         if not self.create_default_user_message or isinstance(message, list):
             return Message(
-                role=self.user_message_role, content=message, images=images, audio=audio, videos=videos, **kwargs
+                role=self.user_message_role,
+                content=message,
+                images=images,
+                audio=audio,
+                videos=videos,
+                files=files,
+                **kwargs,
             )
 
         # 3. Build the default user message for the Agent
@@ -2243,6 +2264,7 @@ class Agent:
             audio=audio,
             images=images,
             videos=videos,
+            files=files,
             **kwargs,
         )
 
@@ -2253,6 +2275,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
@@ -2276,7 +2299,7 @@ class Agent:
 
         Typical usage:
         run_messages = self.get_run_messages(
-            message=message, audio=audio, images=images, videos=videos, messages=messages, **kwargs
+            message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
         """
         logger = get_logger()
@@ -2351,7 +2374,9 @@ class Agent:
         user_message: Optional[Message] = None
         # 4.1 Build user message if message is None, str or list
         if message is None or isinstance(message, str) or isinstance(message, list):
-            user_message = self.get_user_message(message=message, audio=audio, images=images, videos=videos, **kwargs)
+            user_message = self.get_user_message(
+                message=message, audio=audio, images=images, videos=videos, files=files, **kwargs
+            )
         # 4.2 If message is provided as a Message, use it directly
         elif isinstance(message, Message):
             user_message = message
@@ -2419,6 +2444,7 @@ class Agent:
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
         """Helper method to deep copy a field based on its type."""
         from copy import copy, deepcopy
+
         logger = get_logger()
 
         # For memory and reasoning_agent, use their deep_copy methods
@@ -2469,7 +2495,7 @@ class Agent:
         except Exception:
             # If copy fails, return as is
             return field_value
-        
+
     def get_transfer_function(self, member_agent: Agent, index: int) -> Function:
         def _transfer_task_to_agent(
             task_description: str, expected_output: str, additional_information: Optional[str] = None
@@ -2586,7 +2612,7 @@ class Agent:
                     transfer_instructions += f"Available tools: {', '.join(_tools)}\n"
             return transfer_instructions
         return ""
-    
+
     def get_relevant_docs_from_knowledge(
         self, query: str, num_documents: Optional[int] = None, **kwargs
     ) -> Optional[List[Dict[str, Any]]]:
@@ -2747,7 +2773,7 @@ class Agent:
         # -*- Save to storage
         self.write_to_storage()
         # -*- Log Agent session
-        self.log_agent_session()
+        self._log_agent_session()
 
     def rename_session(self, session_name: str) -> None:
         """Rename the current session and save to storage"""
@@ -2759,7 +2785,7 @@ class Agent:
         # -*- Save to storage
         self.write_to_storage()
         # -*- Log Agent session
-        self.log_agent_session()
+        self._log_agent_session()
 
     def generate_session_name(self) -> str:
         """Generate a name for the session using the first 6 messages from the memory"""
@@ -2813,7 +2839,7 @@ class Agent:
         # -*- Save to storage
         self.write_to_storage()
         # -*- Log Agent Session
-        self.log_agent_session()
+        self._log_agent_session()
 
     def delete_session(self, session_id: str):
         """Delete the current session and save to storage"""
@@ -2867,7 +2893,10 @@ class Agent:
     ###########################################################################
 
     def reason(self, run_messages: RunMessages) -> Iterator[RunResponse]:
+        from agno.models.openai.like import OpenAILike
+
         logger = get_logger()
+
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
@@ -3052,7 +3081,10 @@ class Agent:
             )
 
     async def areason(self, run_messages: RunMessages) -> Any:
+        from agno.models.openai.like import OpenAILike
+
         logger = get_logger()
+
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
@@ -3375,7 +3407,7 @@ class Agent:
     # Api functions
     ###########################################################################
 
-    def log_agent_session(self):
+    def _log_agent_session(self):
         if not (self.telemetry or self.monitoring):
             return
 
@@ -3384,24 +3416,6 @@ class Agent:
         try:
             agent_session: AgentSession = self.agent_session or self.get_agent_session()
             create_agent_session(
-                session=AgentSessionCreate(
-                    session_id=agent_session.session_id,
-                    agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
-                ),
-                monitor=self.monitoring,
-            )
-        except Exception as e:
-            get_logger().debug(f"Could not create agent monitor: {e}")
-
-    async def alog_agent_session(self):
-        if not (self.telemetry or self.monitoring):
-            return
-
-        from agno.api.agent import AgentSessionCreate, acreate_agent_session
-
-        try:
-            agent_session: AgentSession = self.agent_session or self.get_agent_session()
-            await acreate_agent_session(
                 session=AgentSessionCreate(
                     session_id=agent_session.session_id,
                     agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
@@ -3502,6 +3516,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         stream: bool = False,
         markdown: bool = False,
         show_message: bool = True,
@@ -3558,7 +3573,14 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 for resp in self.run(
-                    message=message, messages=messages, audio=audio, images=images, videos=videos, stream=True, **kwargs
+                    message=message,
+                    messages=messages,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    stream=True,
+                    **kwargs,
                 ):
                     if isinstance(resp, RunResponse):
                         if resp.event == RunEvent.run_response:
@@ -3675,6 +3697,7 @@ class Agent:
                     audio=audio,
                     images=images,
                     videos=videos,
+                    files=files,
                     stream=False,
                     **kwargs,
                 )
@@ -3730,9 +3753,7 @@ class Agent:
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:
-                            escaped_content = escape_markdown_tags(
-                                run_response.content, tags_to_include_in_markdown
-                            )
+                            escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
                             response_content_batch = Markdown(escaped_content)
                         else:
                             response_content_batch = run_response.get_content_as_string(indent=4)
@@ -3769,6 +3790,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         stream: bool = False,
         markdown: bool = False,
         show_message: bool = True,
@@ -3825,7 +3847,14 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 _arun_generator = await self.arun(
-                    message=message, messages=messages, audio=audio, images=images, videos=videos, stream=True, **kwargs
+                    message=message,
+                    messages=messages,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    stream=True,
+                    **kwargs,
                 )
                 async for resp in _arun_generator:
                     if isinstance(resp, RunResponse):
@@ -3998,9 +4027,7 @@ class Agent:
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:
-                            escaped_content = escape_markdown_tags(
-                                run_response.content, tags_to_include_in_markdown
-                            )
+                            escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
                             response_content_batch = Markdown(escaped_content)
                         else:
                             response_content_batch = run_response.get_content_as_string(indent=4)

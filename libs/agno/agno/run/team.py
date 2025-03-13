@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Message
-from agno.run.response import RunResponseExtraData, RunEvent, RunResponse
+from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
 
 
 @dataclass

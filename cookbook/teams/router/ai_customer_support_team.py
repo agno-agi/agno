@@ -2,10 +2,10 @@ from agno.agent import Agent
 from agno.knowledge.website import WebsiteKnowledgeBase
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.slack import SlackTools
-from agno.vectordb.pgvector.pgvector import PgVector
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.slack import SlackTools
+from agno.vectordb.pgvector.pgvector import PgVector
 
 knowledge_base = WebsiteKnowledgeBase(
     urls=["https://docs.agno.com/introduction"],
@@ -25,7 +25,7 @@ doc_researcher_agent = Agent(
     name="Doc researcher Agent",
     role="Search the knowledge base for information",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools(),ExaTools()],
+    tools=[DuckDuckGoTools(), ExaTools()],
     knowledge=knowledge_base,
     search_knowledge=True,
     instructions=[

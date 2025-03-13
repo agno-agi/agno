@@ -59,10 +59,12 @@ class CSVUrlReader(Reader):
     @property
     def csv_reader(self) -> CSVReader:
         if self._csv_reader is None:
-            self._csv_reader = CSVReader(chunk=self.chunk, 
-                         chunk_size=self.chunk_size, 
-                         chunking_strategy=self.chunking_strategy,
-                         separators=self.separators)
+            self._csv_reader = CSVReader(
+                chunk=self.chunk,
+                chunk_size=self.chunk_size,
+                chunking_strategy=self.chunking_strategy,
+                separators=self.separators,
+            )
         return self._csv_reader
 
     def read(self, url: str) -> List[Document]:

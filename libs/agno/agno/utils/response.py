@@ -1,9 +1,9 @@
-from typing import Set, List, Union
+from typing import List, Set, Union
 
 from agno.exceptions import RunCancelledException
 from agno.models.message import Message
 from agno.reasoning.step import ReasoningStep
-from agno.run.response import RunResponse, RunEvent, RunResponseExtraData
+from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
 from agno.run.team import TeamRunResponse
 
 
@@ -14,6 +14,7 @@ def create_panel(content, title, border_style="blue"):
     return Panel(
         content, title=title, title_align="left", border_style=border_style, box=HEAVY, expand=True, padding=(1, 1)
     )
+
 
 def escape_markdown_tags(content: str, tags: Set[str]) -> str:
     """Escape special tags in markdown content."""
@@ -32,7 +33,9 @@ def check_if_run_cancelled(run_response: RunResponse):
 
 
 def update_run_response_with_reasoning(
-    run_response: Union[RunResponse, TeamRunResponse], reasoning_steps: List[ReasoningStep], reasoning_agent_messages: List[Message]
+    run_response: Union[RunResponse, TeamRunResponse],
+    reasoning_steps: List[ReasoningStep],
+    reasoning_agent_messages: List[Message],
 ) -> None:
     if run_response.extra_data is None:
         run_response.extra_data = RunResponseExtraData()

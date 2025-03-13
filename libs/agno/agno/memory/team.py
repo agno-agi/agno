@@ -6,11 +6,16 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydantic import ConfigDict
 
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
-from agno.memory.agent import AgentRun
+from agno.memory.agent import AgentRun, MemoryRetrieval
+from agno.memory.classifier import MemoryClassifier
+from agno.memory.db import MemoryDb
+from agno.memory.manager import MemoryManager
+from agno.memory.memory import Memory
 from agno.models.message import Message
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
-from agno.utils.log import get_logger, logger
+from agno.utils.log import get_logger
+
 
 @dataclass
 class TeamRun:
@@ -33,11 +38,13 @@ class TeamMemberInteraction:
     task: str
     response: RunResponse
 
+
 @dataclass
 class TeamContext:
     # List of team member interaction, represented as a request and a response
     member_interactions: List[TeamMemberInteraction] = field(default_factory=list)
     text: Optional[str] = None
+
 
 @dataclass
 class TeamMemory:
@@ -45,22 +52,49 @@ class TeamMemory:
     runs: List[TeamRun] = field(default_factory=list)
     # List of messages sent to the model
     messages: List[Message] = field(default_factory=list)
+    # If True, update the system message when it changes
+    update_system_message_on_change: bool = True
 
     team_context: Optional[TeamContext] = None
+
+    # Create and store personalized memories for this user
+    create_user_memories: bool = False
+    # Update memories for the user after each run
+    update_user_memories_after_run: bool = True
+
+    # MemoryDb to store personalized memories
+    db: Optional[MemoryDb] = None
+    # User ID for the personalized memories
+    user_id: Optional[str] = None
+    retrieval: MemoryRetrieval = MemoryRetrieval.last_n
+    memories: Optional[List[Memory]] = None
+    classifier: Optional[MemoryClassifier] = None
+    manager: Optional[MemoryManager] = None
+
+    num_memories: Optional[int] = None
 
     # True when memory is being updated
     updating_memory: bool = False
 
-    # If True, update the system message when it changes
-    update_system_message_on_change: bool = True
-
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def to_dict(self) -> Dict[str, Any]:
-        _memory_dict = {}
+        _memory_dict = self.model_dump(
+            exclude_none=True,
+            include={
+                "update_system_message_on_change",
+                "create_user_memories",
+                "update_user_memories_after_run",
+                "user_id",
+                "num_memories",
+            },
+        )
         # Add messages if they exist
         if self.messages is not None:
             _memory_dict["messages"] = [message.to_dict() for message in self.messages]
+        # Add memories if they exist
+        if self.memories is not None:
+            _memory_dict["memories"] = [memory.to_dict() for memory in self.memories]
         # Add runs if they exist
         if self.runs is not None:
             _memory_dict["runs"] = [run.to_dict() for run in self.runs]
@@ -198,9 +232,7 @@ class TeamMemory:
         get_logger().debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
 
-    def get_all_messages(
-        self
-    ) -> List[Tuple[Message, Message]]:
+    def get_all_messages(self) -> List[Tuple[Message, Message]]:
         """Returns a list of tuples of (user message, assistant response)."""
 
         assistant_role = ["assistant", "model", "CHATBOT"]
@@ -227,3 +259,127 @@ class TeamMemory:
                     runs_as_message_pairs.append((user_message_from_run, assistant_message_from_run))
         return runs_as_message_pairs
 
+    def load_user_memories(self) -> None:
+        """Load memories from memory db for this user."""
+
+        if self.db is None:
+            return
+
+        try:
+            if self.retrieval in (MemoryRetrieval.last_n, MemoryRetrieval.first_n):
+                memory_rows = self.db.read_memories(
+                    user_id=self.user_id,
+                    limit=self.num_memories,
+                    sort="asc" if self.retrieval == MemoryRetrieval.first_n else "desc",
+                )
+            else:
+                raise NotImplementedError("Semantic retrieval not yet supported.")
+        except Exception as e:
+            get_logger().debug(f"Error reading memory: {e}")
+            return
+
+        # Clear the existing memories
+        self.memories = []
+
+        # No memories to load
+        if memory_rows is None or len(memory_rows) == 0:
+            return
+
+        for row in memory_rows:
+            try:
+                self.memories.append(Memory.model_validate(row.memory))
+            except Exception as e:
+                get_logger().warning(f"Error loading memory: {e}")
+                continue
+
+    def should_update_memory(self, input: str) -> bool:
+        """Determines if a message should be added to the memory db."""
+        from agno.memory.classifier import MemoryClassifier
+
+        if self.classifier is None:
+            self.classifier = MemoryClassifier()
+
+        self.classifier.existing_memories = self.memories
+        classifier_response = self.classifier.run(input)
+        if classifier_response == "yes":
+            return True
+        return False
+
+    async def ashould_update_memory(self, input: str) -> bool:
+        """Determines if a message should be added to the memory db."""
+        from agno.memory.classifier import MemoryClassifier
+
+        if self.classifier is None:
+            self.classifier = MemoryClassifier()
+
+        self.classifier.existing_memories = self.memories
+        classifier_response = await self.classifier.arun(input)
+        if classifier_response == "yes":
+            return True
+        return False
+
+    def update_memory(self, input: str, force: bool = False) -> Optional[str]:
+        """Creates a memory from a message and adds it to the memory db."""
+        logger = get_logger()
+
+        if input is None or not isinstance(input, str):
+            return "Invalid message content"
+
+        if self.db is None:
+            logger.warning("MemoryDb not provided.")
+            return "Please provide a db to store memories"
+
+        self.updating_memory = True
+
+        # Check if this user message should be added to long term memory
+        should_update_memory = force or self.should_update_memory(input=input)
+        logger.debug(f"Update memory: {should_update_memory}")
+
+        if not should_update_memory:
+            logger.debug("Memory update not required")
+            return "Memory update not required"
+
+        if self.manager is None:
+            self.manager = MemoryManager(user_id=self.user_id, db=self.db)
+
+        else:
+            self.manager.db = self.db
+            self.manager.user_id = self.user_id
+
+        response = self.manager.run(input)
+        self.load_user_memories()
+        self.updating_memory = False
+        return response
+
+    async def aupdate_memory(self, input: str, force: bool = False) -> Optional[str]:
+        """Creates a memory from a message and adds it to the memory db."""
+        logger = get_logger()
+
+        if input is None or not isinstance(input, str):
+            return "Invalid message content"
+
+        if self.db is None:
+            logger.warning("MemoryDb not provided.")
+            return "Please provide a db to store memories"
+
+        self.updating_memory = True
+
+        # Check if this user message should be added to long term memory
+        should_update_memory = force or await self.ashould_update_memory(input=input)
+        logger.debug(f"Async update memory: {should_update_memory}")
+
+        if not should_update_memory:
+            logger.debug("Memory update not required")
+            return "Memory update not required"
+
+        if self.manager is None:
+            self.manager = MemoryManager(user_id=self.user_id, db=self.db)
+
+        else:
+            self.manager.db = self.db
+            self.manager.user_id = self.user_id
+
+        response = await self.manager.arun(input)
+        self.load_user_memories()
+        self.updating_memory = False
+        return response
