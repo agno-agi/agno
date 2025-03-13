@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Union
 
+from agno.media import File
 import httpx
 from pydantic import BaseModel
 
@@ -70,7 +71,7 @@ class OpenAIResponses(Model):
     reasoning_effort: Optional[str] = None
 
     # Built-in tools
-    web_search: bool = False
+    tools: Optional[List[Dict[str, Any]]] = None
 
     # The role to map the message role to.
     role_map = {
@@ -202,9 +203,16 @@ class OpenAIResponses(Model):
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
 
-        if self.web_search:
-            request_params.setdefault("tools", [])  # type: ignore
-            request_params["tools"].append({"type": "web_search_preview"})
+        if self.tool_choice is not None:
+            request_params["tool_choice"] = self.tool_choice
+
+        return request_params
+    
+    def get_request_tools(self) -> List[Dict[str, Any]]:
+        tools_for_request: List[Dict[str, Any]] = []
+        if self.tools is not None:
+            for tool in self.tools:
+                tools_for_request.append(tool)
 
         # Add tools
         if self._functions is not None and len(self._functions) > 0:
@@ -214,11 +222,45 @@ class OpenAIResponses(Model):
                 for prop in function_dict["parameters"]["properties"].values():
                     if isinstance(prop["type"], list):
                         prop["type"] = prop["type"][0]
-                request_params["tools"].append({"type": "function", **function_dict})
-        if self.tool_choice is not None:
-            request_params["tool_choice"] = self.tool_choice
+                tools_for_request.append({"type": "function", **function_dict})
 
-        return request_params
+        return tools_for_request
+
+    def _upload_file(self, file: File) -> str:
+        """Upload a file to the OpenAI vector database."""
+        
+
+        if file.url is not None:
+            file_content = file.file_url_content
+            file_name = file.url.split("/")[-1]
+            file_tuple = (file_name, file_content)
+            result = self.get_client().files.create(
+                file=file_tuple,
+                purpose="assistants"
+            )
+            return result.id
+        elif file.filepath is not None:
+            from pathlib import Path
+
+            file_path = file.filepath if isinstance(file.filepath, Path) else Path(file.filepath)
+            if file_path.exists() and file_path.is_file():
+                file_content = file_path.read_bytes()
+                result = self.get_client().files.create(
+                    file=file_content,
+                    purpose="assistants"
+                )
+                return result.id
+            else:
+                raise ValueError(f"File not found: {file_path}")
+        elif file.content is not None:
+            result = self.get_client().files.create(
+                file=file.content,
+                purpose="assistants"
+            )
+            return result.id
+        else:
+            raise ValueError("File URL must be provided.")
+
 
     def _format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
         """
@@ -248,8 +290,6 @@ class OpenAIResponses(Model):
                         message_dict["content"] = [{"type": "input_text", "text": message.content}]
                         if message.images is not None:
                             message_dict["content"].extend(images_to_message(images=message.images))
-
-                # TODO: File support
 
                 if message.audio is not None:
                     logger.warning("Audio input is currently unsupported.")
@@ -291,9 +331,12 @@ class OpenAIResponses(Model):
             Response: The response from the API.
         """
         try:
+            tools = self.get_request_tools(messages=messages)
+
             return self.get_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
+                tools=tools,
                 **self.request_kwargs,
             )
         except RateLimitError as e:
@@ -342,9 +385,11 @@ class OpenAIResponses(Model):
             Response: The response from the API.
         """
         try:
+            tools = self.get_request_tools(messages=messages)
             return await self.get_async_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
+                tools=tools,
                 **self.request_kwargs,
             )
         except RateLimitError as e:
@@ -393,9 +438,11 @@ class OpenAIResponses(Model):
             Iterator[ResponseStreamEvent]: An iterator of response stream events.
         """
         try:
+            tools = self.get_request_tools(messages=messages)
             yield from self.get_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
+                tools=tools,
                 stream=True,
                 **self.request_kwargs,
             )  # type: ignore
@@ -445,9 +492,11 @@ class OpenAIResponses(Model):
             Any: An asynchronous iterator of chat completion chunks.
         """
         try:
+            tools = self.get_request_tools(messages=messages)
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
+                tools=tools,
                 stream=True,
                 **self.request_kwargs,
             )

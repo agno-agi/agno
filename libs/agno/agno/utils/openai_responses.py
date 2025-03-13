@@ -91,3 +91,4 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
             continue
 
     return image_messages
+
