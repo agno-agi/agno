@@ -58,6 +58,10 @@ def get_sync_playground_router(
             provider = agent.model.provider or agent.model.__class__.__name__ if agent.model else None
             model_id = agent.model.id if agent.model else None
 
+            # Create an agent_id if its not set on the agent
+            if agent.agent_id is None:
+                agent.set_agent_id()
+
             if provider and model_id:
                 provider = f"{provider} {model_id}"
             elif name and model_id:
