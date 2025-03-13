@@ -15,7 +15,7 @@ try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
     from openai.resources.responses.responses import Response, ResponseStreamEvent
 except (ImportError, ModuleNotFoundError) as e:
-    raise ImportError("`openai` not installed. Please install using `pip install openai -U`")
+    raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
 
 
 @dataclass
