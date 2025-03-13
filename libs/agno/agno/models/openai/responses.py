@@ -12,34 +12,16 @@ from agno.utils.log import logger
 from agno.utils.openai_responses import images_to_message
 
 try:
-    import importlib.metadata as metadata
-
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
     from openai.resources.responses.responses import Response, ResponseStreamEvent
-    from packaging import version
-
-    # Get installed OpenAI version
-    openai_version = metadata.version("openai")
-
-    # Check version compatibility
-    parsed_version = version.parse(openai_version)
-    if parsed_version.major == 0 and parsed_version.minor < 66:
-        import warnings
-
-        warnings.warn("OpenAI v1.66.0 or higher is recommended for the Responses API", UserWarning)
-
-except ImportError as e:
-    # Handle different import error scenarios
-    if "openai" in str(e):
-        raise ImportError("OpenAI not installed. Install with `pip install openai -U`") from e
-    else:
-        raise ImportError("Missing dependencies. Install with `pip install packaging importlib-metadata`") from e
+except (ImportError, ModuleNotFoundError) as e:
+    raise ImportError("`openai` not installed. Please install using `pip install openai -U`")
 
 
 @dataclass
 class OpenAIResponses(Model):
     """
-    Implementation for the OpenAI Responses API using direct chat completions.
+    A class for interacting with OpenAI models using the Responses API.
 
     For more information, see: https://platform.openai.com/docs/api-reference/responses
     """
@@ -49,7 +31,21 @@ class OpenAIResponses(Model):
     provider: str = "OpenAI"
     supports_structured_outputs: bool = True
 
-    # API configuration
+    # Request parameters
+    include: Optional[List[str]] = None
+    max_output_tokens: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+    parallel_tool_calls: Optional[bool] = None
+    reasoning: Optional[Dict[str, Any]] = None
+    store: Optional[bool] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    truncation: Optional[str] = None
+    user: Optional[str] = None
+    response_format: Optional[Dict[str, str]] = None
+    request_params: Optional[Dict[str, Any]] = None
+
+    # Client parameters
     api_key: Optional[str] = None
     organization: Optional[str] = None
     base_url: Optional[Union[str, httpx.URL]] = None
@@ -60,17 +56,13 @@ class OpenAIResponses(Model):
     http_client: Optional[httpx.Client] = None
     client_params: Optional[Dict[str, Any]] = None
 
-    # Response parameters
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    max_output_tokens: Optional[int] = None
-    response_format: Optional[Dict[str, str]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    store: Optional[bool] = None
-    reasoning_effort: Optional[str] = None
+    # OpenAI clients
+    client: Optional[OpenAI] = None
+    async_client: Optional[AsyncOpenAI] = None
 
-    # Built-in tools
-    web_search: bool = False
+    # Internal parameters. Not used for API requests
+    # Whether to use the structured outputs with this Model.
+    structured_outputs: bool = False
 
     # The role to map the message role to.
     role_map = {
@@ -79,14 +71,6 @@ class OpenAIResponses(Model):
         "assistant": "assistant",
         "tool": "tool",
     }
-
-    # OpenAI clients
-    client: Optional[OpenAI] = None
-    async_client: Optional[AsyncOpenAI] = None
-
-    # Internal parameters. Not used for API requests
-    # Whether to use the structured outputs with this Model.
-    structured_outputs: bool = False
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
@@ -172,17 +156,19 @@ class OpenAIResponses(Model):
         """
         # Define base request parameters
         base_params = {
-            "temperature": self.temperature,
-            "top_p": self.top_p,
+            "include": self.include,
             "max_output_tokens": self.max_output_tokens,
             "metadata": self.metadata,
+            "parallel_tool_calls": self.parallel_tool_calls,
+            "reasoning": self.reasoning,
             "store": self.store,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "truncation": self.truncation,
+            "user": self.user,
         }
-        if self.reasoning_effort is not None:
-            base_params["reasoning"] = {
-                "effort": self.reasoning_effort,
-            }
 
+        # Set the response format
         if self.response_format is not None:
             if self.structured_outputs and isinstance(self.response_format, BaseModel):
                 schema = self.response_format.model_json_schema()
@@ -202,22 +188,24 @@ class OpenAIResponses(Model):
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
 
-        if self.web_search:
-            request_params.setdefault("tools", [])  # type: ignore
-            request_params["tools"].append({"type": "web_search_preview"})
-
         # Add tools
-        if self._functions is not None and len(self._functions) > 0:
+        if self._tools is not None and len(self._tools) > 0:
             request_params.setdefault("tools", [])  # type: ignore
-            for function in self._functions.values():
-                function_dict = function.to_dict()
-                for prop in function_dict["parameters"]["properties"].values():
-                    if isinstance(prop["type"], list):
-                        prop["type"] = prop["type"][0]
-                request_params["tools"].append({"type": "function", **function_dict})
-        if self.tool_choice is not None:
-            request_params["tool_choice"] = self.tool_choice
+            for _tool in self._tools:
+                if _tool.get("type") == "function":
+                    for prop in _tool["function"]["parameters"]["properties"].values():
+                        if isinstance(prop["type"], list):
+                            prop["type"] = prop["type"][0]
+                    request_params["tools"].append(_tool)
+                else:
+                    request_params["tools"].append(_tool)
 
+            if self.tool_choice is not None:
+                request_params["tool_choice"] = self.tool_choice
+
+        # Add additional request params if provided
+        if self.request_params:
+            request_params.update(self.request_params)
         return request_params
 
     def _format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
@@ -548,7 +536,7 @@ class OpenAIResponses(Model):
                 model_response.extra.setdefault("tool_call_ids", []).append(output.call_id)
 
         # i.e. we asked for reasoning, so we need to add the reasoning content
-        if self.reasoning_effort:
+        if self.reasoning is not None:
             model_response.reasoning_content = response.output_text
 
         if response.usage is not None:
@@ -588,7 +576,7 @@ class OpenAIResponses(Model):
             model_response.content = stream_event.delta
             stream_data.response_content += stream_event.delta
 
-            if self.reasoning_effort:
+            if self.reasoning is not None:
                 model_response.reasoning_content = stream_event.delta
                 stream_data.response_thinking += stream_event.delta
 
