@@ -330,7 +330,7 @@ class RedditTools(Toolkit):
             return "User authentication required for posting replies. Please provide username and password."
 
         try:
-            logger.info(f"Creating reply to post {post_id}")
+            logger.debug(f"Creating reply to post {post_id}")
             
             # Clean up the post_id if it's a full URL or permalink
             if '/' in post_id:
