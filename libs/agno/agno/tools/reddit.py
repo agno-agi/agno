@@ -374,7 +374,7 @@ class RedditTools(Toolkit):
                 "subreddit": str(reply.subreddit),
             }
             
-            logger.info(f"Reply created successfully: {reply.permalink}")
+            logger.debug(f"Reply created successfully: {reply.permalink}")
             return json.dumps({"reply": reply_info})
             
         except praw.exceptions.RedditAPIException as api_error:
