@@ -3,7 +3,6 @@ name: Main Validation
 on:
   push:
     branches:
-      - 'main'  # Run on main
       - '*release*'  # Run on release
 
 jobs:

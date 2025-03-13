@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import time
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Union
 
 from agno.media import File
@@ -7,40 +8,22 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import MessageData, Model
-from agno.models.message import Message
+from agno.models.message import CitationUrl, Citations, Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 from agno.utils.openai_responses import images_to_message
 
 try:
-    import importlib.metadata as metadata
-
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
     from openai.resources.responses.responses import Response, ResponseStreamEvent
-    from packaging import version
-
-    # Get installed OpenAI version
-    openai_version = metadata.version("openai")
-
-    # Check version compatibility
-    parsed_version = version.parse(openai_version)
-    if parsed_version.major == 0 and parsed_version.minor < 66:
-        import warnings
-
-        warnings.warn("OpenAI v1.66.0 or higher is recommended for the Responses API", UserWarning)
-
-except ImportError as e:
-    # Handle different import error scenarios
-    if "openai" in str(e):
-        raise ImportError("OpenAI not installed. Install with `pip install openai -U`") from e
-    else:
-        raise ImportError("Missing dependencies. Install with `pip install packaging importlib-metadata`") from e
+except (ImportError, ModuleNotFoundError) as e:
+    raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
 
 
 @dataclass
 class OpenAIResponses(Model):
     """
-    Implementation for the OpenAI Responses API using direct chat completions.
+    A class for interacting with OpenAI models using the Responses API.
 
     For more information, see: https://platform.openai.com/docs/api-reference/responses
     """
@@ -50,7 +33,21 @@ class OpenAIResponses(Model):
     provider: str = "OpenAI"
     supports_structured_outputs: bool = True
 
-    # API configuration
+    # Request parameters
+    include: Optional[List[str]] = None
+    max_output_tokens: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+    parallel_tool_calls: Optional[bool] = None
+    reasoning: Optional[Dict[str, Any]] = None
+    store: Optional[bool] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    truncation: Optional[str] = None
+    user: Optional[str] = None
+    response_format: Optional[Any] = None
+    request_params: Optional[Dict[str, Any]] = None
+
+    # Client parameters
     api_key: Optional[str] = None
     organization: Optional[str] = None
     base_url: Optional[Union[str, httpx.URL]] = None
@@ -61,15 +58,13 @@ class OpenAIResponses(Model):
     http_client: Optional[httpx.Client] = None
     client_params: Optional[Dict[str, Any]] = None
 
-    # Response parameters
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    max_output_tokens: Optional[int] = None
-    response_format: Optional[Dict[str, str]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    store: Optional[bool] = None
-    reasoning_effort: Optional[str] = None
-    request_params: Optional[Dict[str, Any]] = None
+    # OpenAI clients
+    client: Optional[OpenAI] = None
+    async_client: Optional[AsyncOpenAI] = None
+
+    # Internal parameters. Not used for API requests
+    # Whether to use the structured outputs with this Model.
+    structured_outputs: bool = False
 
     # The role to map the message role to.
     role_map = {
@@ -78,14 +73,6 @@ class OpenAIResponses(Model):
         "assistant": "assistant",
         "tool": "tool",
     }
-
-    # OpenAI clients
-    client: Optional[OpenAI] = None
-    async_client: Optional[AsyncOpenAI] = None
-
-    # Internal parameters. Not used for API requests
-    # Whether to use the structured outputs with this Model.
-    structured_outputs: bool = False
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
@@ -170,19 +157,21 @@ class OpenAIResponses(Model):
         """
         # Define base request parameters
         base_params = {
-            "temperature": self.temperature,
-            "top_p": self.top_p,
+            "include": self.include,
             "max_output_tokens": self.max_output_tokens,
             "metadata": self.metadata,
+            "parallel_tool_calls": self.parallel_tool_calls,
+            "reasoning": self.reasoning,
             "store": self.store,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "truncation": self.truncation,
+            "user": self.user,
         }
-        if self.reasoning_effort is not None:
-            base_params["reasoning"] = {
-                "effort": self.reasoning_effort,
-            }
 
+        # Set the response format
         if self.response_format is not None:
-            if self.structured_outputs and isinstance(self.response_format, BaseModel):
+            if self.structured_outputs and issubclass(self.response_format, BaseModel):
                 schema = self.response_format.model_json_schema()
                 schema["additionalProperties"] = False
                 base_params["text"] = {
@@ -199,20 +188,20 @@ class OpenAIResponses(Model):
 
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
-        
+
         if self.tool_choice is not None:
             request_params["tool_choice"] = self.tool_choice
-        
+
+        # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
-
         return request_params
-    
+
     def _upload_file(self, file: File) -> str:
         """Upload a file to the OpenAI vector database."""
-        
+
         if file.url is not None:
-            file_content = file.file_url_content
+            file_content = file.file_url_content[0]
             file_name = file.url.split("/")[-1]
             file_tuple = (file_name, file_content)
             result = self.get_client().files.create(
@@ -222,12 +211,14 @@ class OpenAIResponses(Model):
             return result.id
         elif file.filepath is not None:
             from pathlib import Path
-
+            import mimetypes
             file_path = file.filepath if isinstance(file.filepath, Path) else Path(file.filepath)
             if file_path.exists() and file_path.is_file():
+                file_name = file_path.name
                 file_content = file_path.read_bytes()
+                content_type = mimetypes.guess_type(file_path)[0]
                 result = self.get_client().files.create(
-                    file=file_content,
+                    file=(file_name, file_content, content_type),
                     purpose="assistants"
                 )
                 return result.id
@@ -241,15 +232,41 @@ class OpenAIResponses(Model):
             return result.id
         else:
             raise ValueError("File URL must be provided.")
-        
+
+    def _create_a_vector_store(self, file_ids: List[str]) -> str:
+        """Create a vector store for the files."""
+        vector_store = self.get_client().vector_stores.create(
+            name="knowledge_base"
+        )
+        for file_id in file_ids:
+            self.get_client().vector_stores.files.create(
+                vector_store_id=vector_store.id,
+                file_id=file_id
+            )
+        while True:
+            uploaded_files = self.get_client().vector_stores.files.list(
+                vector_store_id=vector_store.id
+            )
+            all_completed = True
+            failed = False
+            for file in uploaded_files:
+                if file.status == "failed":
+                    logger.error(f"File {file.id} failed to upload.")
+                    failed = True
+                    break
+                if file.status != "completed":
+                    all_completed = False
+            if all_completed or failed:
+                break
+            time.sleep(1)
+        return vector_store.id
+
     def _format_tool_params(self, messages: List[Message]) -> Dict[str, Any]:
         """Format the tool parameters for the OpenAI Responses API."""
         formatted_tools = []
         if self._tools:
             for _tool in self._tools:
-                if _tool.type in ["web_search_preview", "file_search"]:
-                    formatted_tools.append(_tool)
-                else:
+                if _tool["type"] == "function":
                     tool_dict = _tool["function"]
                     tool_dict["type"] = "function"
                     for prop in tool_dict["parameters"]["properties"].values():
@@ -257,18 +274,23 @@ class OpenAIResponses(Model):
                             prop["type"] = prop["type"][0]
 
                     formatted_tools.append(tool_dict)
+                else:
+                    formatted_tools.append(_tool)
 
-            file_ids = []
-            for message in messages:
-                if message.files is not None and len(message.files) > 0:
-                    for file in message.files:
-                        file_id = self._upload_file(file)
-                        file_ids.append(file_id)
-            
-            for _tool in formatted_tools:
-                if _tool["type"] == "file_search":
-                    _tool.setdefault("vector_store_ids", [])
-                    _tool["vector_store_ids"].extend(file_ids)
+        file_ids = []
+        for message in messages:
+            # Upload any attached files to the OpenAI vector database
+            if message.files is not None and len(message.files) > 0:
+                for file in message.files:
+                    file_id = self._upload_file(file)
+                    file_ids.append(file_id)
+
+        vector_store_id = self._create_a_vector_store(file_ids) if file_ids else None
+
+        # Add the file IDs to the tool parameters
+        for _tool in formatted_tools:
+            if _tool["type"] == "file_search" and vector_store_id is not None:
+                _tool["vector_store_ids"] = [vector_store_id]
 
         return formatted_tools
 
@@ -329,7 +351,7 @@ class OpenAIResponses(Model):
                         {"type": "function_call_output", "call_id": message.tool_call_id, "output": message.content}
                     )
         return formatted_messages
-    
+
     def invoke(self, messages: List[Message]) -> Response:
         """
         Send a request to the OpenAI Responses API.
@@ -590,8 +612,20 @@ class OpenAIResponses(Model):
         model_response.role = "assistant"
         for output in response.output:
             if output.type == "message":
-                # TODO: Support citations/annotations
                 model_response.content = response.output_text
+
+                # Add citations
+                citations = Citations()
+                for content in output.content:
+                    if content.type == "output_text" and content.annotations:
+                        citations.raw = [annotation.model_dump() for annotation in content.annotations]
+                        for annotation in content.annotations:
+                            if annotation.type == "url_citation":
+                                if citations.urls is None:
+                                    citations.urls = []
+                                citations.urls.append(CitationUrl(url=annotation.url, title=annotation.title))
+                        if citations.urls or citations.documents:
+                            model_response.citations = citations
             elif output.type == "function_call":
                 if model_response.tool_calls is None:
                     model_response.tool_calls = []
@@ -611,7 +645,7 @@ class OpenAIResponses(Model):
                 model_response.extra.setdefault("tool_call_ids", []).append(output.call_id)
 
         # i.e. we asked for reasoning, so we need to add the reasoning content
-        if self.reasoning_effort:
+        if self.reasoning is not None:
             model_response.reasoning_content = response.output_text
 
         if response.usage is not None:
@@ -644,6 +678,19 @@ class OpenAIResponses(Model):
             # Update metrics
             if not assistant_message.metrics.time_to_first_token:
                 assistant_message.metrics.set_time_to_first_token()
+        elif stream_event.type == "response.output_text.annotation.added":
+            model_response = ModelResponse()
+            if stream_data.response_citations is None:
+                stream_data.response_citations = Citations(raw=[stream_event.annotation])
+            else:
+                stream_data.response_citations.raw.append(stream_event.annotation)
+
+            if stream_event.annotation.type == "url_citation":
+                if stream_data.response_citations.urls is None:
+                    stream_data.response_citations.urls = []
+                stream_data.response_citations.urls.append(CitationUrl(url=stream_event.annotation.url, title=stream_event.annotation.title))
+
+            model_response.citations = stream_data.response_citations
 
         elif stream_event.type == "response.output_text.delta":
             model_response = ModelResponse()
@@ -651,7 +698,7 @@ class OpenAIResponses(Model):
             model_response.content = stream_event.delta
             stream_data.response_content += stream_event.delta
 
-            if self.reasoning_effort:
+            if self.reasoning is not None:
                 model_response.reasoning_content = stream_event.delta
                 stream_data.response_thinking += stream_event.delta
 

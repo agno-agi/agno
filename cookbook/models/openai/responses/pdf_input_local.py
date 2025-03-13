@@ -14,7 +14,7 @@ download_file(
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-4o-mini"),
-    tools = 
+    tools=[{"type": "file_search"}],
     markdown=True,
     add_history_to_messages=True,
 )
@@ -24,3 +24,4 @@ agent.print_response(
     files=[File(filepath=pdf_path)],
 )
 agent.print_response("Suggest me a recipe from the attached file.")
+
