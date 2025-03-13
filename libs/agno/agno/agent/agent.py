@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from agno.agent.metrics import SessionMetrics
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
-from agno.media import Audio, AudioArtifact, AudioResponse, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
@@ -35,8 +35,8 @@ from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
-from agno.storage.agent.base import AgentStorage
-from agno.storage.agent.session import AgentSession
+from agno.storage.base import Storage
+from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
@@ -98,7 +98,7 @@ class Agent:
     references_format: Literal["json", "yaml"] = "json"
 
     # --- Agent Storage ---
-    storage: Optional[AgentStorage] = None
+    storage: Optional[Storage] = None
     # Extra data stored with this agent
     extra_data: Optional[Dict[str, Any]] = None
 
@@ -250,7 +250,7 @@ class Agent:
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
-        storage: Optional[AgentStorage] = None,
+        storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
         show_tool_calls: bool = False,
@@ -425,6 +425,13 @@ class Agent:
         else:
             set_log_level_to_info()
 
+    def set_storage_mode(self):
+        if self.storage is not None:
+            if self.storage.mode == "workflow":
+                logger.warning("You cannot use storage in both workflow and agent mode")
+
+            self.storage.mode = "agent"
+
     def set_monitoring(self) -> None:
         """Override monitoring and telemetry settings based on environment variables."""
 
@@ -438,6 +445,7 @@ class Agent:
             self.telemetry = telemetry_env.lower() == "true"
 
     def initialize_agent(self) -> None:
+        self.set_storage_mode()
         self.set_debug()
         self.set_agent_id()
         self.set_session_id()
@@ -462,6 +470,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         **kwargs: Any,
@@ -506,8 +515,11 @@ class Agent:
 
         # 4. Prepare run messages
         run_messages: RunMessages = self.get_run_messages(
-            message=message, audio=audio, images=images, videos=videos, messages=messages, **kwargs
+            message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
+        if len(run_messages.messages) == 0:
+            logger.error("No messages to be sent to the model.")
+
         self.run_messages = run_messages
 
         # 5. Reason about the task if reasoning is enabled
@@ -797,6 +809,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
@@ -812,6 +825,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
@@ -826,6 +840,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Any]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
@@ -857,6 +872,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -896,6 +912,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -908,6 +925,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -944,6 +962,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         **kwargs: Any,
@@ -989,8 +1008,10 @@ class Agent:
 
         # 4. Prepare run messages
         run_messages: RunMessages = self.get_run_messages(
-            message=message, audio=audio, images=images, videos=videos, messages=messages, **kwargs
+            message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
+        if len(run_messages.messages) == 0:
+            logger.error("No messages to be sent to the model.")
         self.run_messages = run_messages
 
         # 5. Reason about the task if reasoning is enabled
@@ -1279,6 +1300,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
@@ -1309,6 +1331,7 @@ class Agent:
                         audio=audio,
                         images=images,
                         videos=videos,
+                        files=files,
                         messages=messages,
                         stream_intermediate_steps=stream_intermediate_steps,
                         **kwargs,
@@ -1347,6 +1370,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -1359,6 +1383,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -1750,7 +1775,7 @@ class Agent:
             Optional[AgentSession]: The loaded AgentSession or None if not found.
         """
         if self.storage is not None and self.session_id is not None:
-            self.agent_session = self.storage.read(session_id=self.session_id)
+            self.agent_session = cast(AgentSession, self.storage.read(session_id=self.session_id))
             if self.agent_session is not None:
                 self.load_agent_session(session=self.agent_session)
             self.load_user_memories()
@@ -1763,7 +1788,7 @@ class Agent:
             Optional[AgentSession]: The saved AgentSession or None if not saved.
         """
         if self.storage is not None:
-            self.agent_session = self.storage.upsert(session=self.get_agent_session())
+            self.agent_session = cast(AgentSession, self.storage.upsert(session=self.get_agent_session()))
         return self.agent_session
 
     def add_introduction(self, introduction: str) -> None:
@@ -2098,6 +2123,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent.
@@ -2155,13 +2181,20 @@ class Agent:
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 **kwargs,
             )
 
         # 2. If create_default_user_message is False or message is a list, return the message as is.
         if not self.create_default_user_message or isinstance(message, list):
             return Message(
-                role=self.user_message_role, content=message, images=images, audio=audio, videos=videos, **kwargs
+                role=self.user_message_role,
+                content=message,
+                images=images,
+                audio=audio,
+                videos=videos,
+                files=files,
+                **kwargs,
             )
 
         # 3. Build the default user message for the Agent
@@ -2197,6 +2230,7 @@ class Agent:
             audio=audio,
             images=images,
             videos=videos,
+            files=files,
             **kwargs,
         )
 
@@ -2207,6 +2241,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
@@ -2230,7 +2265,7 @@ class Agent:
 
         Typical usage:
         run_messages = self.get_run_messages(
-            message=message, audio=audio, images=images, videos=videos, messages=messages, **kwargs
+            message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
         """
         # Initialize the RunMessages object
@@ -2304,7 +2339,9 @@ class Agent:
         user_message: Optional[Message] = None
         # 4.1 Build user message if message is None, str or list
         if message is None or isinstance(message, str) or isinstance(message, list):
-            user_message = self.get_user_message(message=message, audio=audio, images=images, videos=videos, **kwargs)
+            user_message = self.get_user_message(
+                message=message, audio=audio, images=images, videos=videos, files=files, **kwargs
+            )
         # 4.2 If message is provided as a Message, use it directly
         elif isinstance(message, Message):
             user_message = message
@@ -2819,6 +2856,8 @@ class Agent:
     ###########################################################################
 
     def reason(self, run_messages: RunMessages) -> Iterator[RunResponse]:
+        from agno.models.openai.like import OpenAILike
+
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
@@ -2872,8 +2911,10 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)],
                     reasoning_agent_messages=[groq_reasoning_message],
                 )
-            # Use o-3 for reasoning
-            elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3"):
+            # Use o-3 or OpenAILike with deepseek model for reasoning
+            elif (reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")) or (
+                isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower()
+            ):
                 from agno.reasoning.openai import get_openai_reasoning, get_openai_reasoning_agent
 
                 openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
@@ -2998,6 +3039,8 @@ class Agent:
             )
 
     async def areason(self, run_messages: RunMessages) -> Any:
+        from agno.models.openai.like import OpenAILike
+
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
@@ -3052,7 +3095,10 @@ class Agent:
                     reasoning_agent_messages=[groq_reasoning_message],
                 )
             # Use o-3 for reasoning
-            elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o"):
+            elif (reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")) or (
+                isinstance(reasoning_model, OpenAILike) and "deepseek" in reasoning_model.id.lower()
+            ):
+                # elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o"):
                 from agno.reasoning.openai import aget_openai_reasoning, get_openai_reasoning_agent
 
                 openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
@@ -3462,6 +3508,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         stream: bool = False,
         markdown: bool = False,
         show_message: bool = True,
@@ -3518,7 +3565,14 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 for resp in self.run(
-                    message=message, messages=messages, audio=audio, images=images, videos=videos, stream=True, **kwargs
+                    message=message,
+                    messages=messages,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    stream=True,
+                    **kwargs,
                 ):
                     if isinstance(resp, RunResponse):
                         if resp.event == RunEvent.run_response:
@@ -3635,6 +3689,7 @@ class Agent:
                     audio=audio,
                     images=images,
                     videos=videos,
+                    files=files,
                     stream=False,
                     **kwargs,
                 )
@@ -3729,6 +3784,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         stream: bool = False,
         markdown: bool = False,
         show_message: bool = True,
@@ -3785,7 +3841,14 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 _arun_generator = await self.arun(
-                    message=message, messages=messages, audio=audio, images=images, videos=videos, stream=True, **kwargs
+                    message=message,
+                    messages=messages,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    stream=True,
+                    **kwargs,
                 )
                 async for resp in _arun_generator:
                     if isinstance(resp, RunResponse):

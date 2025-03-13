@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse
@@ -22,7 +22,6 @@ try:
     from google.genai.types import (
         Content,
         DynamicRetrievalConfig,
-        File,
         FunctionDeclaration,
         GenerateContentConfig,
         GenerateContentResponse,
@@ -33,6 +32,9 @@ try:
         Schema,
         Tool,
     )
+    from google.genai.types import (
+        File as GeminiFile,
+    )
 except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
 
@@ -40,18 +42,22 @@ except ImportError:
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     # Case 1: Image is a URL
     # Download the image from the URL and add it as base64 encoded data
-    if image.url is not None and image.image_url_content is not None:
-        try:
-            import base64
+    if image.url is not None:
+        content_bytes = image.image_url_content
+        if content_bytes is not None:
+            try:
+                import base64
 
-            content_bytes = image.image_url_content
-            image_data = {
-                "mime_type": "image/jpeg",
-                "data": base64.b64encode(content_bytes).decode("utf-8"),
-            }
-            return image_data
-        except Exception as e:
-            logger.warning(f"Failed to download image from {image}: {e}")
+                image_data = {
+                    "mime_type": "image/jpeg",
+                    "data": base64.b64encode(content_bytes).decode("utf-8"),
+                }
+                return image_data
+            except Exception as e:
+                logger.warning(f"Failed to download image from {image}: {e}")
+                return None
+        else:
+            logger.warning(f"Unsupported image format: {image}")
             return None
 
     # Case 2: Image is a local path
@@ -468,7 +474,7 @@ class Gemini(Model):
                 # Add images to the message for the model
                 if message.images is not None:
                     for image in message.images:
-                        if image.content is not None and isinstance(image.content, File):
+                        if image.content is not None and isinstance(image.content, GeminiFile):
                             # Google recommends that if using a single image, place the text prompt after the image.
                             message_parts.insert(0, image.content)
                         else:
@@ -482,7 +488,7 @@ class Gemini(Model):
                         for video in message.videos:
                             # Case 1: Video is a file_types.File object (Recommended)
                             # Add it as a File object
-                            if video.content is not None and isinstance(video.content, File):
+                            if video.content is not None and isinstance(video.content, GeminiFile):
                                 # Google recommends that if using a single image, place the text prompt after the image.
                                 message_parts.insert(
                                     0, Part.from_uri(file_uri=video.content.uri, mime_type=video.content.mime_type)
@@ -502,7 +508,7 @@ class Gemini(Model):
                 if message.audio is not None:
                     try:
                         for audio_snippet in message.audio:
-                            if audio_snippet.content is not None and isinstance(audio_snippet.content, File):
+                            if audio_snippet.content is not None and isinstance(audio_snippet.content, GeminiFile):
                                 # Google recommends that if using a single image, place the text prompt after the image.
                                 message_parts.insert(
                                     0,
@@ -518,11 +524,18 @@ class Gemini(Model):
                         logger.warning(f"Failed to load audio from {message.audio}: {e}")
                         continue
 
+                # Add files to the message for the model
+                if message.files is not None:
+                    for file in message.files:
+                        file_content = self._format_file_for_message(file)
+                        if file_content:
+                            message_parts.append(file_content)
+
             final_message = Content(role=role, parts=message_parts)
             formatted_messages.append(final_message)
         return formatted_messages, system_message
 
-    def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, File]]:
+    def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:
         # Case 1: Audio is a bytes object
         if audio.content and isinstance(audio.content, bytes):
             return Part.from_bytes(
@@ -579,7 +592,7 @@ class Gemini(Model):
             logger.warning(f"Unknown audio type: {type(audio.content)}")
             return None
 
-    def _format_video_for_message(self, video: Video) -> Optional[File]:
+    def _format_video_for_message(self, video: Video) -> Optional[GeminiFile]:
         # Case 1: Video is a bytes object
         if video.content and isinstance(video.content, bytes):
             return Part.from_bytes(
@@ -629,6 +642,50 @@ class Gemini(Model):
         else:
             logger.warning(f"Unknown video type: {type(video.content)}")
             return None
+
+    def _format_file_for_message(self, file: File) -> Optional[Part]:
+        # Case 1: File is a bytes object
+        if file.content and isinstance(file.content, bytes):
+            return Part.from_bytes(mime_type=file.mime_type, data=file.content)
+
+        # Case 2: File is a URL
+        elif file.url is not None:
+            url_content = file.file_url_content
+            if url_content is not None:
+                content, mime_type = url_content
+                return Part.from_bytes(mime_type=mime_type, data=content)
+            else:
+                logger.warning(f"Failed to download file from {file.url}")
+                return None
+
+        # Case 3: File is a local file path
+        elif file.filepath is not None:
+            file_path = file.filepath if isinstance(file.filepath, Path) else Path(file.filepath)
+            if file_path.exists() and file_path.is_file():
+                if file_path.stat().st_size < 20 * 1024 * 1024:  # 20MB in bytes
+                    if file.mime_type is not None:
+                        return Part.from_bytes(mime_type=file.mime_type, data=file_path.read_bytes())
+                    else:
+                        import mimetypes
+
+                        return Part.from_bytes(
+                            mime_type=mimetypes.guess_type(file_path)[0], data=file_path.read_bytes()
+                        )
+                else:
+                    file_upload = self.get_client().files.upload(
+                        file=file_path,
+                    )
+                    # Check whether the file is ready to be used.
+                    while file_upload.state.name == "PROCESSING":
+                        time.sleep(2)
+                        file_upload = self.get_client().files.get(name=file_upload.name)
+                    if file_upload.state.name == "FAILED":
+                        raise ValueError(file_upload.state.name)
+                    return Part.from_uri(file_uri=file_upload.uri, mime_type=file_upload.mime_type)
+            else:
+                logger.error(f"File {file_path} does not exist.")
+
+        return None
 
     def format_function_call_results(
         self, messages: List[Message], function_call_results: List[Message], **kwargs

@@ -654,7 +654,7 @@ class OpenAIChat(Model):
             response_delta: Raw response chunk from OpenAI
 
         Returns:
-            ProviderResponse: Iterator of parsed response data
+            ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
         if response_delta.choices and len(response_delta.choices) > 0:

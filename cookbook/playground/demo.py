@@ -6,7 +6,7 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.storage.sqlite import SqliteStorage
 from agno.tools.dalle import DalleTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
@@ -22,7 +22,7 @@ simple_agent = Agent(
     role="Answer basic questions",
     agent_id="simple-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    storage=SqliteAgentStorage(table_name="simple_agent", db_file=agent_storage_file),
+    storage=SqliteStorage(table_name="simple_agent", db_file=agent_storage_file),
     add_history_to_messages=True,
     num_history_responses=3,
     add_datetime_to_instructions=True,
@@ -39,7 +39,7 @@ web_agent = Agent(
         "Break down the users request into 2-3 different searches.",
         "Always include sources",
     ],
-    storage=SqliteAgentStorage(table_name="web_agent", db_file=agent_storage_file),
+    storage=SqliteStorage(table_name="web_agent", db_file=agent_storage_file),
     add_history_to_messages=True,
     num_history_responses=5,
     add_datetime_to_instructions=True,
@@ -60,7 +60,7 @@ finance_agent = Agent(
         )
     ],
     instructions=["Always use tables to display data"],
-    storage=SqliteAgentStorage(table_name="finance_agent", db_file=agent_storage_file),
+    storage=SqliteStorage(table_name="finance_agent", db_file=agent_storage_file),
     add_history_to_messages=True,
     num_history_responses=5,
     add_datetime_to_instructions=True,
@@ -81,9 +81,7 @@ image_agent = Agent(
     debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
-    storage=SqliteAgentStorage(
-        table_name="image_agent", db_file=image_agent_storage_file
-    ),
+    storage=SqliteStorage(table_name="image_agent", db_file=image_agent_storage_file),
 )
 
 research_agent = Agent(
@@ -127,7 +125,7 @@ research_agent = Agent(
     - [Reference 1](link)
     - [Reference 2](link)
     """),
-    storage=SqliteAgentStorage(table_name="research_agent", db_file=agent_storage_file),
+    storage=SqliteStorage(table_name="research_agent", db_file=agent_storage_file),
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     markdown=True,
@@ -149,7 +147,7 @@ youtube_agent = Agent(
     num_history_responses=5,
     show_tool_calls=True,
     add_datetime_to_instructions=True,
-    storage=SqliteAgentStorage(table_name="youtube_agent", db_file=agent_storage_file),
+    storage=SqliteStorage(table_name="youtube_agent", db_file=agent_storage_file),
     markdown=True,
 )
 

@@ -1,7 +1,7 @@
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class Media(BaseModel):
@@ -255,3 +255,53 @@ class Image(BaseModel):
         }
 
         return {k: v for k, v in response_dict.items() if v is not None}
+
+
+class File(BaseModel):
+    url: Optional[str] = None
+    filepath: Optional[Union[Path, str]] = None
+    content: Optional[Any] = None
+    mime_type: Optional[str] = None
+
+    VALID_MIME_TYPES: List[str] = [
+        "application/pdf",
+        "application/x-javascript",
+        "text/javascript",
+        "application/x-python",
+        "text/x-python",
+        "text/plain",
+        "text/html",
+        "text/css",
+        "text/md",
+        "text/csv",
+        "text/xml",
+        "text/rtf",
+    ]
+
+    @model_validator(mode="before")
+    @classmethod
+    def check_at_least_one_source(cls, data):
+        """Ensure at least one of url, filepath, or content is provided."""
+        if isinstance(data, dict) and not any(data.get(field) for field in ["url", "filepath", "content"]):
+            raise ValueError("At least one of url, filepath, or content must be provided")
+        return data
+
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, v):
+        """Validate that the mime_type is one of the allowed types."""
+        if v is not None and v not in cls.VALID_MIME_TYPES:
+            raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.VALID_MIME_TYPES}")
+        return v
+
+    @property
+    def file_url_content(self) -> Optional[Tuple[bytes, str]]:
+        import httpx
+
+        if self.url:
+            response = httpx.get(self.url)
+            content = response.content
+            mime_type = response.headers.get("Content-Type", "").split(";")[0]
+            return content, mime_type
+        else:
+            return None
