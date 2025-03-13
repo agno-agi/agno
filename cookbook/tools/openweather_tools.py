@@ -1,7 +1,3 @@
-# cookbook/tools/openweather_tools.py
-from agno.agent import Agent
-from agno.tools.openweather import OpenWeatherTools
-
 """
 OpenWeatherMap API Integration Example
 
@@ -18,6 +14,9 @@ Usage:
 - Get air pollution data for a location
 - Geocode a location name to coordinates
 """
+
+from agno.agent import Agent
+from agno.tools.openweather import OpenWeatherTools
 
 # Create an agent with OpenWeatherTools
 agent = Agent(
