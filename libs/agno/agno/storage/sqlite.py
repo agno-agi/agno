@@ -192,9 +192,7 @@ class SqliteStorage(Storage):
 
                         # Check if index already exists using SQLite's schema table
                         with self.SqlSession() as sess:
-                            exists_query = text(
-                                "SELECT 1 FROM sqlite_master WHERE type='index' AND name=:index_name"
-                            )
+                            exists_query = text("SELECT 1 FROM sqlite_master WHERE type='index' AND name=:index_name")
                             exists = sess.execute(exists_query, {"index_name": idx_name}).scalar() is not None
 
                         if not exists:
