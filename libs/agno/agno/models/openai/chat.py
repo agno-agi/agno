@@ -98,9 +98,9 @@ class OpenAIChat(Model):
     def _get_client_params(self) -> Dict[str, Any]:
         # Fetch API key from env if not already set
         if not self.api_key:
-            self.api_key = getenv("OPENAI_API_KEY")
+            self.api_key = getenv(f"{self.provider.upper()}_API_KEY")
             if not self.api_key:
-                logger.error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
+                logger.error(f"{self.provider.upper()}_KEY not set. Please set the {self.provider.upper()}_API_KEY environment variable.")
 
         # Define base client params
         base_params = {
