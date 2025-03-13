@@ -30,7 +30,7 @@ from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.models.base import Model
-from agno.models.message import Message, MessageReferences
+from agno.models.message import Citations, Message, MessageReferences
 from agno.models.openai.like import OpenAILike
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -558,16 +558,21 @@ class Agent:
                         # We only have thinking on response
                         self.run_response.thinking = model_response.redacted_thinking
 
+                    if model_response_chunk.citations is not None:
+                        self.run_response.citations = model_response_chunk.citations
+
                     # Only yield if we have content or thinking to show
                     if (
                         model_response_chunk.content is not None
                         or model_response_chunk.thinking is not None
                         or model_response_chunk.redacted_thinking is not None
+                        or model_response_chunk.citations is not None
                     ):
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
                             redacted_thinking=model_response_chunk.redacted_thinking,
+                            citations=model_response_chunk.citations,
                             created_at=model_response_chunk.created_at,
                         )
 
@@ -666,6 +671,10 @@ class Agent:
                     self.run_response.thinking = model_response.redacted_thinking
                 else:
                     self.run_response.thinking += model_response.redacted_thinking
+
+            # Update the run_response citations with the model response citations
+            if model_response.citations is not None:
+                self.run_response.citations = model_response.citations
 
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:
@@ -1051,16 +1060,21 @@ class Agent:
                         # We only have thinking on response
                         self.run_response.thinking = model_response.redacted_thinking
 
+                    if model_response_chunk.citations is not None:
+                        self.run_response.citations = model_response_chunk.citations
+
                     # Only yield if we have content or thinking to show
                     if (
                         model_response_chunk.content is not None
                         or model_response_chunk.thinking is not None
                         or model_response_chunk.redacted_thinking is not None
+                        or model_response_chunk.citations is not None
                     ):
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
                             redacted_thinking=model_response_chunk.redacted_thinking,
+                            citations=model_response_chunk.citations,
                             created_at=model_response_chunk.created_at,
                         )
 
@@ -1159,6 +1173,9 @@ class Agent:
                     self.run_response.thinking = model_response.redacted_thinking
                 else:
                     self.run_response.thinking += model_response.redacted_thinking
+
+            if model_response.citations is not None:
+                self.run_response.citations = model_response.citations
 
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:
@@ -1414,6 +1431,7 @@ class Agent:
         event: RunEvent = RunEvent.run_response,
         content_type: Optional[str] = None,
         created_at: Optional[int] = None,
+        citations: Optional[Citations] = None,
     ) -> RunResponse:
         self.run_response = cast(RunResponse, self.run_response)
         thinking_combined = (thinking or "") + (redacted_thinking or "")
@@ -1427,6 +1445,7 @@ class Agent:
             audio=self.run_response.audio,
             images=self.run_response.images,
             videos=self.run_response.videos,
+            citations=self.run_response.citations,
             response_audio=self.run_response.response_audio,
             model=self.run_response.model,
             messages=self.run_response.messages,
@@ -3646,6 +3665,16 @@ class Agent:
                         panels.append(response_panel)
                     if render:
                         live_log.update(Group(*panels))
+
+                    if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                        md_content = "\n".join(f"{i + 1}. [{url}]({url})" for i, url in enumerate(resp.citations.urls))
+                        citations_panel = self.create_panel(
+                            content=Markdown(md_content),
+                            title="Citations",
+                            border_style="green",
+                        )
+                        panels.append(citations_panel)
+                        live_log.update(Group(*panels))
                 response_timer.stop()
 
                 # Final update to remove the "Thinking..." status
@@ -3760,6 +3789,22 @@ class Agent:
                     border_style="blue",
                 )
                 panels.append(response_panel)
+
+                if (
+                    isinstance(run_response, RunResponse)
+                    and run_response.citations is not None
+                    and run_response.citations.urls is not None
+                ):
+                    md_content = "\n".join(
+                        f"{i + 1}. [{url}]({url})" for i, url in enumerate(run_response.citations.urls)
+                    )
+                    citations_panel = self.create_panel(
+                        content=Markdown(md_content),
+                        title="Citations",
+                        border_style="green",
+                    )
+                    panels.append(citations_panel)
+                    live_log.update(Group(*panels))
 
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]
@@ -3923,6 +3968,16 @@ class Agent:
                         panels.append(response_panel)
                     if render:
                         live_log.update(Group(*panels))
+
+                    if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                        md_content = "\n".join(f"{i + 1}. [{url}]({url})" for i, url in enumerate(resp.citations.urls))
+                        citations_panel = self.create_panel(
+                            content=Markdown(md_content),
+                            title="Citations",
+                            border_style="green",
+                        )
+                        panels.append(citations_panel)
+                        live_log.update(Group(*panels))
                 response_timer.stop()
 
                 # Final update to remove the "Thinking..." status
@@ -4036,6 +4091,22 @@ class Agent:
                     border_style="blue",
                 )
                 panels.append(response_panel)
+
+                if (
+                    isinstance(run_response, RunResponse)
+                    and run_response.citations is not None
+                    and run_response.citations.urls is not None
+                ):
+                    md_content = "\n".join(
+                        f"{i + 1}. [{url}]({url})" for i, url in enumerate(run_response.citations.urls)
+                    )
+                    citations_panel = self.create_panel(
+                        content=Markdown(md_content),
+                        title="Citations",
+                        border_style="green",
+                    )
+                    panels.append(citations_panel)
+                    live_log.update(Group(*panels))
 
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]

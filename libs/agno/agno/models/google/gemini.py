@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
-from agno.models.message import Message, MessageMetrics
+from agno.models.message import Citations, Message, MessageMetrics
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
@@ -750,6 +750,23 @@ class Gemini(Model):
 
                         model_response.tool_calls.append(tool_call)
 
+            if response.candidates[0].grounding_metadata is not None:
+                citations = Citations(source="Model")
+                grounding_metadata = response.candidates[0].grounding_metadata.model_dump()
+
+                urls = []
+                for chunk in grounding_metadata.pop("grounding_chunks", []):
+                    if chunk.get("web").get("uri") is not None:
+                        urls.append(chunk.get("web").get("uri"))
+
+                # Remove grounding_chunks and store it separately
+                citations.urls = urls
+
+                # Everything else remains in metadata
+                citations.metadata = grounding_metadata
+
+                model_response.citations = citations
+
         # Extract usage metadata if present
         if hasattr(response, "usage_metadata") and response.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response.usage_metadata
@@ -789,6 +806,23 @@ class Gemini(Model):
                     }
 
                     model_response.tool_calls.append(tool_call)
+
+        if response_delta.candidates[0].grounding_metadata is not None:
+            citations = Citations(source="Model")
+            grounding_metadata = response_delta.candidates[0].grounding_metadata.model_dump()
+
+            urls = []
+            for chunk in grounding_metadata.get("grounding_chunks", []):
+                if chunk.get("web").get("uri") is not None:
+                    urls.append(chunk.get("web").get("uri"))
+
+            # Remove grounding_chunks and store it separately
+            citations.urls = urls
+
+            # Everything else remains in metadata
+            citations.metadata = grounding_metadata
+
+            model_response.citations = citations
 
         # Extract usage metadata if present
         if hasattr(response_delta, "usage_metadata") and response_delta.usage_metadata is not None:
