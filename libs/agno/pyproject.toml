@@ -108,6 +108,7 @@ models = [
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
+  "agno[ibm]"
 ]
 
 # All tools
@@ -127,6 +128,7 @@ tools = [
   "agno[webex]",
   "agno[mcp]",
   "agno[browserbase]",
+  "agno[yfinance]",
 ]
 
 # All storage
