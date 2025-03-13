@@ -348,8 +348,7 @@ class RedditTools(Toolkit):
             # Get the submission object
             submission = self.reddit.submission(id=post_id)
             
-            if self.debug_mode:
-                logger.info(f"Post details: Title: {submission.title}, Author: {submission.author}, Subreddit: {submission.subreddit.display_name}")
+            logger.debug(f"Post details: Title: {submission.title}, Author: {submission.author}, Subreddit: {submission.subreddit.display_name}")
             
             # If subreddit was provided, verify we're in the right place
             if subreddit and submission.subreddit.display_name.lower() != subreddit.lower():
