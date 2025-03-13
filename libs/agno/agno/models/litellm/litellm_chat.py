@@ -2,7 +2,11 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Union, AsyncIterator
 
-import litellm
+try:
+    import litellm
+except ImportError:
+    raise ImportError("`litellm` not installed. Please install it using `pip install litellm`")
+
 from pydantic import BaseModel
 
 from agno.models.base import Model
@@ -106,7 +110,6 @@ class LiteLLM(Model):
         """Sends a chat completion request to the LiteLLM API."""
         completion_kwargs = self.request_kwargs
         completion_kwargs["messages"] = self._format_messages(messages)
-
         return litellm.completion(**completion_kwargs)
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
