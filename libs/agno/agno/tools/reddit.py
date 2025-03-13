@@ -337,7 +337,7 @@ class RedditTools(Toolkit):
                 # Extract the actual ID from the URL/permalink
                 original_id = post_id
                 post_id = post_id.split('/')[-1]
-                logger.info(f"Extracted post ID {post_id} from {original_id}")
+                logger.debug(f"Extracted post ID {post_id} from {original_id}")
             
             # Verify post exists
             if not self._check_post_exists(post_id):
