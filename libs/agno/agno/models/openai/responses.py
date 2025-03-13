@@ -69,9 +69,7 @@ class OpenAIResponses(Model):
     metadata: Optional[Dict[str, Any]] = None
     store: Optional[bool] = None
     reasoning_effort: Optional[str] = None
-
-    # Built-in tools
-    tools: Optional[List[Dict[str, Any]]] = None
+    request_params: Optional[Dict[str, Any]] = None
 
     # The role to map the message role to.
     role_map = {
@@ -163,8 +161,7 @@ class OpenAIResponses(Model):
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_params(self) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -202,34 +199,18 @@ class OpenAIResponses(Model):
 
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
-
+        
         if self.tool_choice is not None:
             request_params["tool_choice"] = self.tool_choice
+        
+        if self.request_params:
+            request_params.update(self.request_params)
 
         return request_params
     
-    def get_request_tools(self) -> List[Dict[str, Any]]:
-        tools_for_request: List[Dict[str, Any]] = []
-        if self.tools is not None:
-            for tool in self.tools:
-                tools_for_request.append(tool)
-
-        # Add tools
-        if self._functions is not None and len(self._functions) > 0:
-            request_params.setdefault("tools", [])  # type: ignore
-            for function in self._functions.values():
-                function_dict = function.to_dict()
-                for prop in function_dict["parameters"]["properties"].values():
-                    if isinstance(prop["type"], list):
-                        prop["type"] = prop["type"][0]
-                tools_for_request.append({"type": "function", **function_dict})
-
-        return tools_for_request
-
     def _upload_file(self, file: File) -> str:
         """Upload a file to the OpenAI vector database."""
         
-
         if file.url is not None:
             file_content = file.file_url_content
             file_name = file.url.split("/")[-1]
@@ -260,7 +241,36 @@ class OpenAIResponses(Model):
             return result.id
         else:
             raise ValueError("File URL must be provided.")
+        
+    def _format_tool_params(self, messages: List[Message]) -> Dict[str, Any]:
+        """Format the tool parameters for the OpenAI Responses API."""
+        formatted_tools = []
+        if self._tools:
+            for _tool in self._tools:
+                if _tool.type in ["web_search_preview", "file_search"]:
+                    formatted_tools.append(_tool)
+                else:
+                    tool_dict = _tool["function"]
+                    tool_dict["type"] = "function"
+                    for prop in tool_dict["parameters"]["properties"].values():
+                        if isinstance(prop["type"], list):
+                            prop["type"] = prop["type"][0]
 
+                    formatted_tools.append(tool_dict)
+
+            file_ids = []
+            for message in messages:
+                if message.files is not None and len(message.files) > 0:
+                    for file in message.files:
+                        file_id = self._upload_file(file)
+                        file_ids.append(file_id)
+            
+            for _tool in formatted_tools:
+                if _tool["type"] == "file_search":
+                    _tool.setdefault("vector_store_ids", [])
+                    _tool["vector_store_ids"].extend(file_ids)
+
+        return formatted_tools
 
     def _format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
         """
@@ -319,7 +329,7 @@ class OpenAIResponses(Model):
                         {"type": "function_call_output", "call_id": message.tool_call_id, "output": message.content}
                     )
         return formatted_messages
-
+    
     def invoke(self, messages: List[Message]) -> Response:
         """
         Send a request to the OpenAI Responses API.
@@ -331,13 +341,14 @@ class OpenAIResponses(Model):
             Response: The response from the API.
         """
         try:
-            tools = self.get_request_tools(messages=messages)
+            request_params = self.get_request_params()
+            if self._tools:
+                request_params["tools"] = self._format_tool_params(messages=messages)
 
             return self.get_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
-                tools=tools,
-                **self.request_kwargs,
+                **request_params,
             )
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
@@ -385,12 +396,13 @@ class OpenAIResponses(Model):
             Response: The response from the API.
         """
         try:
-            tools = self.get_request_tools(messages=messages)
+            request_params = self.get_request_params()
+            if self._tools:
+                request_params["tools"] = self._format_tool_params(messages=messages)
             return await self.get_async_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
-                tools=tools,
-                **self.request_kwargs,
+                **request_params,
             )
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
@@ -438,13 +450,14 @@ class OpenAIResponses(Model):
             Iterator[ResponseStreamEvent]: An iterator of response stream events.
         """
         try:
-            tools = self.get_request_tools(messages=messages)
+            request_params = self.get_request_params()
+            if self._tools:
+                request_params["tools"] = self._format_tool_params(messages=messages)
             yield from self.get_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
-                tools=tools,
                 stream=True,
-                **self.request_kwargs,
+                **request_params,
             )  # type: ignore
         except RateLimitError as e:
             logger.error(f"Rate limit error from OpenAI API: {e}")
@@ -492,13 +505,14 @@ class OpenAIResponses(Model):
             Any: An asynchronous iterator of chat completion chunks.
         """
         try:
-            tools = self.get_request_tools(messages=messages)
+            request_params = self.get_request_params()
+            if self._tools:
+                request_params["tools"] = self._format_tool_params(messages=messages)
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
-                tools=tools,
                 stream=True,
-                **self.request_kwargs,
+                **request_params,
             )
             async for chunk in async_stream:  # type: ignore
                 yield chunk
