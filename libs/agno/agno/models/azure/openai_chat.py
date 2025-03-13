@@ -27,6 +27,7 @@ class AzureOpenAI(OpenAILike):
         api_version (str): The API version to use.
         azure_endpoint (Optional[str]): The Azure endpoint to use.
         azure_deployment (Optional[str]): The Azure deployment to use.
+        base_url (Optional[str]): The base URL to use.
         azure_ad_token (Optional[str]): The Azure AD token to use.
         azure_ad_token_provider (Optional[Any]): The Azure AD token provider to use.
         organization (Optional[str]): The organization to use.
@@ -44,6 +45,7 @@ class AzureOpenAI(OpenAILike):
     api_version: Optional[str] = "2024-10-21"
     azure_endpoint: Optional[str] = None
     azure_deployment: Optional[str] = None
+    base_url: Optional[str] = None
     azure_ad_token: Optional[str] = None
     azure_ad_token_provider: Optional[Any] = None
 
@@ -62,6 +64,7 @@ class AzureOpenAI(OpenAILike):
             "organization": self.organization,
             "azure_endpoint": self.azure_endpoint,
             "azure_deployment": self.azure_deployment,
+            "base_url": self.base_url,
             "azure_ad_token": self.azure_ad_token,
             "azure_ad_token_provider": self.azure_ad_token_provider,
             "http_client": self.http_client,

@@ -12,8 +12,7 @@ agent = Agent(
 image_path = Path(__file__).parent.joinpath("sample.jpg")
 
 # Read the image file content as bytes
-with open(image_path, "rb") as img_file:
-    image_bytes = img_file.read()
+image_bytes = image_path.read_bytes()
 
 agent.print_response(
     "Tell me about this image",

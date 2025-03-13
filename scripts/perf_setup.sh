@@ -27,7 +27,7 @@ print_info "uv venv --python 3.12 ${VENV_DIR}"
 uv venv --python 3.12 ${VENV_DIR}
 
 print_heading "Installing libraries"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -U agno langgraph langchain_openai crewai pydantic_ai smolagents autogen-agentchat "autogen-ext[openai]"
+VIRTUAL_ENV=${VENV_DIR} uv pip install -U agno langgraph langchain_openai openai-agents crewai pydantic_ai smolagents autogen-agentchat "autogen-ext[openai]"
 
 print_heading "uv pip list"
 VIRTUAL_ENV=${VENV_DIR} uv pip list

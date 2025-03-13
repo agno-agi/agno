@@ -1,618 +1,423 @@
 import logging
-from typing import Dict
+from typing import Dict, List
 
+import chess
 import nest_asyncio
 import streamlit as st
+from agents import get_chess_teams
 from agno.utils.log import logger
-from chess_board import ChessBoard
-from main import ChessGame
+from utils import (
+    CUSTOM_CSS,
+    WHITE,
+    ChessBoard,
+    display_board,
+    display_move_history,
+    is_claude_thinking_model,
+    parse_move,
+    show_agent_status,
+)
 
 # Configure logging
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger(__name__)
 
 nest_asyncio.apply()
 
 # Page configuration
 st.set_page_config(
-    page_title="Chess Team AI",
+    page_title="Chess Team Battle",
     page_icon="♟️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Custom CSS for styling
-CUSTOM_CSS = """
-<style>
-.main-title {
-    text-align: center;
-    background: linear-gradient(45deg, #1a1a1a, #4a4a4a);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    font-size: 3em;
-    font-weight: bold;
-    padding: 1em 0;
-}
-.subtitle {
-    text-align: center;
-    color: #666;
-    margin-bottom: 2em;
-}
-.chess-board {
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 1.5em;
-    white-space: pre;
-    background-color: #2b2b2b;
-    padding: 20px;
-    border-radius: 10px;
-    margin: 20px 0;
-    line-height: 1.2;
-    letter-spacing: 0.1em;
-    color: #fff;
-}
-.move-history {
-    background-color: #2b2b2b;
-    padding: 15px;
-    border-radius: 10px;
-    margin: 10px 0;
-}
-.agent-status {
-    background-color: #1e1e1e;
-    border-left: 4px solid #4CAF50;
-    padding: 10px;
-    margin: 10px 0;
-    border-radius: 4px;
-}
-.agent-thinking {
-    display: flex;
-    align-items: center;
-    background-color: #2b2b2b;
-    padding: 10px;
-    border-radius: 5px;
-    margin: 10px 0;
-    border-left: 4px solid #FFA500;
-}
-.piece-moving {
-    background-color: #1e1e1e;
-    border-left: 4px solid #FFA500;
-    padding: 15px;
-    margin: 10px 0;
-    border-radius: 4px;
-    font-size: 1.2em;
-    animation: highlight 2s ease-in-out;
-}
-@keyframes highlight {
-    0% { background-color: #2d4f1e; }
-    50% { background-color: #1e1e1e; }
-    100% { background-color: #2d4f1e; }
-}
-.last-move {
-    color: #4CAF50;
-    font-weight: bold;
-}
-.chess-board-wrapper {
-    font-family: 'Courier New', monospace;
-    background: #2b2b2b;
-    padding: 20px;
-    border-radius: 10px;
-    display: inline-block;
-    margin: 20px auto;
-    text-align: center;
-}
-.board-container {
-    display: flex;
-    justify-content: center;
-    width: 100%;
-}
-.chess-files {
-    color: #888;
-    text-align: center;
-    padding: 5px 0;
-    margin-left: 30px;
-    display: flex;
-    justify-content: space-around;
-    width: calc(100% - 30px);
-    margin-bottom: 5px;
-}
-.chess-file-label {
-    width: 40px;
-    text-align: center;
-}
-.chess-grid {
-    border: 1px solid #666;
-    display: inline-block;
-}
-.chess-row {
-    display: flex;
-    align-items: center;
-}
-.chess-rank {
-    color: #888;
-    width: 25px;
-    text-align: center;
-    padding-right: 5px;
-}
-.chess-cell {
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid #666;
-    font-size: 24px;
-}
-.piece-white {
-    color: #fff;
-}
-.piece-black {
-    color: #aaa;
-}
-.piece-empty {
-    color: transparent;
-}
-.chess-row:nth-child(odd) .chess-cell:nth-child(even),
-.chess-row:nth-child(even) .chess-cell:nth-child(odd) {
-    background-color: #3c3c3c;
-}
-.chess-row:nth-child(even) .chess-cell:nth-child(even),
-.chess-row:nth-child(odd) .chess-cell:nth-child(odd) {
-    background-color: #262626;
-}
-</style>
-"""
-
+# Load custom CSS with dark mode support
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
-def display_board(board: ChessBoard):
-    """Display the chess board in a formatted way"""
-    st.markdown('<div class="board-container">', unsafe_allow_html=True)
-    st.markdown(board.get_board_state(), unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+def get_legal_moves_with_descriptions(board: ChessBoard) -> List[Dict]:
+    """
+    Get all legal moves with descriptions for the current player.
+
+    Args:
+        board: ChessBoard instance
+
+    Returns:
+        List of dictionaries with move information
+    """
+    legal_moves = []
+
+    # Get python-chess board
+    chess_board = board.board
+
+    # Get all legal moves
+    for move in chess_board.legal_moves:
+        # Get source and destination squares
+        from_square = chess.square_name(move.from_square)
+        to_square = chess.square_name(move.to_square)
+
+        # Get piece type
+        piece = chess_board.piece_at(move.from_square)
+        piece_type = piece.symbol().upper() if piece else "?"
+
+        # Check if it's a capture
+        is_capture = chess_board.is_capture(move)
+
+        # Check if it's a promotion
+        promotion = None
+        if move.promotion:
+            promotion = chess.piece_name(move.promotion)
+
+        # Check if it's a castling move
+        is_kingside_castle = chess_board.is_kingside_castling(move)
+        is_queenside_castle = chess_board.is_queenside_castling(move)
+
+        # Create move description
+        if is_kingside_castle:
+            description = "Kingside castle (O-O)"
+        elif is_queenside_castle:
+            description = "Queenside castle (O-O-O)"
+        elif promotion:
+            description = f"Pawn {from_square} to {to_square}, promote to {promotion}"
+        elif is_capture:
+            captured_piece = chess_board.piece_at(move.to_square)
+            captured_type = captured_piece.symbol().upper() if captured_piece else "?"
+            description = f"{piece_type} from {from_square} captures {captured_type} at {to_square}"
+        else:
+            description = f"{piece_type} from {from_square} to {to_square}"
+
+        # Add move to list
+        legal_moves.append(
+            {
+                "uci": move.uci(),
+                "san": chess_board.san(move),
+                "description": description,
+                "is_capture": is_capture,
+                "is_castle": is_kingside_castle or is_queenside_castle,
+                "promotion": promotion,
+            }
+        )
+
+    return legal_moves
 
 
-def add_move_to_history(move: str, player: str, piece_info: Dict[str, str] = None):
-    """Add a move to the game history with piece information"""
-    if "move_history" not in st.session_state:
-        st.session_state.move_history = []
-
-    move_number = len(st.session_state.move_history) + 1
-    st.session_state.move_history.append(
-        {
-            "number": move_number,
-            "player": player,
-            "move": move,
-            "piece": piece_info.get("piece_name", "") if piece_info else "",
-        }
-    )
-
-
-def display_move_history():
-    """Display the move history in a formatted way"""
-    if "move_history" in st.session_state and st.session_state.move_history:
-        st.sidebar.markdown("### Move History")
-
-        piece_symbols = {
-            "King": ("♔", "♚"),
-            "Queen": ("♕", "♛"),
-            "Rook": ("♖", "♜"),
-            "Bishop": ("♗", "♝"),
-            "Knight": ("♘", "♞"),
-            "Pawn": ("♙", "♟"),
-        }
-
-        # Create a formatted move history
-        moves_text = []
-        current_move = {
-            "number": 1,
-            "white": "",
-            "white_piece": "",
-            "black": "",
-            "black_piece": "",
-        }
-
-        for move in st.session_state.move_history:
-            if move["player"] == "White":
-                if current_move["white"]:
-                    moves_text.append(current_move)
-                    current_move = {
-                        "number": len(moves_text) + 1,
-                        "white": "",
-                        "white_piece": "",
-                        "black": "",
-                        "black_piece": "",
-                    }
-                current_move["white"] = move["move"]
-                piece_name = move.get("piece", "")
-                if piece_name in piece_symbols:
-                    current_move["white_piece"] = piece_symbols[piece_name][
-                        0
-                    ]  # White piece symbol
-            else:
-                current_move["black"] = move["move"]
-                piece_name = move.get("piece", "")
-                if piece_name in piece_symbols:
-                    current_move["black_piece"] = piece_symbols[piece_name][
-                        1
-                    ]  # Black piece symbol
-                moves_text.append(current_move)
-                current_move = {
-                    "number": len(moves_text) + 1,
-                    "white": "",
-                    "white_piece": "",
-                    "black": "",
-                    "black_piece": "",
-                }
-
-        if current_move["white"] or current_move["black"]:
-            moves_text.append(current_move)
-
-        # Display moves in a table format
-        history_text = "Move │ White       │ Black\n"
-        history_text += "─────┼────────────┼────────────\n"
-
-        for move in moves_text:
-            white = (
-                f"{move['white_piece']} {move['white']}"
-                if move["white_piece"]
-                else move["white"]
-            )
-            black = (
-                f"{move['black_piece']} {move['black']}"
-                if move["black_piece"]
-                else move["black"]
-            )
-            history_text += f"{move['number']:3d}. │ {white:10s} │ {black:10s}\n"
-
-        st.sidebar.markdown(f"```\n{history_text}\n```")
-
-
-def show_agent_status(agent_name: str, status: str):
-    """Display the current agent status"""
+def main():
+    ####################################################################
+    # App header
+    ####################################################################
     st.markdown(
-        f"""<div class="agent-status">
-            🤖 <b>{agent_name}</b>: {status}
-        </div>""",
+        "<h1 class='main-title'>Chess Team Battle</h1>",
         unsafe_allow_html=True,
     )
 
+    ####################################################################
+    # Initialize session state
+    ####################################################################
+    if "game_started" not in st.session_state:
+        st.session_state.game_started = False
+        st.session_state.game_paused = False
+        st.session_state.move_history = []
 
-def show_thinking_indicator(agent_name: str):
-    """Show a thinking indicator for the current agent"""
-    with st.container():
+    with st.sidebar:
+        st.markdown("### Game Controls")
+        model_options = {
+            "gpt-4o": "openai:gpt-4o",
+            "o3-mini": "openai:o3-mini",
+            "claude-3.5": "anthropic:claude-3-5-sonnet",
+            "claude-3.7": "anthropic:claude-3-7-sonnet",
+            "claude-3.7-thinking": "anthropic:claude-3-7-sonnet-thinking",
+            "gemini-flash": "google:gemini-2.0-flash",
+            "gemini-pro": "google:gemini-2.0-pro-exp-02-05",
+        }
+        ################################################################
+        # Model selection
+        ################################################################
+        st.markdown("#### White Player")
+        selected_white = st.selectbox(
+            "Select White Player",
+            list(model_options.keys()),
+            index=list(model_options.keys()).index("gpt-4o"),
+            key="model_white",
+        )
+
+        st.markdown("#### Black Player")
+        selected_black = st.selectbox(
+            "Select Black Player",
+            list(model_options.keys()),
+            index=list(model_options.keys()).index("claude-3.7"),
+            key="model_black",
+        )
+
+        st.markdown("#### Game Master")
+        selected_master = st.selectbox(
+            "Select Game Master",
+            list(model_options.keys()),
+            index=list(model_options.keys()).index("gpt-4o"),
+            key="model_master",
+        )
+
+        ################################################################
+        # Game controls
+        ################################################################
+        col1, col2 = st.columns(2)
+        with col1:
+            if not st.session_state.game_started:
+                if st.button("▶️ Start Game"):
+                    st.session_state.agents = get_chess_teams(
+                        white_model=model_options[selected_white],
+                        black_model=model_options[selected_black],
+                        master_model=model_options[selected_master],
+                        debug_mode=True,
+                    )
+                    st.session_state.game_board = ChessBoard()
+                    st.session_state.game_started = True
+                    st.session_state.game_paused = False
+                    st.session_state.move_history = []
+                    st.rerun()
+            else:
+                game_over, _ = st.session_state.game_board.get_game_state()
+                if not game_over:
+                    if st.button(
+                        "⏸️ Pause" if not st.session_state.game_paused else "▶️ Resume"
+                    ):
+                        st.session_state.game_paused = not st.session_state.game_paused
+                        st.rerun()
+        with col2:
+            if st.session_state.game_started:
+                if st.button("🔄 New Game"):
+                    st.session_state.agents = get_chess_teams(
+                        white_model=model_options[selected_white],
+                        black_model=model_options[selected_black],
+                        master_model=model_options[selected_master],
+                        debug_mode=True,
+                    )
+                    st.session_state.game_board = ChessBoard()
+                    st.session_state.game_paused = False
+                    st.session_state.move_history = []
+                    st.rerun()
+
+    ####################################################################
+    # Header showing current models
+    ####################################################################
+    if st.session_state.game_started:
         st.markdown(
-            f"""<div class="agent-thinking">
-                <div style="margin-right: 10px;">🔄</div>
-                <div>{agent_name} is thinking...</div>
-            </div>""",
+            f"<h3 style='color:#87CEEB; text-align:center;'>{selected_white} vs {selected_black}</h3>",
             unsafe_allow_html=True,
         )
 
+    ####################################################################
+    # Main game area
+    ####################################################################
+    if st.session_state.game_started:
+        game_over, state_info = st.session_state.game_board.get_game_state()
 
-def extract_move_from_response(response: str) -> str:
-    """Extract chess move from AI response"""
-    try:
-        # Look for moves in format like e2e4
-        import re
+        display_board(st.session_state.game_board)
 
-        move_pattern = r"[a-h][1-8][a-h][1-8]"
-        moves = re.findall(move_pattern, str(response))
+        # Show game status (winner/draw/current player)
+        if game_over:
+            result = state_info.get("result", "")
+            reason = state_info.get("reason", "")
 
-        if moves:
-            return moves[0]
+            if "white_win" in result:
+                st.success(f"🏆 Game Over! White ({selected_white}) wins by {reason}!")
+            elif "black_win" in result:
+                st.success(f"🏆 Game Over! Black ({selected_black}) wins by {reason}!")
+            else:
+                st.info(f"🤝 Game Over! It's a draw by {reason}!")
+        else:
+            # Show current player status
+            current_color = st.session_state.game_board.current_color
+            current_model_name = (
+                selected_white if current_color == WHITE else selected_black
+            )
 
-        # Fallback: look for moves in quoted text
-        quoted_pattern = r'"([a-h][1-8][a-h][1-8])"'
-        quoted_moves = re.findall(quoted_pattern, str(response))
-        if quoted_moves:
-            return quoted_moves[0]
+            show_agent_status(
+                f"{current_color.capitalize()} Player ({current_model_name})",
+                "It's your turn",
+                is_white=(current_color == WHITE),
+            )
 
-        return None
-    except Exception as e:
-        st.error(f"Error extracting move: {str(e)}")
-        return None
+        display_move_history(st.session_state.move_history)
 
-
-def display_game_status():
-    """Display the current game status"""
-    if "game_started" in st.session_state and st.session_state.game_started:
-        st.sidebar.markdown("### Game Status")
-
-        # Show active agents
-        st.sidebar.markdown("**Active Agents:**")
-        agents = {
-            "White Piece Agent": "Waiting for next move"
-            if len(st.session_state.move_history) % 2 == 0
-            else "Thinking...",
-            "Black Piece Agent": "Thinking..."
-            if len(st.session_state.move_history) % 2 == 1
-            else "Waiting for next move",
-            "Legal Move Agent": "Ready to validate",
-            "Master Agent": "Monitoring game",
-        }
-
-        for agent, status in agents.items():
-            st.sidebar.markdown(
-                f"""<div class="agent-status" style="font-size: 0.9em;">
-                    🤖 {agent}<br/>
-                    <small style="color: #888;">{status}</small>
+        if not st.session_state.game_paused and not game_over:
+            # Thinking indicator
+            st.markdown(
+                f"""<div class="thinking-container">
+                    <div class="agent-thinking">
+                        <div style="margin-right: 10px; display: inline-block;">🔄</div>
+                        {current_color.capitalize()} Player ({current_model_name}) is thinking...
+                    </div>
                 </div>""",
                 unsafe_allow_html=True,
             )
 
-        # Show current turn
-        current_turn = (
-            "White" if len(st.session_state.move_history) % 2 == 0 else "Black"
-        )
-        st.sidebar.markdown(f"**Current Turn:** {current_turn}")
+            # Get legal moves using python-chess directly
+            legal_moves = get_legal_moves_with_descriptions(st.session_state.game_board)
 
-
-def check_game_ending_conditions(
-    board_state: str, legal_moves: str, current_color: str
-) -> bool:
-    """Check if the game has ended (checkmate/stalemate/draw)"""
-    try:
-        show_agent_status("Master Agent", "Analyzing position...")
-        with st.spinner("🔍 Checking game status..."):
-            analysis_prompt = f"""Current board state:
-{board_state}
-
-Current player: {current_color}
-Legal moves available: {legal_moves}
-
-Analyze this position and determine if the game has ended.
-Consider:
-1. Is this checkmate? (king in check with no legal moves)
-2. Is this stalemate? (no legal moves but king not in check)
-3. Is this a draw? (insufficient material or repetition)
-
-Respond with appropriate status."""
-
-            master_response = st.session_state.game.agents["master"].run(
-                analysis_prompt, stream=False
+            # Format legal moves for the agent
+            legal_moves_descriptions = "\n".join(
+                [
+                    f"- {move['san']} ({move['uci']}): {move['description']}"
+                    for move in legal_moves
+                ]
             )
 
-            response_content = (
-                master_response.content.strip() if master_response else ""
+            # Get board state
+            board_state = st.session_state.game_board.get_board_state()
+            fen = st.session_state.game_board.get_fen()
+
+            # Get move from current player agent
+            current_agent = (
+                st.session_state.agents["white_piece_agent"]
+                if current_color == WHITE
+                else st.session_state.agents["black_piece_agent"]
             )
-            logger.debug(f"Master analysis: {response_content}")
 
-            if "CHECKMATE" in response_content.upper():
-                st.success(f"🏆 {response_content}")
-                return True
-            elif "STALEMATE" in response_content.upper():
-                st.info("🤝 Game ended in stalemate!")
-                return True
-            elif "DRAW" in response_content.upper():
-                st.info(f"🤝 {response_content}")
-                return True
+            kwargs = {"stream": False}
+            if is_claude_thinking_model(current_agent):
+                kwargs["thinking"] = {"type": "enabled", "budget_tokens": 4096}
 
-            return False
-
-    except Exception as e:
-        logger.error(f"Error checking game end: {str(e)}")
-        return False
-
-
-def format_move_description(move_info: Dict[str, str], player: str) -> str:
-    """Format a nice description of the move with Unicode pieces"""
-    piece_symbols = {
-        "King": "♔" if player == "White" else "♚",
-        "Queen": "♕" if player == "White" else "♛",
-        "Rook": "♖" if player == "White" else "♜",
-        "Bishop": "♗" if player == "White" else "♝",
-        "Knight": "♘" if player == "White" else "♞",
-        "Pawn": "♙" if player == "White" else "♟",
-    }
-
-    if all(key in move_info for key in ["piece_name", "from", "to"]):
-        piece_symbol = piece_symbols.get(move_info["piece_name"], "")
-        return f"{player}'s {piece_symbol} {move_info['piece_name']} moves {move_info['from']} → {move_info['to']}"
-    return f"{player} moves {move_info.get('from', '')} → {move_info.get('to', '')}"
-
-
-def play_next_move(retry_count: int = 0, max_retries: int = 3):
-    """Have the AI agents play the next move"""
-    if retry_count >= max_retries:
-        st.error(f"Failed to make a valid move after {max_retries} attempts")
-        return False
-
-    try:
-        # Get the board object instead of just the state
-        current_board = st.session_state.game.board
-        board_state = current_board.get_board_state()
-
-        # Determine whose turn it is
-        is_white_turn = len(st.session_state.move_history) % 2 == 0
-        current_agent = "white" if is_white_turn else "black"
-        agent_name = "White Piece Agent" if is_white_turn else "Black Piece Agent"
-        current_color = "white" if is_white_turn else "black"
-
-        # First, get legal moves from legal move agent
-        show_agent_status("Legal Move Agent", "Calculating legal moves...")
-        try:
-            with st.spinner("🎲 Calculating legal moves..."):
-                legal_prompt = f"""Current board state:
+            response = current_agent.run(
+                f"""\
+Current board state (FEN): {fen}
+Board visualization:
 {board_state}
 
-List ALL legal moves for {current_color} pieces. Return as comma-separated list."""
+Legal moves available:
+{legal_moves_descriptions}
 
-                legal_response = st.session_state.game.agents["legal"].run(
-                    legal_prompt, stream=False
-                )
+Choose your next move from the legal moves above.
+Respond with ONLY your chosen move in UCI notation (e.g., 'e2e4').
+Do not include any other text in your response.""",
+                **kwargs,
+            )
 
-                legal_moves = legal_response.content.strip() if legal_response else ""
-                logger.debug(f"Legal moves: {legal_moves}")
+            try:
+                # Parse the move from the response
+                move_str = parse_move(response.content if response else "")
 
-                if not legal_moves:
-                    # If no legal moves, check if it's checkmate or stalemate
-                    if check_game_ending_conditions(
-                        board_state, legal_moves, current_color
-                    ):
-                        st.session_state.game_paused = True  # Pause the game
-                        return False
-                    return False
+                # Verify the move is in the list of legal moves
+                legal_move_ucis = [move["uci"] for move in legal_moves]
 
-        except Exception as e:
-            logger.error(f"Error getting legal moves: {str(e)}")
-            st.error("Error calculating legal moves")
-            return False
+                if move_str not in legal_move_ucis:
+                    # Try to find a matching move
+                    for move in legal_moves:
+                        if move["san"].lower() == move_str.lower():
+                            move_str = move["uci"]
+                            break
 
-        # Now, have the piece agent choose from legal moves
-        show_agent_status(agent_name, "Choosing best move...")
-        try:
-            with st.spinner(f"🤔 {agent_name} is thinking..."):
-                choice_prompt = f"""Current board state:
-{board_state}
+                # Make the move
+                success, message = st.session_state.game_board.make_move(move_str)
 
-Legal moves available: {legal_moves}
-
-Choose the best move from these legal moves. Respond ONLY with your chosen move."""
-
-                agent_response = st.session_state.game.agents[current_agent].run(
-                    choice_prompt, stream=False
-                )
-
-                # Extract move from response content
-                response_content = agent_response.content if agent_response else None
-                logger.debug(f"Agent choice: {response_content}")
-
-                if response_content:
-                    ai_move = response_content.strip()
-
-                    # Verify the chosen move is in the legal moves list
-                    legal_moves_list = legal_moves.replace(" ", "").split(",")
-                    if ai_move not in legal_moves_list:
-                        logger.error(
-                            f"Chosen move {ai_move} not in legal moves! Available moves: {legal_moves_list}"
-                        )
-                        st.warning(
-                            f"Invalid move choice by {agent_name}, retrying... (Attempt {retry_count + 1}/{max_retries})"
-                        )
-                        return play_next_move(retry_count + 1, max_retries)
-
-                    # Make the move
-                    result = st.session_state.game.make_move(ai_move)
-                    if "successful" in result.get("status", ""):
-                        # Add move to history with piece information
-                        add_move_to_history(
-                            ai_move, "White" if is_white_turn else "Black", result
-                        )
-
-                        # Show piece movement with description
-                        move_description = format_move_description(
-                            result, "White" if is_white_turn else "Black"
-                        )
-
-                        st.markdown(
-                            f"""<div class="piece-moving">
-                                🎯 {move_description}
-                            </div>""",
-                            unsafe_allow_html=True,
-                        )
-
-                        # Force a rerun to update the board
-                        st.rerun()
-                        return True
-                    else:
-                        logger.error(f"Move failed: {result}")
-                        st.warning(
-                            f"Invalid move by {agent_name}, retrying... (Attempt {retry_count + 1}/{max_retries})"
-                        )
-                        return play_next_move(retry_count + 1, max_retries)
-                else:
-                    logger.error("No response content from agent")
-                    st.warning(
-                        f"No response from {agent_name}, retrying... (Attempt {retry_count + 1}/{max_retries})"
+                if success:
+                    # Find the move description
+                    move_description = next(
+                        (
+                            move["description"]
+                            for move in legal_moves
+                            if move["uci"] == move_str
+                        ),
+                        "",
                     )
-                    return play_next_move(retry_count + 1, max_retries)
 
-        except Exception as e:
-            logger.error(f"Error during agent move: {str(e)}")
-            st.warning(
-                f"Error during {agent_name}'s move, retrying... (Attempt {retry_count + 1}/{max_retries})"
-            )
-            return play_next_move(retry_count + 1, max_retries)
+                    move_number = len(st.session_state.move_history) + 1
+                    st.session_state.move_history.append(
+                        {
+                            "number": move_number,
+                            "player": f"{current_color.capitalize()} ({current_model_name})",
+                            "move": move_str,
+                            "description": move_description,
+                        }
+                    )
 
-    except Exception as e:
-        logger.error(f"Unexpected error in play_next_move: {str(e)}")
-        st.error(f"Error during game play: {str(e)}")
-        return False
+                    logger.info(
+                        f"Move {move_number}: {current_color.capitalize()} ({current_model_name}) played {move_str} - {move_description}"
+                    )
+                    logger.info(
+                        f"Board state:\n{st.session_state.game_board.get_board_state()}"
+                    )
 
+                    # Check game state after move
+                    game_over, state_info = st.session_state.game_board.get_game_state()
 
-def main():
-    st.markdown("<h1 class='main-title'>Chess Team AI</h1>", unsafe_allow_html=True)
-    st.markdown(
-        "<p class='subtitle'>Watch AI agents play chess against each other!</p>",
-        unsafe_allow_html=True,
-    )
+                    # If game is not over, get analysis from master agent
+                    if not game_over and move_number % 2 == 0:  # After black's move
+                        master_agent = st.session_state.agents["master_agent"]
 
-    # Initialize session state
-    if "game_started" not in st.session_state:
-        st.session_state.game_started = False
-        st.session_state.game_paused = False
+                        kwargs = {"stream": False}
+                        if is_claude_thinking_model(master_agent):
+                            kwargs["thinking"] = {
+                                "type": "enabled",
+                                "budget_tokens": 4096,
+                            }
 
-    # Sidebar
-    with st.sidebar:
-        st.markdown("### Game Controls")
+                    if game_over:
+                        result = state_info.get("result", "")
+                        reason = state_info.get("reason", "")
 
-        col1, col2 = st.columns(2)
+                        if "white_win" in result:
+                            logger.info(f"Game Over - White wins by {reason}")
+                            st.success(
+                                f"🏆 Game Over! White ({selected_white}) wins by {reason}!"
+                            )
+                        elif "black_win" in result:
+                            logger.info(f"Game Over - Black wins by {reason}")
+                            st.success(
+                                f"🏆 Game Over! Black ({selected_black}) wins by {reason}!"
+                            )
+                        else:
+                            logger.info(f"Game Over - Draw by {reason}")
+                            st.info(f"🤝 Game Over! It's a draw by {reason}!")
 
-        # Start/Pause Game button
-        with col1:
-            if not st.session_state.game_started:
-                if st.button("▶️ Start Game"):
-                    st.session_state.game = ChessGame()
-                    st.session_state.game_started = True
-                    st.session_state.move_history = []
+                        st.session_state.game_paused = True
+
                     st.rerun()
-            else:
-                if st.button(
-                    "⏸️ Pause" if not st.session_state.game_paused else "▶️ Resume"
-                ):
-                    st.session_state.game_paused = not st.session_state.game_paused
+                else:
+                    logger.error(f"Invalid move attempt: {message}")
+                    response = current_agent.run(
+                        f"""\
+Invalid move: {message}
+
+Current board state (FEN): {fen}
+Board visualization:
+{board_state}
+
+Legal moves available:
+{legal_moves_descriptions}
+
+Please choose a valid move from the list above.
+Respond with ONLY your chosen move in UCI notation (e.g., 'e2e4').
+Do not include any other text in your response.""",
+                        stream=False,
+                    )
                     st.rerun()
 
-        # New Game button
-        with col2:
-            if st.session_state.game_started:
-                if st.button("🔄 New Game"):
-                    st.session_state.game = ChessGame()
-                    st.session_state.move_history = []
-                    st.rerun()
-
-        st.markdown("### About")
-        st.markdown("""
-        Watch two AI agents play chess:
-        - White Piece Agent vs Black Piece Agent
-        - Legal Move Agent validates moves
-        - Master Agent coordinates the game
-        """)
-
-    # Main game area
-    if st.session_state.game_started:
-        # Create columns for board and move history
-        col1, col2 = st.columns([2, 1])
-
-        with col1:
-            # Display current board - pass the board object instead of just the state
-            display_board(st.session_state.game.board)
-
-            # Auto-play next move if game is not paused
-            if not st.session_state.game_paused:
-                if play_next_move():
-                    st.rerun()  # Refresh to show the new state
-
-        with col2:
-            display_move_history()
+            except Exception as e:
+                logger.error(f"Error processing move: {str(e)}")
+                st.error(f"Error processing move: {str(e)}")
+                st.rerun()
     else:
-        # Display welcome message when game hasn't started
-        st.info("👈 Click 'Start Game' in the sidebar to begin!")
+        st.info("👈 Press 'Start Game' to begin!")
 
-    # Display game status
-    display_game_status()
+    ####################################################################
+    # About section
+    ####################################################################
+    st.sidebar.markdown(f"""
+    ### ♟️ Chess Team Battle
+    Watch AI agents play chess with specialized roles!
+
+    **Current Teams:**
+    * ♔ White: `{selected_white}`
+    * ♚ Black: `{selected_black}`
+    * 🧠 Game Master: `{selected_master}`
+
+    **How it Works:**
+    1. Python-chess validates all legal moves
+    2. The White/Black Player agents choose the best move
+    3. The Game Master analyzes the position
+    4. The process repeats until the game ends
+    """)
 
 
 if __name__ == "__main__":

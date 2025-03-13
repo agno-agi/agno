@@ -3,7 +3,6 @@ from typing import Any, Dict, List, Optional
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.embedder.openai import OpenAIEmbedder
 from agno.utils.log import logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -32,7 +31,7 @@ class MongoDb(VectorDb):
         collection_name: str,
         db_url: Optional[str] = "mongodb://localhost:27017/",
         database: str = "agno",
-        embedder: Embedder = OpenAIEmbedder(),
+        embedder: Optional[Embedder] = None,
         distance_metric: str = Distance.cosine,
         overwrite: bool = False,
         wait_until_index_ready: Optional[float] = None,
@@ -65,7 +64,14 @@ class MongoDb(VectorDb):
             raise ValueError("Database name must not be empty.")
         self.collection_name = collection_name
         self.database = database
+
+        if embedder is None:
+            from agno.embedder.openai import OpenAIEmbedder
+
+            embedder = OpenAIEmbedder()
+            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder = embedder
+
         self.distance_metric = distance_metric
         self.connection_string = db_url
         self.overwrite = overwrite
@@ -465,3 +471,26 @@ class MongoDb(VectorDb):
         except Exception as e:
             logger.error(f"Error getting document count: {e}")
             return 0
+
+    async def async_create(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_doc_exists(self, document: Document) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_drop(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_exists(self) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

@@ -35,7 +35,7 @@ def test_basic():
 
     assert response.content is not None
     assert len(response.messages) == 3
-    assert [m.role for m in response.messages] == ["system", "user", "model"]
+    assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
     _assert_metrics(response)
 
@@ -69,7 +69,7 @@ async def test_async_basic():
 
     assert response.content is not None
     assert len(response.messages) == 3
-    assert [m.role for m in response.messages] == ["system", "user", "model"]
+    assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
 
 
@@ -127,7 +127,7 @@ def test_with_memory():
 
     # Verify memories were created
     assert len(agent.memory.messages) == 5
-    assert [m.role for m in agent.memory.messages] == ["system", "user", "model", "user", "model"]
+    assert [m.role for m in agent.memory.messages] == ["system", "user", "assistant", "user", "assistant"]
 
     # Test metrics structure and types
     _assert_metrics(response2)

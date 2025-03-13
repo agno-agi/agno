@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.1.7"
+version = "1.1.10"
 description = "Agno: a lightweight framework for building multi-modal Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -49,6 +49,7 @@ groq = ["groq"]
 mistral = ["mistralai"]
 openai = ["openai"]
 ollama = ["ollama"]
+ibm = ["ibm-watsonx-ai"]
 
 # Dependencies for Tools
 exa = ["exa_py"]
@@ -65,6 +66,8 @@ todoist = ["todoist-api-python"]
 elevenlabs = ["elevenlabs"]
 fal = ["fal_client"]
 webex = ["webexpythonsdk"]
+mcp = ["mcp"]
+browserbase = ["browserbase", "playwright"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -73,14 +76,14 @@ postgres = ["psycopg-binary", "psycopg"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb", "tantivy"]
+lancedb = ["lancedb==0.20.0", "tantivy"]
 qdrant = ["qdrant-client"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
 
 # Dependencies for Knowledge
-pdf = ["pypdf"]
+pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 
 # Dependencies for Performance
@@ -109,7 +112,6 @@ models = [
 # All tools
 tools = [
   "agno[exa]",
-  "agno[yfinance]",
   "agno[ddg]",
   "agno[duckdb]",
   "agno[newspaper]",
@@ -122,6 +124,8 @@ tools = [
   "agno[elevenlabs]",
   "agno[fal]",
   "agno[webex]",
+  "agno[mcp]",
+  "agno[browserbase]",
 ]
 
 # All storage
@@ -157,7 +161,8 @@ tests = [
     "agno[knowledge]",
     "agno[performance]",
     "agno[cookbooks]",
-    "twine", "build"
+    "twine",
+    "build",
 ]
 
 [project.scripts]
@@ -199,6 +204,7 @@ exclude = ["tests*"]
 
 [[tool.mypy.overrides]]
 module = [
+  "agentql.*",
   "altair.*",
   "anthropic.*",
   "apify_client.*",
@@ -210,6 +216,7 @@ module = [
   "botocore.*",
   "bs4.*",
   "bson.*",
+  "browserbase.*",
   "cassio.*",
   "chonkie.*",
   "chromadb.*",
@@ -233,6 +240,7 @@ module = [
   "googlesearch.*",
   "groq.*",
   "huggingface_hub.*",
+  "ibm_watsonx_ai.*",
   "imghdr.*",
   "jira.*",
   "kubernetes.*",
@@ -241,6 +249,7 @@ module = [
   "langchain.*",
   "llama_index.*",
   "mem0.*",
+  "mcp.*",
   "memory_profiler.*",
   "mistralai.*",
   "mlx_whisper.*",
@@ -255,6 +264,7 @@ module = [
   "PIL.*",
   "pinecone_text.*",
   "pinecone.*",
+  "playwright.sync_api.*",
   "psycopg.*",
   "psycopg2.*",
   "pyarrow.*",

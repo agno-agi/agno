@@ -8,7 +8,6 @@ except ImportError:
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.embedder.openai import OpenAIEmbedder
 from agno.utils.log import logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -18,7 +17,7 @@ class Milvus(VectorDb):
     def __init__(
         self,
         collection: str,
-        embedder: Embedder = OpenAIEmbedder(),
+        embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         uri: str = "http://localhost:19530",
         token: Optional[str] = None,
@@ -49,8 +48,15 @@ class Milvus(VectorDb):
             **kwargs: Additional keyword arguments to pass to the MilvusClient.
         """
         self.collection: str = collection
+
+        if embedder is None:
+            from agno.embedder.openai import OpenAIEmbedder
+
+            embedder = OpenAIEmbedder()
+            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
+
         self.distance: Distance = distance
         self.uri: str = uri
         self.token: Optional[str] = token
@@ -266,3 +272,26 @@ class Milvus(VectorDb):
         else:
             expr = ""
         return expr
+
+    async def async_create(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_doc_exists(self, document: Document) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_drop(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_exists(self) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

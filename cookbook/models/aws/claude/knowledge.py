@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy pgvector pypdf openai boto3` to install dependencies."""
+"""Run `pip install duckduckgo-search sqlalchemy pgvector pypdf openai anthropic` to install dependencies."""
 
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase

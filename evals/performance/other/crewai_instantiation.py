@@ -1,4 +1,4 @@
-"""Run `pip install openai memory_profiler crewai crewai[tools]` to install dependencies."""
+"""Run `pip install openai crewai crewai[tools]` to install dependencies."""
 from typing import Literal
 
 from crewai.agent import Agent

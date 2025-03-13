@@ -3,21 +3,19 @@ import requests
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.models.google import Gemini
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 
 def test_image_input():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp"),
         exponential_backoff=True,
-        tools=[DuckDuckGoTools()],
         markdown=True,
         telemetry=False,
         monitoring=False,
     )
 
     response = agent.run(
-        "Tell me about this image and give me the latest news about it.",
+        "Tell me about this image.",
         images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
     )
 

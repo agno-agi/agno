@@ -1,6 +1,4 @@
-"""Run `pip install memory_profiler smolagents` to install dependencies."""
-from typing import Literal
-
+"""Run `pip install smolagents` to install dependencies."""
 from agno.eval.perf import PerfEval
 from smolagents import ToolCallingAgent, HfApiModel, Tool
 

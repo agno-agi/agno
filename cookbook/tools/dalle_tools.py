@@ -33,5 +33,5 @@ response = agent_custom.run(
 if response.images:
     download_image(
         url=response.images[0].url,
-        save_path=Path(__file__).parent.joinpath("tmp/nature.jpg"),
+        output_path=Path(__file__).parent.joinpath("tmp/nature.jpg"),
     )

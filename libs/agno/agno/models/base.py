@@ -161,6 +161,7 @@ class Model(ABC):
             ModelResponse: The model's response
         """
         logger.debug(f"---------- {self.get_provider()} Response Start ----------")
+        logger.debug(f"---------- Model: {self.id} ----------")
         self._log_messages(messages)
         model_response = ModelResponse()
 
@@ -223,6 +224,7 @@ class Model(ABC):
             ModelResponse: The model's response
         """
         logger.debug(f"---------- {self.get_provider()} Async Response Start ----------")
+        logger.debug(f"---------- Model: {self.id} ----------")
         self._log_messages(messages)
         model_response = ModelResponse()
 
@@ -460,6 +462,7 @@ class Model(ABC):
             Iterator[ModelResponse]: Iterator of model responses
         """
         logger.debug(f"---------- {self.get_provider()} Response Stream Start ----------")
+        logger.debug(f"---------- Model: {self.id} ----------")
         self._log_messages(messages)
 
         while True:
@@ -555,6 +558,7 @@ class Model(ABC):
             AsyncIterator[ModelResponse]: Async iterator of model responses
         """
         logger.debug(f"---------- {self.get_provider()} Async Response Stream Start ----------")
+        logger.debug(f"---------- Model: {self.id} ----------")
         self._log_messages(messages)
 
         while True:
@@ -636,6 +640,10 @@ class Model(ABC):
         # Update metrics
         if not assistant_message.metrics.time_to_first_token:
             assistant_message.metrics.set_time_to_first_token()
+
+        # Add role to assistant message
+        if model_response.role is not None:
+            assistant_message.role = model_response.role
 
         should_yield = False
         # Update stream_data content
@@ -1012,7 +1020,7 @@ class Model(ABC):
             model_response.tool_calls = []
 
         function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(assistant_message, messages)
-        if self.show_tool_calls:
+        if self.show_tool_calls and function_calls_to_run:
             self._show_tool_calls(function_calls_to_run, model_response)
         return function_calls_to_run
 
@@ -1033,6 +1041,8 @@ class Model(ABC):
             assistant_message: Message to update with metrics
             response_usage: Usage data from model provider
         """
+
+        # Standard token metrics
         if isinstance(response_usage, dict):
             if "input_tokens" in response_usage:
                 assistant_message.metrics.input_tokens = response_usage.get("input_tokens", 0)

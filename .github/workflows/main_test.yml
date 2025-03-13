@@ -553,6 +553,74 @@ jobs:
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/models/xai
 
+  test-ibm-watsonx:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    env:
+      IBM_WATSONX_PROJECT_ID: ${{ secrets.IBM_WATSONX_PROJECT_ID }}
+      IBM_WATSONX_API_KEY: ${{ secrets.IBM_WATSONX_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v41
+      - name: Run xAI tests
+        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/ibm/watsonx') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/ibm/watsonx') || contains(github.base_ref, 'release')
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/models/ibm/watsonx
+  
+  test-deepinfra:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    env:
+      DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v41
+      - name: Run DeepInfra tests
+        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/deepinfra') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/deepinfra') || contains(github.base_ref, 'release')
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/models/deepinfra
+
+          
   # Run remaining integration tests
   test-remaining:
     runs-on: ubuntu-latest

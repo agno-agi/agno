@@ -29,7 +29,7 @@ def main():
     # App header
     ####################################################################
     st.markdown(
-        "<h1 class='main-title'>Watch Agents play Tic Tac Toe</h1>",
+        "<h1 class='main-title'>Agents play Tic Tac Toe</h1>",
         unsafe_allow_html=True,
     )
 
@@ -45,6 +45,7 @@ def main():
         st.markdown("### Game Controls")
         model_options = {
             "gpt-4o": "openai:gpt-4o",
+            "gpt-4.5": "openai:gpt-4.5-preview",
             "o3-mini": "openai:o3-mini",
             "claude-3.5": "anthropic:claude-3-5-sonnet",
             "claude-3.7": "anthropic:claude-3-7-sonnet",
@@ -59,13 +60,13 @@ def main():
         selected_p_x = st.selectbox(
             "Select Player X",
             list(model_options.keys()),
-            index=list(model_options.keys()).index("claude-3.7-thinking"),
+            index=list(model_options.keys()).index("gpt-4.5"),
             key="model_p1",
         )
         selected_p_o = st.selectbox(
             "Select Player O",
             list(model_options.keys()),
-            index=list(model_options.keys()).index("o3-mini"),
+            index=list(model_options.keys()).index("claude-3.7"),
             key="model_p2",
         )
 
