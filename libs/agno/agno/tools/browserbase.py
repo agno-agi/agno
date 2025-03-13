@@ -70,7 +70,7 @@ class BrowserbaseTools(Toolkit):
         """Ensures a session exists, creating one if needed."""
         if not self._session:
             try:
-                self._session = self.app.sessions.create(project_id=self.project_id)
+                self._session = self.app.sessions.create(project_id=self.project_id)  # type: ignore
                 self._connect_url = self._session.connect_url if self._session else ""  # type: ignore
                 if self._session:
                     logger.debug(f"Created new session with ID: {self._session.id}")
@@ -89,7 +89,7 @@ class BrowserbaseTools(Toolkit):
             self._ensure_session()
 
         if not self._playwright:
-            self._playwright = sync_playwright().start()
+            self._playwright = sync_playwright().start()  # type: ignore
             if self._playwright:
                 self._browser = self._playwright.chromium.connect_over_cdp(self._connect_url)
             context = self._browser.contexts[0] if self._browser else ""
@@ -173,7 +173,7 @@ class BrowserbaseTools(Toolkit):
             self._cleanup()
             raise e
 
-    def close_session(self, session_id: Optional[str] = None) -> str:
+    def close_session(self) -> str:
         """Closes a browser session.
         Args:
             session_id (str, optional): The session ID to close. If not provided, will use the current session.
@@ -183,18 +183,6 @@ class BrowserbaseTools(Toolkit):
         try:
             # First cleanup our local browser resources
             self._cleanup()
-
-            # Use provided session_id or fall back to the current session
-            session_id_to_close = session_id or (self._session.id if self._session else None)
-
-            if session_id_to_close:
-                try:
-                    self.app.sessions.delete(session_id_to_close)
-                    logger.debug(f"Closed session: {session_id_to_close}")
-                except Exception as e:
-                    logger.debug(f"Session {session_id_to_close} may have already been closed: {str(e)}")
-            else:
-                logger.warning("No session ID provided or available to close")
 
             # Reset session state
             self._session = None

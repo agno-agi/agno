@@ -31,13 +31,12 @@ from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageAr
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
-from agno.models.openai.like import OpenAILike
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
-from agno.storage.agent.base import AgentStorage
-from agno.storage.agent.session import AgentSession
+from agno.storage.base import Storage
+from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
@@ -99,7 +98,7 @@ class Agent:
     references_format: Literal["json", "yaml"] = "json"
 
     # --- Agent Storage ---
-    storage: Optional[AgentStorage] = None
+    storage: Optional[Storage] = None
     # Extra data stored with this agent
     extra_data: Optional[Dict[str, Any]] = None
 
@@ -251,7 +250,7 @@ class Agent:
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
-        storage: Optional[AgentStorage] = None,
+        storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
         show_tool_calls: bool = False,
@@ -426,6 +425,13 @@ class Agent:
         else:
             set_log_level_to_info()
 
+    def set_storage_mode(self):
+        if self.storage is not None:
+            if self.storage.mode == "workflow":
+                logger.warning("You cannot use storage in both workflow and agent mode")
+
+            self.storage.mode = "agent"
+
     def set_monitoring(self) -> None:
         """Override monitoring and telemetry settings based on environment variables."""
 
@@ -439,6 +445,7 @@ class Agent:
             self.telemetry = telemetry_env.lower() == "true"
 
     def initialize_agent(self) -> None:
+        self.set_storage_mode()
         self.set_debug()
         self.set_agent_id()
         self.set_session_id()
@@ -1768,7 +1775,7 @@ class Agent:
             Optional[AgentSession]: The loaded AgentSession or None if not found.
         """
         if self.storage is not None and self.session_id is not None:
-            self.agent_session = self.storage.read(session_id=self.session_id)
+            self.agent_session = cast(AgentSession, self.storage.read(session_id=self.session_id))
             if self.agent_session is not None:
                 self.load_agent_session(session=self.agent_session)
             self.load_user_memories()
@@ -1781,7 +1788,7 @@ class Agent:
             Optional[AgentSession]: The saved AgentSession or None if not saved.
         """
         if self.storage is not None:
-            self.agent_session = self.storage.upsert(session=self.get_agent_session())
+            self.agent_session = cast(AgentSession, self.storage.upsert(session=self.get_agent_session()))
         return self.agent_session
 
     def add_introduction(self, introduction: str) -> None:
@@ -2849,6 +2856,8 @@ class Agent:
     ###########################################################################
 
     def reason(self, run_messages: RunMessages) -> Iterator[RunResponse]:
+        from agno.models.openai.like import OpenAILike
+
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
@@ -3030,6 +3039,8 @@ class Agent:
             )
 
     async def areason(self, run_messages: RunMessages) -> Any:
+        from agno.models.openai.like import OpenAILike
+
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)

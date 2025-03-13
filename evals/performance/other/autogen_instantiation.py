@@ -1,4 +1,4 @@
-"""Run `pip install memory_profiler autogen-agentchat "autogen-ext[openai]"` to install dependencies."""
+"""Run `pip install autogen-agentchat "autogen-ext[openai]"` to install dependencies."""
 
 from typing import Literal
 

@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.1.10"
+version = "1.1.11"
 description = "Agno: a lightweight framework for building multi-modal Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -72,6 +72,7 @@ browserbase = ["browserbase", "playwright"]
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary", "psycopg"]
+sqlite = ["sqlalchemy"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
@@ -132,6 +133,7 @@ tools = [
 storage = [
   "agno[sql]",
   "agno[postgres]",
+  "agno[sqlite]",
 ]
 
 # All vector databases
