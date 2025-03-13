@@ -50,7 +50,7 @@ mistral = ["mistralai"]
 openai = ["openai"]
 ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
-
+lmstudio = ["lmstudio"]
 # Dependencies for Tools
 exa = ["exa_py"]
 yfinance = ["yfinance"]
@@ -108,6 +108,8 @@ models = [
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
+  "agno[lmstudio]",
+  "agno[ibm]"
 ]
 
 # All tools
@@ -127,6 +129,7 @@ tools = [
   "agno[webex]",
   "agno[mcp]",
   "agno[browserbase]",
+  "agno[yfinance]",
 ]
 
 # All storage
