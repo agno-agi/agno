@@ -42,7 +42,7 @@ class OpenAIResponses(Model):
     top_p: Optional[float] = None
     truncation: Optional[str] = None
     user: Optional[str] = None
-    response_format: Optional[Dict[str, str]] = None
+    response_format: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
