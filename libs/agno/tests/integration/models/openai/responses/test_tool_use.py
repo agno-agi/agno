@@ -223,7 +223,8 @@ def test_tool_call_list_parameters():
 def test_web_search_built_in_tool():
     """Test the built-in web search tool in the Responses API."""
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini", web_search=True),
+        model=OpenAIResponses(id="gpt-4o-mini"),
+        tools=[{"type": "web_search_preview"}],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -241,7 +242,8 @@ def test_web_search_built_in_tool():
 def test_web_search_built_in_tool_stream():
     """Test the built-in web search tool in the Responses API."""
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini", web_search=True),
+        model=OpenAIResponses(id="gpt-4o-mini"),
+        tools=[{"type": "web_search_preview"}],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -267,8 +269,8 @@ def test_web_search_built_in_tool_stream():
 def test_web_search_built_in_tool_with_other_tools():
     """Test the built-in web search tool in the Responses API."""
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini", web_search=True),
-        tools=[YFinanceTools()],
+        model=OpenAIResponses(id="gpt-4o-mini"),
+        tools=[YFinanceTools(), {"type": "web_search_preview"}],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,

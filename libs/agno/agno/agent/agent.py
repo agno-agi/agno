@@ -105,7 +105,7 @@ class Agent:
     # --- Agent Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
-    tools: Optional[List[Union[Toolkit, Callable, Function]]] = None
+    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
     # Show tool calls in Agent response.
     show_tool_calls: bool = False
     # Maximum number of tool calls allowed.
@@ -252,7 +252,7 @@ class Agent:
         references_format: Literal["json", "yaml"] = "json",
         storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
+        tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         show_tool_calls: bool = False,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -1452,7 +1452,7 @@ class Agent:
             audio=self.run_response.audio,
             images=self.run_response.images,
             videos=self.run_response.videos,
-            citations=self.run_response.citations,
+            citations=citations or self.run_response.citations,
             response_audio=self.run_response.response_audio,
             model=self.run_response.model,
             messages=self.run_response.messages,
@@ -1465,9 +1465,9 @@ class Agent:
             rr.created_at = created_at
         return rr
 
-    def get_tools(self) -> Optional[List[Union[Toolkit, Callable, Function]]]:
+    def get_tools(self) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
         self.memory = cast(AgentMemory, self.memory)
-        agent_tools: List[Union[Toolkit, Callable, Function]] = []
+        agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Add provided tools
         if self.tools is not None:
@@ -1512,7 +1512,13 @@ class Agent:
                 self._functions_for_model = {}
 
                 for tool in agent_tools:
-                    if isinstance(tool, Toolkit):
+                    if isinstance(tool, Dict):
+                        # If a dict is passed, it is a builtin tool
+                        # that is run by the model provider and not the Agent
+                        self._tools_for_model.append(tool)
+                        logger.debug(f"Included builtin tool {tool}")
+
+                    elif isinstance(tool, Toolkit):
                         # For each function in the toolkit and process entrypoint
                         for name, func in tool.functions.items():
                             # If the function does not exist in self.functions
@@ -1563,7 +1569,7 @@ class Agent:
                 logger.exception(e)
                 logger.error(
                     "Agno agents use `openai` as the default model provider. "
-                    "Please provide a `model` or install `openai`."
+                    "Please provide a `model` or install `openai` using `pip install openai -U`."
                 )
                 exit(1)
             self.model = OpenAIChat(id="gpt-4o")
