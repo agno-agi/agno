@@ -1516,7 +1516,7 @@ class Agent:
                         # If a dict is passed, it is a builtin tool
                         # that is run by the model provider and not the Agent
                         self._tools_for_model.append(tool)
-                        logger.info(f"Included builtin tool {tool}")
+                        logger.debug(f"Included builtin tool {tool}")
 
                     elif isinstance(tool, Toolkit):
                         # For each function in the toolkit and process entrypoint
