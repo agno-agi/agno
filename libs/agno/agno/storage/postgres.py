@@ -4,6 +4,7 @@ from typing import List, Literal, Optional
 from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
+from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import logger
 
@@ -14,7 +15,7 @@ try:
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
     from sqlalchemy.sql.expression import select, text
-    from sqlalchemy.types import BigInteger, String
+    from sqlalchemy.types import BigInteger, Boolean, String
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -28,7 +29,7 @@ class PostgresStorage(Storage):
         db_engine: Optional[Engine] = None,
         schema_version: int = 1,
         auto_upgrade_schema: bool = False,
-        mode: Optional[Literal["agent", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
     ):
         """
         This class provides agent storage using a PostgreSQL table.
@@ -45,7 +46,7 @@ class PostgresStorage(Storage):
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             schema_version (int): Version of the schema. Defaults to 1.
             auto_upgrade_schema (bool): Whether to automatically upgrade the schema.
-            mode (Optional[Literal["agent", "workflow"]]): The mode of the storage.
+            mode (Optional[Literal["agent", "team", "workflow"]]): The mode of the storage.
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
         """
@@ -77,12 +78,12 @@ class PostgresStorage(Storage):
         logger.debug(f"Created PostgresStorage: '{self.schema}.{self.table_name}'")
 
     @property
-    def mode(self) -> Literal["agent", "workflow"]:
+    def mode(self) -> Literal["agent", "team", "workflow"]:
         """Get the mode of the storage."""
         return super().mode
 
     @mode.setter
-    def mode(self, value: Optional[Literal["agent", "workflow"]]) -> None:
+    def mode(self, value: Optional[Literal["agent", "team", "workflow"]]) -> None:
         """Set the mode and refresh the table if mode changes."""
         super(PostgresStorage, type(self)).mode.fset(self, value)  # type: ignore
         if value is not None:
@@ -110,7 +111,14 @@ class PostgresStorage(Storage):
         if self.mode == "agent":
             specific_columns = [
                 Column("agent_id", String, index=True),
+                Column("is_member_of_team", Boolean, default=False),
                 Column("agent_data", postgresql.JSONB),
+            ]
+        elif self.mode == "team":
+            specific_columns = [
+                Column("team_id", String, index=True),
+                Column("member_ids", postgresql.JSONB),
+                Column("team_data", postgresql.JSONB),
             ]
         else:
             specific_columns = [
@@ -120,7 +128,7 @@ class PostgresStorage(Storage):
 
         # Create table with all columns
         table = Table(
-            self.table_name, self.metadata, *common_columns, *specific_columns, extend_existing=True, schema=self.schema
+            self.table_name, self.metadata, *common_columns, *specific_columns, extend_existing=True, schema=self.schema  # type: ignore
         )
 
         return table
@@ -162,7 +170,7 @@ class PostgresStorage(Storage):
                     exists_query = text("SELECT 1 FROM information_schema.tables WHERE table_name = :table")
                     exists = sess.execute(exists_query, {"table": self.table_name}).scalar() is not None
 
-            logger.debug(f"Table '{self.table.fullname}' does {'not' if not exists else ''} exist")
+            logger.debug(f"Table '{self.table.fullname}' does{' not ' if not exists else ' '}exist")
             return exists
 
         except Exception as e:
@@ -244,7 +252,9 @@ class PostgresStorage(Storage):
                 result = sess.execute(stmt).fetchone()
                 if self.mode == "agent":
                     return AgentSession.from_dict(result._mapping) if result is not None else None
-                else:
+                elif self.mode == "team":
+                    return TeamSession.from_dict(result._mapping) if result is not None else None
+                elif self.mode == "workflow":
                     return WorkflowSession.from_dict(result._mapping) if result is not None else None
         except Exception as e:
             if "does not exist" in str(e):
@@ -275,7 +285,9 @@ class PostgresStorage(Storage):
                 if entity_id is not None:
                     if self.mode == "agent":
                         stmt = stmt.where(self.table.c.agent_id == entity_id)
-                    else:
+                    elif self.mode == "team":
+                        stmt = stmt.where(self.table.c.team_id == entity_id)
+                    elif self.mode == "workflow":
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
 
                 # order by created_at desc
@@ -310,6 +322,8 @@ class PostgresStorage(Storage):
                 if entity_id is not None:
                     if self.mode == "agent":
                         stmt = stmt.where(self.table.c.agent_id == entity_id)
+                    elif self.mode == "team":
+                        stmt = stmt.where(self.table.c.team_id == entity_id)
                     else:
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
                 # order by created_at desc
@@ -319,6 +333,8 @@ class PostgresStorage(Storage):
                 if rows is not None:
                     if self.mode == "agent":
                         return [AgentSession.from_dict(row._mapping) for row in rows]  # type: ignore
+                    elif self.mode == "team":
+                        return [TeamSession.from_dict(row._mapping) for row in rows]  # type: ignore
                     else:
                         return [WorkflowSession.from_dict(row._mapping) for row in rows]  # type: ignore
                 else:
@@ -329,6 +345,44 @@ class PostgresStorage(Storage):
             logger.debug("Creating table for future transactions")
             self.create()
         return []
+
+    def upgrade_schema(self) -> None:
+        """
+        Upgrade the schema to the latest version.
+        Currently handles adding the is_member_of_team column for agent mode.
+        """
+        if not self.auto_upgrade_schema:
+            logger.debug("Auto schema upgrade disabled. Skipping upgrade.")
+            return
+
+        try:
+            if self.mode == "agent" and self.table_exists():
+                with self.Session() as sess:
+                    # Check if is_member_of_team column exists
+                    column_exists_query = text(
+                        """
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_schema = :schema AND table_name = :table 
+                        AND column_name = 'is_member_of_team'
+                        """
+                    )
+                    column_exists = (
+                        sess.execute(column_exists_query, {"schema": self.schema, "table": self.table_name}).scalar()
+                        is not None
+                    )
+
+                    if not column_exists:
+                        logger.info(f"Adding 'is_member_of_team' column to {self.schema}.{self.table_name}")
+                        alter_table_query = text(
+                            f"ALTER TABLE {self.schema}.{self.table_name} "
+                            f"ADD COLUMN is_member_of_team BOOLEAN DEFAULT FALSE"
+                        )
+                        sess.execute(alter_table_query)
+                        sess.commit()
+                        logger.info("Schema upgrade completed successfully")
+        except Exception as e:
+            logger.error(f"Error during schema upgrade: {e}")
+            raise
 
     def upsert(self, session: Session, create_and_retry: bool = True) -> Optional[Session]:
         """
@@ -341,6 +395,10 @@ class PostgresStorage(Storage):
         Returns:
             Optional[Session]: The upserted Session, or None if operation failed.
         """
+        # Perform schema upgrade if auto_upgrade_schema is enabled
+        if self.auto_upgrade_schema:
+            self.upgrade_schema()
+
         try:
             with self.Session() as sess, sess.begin():
                 # Create an insert statement
@@ -348,6 +406,7 @@ class PostgresStorage(Storage):
                     stmt = postgresql.insert(self.table).values(
                         session_id=session.session_id,
                         agent_id=session.agent_id,  # type: ignore
+                        is_member_of_team=session.is_member_of_team,  # type: ignore
                         user_id=session.user_id,
                         memory=session.memory,
                         agent_data=session.agent_data,  # type: ignore
@@ -360,9 +419,36 @@ class PostgresStorage(Storage):
                         index_elements=["session_id"],
                         set_=dict(
                             agent_id=session.agent_id,  # type: ignore
+                            is_member_of_team=session.is_member_of_team,  # type: ignore
                             user_id=session.user_id,
                             memory=session.memory,
                             agent_data=session.agent_data,  # type: ignore
+                            session_data=session.session_data,
+                            extra_data=session.extra_data,
+                            updated_at=int(time.time()),
+                        ),  # The updated value for each column
+                    )
+                elif self.mode == "team":
+                    stmt = postgresql.insert(self.table).values(
+                        session_id=session.session_id,
+                        team_id=session.team_id,  # type: ignore
+                        member_ids=session.member_ids,  # type: ignore
+                        user_id=session.user_id,
+                        memory=session.memory,
+                        team_data=session.team_data,  # type: ignore
+                        session_data=session.session_data,
+                        extra_data=session.extra_data,
+                    )
+                    # Define the upsert if the session_id already exists
+                    # See: https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#postgresql-insert-on-conflict
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=dict(
+                            team_id=session.team_id,  # type: ignore
+                            member_ids=session.member_ids,  # type: ignore
+                            user_id=session.user_id,
+                            memory=session.memory,
+                            team_data=session.team_data,  # type: ignore
                             session_data=session.session_data,
                             extra_data=session.extra_data,
                             updated_at=int(time.time()),
@@ -441,13 +527,6 @@ class PostgresStorage(Storage):
             # Clear metadata to ensure indexes are recreated properly
             self.metadata = MetaData(schema=self.schema)
             self.table = self.get_table()
-
-    def upgrade_schema(self) -> None:
-        """
-        Upgrade the schema to the latest version.
-        This method is currently a placeholder and does not perform any actions.
-        """
-        pass
 
     def __deepcopy__(self, memo):
         """

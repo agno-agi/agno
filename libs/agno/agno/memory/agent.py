@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict
@@ -8,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 from agno.memory.classifier import MemoryClassifier
 from agno.memory.db import MemoryDb
 from agno.memory.manager import MemoryManager
-from agno.memory.memory import Memory
+from agno.memory.memory import Memory, MemoryRetrieval
 from agno.memory.summarizer import MemorySummarizer
 from agno.memory.summary import SessionSummary
 from agno.models.message import Message
@@ -30,12 +29,6 @@ class AgentRun(BaseModel):
             "response": self.response.to_dict() if self.response else None,
         }
         return {k: v for k, v in response.items() if v is not None}
-
-
-class MemoryRetrieval(str, Enum):
-    last_n = "last_n"
-    first_n = "first_n"
-    semantic = "semantic"
 
 
 class AgentMemory(BaseModel):
@@ -78,8 +71,6 @@ class AgentMemory(BaseModel):
         _memory_dict = self.model_dump(
             exclude_none=True,
             include={
-                "runs",
-                "messages",
                 "update_system_message_on_change",
                 "create_session_summary",
                 "update_session_summary_after_run",
@@ -130,11 +121,6 @@ class AgentMemory(BaseModel):
             else:
                 # Add the system message to the messages list
                 self.messages.insert(0, message)
-
-    def add_message(self, message: Message) -> None:
-        """Add a Message to the messages list."""
-        self.messages.append(message)
-        logger.debug("Added Message to AgentMemory")
 
     def add_messages(self, messages: List[Message]) -> None:
         """Add a list of messages to the messages list."""

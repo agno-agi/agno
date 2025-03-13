@@ -17,6 +17,7 @@ class RunEvent(str, Enum):
     run_response = "RunResponse"
     run_completed = "RunCompleted"
     run_error = "RunError"
+    run_cancelled = "RunCancelled"
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     reasoning_started = "ReasoningStarted"

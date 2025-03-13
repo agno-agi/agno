@@ -13,7 +13,7 @@ from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.log import get_logger
 
 try:
     from google import genai
@@ -54,10 +54,10 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
                 }
                 return image_data
             except Exception as e:
-                logger.warning(f"Failed to download image from {image}: {e}")
+                get_logger().warning(f"Failed to download image from {image}: {e}")
                 return None
         else:
-            logger.warning(f"Unsupported image format: {image}")
+            get_logger().warning(f"Unsupported image format: {image}")
             return None
 
     # Case 2: Image is a local path
@@ -68,14 +68,14 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
                 with open(image_path, "rb") as f:
                     content_bytes = f.read()
             else:
-                logger.error(f"Image file {image_path} does not exist.")
+                get_logger().error(f"Image file {image_path} does not exist.")
                 raise
             return {
                 "mime_type": "image/jpeg",
                 "data": content_bytes,
             }
         except Exception as e:
-            logger.warning(f"Failed to load image from {image.filepath}: {e}")
+            get_logger().warning(f"Failed to load image from {image.filepath}: {e}")
             return None
 
     # Case 3: Image is a bytes object
@@ -86,7 +86,7 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         image_data = {"mime_type": "image/jpeg", "data": base64.b64encode(image.content).decode("utf-8")}
         return image_data
     else:
-        logger.warning(f"Unknown image type: {type(image)}")
+        get_logger().warning(f"Unknown image type: {type(image)}")
         return None
 
 
@@ -227,7 +227,7 @@ class Gemini(Model):
         if not self.vertexai:
             self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
             if not self.api_key:
-                logger.error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
+                get_logger().error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
             client_params["api_key"] = self.api_key
         else:
             client_params["vertexai"] = True
@@ -291,11 +291,11 @@ class Gemini(Model):
             config["response_schema"] = self.response_format
 
         if self.grounding and self.search:
-            logger.info("Both grounding and search are enabled. Grounding will take precedence.")
+            get_logger().info("Both grounding and search are enabled. Grounding will take precedence.")
             self.search = False
 
         if self.grounding:
-            logger.info("Grounding enabled. External tools will be disabled.")
+            get_logger().info("Grounding enabled. External tools will be disabled.")
             config["tools"] = [
                 Tool(
                     google_search=GoogleSearchRetrieval(
@@ -307,7 +307,7 @@ class Gemini(Model):
             ]
 
         elif self.search:
-            logger.info("Search enabled. External tools will be disabled.")
+            get_logger().info("Search enabled. External tools will be disabled.")
             config["tools"] = [Tool(google_search=GoogleSearch())]
 
         elif self._tools:
@@ -342,12 +342,12 @@ class Gemini(Model):
                 **request_kwargs,
             )
         except (ClientError, ServerError) as e:
-            logger.error(f"Error from Gemini API: {e}")
+            get_logger().error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
                 message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            logger.error(f"Unknown error from Gemini API: {e}")
+            get_logger().error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]):
@@ -371,12 +371,12 @@ class Gemini(Model):
                 **request_kwargs,
             )
         except (ClientError, ServerError) as e:
-            logger.error(f"Error from Gemini API: {e}")
+            get_logger().error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
                 message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            logger.error(f"Unknown error from Gemini API: {e}")
+            get_logger().error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]):
@@ -394,12 +394,12 @@ class Gemini(Model):
                 **request_kwargs,
             )
         except (ClientError, ServerError) as e:
-            logger.error(f"Error from Gemini API: {e}")
+            get_logger().error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
                 message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            logger.error(f"Unknown error from Gemini API: {e}")
+            get_logger().error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]):
@@ -419,12 +419,12 @@ class Gemini(Model):
             async for chunk in async_stream:
                 yield chunk
         except (ClientError, ServerError) as e:
-            logger.error(f"Error from Gemini API: {e}")
+            get_logger().error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
                 message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            logger.error(f"Unknown error from Gemini API: {e}")
+            get_logger().error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message]):
@@ -501,7 +501,7 @@ class Gemini(Model):
                                     message_parts.insert(0, video_file)  # type: ignore
                     except Exception as e:
                         traceback.print_exc()
-                        logger.warning(f"Failed to load video from {message.videos}: {e}")
+                        get_logger().warning(f"Failed to load video from {message.videos}: {e}")
                         continue
 
                 # Add audio to the message for the model
@@ -521,7 +521,7 @@ class Gemini(Model):
                                 if audio_content:
                                     message_parts.append(audio_content)
                     except Exception as e:
-                        logger.warning(f"Failed to load audio from {message.audio}: {e}")
+                        get_logger().warning(f"Failed to load audio from {message.audio}: {e}")
                         continue
 
                 # Add files to the message for the model
@@ -558,7 +558,7 @@ class Gemini(Model):
             try:
                 existing_audio_upload = self.get_client().files.get(name=remote_file_name)
             except Exception as e:
-                logger.warning(f"Error getting file {remote_file_name}: {e}")
+                get_logger().warning(f"Error getting file {remote_file_name}: {e}")
                 pass
 
             if existing_audio_upload:
@@ -575,7 +575,7 @@ class Gemini(Model):
                         ),
                     )
                 else:
-                    logger.error(f"Audio file {audio_path} does not exist.")
+                    get_logger().error(f"Audio file {audio_path} does not exist.")
                     raise Exception(f"Audio file {audio_path} does not exist.")
 
                 # Check whether the file is ready to be used.
@@ -589,7 +589,7 @@ class Gemini(Model):
                 file_uri=audio_file.uri, mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3"
             )
         else:
-            logger.warning(f"Unknown audio type: {type(audio.content)}")
+            get_logger().warning(f"Unknown audio type: {type(audio.content)}")
             return None
 
     def _format_video_for_message(self, video: Video) -> Optional[GeminiFile]:
@@ -608,7 +608,7 @@ class Gemini(Model):
             try:
                 existing_video_upload = self.get_client().files.get(name=remote_file_name)
             except Exception as e:
-                logger.warning(f"Error getting file {remote_file_name}: {e}")
+                get_logger().warning(f"Error getting file {remote_file_name}: {e}")
                 pass
 
             if existing_video_upload:
@@ -625,7 +625,7 @@ class Gemini(Model):
                         ),
                     )
                 else:
-                    logger.error(f"Video file {video_path} does not exist.")
+                    get_logger().error(f"Video file {video_path} does not exist.")
                     raise Exception(f"Video file {video_path} does not exist.")
 
                 # Check whether the file is ready to be used.
@@ -640,7 +640,7 @@ class Gemini(Model):
                 file_uri=video_file.uri, mime_type=f"video/{video.format}" if video.format else "video/mp4"
             )
         else:
-            logger.warning(f"Unknown video type: {type(video.content)}")
+            get_logger().warning(f"Unknown video type: {type(video.content)}")
             return None
 
     def _format_file_for_message(self, file: File) -> Optional[Part]:
@@ -655,7 +655,7 @@ class Gemini(Model):
                 content, mime_type = url_content
                 return Part.from_bytes(mime_type=mime_type, data=content)
             else:
-                logger.warning(f"Failed to download file from {file.url}")
+                get_logger().warning(f"Failed to download file from {file.url}")
                 return None
 
         # Case 3: File is a local file path
@@ -683,7 +683,7 @@ class Gemini(Model):
                         raise ValueError(file_upload.state.name)
                     return Part.from_uri(file_uri=file_upload.uri, mime_type=file_upload.mime_type)
             else:
-                logger.error(f"File {file_path} does not exist.")
+                get_logger().error(f"File {file_path} does not exist.")
 
         return None
 

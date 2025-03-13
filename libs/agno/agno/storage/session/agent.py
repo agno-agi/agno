@@ -14,6 +14,8 @@ class AgentSession:
     session_id: str
     # ID of the user interacting with this agent
     user_id: Optional[str] = None
+    # Is member of team
+    is_member_of_team: bool = False
     # Agent Memory
     memory: Optional[Dict[str, Any]] = None
     # Session Data: session_name, session_state, images, videos, audio
@@ -32,10 +34,6 @@ class AgentSession:
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
-
-    def monitoring_data(self) -> Dict[str, Any]:
-        monitoring_data = asdict(self)
-        return monitoring_data
 
     def telemetry_data(self) -> Dict[str, Any]:
         return {

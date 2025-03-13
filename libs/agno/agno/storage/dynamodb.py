@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Literal, Optional
 from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
+from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import logger
 
@@ -26,7 +27,7 @@ class DynamoDbStorage(Storage):
         aws_secret_access_key: Optional[str] = None,
         endpoint_url: Optional[str] = None,
         create_table_if_not_exists: bool = True,
-        mode: Optional[Literal["agent", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
     ):
         """
         Initialize the DynamoDbStorage.
@@ -38,7 +39,7 @@ class DynamoDbStorage(Storage):
             aws_secret_access_key (Optional[str]): AWS secret access key.
             endpoint_url (Optional[str]): The complete URL to use for the constructed client.
             create_table_if_not_exists (bool): Whether to create the table if it does not exist.
-            mode (Optional[Literal["agent", "workflow"]]): The mode of the storage.
+            mode (Optional[Literal["agent", "team", "workflow"]]): The mode of the storage.
         """
         super().__init__(mode)
         self.table_name = table_name
@@ -66,12 +67,12 @@ class DynamoDbStorage(Storage):
         logger.debug(f"Initialized DynamoDbStorage with table '{self.table_name}'")
 
     @property
-    def mode(self) -> Literal["agent", "workflow"]:
+    def mode(self) -> Literal["agent", "team", "workflow"]:
         """Get the mode of the storage."""
         return super().mode
 
     @mode.setter
-    def mode(self, value: Optional[Literal["agent", "workflow"]]) -> None:
+    def mode(self, value: Optional[Literal["agent", "team", "workflow"]]) -> None:
         """Set the mode and refresh the table if mode changes."""
         super(DynamoDbStorage, type(self)).mode.fset(self, value)  # type: ignore
         if value is not None:
@@ -95,6 +96,13 @@ class DynamoDbStorage(Storage):
                         {"AttributeName": "session_id", "AttributeType": "S"},
                         {"AttributeName": "user_id", "AttributeType": "S"},
                         {"AttributeName": "agent_id", "AttributeType": "S"},
+                        {"AttributeName": "created_at", "AttributeType": "N"},
+                    ]
+                elif self.mode == "team":
+                    attribute_definitions = [
+                        {"AttributeName": "session_id", "AttributeType": "S"},
+                        {"AttributeName": "user_id", "AttributeType": "S"},
+                        {"AttributeName": "team_id", "AttributeType": "S"},
                         {"AttributeName": "created_at", "AttributeType": "N"},
                     ]
                 else:
@@ -125,6 +133,21 @@ class DynamoDbStorage(Storage):
                             "IndexName": "agent_id-index",
                             "KeySchema": [
                                 {"AttributeName": "agent_id", "KeyType": "HASH"},
+                                {"AttributeName": "created_at", "KeyType": "RANGE"},
+                            ],
+                            "Projection": {"ProjectionType": "ALL"},
+                            "ProvisionedThroughput": {
+                                "ReadCapacityUnits": 5,
+                                "WriteCapacityUnits": 5,
+                            },
+                        }
+                    )
+                elif self.mode == "team":
+                    secondary_indexes.append(
+                        {
+                            "IndexName": "team_id-index",
+                            "KeySchema": [
+                                {"AttributeName": "team_id", "KeyType": "HASH"},
                                 {"AttributeName": "created_at", "KeyType": "RANGE"},
                             ],
                             "Projection": {"ProjectionType": "ALL"},
@@ -189,6 +212,8 @@ class DynamoDbStorage(Storage):
                 item = self._deserialize_item(item)
                 if self.mode == "agent":
                     return AgentSession.from_dict(item)
+                elif self.mode == "team":
+                    return TeamSession.from_dict(item)
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(item)
         except Exception as e:
@@ -223,6 +248,13 @@ class DynamoDbStorage(Storage):
                     response = self.table.query(
                         IndexName="agent_id-index",
                         KeyConditionExpression=Key("agent_id").eq(entity_id),
+                        ProjectionExpression="session_id",
+                    )
+                elif self.mode == "team":
+                    # Query using team_id index
+                    response = self.table.query(
+                        IndexName="team_id-index",
+                        KeyConditionExpression=Key("team_id").eq(entity_id),
                         ProjectionExpression="session_id",
                     )
                 else:
@@ -262,7 +294,14 @@ class DynamoDbStorage(Storage):
                     response = self.table.query(
                         IndexName="user_id-index",
                         KeyConditionExpression=Key("user_id").eq(user_id),
-                        ProjectionExpression="session_id, agent_id, user_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
+                        ProjectionExpression="session_id, agent_id, user_id, is_member_of_team, memory, agent_data, session_data, extra_data, created_at, updated_at",
+                    )
+                elif self.mode == "team":
+                    # Query using user_id index
+                    response = self.table.query(
+                        IndexName="user_id-index",
+                        KeyConditionExpression=Key("user_id").eq(user_id),
+                        ProjectionExpression="session_id, team_id, member_ids, user_id, memory, team_data, session_data, extra_data, created_at, updated_at",
                     )
                 else:
                     # Query using user_id index
@@ -287,7 +326,14 @@ class DynamoDbStorage(Storage):
                     response = self.table.query(
                         IndexName="agent_id-index",
                         KeyConditionExpression=Key("agent_id").eq(entity_id),
-                        ProjectionExpression="session_id, agent_id, user_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
+                        ProjectionExpression="session_id, agent_id, user_id, is_member_of_team, memory, agent_data, session_data, extra_data, created_at, updated_at",
+                    )
+                elif self.mode == "team":
+                    # Query using team_id index
+                    response = self.table.query(
+                        IndexName="team_id-index",
+                        KeyConditionExpression=Key("team_id").eq(entity_id),
+                        ProjectionExpression="session_id, team_id, member_ids, user_id, memory, team_data, session_data, extra_data, created_at, updated_at",
                     )
                 else:
                     # Query using workflow_id index
@@ -307,14 +353,25 @@ class DynamoDbStorage(Storage):
                         sessions.append(_session)
             else:
                 # Scan the whole table
-                response = self.table.scan(
-                    ProjectionExpression="session_id, agent_id, user_id, memory, agent_data, session_data, extra_data, created_at, updated_at"
-                )
+                if self.mode == "agent":
+                    response = self.table.scan(
+                        ProjectionExpression="session_id, agent_id, user_id, is_member_of_team, memory, agent_data, session_data, extra_data, created_at, updated_at"
+                    )
+                elif self.mode == "team":
+                    response = self.table.scan(
+                        ProjectionExpression="session_id, team_id, member_ids, user_id, memory, team_data, session_data, extra_data, created_at, updated_at"
+                    )
+                else:
+                    response = self.table.scan(
+                        ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at"
+                    )
                 items = response.get("Items", [])
                 for item in items:
                     item = self._deserialize_item(item)
                     if self.mode == "agent":
                         _session = AgentSession.from_dict(item)  # type: ignore
+                    elif self.mode == "team":
+                        _session = TeamSession.from_dict(item)  # type: ignore
                     else:
                         _session = WorkflowSession.from_dict(item)  # type: ignore
                     if _session is not None:

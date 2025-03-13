@@ -39,8 +39,9 @@ from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
+from agno.utils.log import get_logger, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.message import get_text_from_message
+from agno.utils.response import create_panel, escape_markdown_tags
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_structured_output
 from agno.utils.timer import Timer
@@ -220,6 +221,9 @@ class Agent:
     # Separator between responses from the team
     team_response_separator: str = "\n"
 
+    # Internal indicator to signify when it is a member of a team
+    is_member_of_team: bool = False
+
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
@@ -374,6 +378,7 @@ class Agent:
         self.stream_intermediate_steps = stream_intermediate_steps
 
         self.team = team
+
         self.team_data = team_data
         self.role = role
         self.respond_directly = respond_directly
@@ -394,10 +399,10 @@ class Agent:
 
         # Images generated during this session
         self.images: Optional[List[ImageArtifact]] = None
-        # Videos generated during this session
-        self.videos: Optional[List[VideoArtifact]] = None
         # Audio generated during this session
         self.audio: Optional[List[AudioArtifact]] = None
+        # Videos generated during this session
+        self.videos: Optional[List[VideoArtifact]] = None
         # Agent session
         self.agent_session: Optional[AgentSession] = None
 
@@ -409,13 +414,13 @@ class Agent:
     def set_agent_id(self) -> str:
         if self.agent_id is None:
             self.agent_id = str(uuid4())
-        logger.debug(f"*********** Agent ID: {self.agent_id} ***********")
+        get_logger().debug(f"Agent ID: {self.agent_id}", center=True)
         return self.agent_id
 
     def set_session_id(self) -> str:
         if self.session_id is None or self.session_id == "":
             self.session_id = str(uuid4())
-        logger.debug(f"*********** Session ID: {self.session_id} ***********")
+        get_logger().debug(f"Session ID: {self.session_id}", center=True)
         return self.session_id
 
     def set_debug(self) -> None:
@@ -427,8 +432,8 @@ class Agent:
 
     def set_storage_mode(self):
         if self.storage is not None:
-            if self.storage.mode == "workflow":
-                logger.warning("You cannot use storage in both workflow and agent mode")
+            if self.storage.mode in ["workflow", "team"]:
+                get_logger().warning("You cannot use storage in both agent mode")
 
             self.storage.mode = "agent"
 
@@ -491,6 +496,7 @@ class Agent:
         11. Save session to storage
         12. Save output to file if save_response_to_file is set
         """
+        logger = get_logger()
         # 1. Prepare the Agent for the run
         # 1.1 Initialize the Agent
         self.initialize_agent()
@@ -502,7 +508,8 @@ class Agent:
         self.run_id = str(uuid4())
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
-        logger.debug(f"*********** Agent Run Start: {self.run_response.run_id} ***********")
+        logger.debug(f"Agent Run Start: {self.run_response.run_id}", center=True)
+        logger.debug("")
 
         # 2. Update the Model and resolve context
         self.update_model()
@@ -787,9 +794,9 @@ class Agent:
             self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
         # Log Agent Run
-        self.log_agent_run()
+        self._log_agent_run()
 
-        logger.debug(f"*********** Agent Run End: {self.run_response.run_id} ***********")
+        logger.debug(f" Agent Run End: {self.run_response.run_id} ", center=True, symbol="*")
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,
@@ -839,7 +846,7 @@ class Agent:
         stream: bool = False,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Any]] = None,
+        videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
@@ -847,6 +854,7 @@ class Agent:
         **kwargs: Any,
     ) -> Union[RunResponse, Iterator[RunResponse]]:
         """Run the Agent and return the response."""
+        logger = get_logger()
 
         # If no retries are set, use the agent's default retries
         if retries is None:
@@ -944,6 +952,16 @@ class Agent:
                     import time
 
                     time.sleep(delay)
+            except KeyboardInterrupt:
+                # Create a cancelled response
+                cancelled_response = RunResponse(
+                    run_id=self.run_id or str(uuid4()),
+                    session_id=self.session_id,
+                    agent_id=self.agent_id,
+                    content="Operation cancelled by user",
+                    event=RunEvent.run_cancelled,
+                )
+                return cancelled_response
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -983,7 +1001,7 @@ class Agent:
         11. Save session to storage
         12. Save output to file if save_response_to_file is set
         """
-
+        logger = get_logger()
         # 1. Prepare the Agent for the run
         # 1.1 Initialize the Agent
         self.initialize_agent()
@@ -996,6 +1014,7 @@ class Agent:
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
         logger.debug(f"*********** Async Agent Run Start: {self.run_response.run_id} ***********")
+        logger.debug("")
 
         # 2. Update the Model and resolve context
         self.update_model()
@@ -1279,9 +1298,9 @@ class Agent:
             self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
         # Log Agent Run
-        await self.alog_agent_run()
+        await self._alog_agent_run()
 
-        logger.debug(f"*********** Agent Run End: {self.run_response.run_id} ***********")
+        get_logger().debug(f" Agent Run End: {self.run_response.run_id} ", center=True, symbol="*")
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,
@@ -1307,7 +1326,7 @@ class Agent:
         **kwargs: Any,
     ) -> Any:
         """Async Run the Agent and return the response."""
-
+        logger = get_logger()
         # If no retries are set, use the agent's default retries
         if retries is None:
             retries = self.retries
@@ -1402,6 +1421,15 @@ class Agent:
                     import time
 
                     time.sleep(delay)
+            except KeyboardInterrupt:
+                # Create a cancelled response
+                return RunResponse(
+                    run_id=self.run_id or str(uuid4()),
+                    session_id=self.session_id,
+                    agent_id=self.agent_id,
+                    content="Operation cancelled by user",
+                    event=RunEvent.run_cancelled,
+                )
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1471,13 +1499,14 @@ class Agent:
                 agent_tools.append(self.add_to_knowledge)
 
         # Add transfer tools
-        if self.team is not None and len(self.team) > 0:
+        if self.has_team:
             for agent_index, agent in enumerate(self.team):
                 agent_tools.append(self.get_transfer_function(agent, agent_index))
 
         return agent_tools
 
     def add_tools_to_model(self, model: Model) -> None:
+        logger = get_logger()
         # Skip if functions_for_model is not None
         if self._functions_for_model is None or self._tools_for_model is None:
             # Get Agent tools
@@ -1536,6 +1565,7 @@ class Agent:
                 model.set_functions(functions=self._functions_for_model)
 
     def update_model(self) -> None:
+        logger = get_logger()
         # Use the default Model (OpenAIChat) if no model is provided
         if self.model is None:
             try:
@@ -1580,7 +1610,7 @@ class Agent:
     def resolve_run_context(self) -> None:
         from inspect import signature
 
-        logger.debug("Resolving context")
+        get_logger().debug("Resolving context")
         if self.context is not None:
             for ctx_key, ctx_value in self.context.items():
                 if callable(ctx_value):
@@ -1594,7 +1624,7 @@ class Agent:
                         if resolved_ctx_value is not None:
                             self.context[ctx_key] = resolved_ctx_value
                     except Exception as e:
-                        logger.warning(f"Failed to resolve context for {ctx_key}: {e}")
+                        get_logger().warning(f"Failed to resolve context for {ctx_key}: {e}")
                 else:
                     self.context[ctx_key] = ctx_value
 
@@ -1606,9 +1636,9 @@ class Agent:
 
             self.memory.load_user_memories()
             if self.user_id is not None:
-                logger.debug(f"Memories loaded for user: {self.user_id}")
+                get_logger().debug(f"Memories loaded for user: {self.user_id}")
             else:
-                logger.debug("Memories loaded")
+                get_logger().debug("Memories loaded")
 
     def get_agent_data(self) -> Dict[str, Any]:
         agent_data: Dict[str, Any] = {}
@@ -1649,6 +1679,7 @@ class Agent:
             session_id=self.session_id,
             agent_id=self.agent_id,
             user_id=self.user_id,
+            is_member_of_team=self.is_member_of_team,
             memory=self.memory.to_dict() if self.memory is not None else None,
             agent_data=self.get_agent_data(),
             session_data=self.get_session_data(),
@@ -1661,6 +1692,8 @@ class Agent:
         from agno.memory.memory import Memory
         from agno.memory.summary import SessionSummary
         from agno.utils.merge_dict import merge_dictionaries
+
+        logger = get_logger()
 
         # Get the agent_id, user_id and session_id from the database
         if self.agent_id is None and session.agent_id is not None:
@@ -1801,7 +1834,8 @@ class Agent:
                 self.memory.add_run(
                     AgentRun(
                         response=RunResponse(
-                            content=introduction, messages=[Message(role="assistant", content=introduction)]
+                            content=introduction,
+                            messages=[Message(role=self.model.assistant_message_role, content=introduction)],
                         )
                     )
                 )
@@ -1822,12 +1856,12 @@ class Agent:
         # Load an existing session or create a new session
         if self.storage is not None:
             # Load existing session if session_id is provided
-            logger.debug(f"Reading AgentSession: {self.session_id}")
+            get_logger().debug(f"Reading AgentSession: {self.session_id}")
             self.read_from_storage()
 
             # Create a new session if it does not exist
             if self.agent_session is None:
-                logger.debug("-*- Creating new AgentSession")
+                get_logger().debug("-*- Creating new AgentSession")
                 # Initialize the agent_id and session_id if they are not set
                 if self.agent_id is None or self.session_id is None:
                     self.initialize_agent()
@@ -1838,8 +1872,8 @@ class Agent:
                 self.write_to_storage()
                 if self.agent_session is None:
                     raise Exception("Failed to create new AgentSession in storage")
-                logger.debug(f"-*- Created AgentSession: {self.agent_session.session_id}")
-                self.log_agent_session()
+                get_logger().debug(f"-*- Created AgentSession: {self.agent_session.session_id}")
+                self._log_agent_session()
         return self.session_id
 
     def new_session(self) -> None:
@@ -1916,7 +1950,7 @@ class Agent:
                         json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2)}"
                         json_output_prompt += "\n</json_field_properties>"
             else:
-                logger.warning(f"Could not build json schema for {self.response_model}")
+                get_logger().warning(f"Could not build json schema for {self.response_model}")
         else:
             json_output_prompt += "Provide the output as JSON."
 
@@ -2158,7 +2192,7 @@ class Agent:
                     self.run_response.extra_data.references = []
                 self.run_response.extra_data.references.append(references)
             retrieval_timer.stop()
-            logger.debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            get_logger().debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
         # 1. If the user_message is provided, use that.
         if self.user_message is not None:
@@ -2268,6 +2302,7 @@ class Agent:
             message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
         """
+        logger = get_logger()
         # Initialize the RunMessages object
         run_messages = RunMessages()
         self.memory = cast(AgentMemory, self.memory)
@@ -2403,12 +2438,14 @@ class Agent:
             fields_for_new_agent.update(update)
         # Create a new Agent
         new_agent = self.__class__(**fields_for_new_agent)
-        logger.debug(f"Created new {self.__class__.__name__}")
+        get_logger().debug(f"Created new {self.__class__.__name__}")
         return new_agent
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
         """Helper method to deep copy a field based on its type."""
         from copy import copy, deepcopy
+
+        logger = get_logger()
 
         # For memory and reasoning_agent, use their deep_copy methods
         if field_name in ("memory", "reasoning_agent"):
@@ -2479,7 +2516,7 @@ class Agent:
                         f"\n\n<additional_information>\n{additional_information}\n</additional_information>"
                     )
             except Exception as e:
-                logger.warning(f"Failed to add additional information to the member agent: {e}")
+                get_logger().warning(f"Failed to add additional information to the member agent: {e}")
 
             member_agent_session_id = member_agent.session_id
             member_agent_agent_id = member_agent.agent_id
@@ -2593,7 +2630,7 @@ class Agent:
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.retriever(**retriever_kwargs)
             except Exception as e:
-                logger.warning(f"Retriever failed: {e}")
+                get_logger().warning(f"Retriever failed: {e}")
                 return None
 
         if self.knowledge is None:
@@ -2635,7 +2672,7 @@ class Agent:
         try:
             return json.dumps(context, indent=2, default=str)
         except (TypeError, ValueError, OverflowError) as e:
-            logger.warning(f"Failed to convert context to JSON: {e}")
+            get_logger().warning(f"Failed to convert context to JSON: {e}")
             # Attempt a fallback conversion for non-serializable objects
             sanitized_context = {}
             for key, value in context.items():
@@ -2650,7 +2687,7 @@ class Agent:
             try:
                 return json.dumps(sanitized_context, indent=2)
             except Exception as e:
-                logger.error(f"Failed to convert sanitized context to JSON: {e}")
+                get_logger().error(f"Failed to convert sanitized context to JSON: {e}")
                 return str(context)
 
     def save_run_response_to_file(self, message: Optional[Union[str, List, Dict, Message]] = None) -> None:
@@ -2660,7 +2697,7 @@ class Agent:
                 if isinstance(message, str):
                     message_str = message
                 else:
-                    logger.warning("Did not use message in output file name: message is not a string")
+                    get_logger().warning("Did not use message in output file name: message is not a string")
             try:
                 from pathlib import Path
 
@@ -2681,7 +2718,7 @@ class Agent:
 
                     fn_path.write_text(json.dumps(self.run_response.content, indent=2))
             except Exception as e:
-                logger.warning(f"Failed to save output to file: {e}")
+                get_logger().warning(f"Failed to save output to file: {e}")
 
     def update_run_response_with_reasoning(
         self, reasoning_steps: List[ReasoningStep], reasoning_agent_messages: List[Message]
@@ -2736,7 +2773,7 @@ class Agent:
         # -*- Save to storage
         self.write_to_storage()
         # -*- Log Agent session
-        self.log_agent_session()
+        self._log_agent_session()
 
     def rename_session(self, session_name: str) -> None:
         """Rename the current session and save to storage"""
@@ -2748,7 +2785,7 @@ class Agent:
         # -*- Save to storage
         self.write_to_storage()
         # -*- Log Agent session
-        self.log_agent_session()
+        self._log_agent_session()
 
     def generate_session_name(self) -> str:
         """Generate a name for the session using the first 6 messages from the memory"""
@@ -2765,7 +2802,7 @@ class Agent:
                 messages_for_generating_session_name.append(message_pair[0])
                 messages_for_generating_session_name.append(message_pair[1])
         except Exception as e:
-            logger.warning(f"Failed to generate name: {e}")
+            get_logger().warning(f"Failed to generate name: {e}")
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
@@ -2782,10 +2819,10 @@ class Agent:
         generated_name = self.model.response(messages=generate_name_messages)
         content = generated_name.content
         if content is None:
-            logger.error("Generated name is None. Trying again.")
+            get_logger().error("Generated name is None. Trying again.")
             return self.generate_session_name()
         if len(content.split()) > 15:
-            logger.error("Generated name is too long. Trying again.")
+            get_logger().error("Generated name is too long. Trying again.")
             return self.generate_session_name()
         return content.replace('"', "").strip()
 
@@ -2796,13 +2833,13 @@ class Agent:
         self.read_from_storage()
         # -*- Generate name for session
         generated_session_name = self.generate_session_name()
-        logger.debug(f"Generated Session Name: {generated_session_name}")
+        get_logger().debug(f"Generated Session Name: {generated_session_name}")
         # -*- Rename thread
         self.session_name = generated_session_name
         # -*- Save to storage
         self.write_to_storage()
         # -*- Log Agent Session
-        self.log_agent_session()
+        self._log_agent_session()
 
     def delete_session(self, session_id: str):
         """Delete the current session and save to storage"""
@@ -2858,6 +2895,8 @@ class Agent:
     def reason(self, run_messages: RunMessages) -> Iterator[RunResponse]:
         from agno.models.openai.like import OpenAILike
 
+        logger = get_logger()
+
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
@@ -2911,6 +2950,7 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)],
                     reasoning_agent_messages=[groq_reasoning_message],
                 )
+
             # Use o-3 or OpenAILike with deepseek model for reasoning
             elif (reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")) or (
                 isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower()
@@ -2951,6 +2991,8 @@ class Agent:
                     tools=self.tools,
                     structured_outputs=self.structured_outputs,
                     monitoring=self.monitoring,
+                    telemetry=self.telemetry,
+                    debug_mode=self.debug_mode,
                 )
 
             # Validate reasoning agent
@@ -3040,6 +3082,8 @@ class Agent:
 
     async def areason(self, run_messages: RunMessages) -> Any:
         from agno.models.openai.like import OpenAILike
+
+        logger = get_logger()
 
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
@@ -3280,7 +3324,7 @@ class Agent:
         tool_calls = self.memory.get_tool_calls(num_calls)
         if len(tool_calls) == 0:
             return ""
-        logger.debug(f"tool_calls: {tool_calls}")
+        get_logger().debug(f"tool_calls: {tool_calls}")
         return json.dumps(tool_calls)
 
     def search_knowledge_base(self, query: str) -> str:
@@ -3309,7 +3353,7 @@ class Agent:
                 self.run_response.extra_data.references = []
             self.run_response.extra_data.references.append(references)
         retrieval_timer.stop()
-        logger.debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+        get_logger().debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
         if docs_from_knowledge is None:
             return "No documents found"
@@ -3335,7 +3379,7 @@ class Agent:
         if document_name is None:
             document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
-        logger.info(f"Adding document to knowledge base: {document_name}: {document_content}")
+        get_logger().info(f"Adding document to knowledge base: {document_name}: {document_content}")
         self.knowledge.load_document(
             document=Document(
                 name=document_name,
@@ -3363,7 +3407,7 @@ class Agent:
     # Api functions
     ###########################################################################
 
-    def log_agent_session(self):
+    def _log_agent_session(self):
         if not (self.telemetry or self.monitoring):
             return
 
@@ -3374,30 +3418,12 @@ class Agent:
             create_agent_session(
                 session=AgentSessionCreate(
                     session_id=agent_session.session_id,
-                    agent_data=agent_session.monitoring_data() if self.monitoring else agent_session.telemetry_data(),
+                    agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
                 ),
                 monitor=self.monitoring,
             )
         except Exception as e:
-            logger.debug(f"Could not create agent monitor: {e}")
-
-    async def alog_agent_session(self):
-        if not (self.telemetry or self.monitoring):
-            return
-
-        from agno.api.agent import AgentSessionCreate, acreate_agent_session
-
-        try:
-            agent_session: AgentSession = self.agent_session or self.get_agent_session()
-            await acreate_agent_session(
-                session=AgentSessionCreate(
-                    session_id=agent_session.session_id,
-                    agent_data=agent_session.monitoring_data() if self.monitoring else agent_session.telemetry_data(),
-                ),
-                monitor=self.monitoring,
-            )
-        except Exception as e:
-            logger.debug(f"Could not create agent monitor: {e}")
+            get_logger().debug(f"Could not create agent monitor: {e}")
 
     def _create_run_data(self) -> Dict[str, Any]:
         """Create and return the run data dictionary."""
@@ -3430,7 +3456,7 @@ class Agent:
 
         return run_data
 
-    def log_agent_run(self) -> None:
+    def _log_agent_run(self) -> None:
         self.set_monitoring()
 
         if not self.telemetry and not self.monitoring:
@@ -3447,14 +3473,14 @@ class Agent:
                     run_id=self.run_id,
                     run_data=run_data,
                     session_id=agent_session.session_id,
-                    agent_data=agent_session.monitoring_data() if self.monitoring else agent_session.telemetry_data(),
+                    agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
                 ),
                 monitor=self.monitoring,
             )
         except Exception as e:
-            logger.debug(f"Could not create agent event: {e}")
+            get_logger().debug(f"Could not create agent event: {e}")
 
-    async def alog_agent_run(self) -> None:
+    async def _alog_agent_run(self) -> None:
         self.set_monitoring()
 
         if not self.telemetry and not self.monitoring:
@@ -3471,34 +3497,16 @@ class Agent:
                     run_id=self.run_id,
                     run_data=run_data,
                     session_id=agent_session.session_id,
-                    agent_data=agent_session.monitoring_data() if self.monitoring else agent_session.telemetry_data(),
+                    agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
                 ),
                 monitor=self.monitoring,
             )
         except Exception as e:
-            logger.debug(f"Could not create agent event: {e}")
+            get_logger().debug(f"Could not create agent event: {e}")
 
     ###########################################################################
     # Print Response
     ###########################################################################
-
-    def create_panel(self, content, title, border_style="blue"):
-        from rich.box import HEAVY
-        from rich.panel import Panel
-
-        return Panel(
-            content, title=title, title_align="left", border_style=border_style, box=HEAVY, expand=True, padding=(1, 1)
-        )
-
-    def escape_markdown_tags(self, content: str, tags: Set[str]) -> str:
-        """Escape special tags in markdown content."""
-        escaped_content = content
-        for tag in tags:
-            # Escape opening tag
-            escaped_content = escaped_content.replace(f"<{tag}>", f"&lt;{tag}&gt;")
-            # Escape closing tag
-            escaped_content = escaped_content.replace(f"</{tag}>", f"&lt;/{tag}&gt;")
-        return escaped_content
 
     def print_response(
         self,
@@ -3555,7 +3563,7 @@ class Agent:
                     render = True
                     # Convert message to a panel
                     message_content = get_text_from_message(message)
-                    message_panel = self.create_panel(
+                    message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
                         border_style="cyan",
@@ -3586,7 +3594,7 @@ class Agent:
                     response_content_stream: Union[str, Markdown] = _response_content
                     # Escape special tags before markdown conversion
                     if self.markdown:
-                        escaped_content = self.escape_markdown_tags(_response_content, tags_to_include_in_markdown)
+                        escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
                         response_content_stream = Markdown(escaped_content)
 
                     panels = [status]
@@ -3595,7 +3603,7 @@ class Agent:
                         render = True
                         # Convert message to a panel
                         message_content = get_text_from_message(message)
-                        message_panel = self.create_panel(
+                        message_panel = create_panel(
                             content=Text(message_content, style="green"),
                             title="Message",
                             border_style="cyan",
@@ -3627,7 +3635,7 @@ class Agent:
                                     step_content.append(
                                         Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim")
                                     )
-                            reasoning_panel = self.create_panel(
+                            reasoning_panel = create_panel(
                                 content=step_content, title=f"Reasoning step {i}", border_style="green"
                             )
                             panels.append(reasoning_panel)
@@ -3637,7 +3645,7 @@ class Agent:
                     if len(_response_thinking) > 0:
                         render = True
                         # Create panel for thinking
-                        thinking_panel = self.create_panel(
+                        thinking_panel = create_panel(
                             content=Text(_response_thinking),
                             title=f"Thinking ({response_timer.elapsed:.1f}s)",
                             border_style="green",
@@ -3649,7 +3657,7 @@ class Agent:
                     if len(_response_content) > 0:
                         render = True
                         # Create panel for response
-                        response_panel = self.create_panel(
+                        response_panel = create_panel(
                             content=response_content_stream,
                             title=f"Response ({response_timer.elapsed:.1f}s)",
                             border_style="blue",
@@ -3674,7 +3682,7 @@ class Agent:
                 if message and show_message:
                     # Convert message to a panel
                     message_content = get_text_from_message(message)
-                    message_panel = self.create_panel(
+                    message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
                         border_style="cyan",
@@ -3725,7 +3733,7 @@ class Agent:
                                 step_content.append(
                                     Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim")
                                 )
-                        reasoning_panel = self.create_panel(
+                        reasoning_panel = create_panel(
                             content=step_content, title=f"Reasoning step {i}", border_style="green"
                         )
                         panels.append(reasoning_panel)
@@ -3733,7 +3741,7 @@ class Agent:
 
                 if isinstance(run_response, RunResponse) and run_response.thinking is not None:
                     # Create panel for thinking
-                    thinking_panel = self.create_panel(
+                    thinking_panel = create_panel(
                         content=Text(run_response.thinking),
                         title=f"Thinking ({response_timer.elapsed:.1f}s)",
                         border_style="green",
@@ -3745,9 +3753,7 @@ class Agent:
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:
-                            escaped_content = self.escape_markdown_tags(
-                                run_response.content, tags_to_include_in_markdown
-                            )
+                            escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
                             response_content_batch = Markdown(escaped_content)
                         else:
                             response_content_batch = run_response.get_content_as_string(indent=4)
@@ -3757,15 +3763,15 @@ class Agent:
                                 run_response.content.model_dump_json(exclude_none=True), indent=2
                             )
                         except Exception as e:
-                            logger.warning(f"Failed to convert response to JSON: {e}")
+                            get_logger().warning(f"Failed to convert response to JSON: {e}")
                     else:
                         try:
                             response_content_batch = JSON(json.dumps(run_response.content), indent=4)
                         except Exception as e:
-                            logger.warning(f"Failed to convert response to JSON: {e}")
+                            get_logger().warning(f"Failed to convert response to JSON: {e}")
 
                 # Create panel for response
-                response_panel = self.create_panel(
+                response_panel = create_panel(
                     content=response_content_batch,
                     title=f"Response ({response_timer.elapsed:.1f}s)",
                     border_style="blue",
@@ -3831,7 +3837,7 @@ class Agent:
                     render = True
                     # Convert message to a panel
                     message_content = get_text_from_message(message)
-                    message_panel = self.create_panel(
+                    message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
                         border_style="cyan",
@@ -3863,7 +3869,7 @@ class Agent:
                     response_content_stream: Union[str, Markdown] = _response_content
                     # Escape special tags before markdown conversion
                     if self.markdown:
-                        escaped_content = self.escape_markdown_tags(_response_content, tags_to_include_in_markdown)
+                        escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
                         response_content_stream = Markdown(escaped_content)
 
                     panels = [status]
@@ -3872,7 +3878,7 @@ class Agent:
                         render = True
                         # Convert message to a panel
                         message_content = get_text_from_message(self.format_message_with_state_variables(message))
-                        message_panel = self.create_panel(
+                        message_panel = create_panel(
                             content=Text(message_content, style="green"),
                             title="Message",
                             border_style="cyan",
@@ -3904,7 +3910,7 @@ class Agent:
                                     step_content.append(
                                         Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim")
                                     )
-                            reasoning_panel = self.create_panel(
+                            reasoning_panel = create_panel(
                                 content=step_content, title=f"Reasoning step {i}", border_style="green"
                             )
                             panels.append(reasoning_panel)
@@ -3914,7 +3920,7 @@ class Agent:
                     if len(_response_thinking) > 0:
                         render = True
                         # Create panel for thinking
-                        thinking_panel = self.create_panel(
+                        thinking_panel = create_panel(
                             content=Text(_response_thinking),
                             title=f"Thinking ({response_timer.elapsed:.1f}s)",
                             border_style="green",
@@ -3926,7 +3932,7 @@ class Agent:
                     if len(_response_content) > 0:
                         render = True
                         # Create panel for response
-                        response_panel = self.create_panel(
+                        response_panel = create_panel(
                             content=response_content_stream,
                             title=f"Response ({response_timer.elapsed:.1f}s)",
                             border_style="blue",
@@ -3951,7 +3957,7 @@ class Agent:
                 if message and show_message:
                     # Convert message to a panel
                     message_content = get_text_from_message(message)
-                    message_panel = self.create_panel(
+                    message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
                         border_style="cyan",
@@ -4001,7 +4007,7 @@ class Agent:
                                 step_content.append(
                                     Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim")
                                 )
-                        reasoning_panel = self.create_panel(
+                        reasoning_panel = create_panel(
                             content=step_content, title=f"Reasoning step {i}", border_style="green"
                         )
                         panels.append(reasoning_panel)
@@ -4009,7 +4015,7 @@ class Agent:
 
                 if isinstance(run_response, RunResponse) and run_response.thinking is not None:
                     # Create panel for thinking
-                    thinking_panel = self.create_panel(
+                    thinking_panel = create_panel(
                         content=Text(run_response.thinking),
                         title=f"Thinking ({response_timer.elapsed:.1f}s)",
                         border_style="green",
@@ -4021,9 +4027,7 @@ class Agent:
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:
-                            escaped_content = self.escape_markdown_tags(
-                                run_response.content, tags_to_include_in_markdown
-                            )
+                            escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
                             response_content_batch = Markdown(escaped_content)
                         else:
                             response_content_batch = run_response.get_content_as_string(indent=4)
@@ -4033,15 +4037,15 @@ class Agent:
                                 run_response.content.model_dump_json(exclude_none=True), indent=2
                             )
                         except Exception as e:
-                            logger.warning(f"Failed to convert response to JSON: {e}")
+                            get_logger().warning(f"Failed to convert response to JSON: {e}")
                     else:
                         try:
                             response_content_batch = JSON(json.dumps(run_response.content), indent=4)
                         except Exception as e:
-                            logger.warning(f"Failed to convert response to JSON: {e}")
+                            get_logger().warning(f"Failed to convert response to JSON: {e}")
 
                 # Create panel for response
-                response_panel = self.create_panel(
+                response_panel = create_panel(
                     content=response_content_batch,
                     title=f"Response ({response_timer.elapsed:.1f}s)",
                     border_style="blue",

@@ -190,6 +190,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
+from agno.team.team import Team
 
 web_agent = Agent(
     name="Web Agent",
@@ -212,8 +213,10 @@ finance_agent = Agent(
 )
 
 agent_team = Agent(
-    team=[web_agent, finance_agent],
+    mode="coordinator",
+    members=[web_agent, finance_agent],
     model=OpenAIChat(id="gpt-4o"),
+    success_criteria="A comprehensive financial news report with clear sections and data-driven insights.",
     instructions=["Always include sources", "Use tables to display data"],
     show_tool_calls=True,
     markdown=True,
