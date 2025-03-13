@@ -1,4 +1,4 @@
-"""Run `pip install memory_profiler langgraph langchain_openai` to install dependencies."""
+"""Run `pip install langgraph langchain_openai` to install dependencies."""
 
 from typing import Literal
 
