@@ -21,11 +21,18 @@ class MessageReferences(BaseModel):
     time: Optional[float] = None
 
 
+class CitationUrl(BaseModel):
+    """URL of the citation"""
+
+    url: Optional[str] = None
+    title: Optional[str] = None
+
+
 class Citations(BaseModel):
     """Citations for the message"""
 
     # URLs of the citations.
-    urls: Optional[List[str]] = None
+    urls: Optional[List[CitationUrl]] = None
     # The document information of the citations.
     document: Optional[Dict[str, Any]] = None
     # Metadata of the citations.

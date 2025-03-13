@@ -73,7 +73,7 @@ class MemoryManager(BaseModel):
         if self.db is None:
             return None
 
-        return self.db.read_memories(user_id=self.user_id,limit = self.limit)
+        return self.db.read_memories(user_id=self.user_id, limit=self.limit)
 
     def add_memory(self, memory: str) -> str:
         """Use this function to add a memory to the database.

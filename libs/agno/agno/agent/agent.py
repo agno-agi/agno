@@ -3677,8 +3677,13 @@ class Agent:
                     if render:
                         live_log.update(Group(*panels))
 
-                    if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
-                        md_content = "\n".join(f"{i + 1}. [{url}]({url})" for i, url in enumerate(resp.citations.urls))
+                if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                    md_content = "\n".join(
+                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                        for i, citation in enumerate(resp.citations.urls)
+                        if citation.url  # Only include citations with valid URLs
+                    )
+                    if md_content:  # Only create panel if there are citations
                         citations_panel = self.create_panel(
                             content=Markdown(md_content),
                             title="Citations",
@@ -3807,15 +3812,18 @@ class Agent:
                     and run_response.citations.urls is not None
                 ):
                     md_content = "\n".join(
-                        f"{i + 1}. [{url}]({url})" for i, url in enumerate(run_response.citations.urls)
+                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                        for i, citation in enumerate(run_response.citations.urls)
+                        if citation.url  # Only include citations with valid URLs
                     )
-                    citations_panel = self.create_panel(
-                        content=Markdown(md_content),
-                        title="Citations",
-                        border_style="green",
-                    )
-                    panels.append(citations_panel)
-                    live_log.update(Group(*panels))
+                    if md_content:  # Only create panel if there are citations
+                        citations_panel = self.create_panel(
+                            content=Markdown(md_content),
+                            title="Citations",
+                            border_style="green",
+                        )
+                        panels.append(citations_panel)
+                        live_log.update(Group(*panels))
 
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]
@@ -3980,8 +3988,13 @@ class Agent:
                     if render:
                         live_log.update(Group(*panels))
 
-                    if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
-                        md_content = "\n".join(f"{i + 1}. [{url}]({url})" for i, url in enumerate(resp.citations.urls))
+                if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                    md_content = "\n".join(
+                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                        for i, citation in enumerate(resp.citations.urls)
+                        if citation.url  # Only include citations with valid URLs
+                    )
+                    if md_content:  # Only create panel if there are citations
                         citations_panel = self.create_panel(
                             content=Markdown(md_content),
                             title="Citations",
@@ -4109,15 +4122,18 @@ class Agent:
                     and run_response.citations.urls is not None
                 ):
                     md_content = "\n".join(
-                        f"{i + 1}. [{url}]({url})" for i, url in enumerate(run_response.citations.urls)
+                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                        for i, citation in enumerate(run_response.citations.urls)
+                        if citation.url  # Only include citations with valid URLs
                     )
-                    citations_panel = self.create_panel(
-                        content=Markdown(md_content),
-                        title="Citations",
-                        border_style="green",
-                    )
-                    panels.append(citations_panel)
-                    live_log.update(Group(*panels))
+                    if md_content:  # Only create panel if there are citations
+                        citations_panel = self.create_panel(
+                            content=Markdown(md_content),
+                            title="Citations",
+                            border_style="green",
+                        )
+                        panels.append(citations_panel)
+                        live_log.update(Group(*panels))
 
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]

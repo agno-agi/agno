@@ -5,12 +5,11 @@ from typing import Any, Dict, Optional, Union
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.models.message import Citations
+from agno.models.message import Citations, CitationUrl
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
 try:
-    from openai.types.chat import ChatCompletionAudio
     from openai.types.chat.chat_completion import ChatCompletion
     from openai.types.chat.chat_completion_chunk import (
         ChatCompletionChunk,
@@ -135,19 +134,10 @@ class Perplexity(OpenAILike):
             except Exception as e:
                 logger.warning(f"Error processing tool calls: {e}")
 
-        # Add audio transcript to content if available
-        response_audio: Optional[ChatCompletionAudio] = response_message.audio
-        if response_audio and response_audio.transcript and not model_response.content:
-            model_response.content = response_audio.transcript
-
-        if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
-            model_response.reasoning_content = response_message.reasoning_content
-
         # Add citations if present
         if hasattr(response, "citations") and response.citations is not None:
             model_response.citations = Citations(
-                source="Model",
-                urls=response.citations,
+                urls=[CitationUrl(url=c) for c in response.citations],
             )
 
         if response.usage is not None:
@@ -180,8 +170,7 @@ class Perplexity(OpenAILike):
         # Add citations if present
         if hasattr(response_delta, "citations") and response_delta.citations is not None:
             model_response.citations = Citations(
-                source="Model",
-                urls=response_delta.citations,
+                urls=[CitationUrl(url=c) for c in response_delta.citations],
             )
 
         # Add usage metrics if present
