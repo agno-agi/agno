@@ -56,7 +56,7 @@ from typing import Dict, Iterator, List, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.storage.workflow.sqlite import SqliteWorkflowStorage
+from agno.storage.sqlite import SqliteStorage
 from agno.tools.exa import ExaTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
@@ -439,7 +439,7 @@ def main():
         # Create workflow with SQLite storage
         workflow = PersonalisedEmailGenerator(
             session_id="personalized-email-generator",
-            storage=SqliteWorkflowStorage(
+            storage=SqliteStorage(
                 table_name="personalized_email_workflows",
                 db_file="tmp/agno_workflows.db",
             ),

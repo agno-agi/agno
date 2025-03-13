@@ -26,7 +26,7 @@ from typing import Dict, Iterator, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.storage.workflow.sqlite import SqliteWorkflowStorage
+from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
@@ -408,7 +408,7 @@ if __name__ == "__main__":
     # Initialize the news report generator workflow
     generate_research_report = ResearchReportGenerator(
         session_id=f"generate-report-on-{url_safe_topic}",
-        storage=SqliteWorkflowStorage(
+        storage=SqliteStorage(
             table_name="generate_research_report_workflow",
             db_file="tmp/workflows.db",
         ),

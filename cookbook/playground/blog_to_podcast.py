@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.storage.sqlite import SqliteStorage
 from agno.tools.eleven_labs import ElevenLabsTools
 from agno.tools.firecrawl import FirecrawlTools
 
@@ -35,7 +35,7 @@ blog_to_podcast_agent = Agent(
     markdown=True,
     debug_mode=True,
     add_history_to_messages=True,
-    storage=SqliteAgentStorage(
+    storage=SqliteStorage(
         table_name="blog_to_podcast_agent", db_file=image_agent_storage_file
     ),
 )

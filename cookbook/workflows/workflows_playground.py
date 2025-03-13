@@ -4,7 +4,7 @@
 """
 
 from agno.playground import Playground, serve_playground_app
-from agno.storage.workflow.sqlite import SqliteWorkflowStorage
+from agno.storage.sqlite import SqliteStorage
 
 # Import the workflows
 from blog_post_generator import BlogPostGenerator
@@ -18,14 +18,14 @@ from startup_idea_validator import StartupIdeaValidator
 
 blog_post_generator = BlogPostGenerator(
     workflow_id="generate-blog-post",
-    storage=SqliteWorkflowStorage(
+    storage=SqliteStorage(
         table_name="generate_blog_post_workflows",
         db_file="tmp/agno_workflows.db",
     ),
 )
 personalised_email_generator = PersonalisedEmailGenerator(
     workflow_id="personalized-email-generator",
-    storage=SqliteWorkflowStorage(
+    storage=SqliteStorage(
         table_name="personalized_email_workflows",
         db_file="tmp/agno_workflows.db",
     ),
@@ -33,7 +33,7 @@ personalised_email_generator = PersonalisedEmailGenerator(
 
 investment_report_generator = InvestmentReportGenerator(
     workflow_id="generate-investment-report",
-    storage=SqliteWorkflowStorage(
+    storage=SqliteStorage(
         table_name="investment_report_workflows",
         db_file="tmp/agno_workflows.db",
     ),
@@ -41,7 +41,7 @@ investment_report_generator = InvestmentReportGenerator(
 
 startup_idea_validator = StartupIdeaValidator(
     workflow_id="validate-startup-idea",
-    storage=SqliteWorkflowStorage(
+    storage=SqliteStorage(
         table_name="validate_startup_ideas_workflow",
         db_file="tmp/agno_workflows.db",
     ),

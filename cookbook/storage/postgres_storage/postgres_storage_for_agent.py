@@ -1,11 +1,13 @@
-"""Run `pip install duckduckgo-search openai` to install dependencies."""
+"""Run `pip install duckduckgo-search sqlalchemy openai` to install dependencies."""
 
 from agno.agent import Agent
-from agno.storage.agent.yaml import YamlAgentStorage
+from agno.storage.postgres import PostgresStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
 agent = Agent(
-    storage=YamlAgentStorage(dir_path="tmp/agent_sessions_yaml"),
+    storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
     tools=[DuckDuckGoTools()],
     add_history_to_messages=True,
 )

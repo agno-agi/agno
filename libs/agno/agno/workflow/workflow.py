@@ -14,8 +14,8 @@ from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.memory.workflow import WorkflowMemory, WorkflowRun
 from agno.run.response import RunEvent, RunResponse  # noqa: F401
-from agno.storage.workflow.base import WorkflowStorage
-from agno.storage.workflow.session import WorkflowSession
+from agno.storage.base import Storage
+from agno.storage.session.workflow import WorkflowSession
 from agno.utils.common import nested_model_dump
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.merge_dict import merge_dictionaries
@@ -47,7 +47,7 @@ class Workflow:
     memory: Optional[WorkflowMemory] = None
 
     # --- Workflow Storage ---
-    storage: Optional[WorkflowStorage] = None
+    storage: Optional[Storage] = None
     # Extra data stored with this workflow
     extra_data: Optional[Dict[str, Any]] = None
 
@@ -82,7 +82,7 @@ class Workflow:
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         memory: Optional[WorkflowMemory] = None,
-        storage: Optional[WorkflowStorage] = None,
+        storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         debug_mode: bool = False,
         monitoring: bool = False,
@@ -139,7 +139,8 @@ class Workflow:
     def run_workflow(self, **kwargs: Any):
         """Run the Workflow"""
 
-        # Set debug, workflow_id, session_id, initialize memory
+        # Set mode, debug, workflow_id, session_id, initialize memory
+        self.set_storage_mode()
         self.set_debug()
         self.set_workflow_id()
         self.set_session_id()
@@ -217,6 +218,10 @@ class Workflow:
         else:
             logger.warning(f"Workflow.run() should only return RunResponse objects, got: {type(result)}")
             return None
+
+    def set_storage_mode(self):
+        if self.storage is not None:
+            self.storage.mode = "workflow"
 
     def set_workflow_id(self) -> str:
         if self.workflow_id is None:
@@ -441,7 +446,7 @@ class Workflow:
             Optional[WorkflowSession]: The loaded WorkflowSession or None if not found.
         """
         if self.storage is not None and self.session_id is not None:
-            self.workflow_session = self.storage.read(session_id=self.session_id)
+            self.workflow_session = cast(WorkflowSession, self.storage.read(session_id=self.session_id))
             if self.workflow_session is not None:
                 self.load_workflow_session(session=self.workflow_session)
         return self.workflow_session
@@ -453,7 +458,7 @@ class Workflow:
             Optional[WorkflowSession]: The saved WorkflowSession or None if not saved.
         """
         if self.storage is not None:
-            self.workflow_session = self.storage.upsert(session=self.get_workflow_session())
+            self.workflow_session = cast(WorkflowSession, self.storage.upsert(session=self.get_workflow_session()))
         return self.workflow_session
 
     def load_session(self, force: bool = False) -> Optional[str]:
@@ -570,7 +575,7 @@ class Workflow:
             return field_value.deep_copy()
 
         # For compound types, attempt a deep copy
-        if isinstance(field_value, (list, dict, set, WorkflowStorage)):
+        if isinstance(field_value, (list, dict, set, Storage)):
             try:
                 return deepcopy(field_value)
             except Exception as e:
