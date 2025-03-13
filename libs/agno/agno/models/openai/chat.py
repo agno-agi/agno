@@ -574,8 +574,6 @@ class OpenAIChat(Model):
         """
         model_response = ModelResponse()
 
-        logger.info(f"response: {response}")
-
         if hasattr(response, "error") and response.error:
             raise ModelProviderError(
                 message=response.error.get("message", "Unknown model error"),
