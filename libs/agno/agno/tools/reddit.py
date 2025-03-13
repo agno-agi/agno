@@ -438,7 +438,7 @@ class RedditTools(Toolkit):
                 return error_msg
             
             # Create the reply
-            logger.info(f"Attempting to post reply with content length: {len(content)}")
+            logger.debug(f"Attempting to post reply with content length: {len(content)}")
             reply = comment.reply(body=content)
             
             # Prepare the response information
