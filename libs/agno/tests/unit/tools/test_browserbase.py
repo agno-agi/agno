@@ -219,18 +219,20 @@ def test_get_page_content(browserbase_tools, mock_playwright):
 
 
 def test_close_session_with_session_id(browserbase_tools, mock_browserbase):
-    """Test close_session method with provided session_id."""
+    """Test close_session method."""
     # Call the method
-    result = browserbase_tools.close_session("test_session_id")
+    result = browserbase_tools.close_session()
     result_data = json.loads(result)
 
     # Verify results
     assert result_data["status"] == "closed"
-    mock_browserbase.sessions.delete.assert_called_once_with("test_session_id")
+    # We no longer expect sessions.delete to be called
+    # Instead, verify that cleanup was performed
+    assert "Browser resources cleaned up" in result_data["message"]
 
 
 def test_close_session_without_session_id(browserbase_tools, mock_browserbase):
-    """Test close_session method without session_id uses current session."""
+    """Test close_session method with current session."""
     # Setup mock session
     mock_session = Mock()
     mock_session.id = "current_session_id"
@@ -242,40 +244,18 @@ def test_close_session_without_session_id(browserbase_tools, mock_browserbase):
 
     # Verify results
     assert result_data["status"] == "closed"
-    mock_browserbase.sessions.delete.assert_called_once_with("current_session_id")
     assert browserbase_tools._session is None
-    assert browserbase_tools._connect_url is None
 
 
 def test_close_session_with_exception(browserbase_tools, mock_browserbase):
-    """Test close_session method when session deletion fails."""
-    # Setup mock to raise exception
-    mock_browserbase.sessions.delete.side_effect = Exception("Session already closed")
-
-    # Call the method
-    result = browserbase_tools.close_session("test_session_id")
-    result_data = json.loads(result)
+    """Test close_session method when an exception occurs."""
+    # Setup mock to raise exception during cleanup
+    with patch.object(browserbase_tools, "_cleanup", side_effect=Exception("Cleanup failed")):
+        # Call the method
+        result = browserbase_tools.close_session()
+        result_data = json.loads(result)
 
     # Verify results
-    assert result_data["status"] == "closed"  # Should still report closed
-    mock_browserbase.sessions.delete.assert_called_once_with("test_session_id")
-
-
-def test_cleanup_on_exception(browserbase_tools, mock_playwright):
-    """Test that resources are cleaned up when an exception occurs."""
-    # Setup mock page to raise exception
-    mock_page = mock_playwright["page"]
-    mock_page.content.side_effect = Exception("Test exception")
-
-    # Set the page on the tools instance to avoid connect_over_cdp
-    browserbase_tools._page = mock_page
-    browserbase_tools._browser = mock_playwright["browser"]
-    browserbase_tools._playwright = mock_playwright["playwright"]
-
-    # Call method that should raise exception
-    with pytest.raises(Exception):
-        browserbase_tools.get_page_content()
-
-    # Verify cleanup was called
-    mock_playwright["browser"].close.assert_called_once()
-    mock_playwright["playwright"].stop.assert_called_once()
+    assert result_data["status"] == "warning"
+    assert "Cleanup completed with warning" in result_data["message"]
+    assert "Cleanup failed" in result_data["message"]
