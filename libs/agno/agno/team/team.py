@@ -1782,31 +1782,34 @@ class Team:
             # Set functions on the model
             model.set_functions(functions=self._functions_for_model)
 
-    def _get_members_system_message_content(self) -> str:
+    def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
         for idx, member in enumerate(self.members):
             if isinstance(member, Team):
-                continue
-            system_message_content += f" - Agent {idx + 1}:\n"
-            if member.name is not None:
-                system_message_content += f"   - Name: {member.name}\n"
-            if member.role is not None:
-                system_message_content += f"   - Role: {member.role}\n"
-            if member.tools is not None:
-                system_message_content += "   - Available tools:\n"
-                tool_name_and_description = []
+                system_message_content += f"{indent * ' '} - Team: {member.name}\n"
+                if member.members is not None:
+                    system_message_content += member.get_members_system_message_content(indent=indent + 2)
+            else:
+                system_message_content += f"{indent * ' '} - Agent {idx + 1}:\n"
+                if member.name is not None:
+                    system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
+                if member.role is not None:
+                    system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
+                if member.tools is not None:
+                    system_message_content += f"{indent * ' '}   - Available tools:\n"
+                    tool_name_and_description = []
 
-                for _tool in member.tools:
-                    if isinstance(_tool, Toolkit):
-                        for _func in _tool.functions.values():
-                            tool_name_and_description.append((_func.name, get_entrypoint_docstring(_func.entrypoint)))
-                    elif isinstance(_tool, Function):
-                        tool_name_and_description.append((_tool.name, get_entrypoint_docstring(_tool.entrypoint)))
-                    elif callable(_tool):
-                        tool_name_and_description.append((_tool.__name__, get_entrypoint_docstring(_tool)))
+                    for _tool in member.tools:
+                        if isinstance(_tool, Toolkit):
+                            for _func in _tool.functions.values():
+                                tool_name_and_description.append((_func.name, get_entrypoint_docstring(_func.entrypoint)))
+                        elif isinstance(_tool, Function):
+                            tool_name_and_description.append((_tool.name, get_entrypoint_docstring(_tool.entrypoint)))
+                        elif callable(_tool):
+                            tool_name_and_description.append((_tool.__name__, get_entrypoint_docstring(_tool)))
 
-                for _tool_name, _tool_description in tool_name_and_description:
-                    system_message_content += f"     - {_tool_name}: {_tool_description}\n"
+                    for _tool_name, _tool_description in tool_name_and_description:
+                        system_message_content += f"{indent * ' '}    - {_tool_name}: {_tool_description}\n"
 
         return system_message_content
 
@@ -1844,8 +1847,8 @@ class Team:
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
         if self.mode == "coordinator":
-            system_message_content += "You are the leader of a team of AI Agents:\n"
-            system_message_content += self._get_members_system_message_content()
+            system_message_content += "You are the leader of a team of AI Agents and possible Sub-Teams:\n"
+            system_message_content += self.get_members_system_message_content()
 
             system_message_content += (
                 "\n"
@@ -1861,8 +1864,8 @@ class Team:
                 "\n"
             )
         elif self.mode == "router":
-            system_message_content += "You are the leader of a team of AI Agents:\n"
-            system_message_content += self._get_members_system_message_content()
+            system_message_content += "You are the leader of a team of AI Agents and possible Sub-Teams:\n"
+            system_message_content += self.get_members_system_message_content()
             system_message_content += (
                 "- You act as a router for the user's request. You have to choose the correct agent(s) to forward the user's request to. This should be the agent that has the highest likelihood of completing the task.\n"
                 "- When you forward a task to another Agent, make sure to include:\n"
@@ -1874,8 +1877,8 @@ class Team:
             )
 
         elif self.mode == "collaborative":
-            system_message_content += "You are leading a collaborative team of Agents:\n"
-            system_message_content += self._get_members_system_message_content()
+            system_message_content += "You are leading a collaborative team of Agents and possible Sub-Teams:\n"
+            system_message_content += self.get_members_system_message_content()
             system_message_content += (
                 "- Take all the responses from the other Agents into account and evaluate whether the task has been completed.\n"
                 "- If you feel the task has been completed, you can stop and respond to the user.\n"

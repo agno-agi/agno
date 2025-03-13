@@ -3,6 +3,7 @@ from textwrap import dedent
 import requests
 from agno.agent import Agent
 from agno.media import Audio, Image
+from agno.models.deepseek import DeepSeek
 from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
@@ -98,15 +99,25 @@ calculator_writer_team = Team(
     ],
     show_tool_calls=True,
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
+)
+
+reasoning_agent = Agent(
+    name="Reasoning Agent",
+    role="Reasoning about Math",
+    model=OpenAIChat(id="gpt-4o"),
+    reasoning_model=DeepSeek(id="deepseek-reasoner"),
+    instructions=["You are a reasoning agent that can reason about math."],
+    show_tool_calls=True,
+    markdown=True,
+    debug_mode=True,
 )
 
 agent_team = Team(
     name="Agent Team",
     mode="router",
     model=OpenAIChat("gpt-4.5-preview"),
-    members=[web_agent, finance_agent, image_agent, audio_agent, calculator_agent, writer_agent, calculator_writer_team],
+    members=[web_agent, finance_agent, image_agent, audio_agent, calculator_writer_team, reasoning_agent],
     show_tool_calls=True,
     markdown=True,
     debug_mode=True,
@@ -114,16 +125,13 @@ agent_team = Team(
 )
 
 # Use web and finance agents to answer the question
-agent_team.print_response(
-    "Summarize analyst recommendations and share the latest news for NVDA", stream=True
-)
+# agent_team.print_response(
+#     "Summarize analyst recommendations and share the latest news for NVDA", stream=True
+# )
 # agent_team.print_response(
 #     "Calculate the sum of 10 and 20 and give write something about how you did the calculation", stream=True
 # )
 
-agent_team.print_response(
-    "Summarize analyst recommendations and share the latest news for NVDA", stream=True
-)
 # image_path = Path(__file__).parent.joinpath("sample.jpg")
 # # Use image agent to analyze the image
 # agent_team.print_response(
@@ -145,3 +153,13 @@ agent_team.print_response(
 # agent_team.print_response(
 #     "Generate an image of a cat", stream=True
 # )
+
+# Use the calculator writer team to calculate the result
+# agent_team.print_response(
+#     "What is the square root of 6421123 times the square root of 9485271", stream=True
+# )
+
+# Use the reasoning agent to reason about the result
+agent_team.print_response(
+    "9.11 and 9.9 -- which is bigger?", stream=True
+)

@@ -71,6 +71,7 @@ class OpenAIResponses(Model):
 
     # Built-in tools
     web_search: bool = False
+    web_search_config: Dict[str, Any] = None
 
     # The role to map the message role to.
     role_map = {
