@@ -98,6 +98,12 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
     """
     Add a document url or base64 encoded content to a message.
     """
+
+    mime_mapping = {
+        "application/pdf": "base64",
+        "text/plain": "text",
+    }
+
     # Case 1: Document is a URL
     if file.url is not None:
         return {
@@ -115,17 +121,21 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         path = Path(file.filepath) if isinstance(file.filepath, str) else file.filepath
         if path.exists() and path.is_file():
             file_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
+
+            # Determine media type
             media_type = file.mime_type
             if media_type is None:
                 import mimetypes
 
-                media_type = mimetypes.guess_type(file.filepath)[0]
-                if media_type != "application/pdf":
-                    logger.error(f"Unsupported file type: {media_type}")
+                media_type = mimetypes.guess_type(file.filepath)[0] or "application/pdf"
+
+            # Map media type to type, default to "base64" if no mapping exists
+            type = mime_mapping.get(media_type, "base64")
+
             return {
                 "type": "document",
                 "source": {
-                    "type": "base64",
+                    "type": type,
                     "media_type": media_type,
                     "data": file_data,
                 },

@@ -30,7 +30,7 @@ from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.models.base import Model
-from agno.models.message import Message, MessageReferences
+from agno.models.message import Citations, Message, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
@@ -565,16 +565,21 @@ class Agent:
                         # We only have thinking on response
                         self.run_response.thinking = model_response.redacted_thinking
 
+                    if model_response_chunk.citations is not None:
+                        self.run_response.citations = model_response_chunk.citations
+
                     # Only yield if we have content or thinking to show
                     if (
                         model_response_chunk.content is not None
                         or model_response_chunk.thinking is not None
                         or model_response_chunk.redacted_thinking is not None
+                        or model_response_chunk.citations is not None
                     ):
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
                             redacted_thinking=model_response_chunk.redacted_thinking,
+                            citations=model_response_chunk.citations,
                             created_at=model_response_chunk.created_at,
                         )
 
@@ -673,6 +678,10 @@ class Agent:
                     self.run_response.thinking = model_response.redacted_thinking
                 else:
                     self.run_response.thinking += model_response.redacted_thinking
+
+            # Update the run_response citations with the model response citations
+            if model_response.citations is not None:
+                self.run_response.citations = model_response.citations
 
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:
@@ -1058,16 +1067,21 @@ class Agent:
                         # We only have thinking on response
                         self.run_response.thinking = model_response.redacted_thinking
 
+                    if model_response_chunk.citations is not None:
+                        self.run_response.citations = model_response_chunk.citations
+
                     # Only yield if we have content or thinking to show
                     if (
                         model_response_chunk.content is not None
                         or model_response_chunk.thinking is not None
                         or model_response_chunk.redacted_thinking is not None
+                        or model_response_chunk.citations is not None
                     ):
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
                             redacted_thinking=model_response_chunk.redacted_thinking,
+                            citations=model_response_chunk.citations,
                             created_at=model_response_chunk.created_at,
                         )
 
@@ -1166,6 +1180,9 @@ class Agent:
                     self.run_response.thinking = model_response.redacted_thinking
                 else:
                     self.run_response.thinking += model_response.redacted_thinking
+
+            if model_response.citations is not None:
+                self.run_response.citations = model_response.citations
 
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:
@@ -1421,6 +1438,7 @@ class Agent:
         event: RunEvent = RunEvent.run_response,
         content_type: Optional[str] = None,
         created_at: Optional[int] = None,
+        citations: Optional[Citations] = None,
     ) -> RunResponse:
         self.run_response = cast(RunResponse, self.run_response)
         thinking_combined = (thinking or "") + (redacted_thinking or "")
@@ -1434,6 +1452,7 @@ class Agent:
             audio=self.run_response.audio,
             images=self.run_response.images,
             videos=self.run_response.videos,
+            citations=self.run_response.citations,
             response_audio=self.run_response.response_audio,
             model=self.run_response.model,
             messages=self.run_response.messages,
@@ -2862,8 +2881,6 @@ class Agent:
     ###########################################################################
 
     def reason(self, run_messages: RunMessages) -> Iterator[RunResponse]:
-        from agno.models.openai.like import OpenAILike
-
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
@@ -2879,6 +2896,8 @@ class Agent:
 
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
+            from agno.models.openai.like import OpenAILike
+
             # Use DeepSeek for reasoning
             if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id.lower() == "deepseek-reasoner":
                 from agno.reasoning.deepseek import get_deepseek_reasoning, get_deepseek_reasoning_agent
@@ -3045,8 +3064,6 @@ class Agent:
             )
 
     async def areason(self, run_messages: RunMessages) -> Any:
-        from agno.models.openai.like import OpenAILike
-
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
@@ -3062,6 +3079,8 @@ class Agent:
 
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
+            from agno.models.openai.like import OpenAILike
+
             # Use DeepSeek for reasoning
             if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id == "deepseek-reasoner":
                 from agno.reasoning.deepseek import aget_deepseek_reasoning, get_deepseek_reasoning_agent
@@ -3663,6 +3682,21 @@ class Agent:
                         panels.append(response_panel)
                     if render:
                         live_log.update(Group(*panels))
+
+                if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                    md_content = "\n".join(
+                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                        for i, citation in enumerate(resp.citations.urls)
+                        if citation.url  # Only include citations with valid URLs
+                    )
+                    if md_content:  # Only create panel if there are citations
+                        citations_panel = self.create_panel(
+                            content=Markdown(md_content),
+                            title="Citations",
+                            border_style="green",
+                        )
+                        panels.append(citations_panel)
+                        live_log.update(Group(*panels))
                 response_timer.stop()
 
                 # Final update to remove the "Thinking..." status
@@ -3777,6 +3811,25 @@ class Agent:
                     border_style="blue",
                 )
                 panels.append(response_panel)
+
+                if (
+                    isinstance(run_response, RunResponse)
+                    and run_response.citations is not None
+                    and run_response.citations.urls is not None
+                ):
+                    md_content = "\n".join(
+                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                        for i, citation in enumerate(run_response.citations.urls)
+                        if citation.url  # Only include citations with valid URLs
+                    )
+                    if md_content:  # Only create panel if there are citations
+                        citations_panel = self.create_panel(
+                            content=Markdown(md_content),
+                            title="Citations",
+                            border_style="green",
+                        )
+                        panels.append(citations_panel)
+                        live_log.update(Group(*panels))
 
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]
@@ -3940,6 +3993,21 @@ class Agent:
                         panels.append(response_panel)
                     if render:
                         live_log.update(Group(*panels))
+
+                if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                    md_content = "\n".join(
+                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                        for i, citation in enumerate(resp.citations.urls)
+                        if citation.url  # Only include citations with valid URLs
+                    )
+                    if md_content:  # Only create panel if there are citations
+                        citations_panel = self.create_panel(
+                            content=Markdown(md_content),
+                            title="Citations",
+                            border_style="green",
+                        )
+                        panels.append(citations_panel)
+                        live_log.update(Group(*panels))
                 response_timer.stop()
 
                 # Final update to remove the "Thinking..." status
@@ -4053,6 +4121,25 @@ class Agent:
                     border_style="blue",
                 )
                 panels.append(response_panel)
+
+                if (
+                    isinstance(run_response, RunResponse)
+                    and run_response.citations is not None
+                    and run_response.citations.urls is not None
+                ):
+                    md_content = "\n".join(
+                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                        for i, citation in enumerate(run_response.citations.urls)
+                        if citation.url  # Only include citations with valid URLs
+                    )
+                    if md_content:  # Only create panel if there are citations
+                        citations_panel = self.create_panel(
+                            content=Markdown(md_content),
+                            title="Citations",
+                            border_style="green",
+                        )
+                        panels.append(citations_panel)
+                        live_log.update(Group(*panels))
 
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]

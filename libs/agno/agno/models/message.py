@@ -21,6 +21,22 @@ class MessageReferences(BaseModel):
     time: Optional[float] = None
 
 
+class CitationUrl(BaseModel):
+    """URL of the citation"""
+
+    url: Optional[str] = None
+    title: Optional[str] = None
+
+
+class Citations(BaseModel):
+    """Citations for the message"""
+
+    # URLs of the citations.
+    urls: Optional[List[CitationUrl]] = None
+    # Metadata of the citations.
+    metadata: Optional[Any] = None
+
+
 @dataclass
 class MessageMetrics:
     input_tokens: int = 0
@@ -152,6 +168,9 @@ class Message(BaseModel):
 
     # Data from the provider we might need on subsequent messages
     provider_data: Optional[Dict[str, Any]] = None
+
+    # Citations received from the model
+    citations: Optional[Citations] = None
 
     # --- Data not sent to the Model API ---
     # The reasoning content from the model
