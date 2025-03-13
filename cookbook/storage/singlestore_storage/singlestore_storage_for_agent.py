@@ -1,10 +1,12 @@
 """Run `pip install duckduckgo-search sqlalchemy openai` to install dependencies."""
 
+import os
 from os import getenv
 
 from agno.agent import Agent
-from agno.storage.agent.singlestore import SingleStoreAgentStorage
+from agno.storage.singlestore import SingleStoreStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.utils.certs import download_cert
 from sqlalchemy.engine import create_engine
 
 # Configure SingleStore DB connection
@@ -14,6 +16,17 @@ HOST = getenv("SINGLESTORE_HOST")
 PORT = getenv("SINGLESTORE_PORT")
 DATABASE = getenv("SINGLESTORE_DATABASE")
 SSL_CERT = getenv("SINGLESTORE_SSL_CERT", None)
+
+
+# Download the certificate if SSL_CERT is not provided
+if not SSL_CERT:
+    SSL_CERT = download_cert(
+        cert_url="https://portal.singlestore.com/static/ca/singlestore_bundle.pem",
+        filename="singlestore_bundle.pem",
+    )
+    if SSL_CERT:
+        os.environ["SINGLESTORE_SSL_CERT"] = SSL_CERT
+
 
 # SingleStore DB URL
 db_url = (
@@ -27,7 +40,7 @@ db_engine = create_engine(db_url)
 
 # Create an agent with SingleStore storage
 agent = Agent(
-    storage=SingleStoreAgentStorage(
+    storage=SingleStoreStorage(
         table_name="agent_sessions", db_engine=db_engine, schema=DATABASE
     ),
     tools=[DuckDuckGoTools()],

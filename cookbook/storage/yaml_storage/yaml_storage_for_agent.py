@@ -1,11 +1,11 @@
-"""Run `pip install duckduckgo-search sqlalchemy openai` to install dependencies."""
+"""Run `pip install duckduckgo-search openai` to install dependencies."""
 
 from agno.agent import Agent
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.storage.yaml import YamlStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/data.db"),
+    storage=YamlStorage(dir_path="tmp/agent_sessions_yaml"),
     tools=[DuckDuckGoTools()],
     add_history_to_messages=True,
 )
