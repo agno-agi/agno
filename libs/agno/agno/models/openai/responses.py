@@ -193,10 +193,12 @@ class OpenAIResponses(Model):
             request_params.setdefault("tools", [])  # type: ignore
             for _tool in self._tools:
                 if _tool.get("type") == "function":
-                    for prop in _tool["function"]["parameters"]["properties"].values():
+                    _tool_definition = _tool["function"]
+                    _tool_definition["type"] = "function"
+                    for prop in _tool_definition["parameters"]["properties"].values():
                         if isinstance(prop["type"], list):
                             prop["type"] = prop["type"][0]
-                    request_params["tools"].append(_tool)
+                    request_params["tools"].append(_tool_definition)
                 else:
                     request_params["tools"].append(_tool)
 
