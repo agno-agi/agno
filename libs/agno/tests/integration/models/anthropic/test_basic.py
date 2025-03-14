@@ -1,3 +1,4 @@
+from enum import Enum
 import pytest
 from pydantic import BaseModel, Field
 
@@ -118,9 +119,14 @@ def test_structured_output():
 
 
 def test_structured_output_native_defaults_to_json():
+    class GenreEnum(str, Enum):
+        ACTION = "action"
+        COMEDY = "comedy"
+        HORROR = "horror"
+
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
-        genre: str = Field(..., description="Movie genre")
+        genre: GenreEnum = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
