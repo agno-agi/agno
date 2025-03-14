@@ -4,7 +4,6 @@ from typing import Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
-from httpx import URL
 
 try:
     from crawl4ai import AsyncWebCrawler, CacheMode
