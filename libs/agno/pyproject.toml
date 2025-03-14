@@ -61,7 +61,7 @@ youtube = ["youtube_transcript_api"]
 firecrawl = ["firecrawl-py"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
-googlemaps = ["googlemaps"]
+googlemaps = ["googlemaps", "google-maps-places"]
 todoist = ["todoist-api-python"]
 elevenlabs = ["elevenlabs"]
 fal = ["fal_client"]
@@ -240,6 +240,7 @@ module = [
   "github.*",
   "google.*",
   "googlemaps.*",
+  "google_maps_places.*",
   "google_auth_oauthlib.*",
   "googleapiclient.*",
   "googlesearch.*",
