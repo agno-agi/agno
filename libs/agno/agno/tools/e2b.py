@@ -93,7 +93,7 @@ class E2BTools(Toolkit):
             self.register(self.run_background_command)
             self.register(self.kill_background_command)
 
-    # --- Code Execution Functions ---
+    # Code Execution Functions
 
     def run_python_code(self, code: str) -> str:
         """
