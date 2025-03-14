@@ -1,13 +1,12 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Union, AsyncIterator
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
 try:
     import litellm
 except ImportError:
     raise ImportError("`litellm` not installed. Please install it using `pip install litellm`")
 
-from pydantic import BaseModel
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -44,31 +43,29 @@ class LiteLLM(Model):
         if not self.api_key:
             self.api_key = getenv("LITELLM_API_KEY")
             if not self.api_key:
-                logger.warning(
-                    "LITELLM_API_KEY not set. Please set the LITELLM_API_KEY environment variable.")
+                logger.warning("LITELLM_API_KEY not set. Please set the LITELLM_API_KEY environment variable.")
 
     def _format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
         """Format messages for LiteLLM API."""
         formatted_messages = []
         for m in messages:
-            msg = {"role": m.role,
-                   "content": m.content if m.content is not None else ""}
+            msg = {"role": m.role, "content": m.content if m.content is not None else ""}
 
             # Handle tool calls in assistant messages
             if m.role == "assistant" and m.tool_calls:
-                msg["tool_calls"] = [{
-                    "id": tc.get("id", f"call_{i}"),
-                    "type": "function",
-                    "function": {
-                        "name": tc["function"]["name"],
-                        "arguments": tc["function"]["arguments"]
+                msg["tool_calls"] = [
+                    {
+                        "id": tc.get("id", f"call_{i}"),
+                        "type": "function",
+                        "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]},
                     }
-                } for i, tc in enumerate(m.tool_calls)]
+                    for i, tc in enumerate(m.tool_calls)
+                ]
 
             # Handle tool responses
             if m.role == "tool":
-                msg["tool_call_id"] = m.tool_call_id
-                msg["name"] = m.name
+                msg["tool_call_id"] = m.tool_call_id or ""
+                msg["name"] = m.name or ""
 
             formatted_messages.append(msg)
 
@@ -99,8 +96,7 @@ class LiteLLM(Model):
             base_params["tool_choice"] = "auto"
 
         # Add additional request params if provided
-        request_params: Dict[str, Any] = {
-            k: v for k, v in base_params.items() if v is not None}
+        request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
         if self.request_params:
             request_params.update(self.request_params)
 
@@ -142,7 +138,7 @@ class LiteLLM(Model):
         except Exception as e:
             logger.error(f"Error in streaming response: {e}")
             raise
-        
+
     def parse_provider_response(self, response: Any) -> ModelResponse:
         """Parse the provider response."""
         model_response = ModelResponse()
@@ -155,20 +151,19 @@ class LiteLLM(Model):
         if hasattr(response_message, "tool_calls") and response_message.tool_calls:
             model_response.tool_calls = []
             for tool_call in response_message.tool_calls:
-                model_response.tool_calls.append({
-                    "id": tool_call.id,
-                    "type": "function",
-                    "function": {
-                        "name": tool_call.function.name,
-                        "arguments": tool_call.function.arguments
+                model_response.tool_calls.append(
+                    {
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {"name": tool_call.function.name, "arguments": tool_call.function.arguments},
                     }
-                })
+                )
 
         if hasattr(response, "usage"):
             model_response.response_usage = {
                 "input_tokens": response.usage.prompt_tokens,
                 "output_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens
+                "total_tokens": response.usage.total_tokens,
             }
 
         return model_response
@@ -187,13 +182,15 @@ class LiteLLM(Model):
                 model_response.tool_calls = []
                 for tool_call in delta.tool_calls:
                     if tool_call.type == "function":
-                        model_response.tool_calls.append({
-                            "id": tool_call.id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments
+                        model_response.tool_calls.append(
+                            {
+                                "id": tool_call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tool_call.function.name,
+                                    "arguments": tool_call.function.arguments,
+                                },
                             }
-                        })
+                        )
 
         return model_response

@@ -3,7 +3,6 @@ import pytest
 from agno.agent import Agent, RunResponse
 from agno.models.litellm import LiteLLM
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.utils.log import logger
 
 
 def _assert_metrics(response: RunResponse):
@@ -26,14 +25,14 @@ def _assert_metrics(response: RunResponse):
 
     # The total should be at least the sum of input and output
     # (Note: sometimes there might be small discrepancies in how these are calculated)
-    assert total_tokens >= input_tokens + \
-        output_tokens - 5  # Allow small margin of error
+    assert total_tokens >= input_tokens + output_tokens - 5  # Allow small margin of error
 
 
 def test_tool_use():
     """Test tool use functionality with LiteLLM"""
-    agent = Agent(model=LiteLLM(id="gpt-4o"), markdown=True,
-                  tools=[DuckDuckGoTools()], telemetry=False, monitoring=False)
+    agent = Agent(
+        model=LiteLLM(id="gpt-4o"), markdown=True, tools=[DuckDuckGoTools()], telemetry=False, monitoring=False
+    )
 
     # Get the response with a query that should trigger tool use
     response: RunResponse = agent.run("What's the latest news about SpaceX?")
@@ -52,8 +51,9 @@ def test_tool_use():
 @pytest.mark.asyncio
 async def test_async_tool_use():
     """Test async tool use functionality with LiteLLM"""
-    agent = Agent(model=LiteLLM(id="gpt-4o"), markdown=True,
-                  tools=[DuckDuckGoTools()], telemetry=False, monitoring=False)
+    agent = Agent(
+        model=LiteLLM(id="gpt-4o"), markdown=True, tools=[DuckDuckGoTools()], telemetry=False, monitoring=False
+    )
 
     # Get the response with a query that should trigger tool use
     response = await agent.arun("What's the latest news about SpaceX?")

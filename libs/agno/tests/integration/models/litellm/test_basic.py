@@ -1,8 +1,9 @@
 import pytest
+from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
 from agno.models.litellm import LiteLLM
-from agno.utils.log import logger
+from agno.storage.sqlite import SqliteStorage
 
 
 def _assert_metrics(response: RunResponse):
@@ -30,8 +31,7 @@ def _assert_metrics(response: RunResponse):
 
 def test_basic():
     """Test basic functionality with LiteLLM"""
-    agent = Agent(model=LiteLLM(id="gpt-4o"), markdown=True,
-                  telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLM(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
 
     # Get the response
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -85,3 +85,69 @@ async def test_async_basic_stream():
         assert isinstance(response, RunResponse)
         assert response.content is not None
     _assert_metrics(agent.run_response)
+
+
+def test_with_memory():
+    agent = Agent(
+        model=LiteLLM(id="gpt-4o"),
+        add_history_to_messages=True,
+        num_history_responses=5,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    # First interaction
+    response1 = agent.run("My name is John Smith")
+    assert response1.content is not None
+
+    # Second interaction should remember the name
+    response2 = agent.run("What's my name?")
+    assert "John Smith" in response2.content
+
+    # Verify memories were created
+    assert len(agent.memory.messages) == 5
+    assert [m.role for m in agent.memory.messages] == ["system", "user", "assistant", "user", "assistant"]
+
+    _assert_metrics(response2)
+
+
+def test_response_model():
+    class MovieScript(BaseModel):
+        title: str = Field(..., description="Movie title")
+        genre: str = Field(..., description="Movie genre")
+        plot: str = Field(..., description="Brief plot summary")
+
+    agent = Agent(
+        model=LiteLLM(id="gpt-4o"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+        response_model=MovieScript,
+    )
+
+    response = agent.run("Create a movie about time travel")
+
+    # Verify structured output
+    assert isinstance(response.content, MovieScript)
+    assert response.content.title is not None
+    assert response.content.genre is not None
+    assert response.content.plot is not None
+
+
+def test_history():
+    agent = Agent(
+        model=LiteLLM(id="gpt-4o"),
+        storage=SqliteStorage(table_name="agent_sessions_storage", db_file="tmp/data.db"),
+        add_history_to_messages=True,
+        telemetry=False,
+        monitoring=False,
+    )
+    agent.run("Hello")
+    assert len(agent.run_response.messages) == 2
+    agent.run("Hello 2")
+    assert len(agent.run_response.messages) == 4
+    agent.run("Hello 3")
+    assert len(agent.run_response.messages) == 6
+    agent.run("Hello 4")
+    assert len(agent.run_response.messages) == 8

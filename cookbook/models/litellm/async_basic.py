@@ -1,6 +1,7 @@
+import asyncio
+
 from agno.agent import Agent
 from agno.models.litellm import LiteLLM
-import asyncio
 
 openai_agent = Agent(
     model=LiteLLM(

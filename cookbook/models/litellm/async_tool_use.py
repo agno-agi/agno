@@ -1,8 +1,9 @@
+import asyncio
+
 from agno.agent import Agent
 from agno.models.litellm import LiteLLM
-from agno.tools.yfinance import YFinanceTools
 from agno.tools.duckduckgo import DuckDuckGoTools
-import asyncio
+from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
     model=LiteLLM(
