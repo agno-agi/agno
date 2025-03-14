@@ -1,7 +1,9 @@
 import asyncio
+import requests
 from typing import Optional
 
 from agno.tools import Toolkit
+from agno.utils.log import logger
 
 try:
     from crawl4ai import AsyncWebCrawler, CacheMode
@@ -13,12 +15,37 @@ class Crawl4aiTools(Toolkit):
     def __init__(
         self,
         max_length: Optional[int] = 1000,
+        expand_url: bool = True,
+        retries: int = 3,
     ):
         super().__init__(name="crawl4ai_tools")
 
         self.max_length = max_length
+        self.expand_url_flag = expand_url
+        self.retries = retries
 
         self.register(self.web_crawler)
+
+    def expand_url(self, url: str) -> str:
+        """
+        Expands a shortened URL to its final destination using HTTP HEAD requests with retries.
+
+        :param url: The URL to expand.
+
+        :return: The final destination URL if successful; otherwise, returns the original URL.
+        """
+        timeout = 5
+        for attempt in range(1, self.retries + 1):
+            try:
+                response = requests.head(url, allow_redirects=True, timeout=timeout)
+                final_url = response.url
+                logger.info(f"expand_url: {url} expanded to {final_url} on attempt {attempt}")
+                return final_url
+            except Exception as e:
+                logger.error(f"Error expanding URL {url} on attempt {attempt}: {e}")
+
+        return url
+
 
     def web_crawler(self, url: str, max_length: Optional[int] = None) -> str:
         """
