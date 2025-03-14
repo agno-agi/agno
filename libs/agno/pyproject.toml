@@ -50,6 +50,7 @@ mistral = ["mistralai"]
 openai = ["openai"]
 ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
+litellm = ["litellm"]
 
 # Dependencies for Tools
 exa = ["exa_py"]
