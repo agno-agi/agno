@@ -889,7 +889,7 @@ class Agent:
                     )
 
                     # If the model natively supports structured outputs, the content is already in the structured format
-                    if self.structured_outputs:
+                    if self.structured_outputs and self.model.supports_structured_outputs:
                         # Do a final check confirming the content is in the response_model format
                         if isinstance(run_response.content, self.response_model):
                             return run_response
@@ -1990,7 +1990,7 @@ class Agent:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
 
             # Add the JSON output prompt if response_model is provided and structured_outputs is False
-            if self.response_model is not None and not self.structured_outputs:
+            if self.response_model is not None and not (self.model.supports_structured_outputs and self.structured_outputs):
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
             return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
@@ -2130,8 +2130,8 @@ class Agent:
                         "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
                     )
 
-        # Add the JSON output prompt if response_model is provided and structured_outputs is False
-        if self.response_model is not None and not self.structured_outputs:
+        # Add the JSON output prompt if response_model is provided and structured_outputs is False (only applicable if the model supports structured outputs)
+        if self.response_model is not None and not (self.model.supports_structured_outputs and self.structured_outputs):
             system_message_content += f"{self.get_json_output_prompt()}"
 
         # Return the system message
