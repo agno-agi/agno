@@ -21,10 +21,10 @@ def mock_e2b_tools():
         mock_sandbox_class.return_value = mock_sandbox
 
         # Create files/process structure
-        mock_sandbox.files = Mock()
-        mock_sandbox.commands = Mock()
-        mock_sandbox.get_host = Mock()
-        mock_sandbox.close = Mock()
+        mock_sandbox.files = Mock(spec=Sandbox.files)
+        mock_sandbox.commands = Mock(spec=Sandbox.commands)
+        mock_sandbox.get_host = Mock(spec=Sandbox.get_host)
+        mock_sandbox.kill = Mock(spec=Sandbox.kill)
 
         # Create the E2BTools instance with our patched Sandbox
         with patch.dict("os.environ", {"E2B_API_KEY": TEST_API_KEY}):
