@@ -196,12 +196,16 @@ class AgentMemory(BaseModel):
 
                 # Start from the beginning to look for the user message
                 for message in run.response.messages:
+                    if hasattr(message, "from_history") and message.from_history:
+                        continue
                     if message.role == user_role:
                         user_messages_from_run = message
                         break
 
                 # Start from the end to look for the assistant response
                 for message in run.response.messages[::-1]:
+                    if hasattr(message, "from_history") and message.from_history:
+                        continue
                     if message.role in assistant_role:
                         assistant_messages_from_run = message
                         break

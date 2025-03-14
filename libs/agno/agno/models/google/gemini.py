@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
-from agno.models.message import Message, MessageMetrics
+from agno.models.message import Citations, Message, MessageMetrics, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
@@ -750,6 +750,28 @@ class Gemini(Model):
 
                         model_response.tool_calls.append(tool_call)
 
+            if response.candidates and response.candidates[0].grounding_metadata is not None:
+                citations = Citations()
+                grounding_metadata = response.candidates[0].grounding_metadata.model_dump()
+                citations.raw = grounding_metadata
+
+                # Extract url and title
+                chunks = grounding_metadata.pop("grounding_chunks", [])
+                citation_pairs = (
+                    [
+                        (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
+                        for chunk in chunks
+                        if chunk.get("web", {}).get("uri")
+                    ]
+                    if chunks
+                    else []
+                )
+
+                # Create citation objects from filtered pairs
+                citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
+
+                model_response.citations = citations
+
         # Extract usage metadata if present
         if hasattr(response, "usage_metadata") and response.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response.usage_metadata
@@ -789,6 +811,24 @@ class Gemini(Model):
                     }
 
                     model_response.tool_calls.append(tool_call)
+
+        if response_delta.candidates and response_delta.candidates[0].grounding_metadata is not None:
+            citations = Citations()
+            grounding_metadata = response_delta.candidates[0].grounding_metadata.model_dump()
+            citations.raw = grounding_metadata
+
+            # Extract url and title
+            chunks = grounding_metadata.pop("grounding_chunks", [])
+            citation_pairs = [
+                (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
+                for chunk in chunks
+                if chunk.get("web", {}).get("uri")
+            ]
+
+            # Create citation objects from filtered pairs
+            citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
+
+            model_response.citations = citations
 
         # Extract usage metadata if present
         if hasattr(response_delta, "usage_metadata") and response_delta.usage_metadata is not None:
