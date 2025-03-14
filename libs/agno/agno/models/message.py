@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agno.media import Audio, AudioResponse, Image, Video
+from agno.media import Audio, AudioResponse, File, Image, Video
 from agno.utils.log import logger
 from agno.utils.timer import Timer
 
@@ -19,6 +19,34 @@ class MessageReferences(BaseModel):
     references: Optional[List[Dict[str, Any]]] = None
     # Time taken to retrieve the references.
     time: Optional[float] = None
+
+
+class UrlCitation(BaseModel):
+    """URL of the citation"""
+
+    url: Optional[str] = None
+    title: Optional[str] = None
+
+
+class DocumentCitation(BaseModel):
+    """Document of the citation"""
+
+    document_title: Optional[str] = None
+    cited_text: Optional[str] = None
+    file_name: Optional[str] = None
+
+
+class Citations(BaseModel):
+    """Citations for the message"""
+
+    # Raw citations from the model
+    raw: Optional[Any] = None
+
+    # URLs of the citations.
+    urls: Optional[List[UrlCitation]] = None
+
+    # Document Citations
+    documents: Optional[List[DocumentCitation]] = None
 
 
 @dataclass
@@ -141,6 +169,7 @@ class Message(BaseModel):
     audio: Optional[Sequence[Audio]] = None
     images: Optional[Sequence[Image]] = None
     videos: Optional[Sequence[Video]] = None
+    files: Optional[Sequence[File]] = None
 
     # Output from the models
     audio_output: Optional[AudioResponse] = None
@@ -151,6 +180,9 @@ class Message(BaseModel):
 
     # Data from the provider we might need on subsequent messages
     provider_data: Optional[Dict[str, Any]] = None
+
+    # Citations received from the model
+    citations: Optional[Citations] = None
 
     # --- Data not sent to the Model API ---
     # The reasoning content from the model
@@ -276,6 +308,8 @@ class Message(BaseModel):
             _logger(f"Videos added: {len(self.videos)}")
         if self.audio:
             _logger(f"Audio Files added: {len(self.audio)}")
+        if self.files:
+            _logger(f"Files added: {len(self.files)}")
 
         if metrics and self.metrics is not None and self.metrics != MessageMetrics():
             _logger("**************** METRICS ****************")

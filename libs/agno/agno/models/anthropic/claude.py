@@ -5,9 +5,9 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
-from agno.media import Image
+from agno.media import File, Image
 from agno.models.base import Model
-from agno.models.message import Message
+from agno.models.message import Citations, DocumentCitation, Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
@@ -48,7 +48,7 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     try:
         # Case 1: Image is a URL
         if image.url is not None:
-            content_bytes = image.image_url_content
+            return {"type": "image", "source": {"type": "url", "url": image.url}}
 
         # Case 2: Image is a local file path
         elif image.filepath is not None:
@@ -94,6 +94,67 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
+    """
+    Add a document url or base64 encoded content to a message.
+    """
+
+    mime_mapping = {
+        "application/pdf": "base64",
+        "text/plain": "text",
+    }
+
+    # Case 1: Document is a URL
+    if file.url is not None:
+        return {
+            "type": "document",
+            "source": {
+                "type": "url",
+                "url": file.url,
+            },
+            "citations": {"enabled": True},
+        }
+    # Case 2: Document is a local file path
+    elif file.filepath is not None:
+        import base64
+        from pathlib import Path
+
+        path = Path(file.filepath) if isinstance(file.filepath, str) else file.filepath
+        if path.exists() and path.is_file():
+            file_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
+
+            # Determine media type
+            media_type = file.mime_type
+            if media_type is None:
+                import mimetypes
+
+                media_type = mimetypes.guess_type(file.filepath)[0] or "application/pdf"
+
+            # Map media type to type, default to "base64" if no mapping exists
+            type = mime_mapping.get(media_type, "base64")
+
+            return {
+                "type": "document",
+                "source": {
+                    "type": type,
+                    "media_type": media_type,
+                    "data": file_data,
+                },
+                "citations": {"enabled": True},
+            }
+        else:
+            logger.error(f"Document file not found: {file}")
+            return None
+    # Case 3: Document is base64 encoded content
+    elif file.content is not None:
+        return {
+            "type": "document",
+            "source": {"type": "base64", "media_type": "application/pdf", "data": file.content},
+            "citations": {"enabled": True},
+        }
+    return None
+
+
 def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
@@ -122,6 +183,12 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
                     image_content = _format_image_for_message(image)
                     if image_content:
                         content.append(image_content)
+
+            if message.files is not None:
+                for file in message.files:
+                    file_content = _format_file_for_message(file)
+                    if file_content:
+                        content.append(file_content)
 
         # Handle tool calls from history
         elif message.role == "assistant":
@@ -512,7 +579,17 @@ class Claude(Model):
         if response.content:
             for block in response.content:
                 if block.type == "text":
-                    model_response.content = block.text
+                    if model_response.content is None:
+                        model_response.content = block.text
+                    else:
+                        model_response.content += block.text
+
+                    if block.citations:
+                        model_response.citations = Citations(raw=block.citations, documents=[])
+                        for citation in block.citations:
+                            model_response.citations.documents.append(  # type: ignore
+                                DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
+                            )
                 elif block.type == "thinking":
                     model_response.thinking = block.thinking
                     model_response.provider_data = {
@@ -570,6 +647,12 @@ class Claude(Model):
             # Handle text content
             if response.delta.type == "text_delta":
                 model_response.content = response.delta.text
+            elif response.delta.type == "citation_delta":
+                citation = response.delta.citation
+                model_response.citations = Citations(raw=citation)
+                model_response.citations.documents.append(  # type: ignore
+                    DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
+                )
             # Handle thinking content
             elif response.delta.type == "thinking_delta":
                 model_response.thinking = response.delta.thinking

@@ -36,7 +36,10 @@ class CalComTools(Toolkit):
         # Get credentials from environment if not provided
         self.api_key = api_key or getenv("CALCOM_API_KEY")
         event_type_str = getenv("CALCOM_EVENT_TYPE_ID")
-        self.event_type_id = event_type_id or int(event_type_str) if event_type_str is not None else 0
+        if event_type_id is not None:
+            self.event_type_id = int(event_type_id)
+        else:
+            self.event_type_id = int(event_type_str) if event_type_str is not None else 0
 
         if not self.api_key:
             logger.error("CALCOM_API_KEY not set. Please set the CALCOM_API_KEY environment variable.")
