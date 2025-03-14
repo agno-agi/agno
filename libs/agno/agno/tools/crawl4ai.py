@@ -1,9 +1,10 @@
 import asyncio
-import requests
+import httpx
 from typing import Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
+from httpx import URL
 
 try:
     from crawl4ai import AsyncWebCrawler, CacheMode
@@ -37,10 +38,10 @@ class Crawl4aiTools(Toolkit):
         timeout = 5
         for attempt in range(1, self.retries + 1):
             try:
-                response = requests.head(url, allow_redirects=True, timeout=timeout)
+                response = httpx.head(url,follow_redirects=True,timeout=timeout)
                 final_url = response.url
                 logger.info(f"expand_url: {url} expanded to {final_url} on attempt {attempt}")
-                return final_url
+                return str(final_url)
             except Exception as e:
                 logger.error(f"Error expanding URL {url} on attempt {attempt}: {e}")
 
