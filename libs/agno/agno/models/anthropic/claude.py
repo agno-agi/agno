@@ -648,7 +648,6 @@ class Claude(Model):
             if response.delta.type == "text_delta":
                 model_response.content = response.delta.text
             elif response.delta.type == "citation_delta":
-                print("HERE", response.delta)
                 citation = response.delta.citation
                 model_response.citations = Citations(raw=citation)
                 model_response.citations.documents.append(

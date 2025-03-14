@@ -232,7 +232,7 @@ class OpenAIResponses(Model):
 
         return None
 
-    def _create_a_vector_store(self, file_ids: List[str]) -> str:
+    def _create_vector_store(self, file_ids: List[str]) -> str:
         """Create a vector store for the files."""
         vector_store = self.get_client().vector_stores.create(name="knowledge_base")
         for file_id in file_ids:
@@ -259,16 +259,17 @@ class OpenAIResponses(Model):
         if self._tools:
             for _tool in self._tools:
                 if _tool["type"] == "function":
-                    tool_dict = _tool["function"]
-                    tool_dict["type"] = "function"
-                    for prop in tool_dict["parameters"]["properties"].values():
+                    _tool_dict = _tool["function"]
+                    _tool_dict["type"] = "function"
+                    for prop in _tool_dict["parameters"]["properties"].values():
                         if isinstance(prop["type"], list):
                             prop["type"] = prop["type"][0]
 
-                    formatted_tools.append(tool_dict)
+                    formatted_tools.append(_tool_dict)
                 else:
                     formatted_tools.append(_tool)
 
+        # Find files to upload to the OpenAI vector database
         file_ids = []
         for message in messages:
             # Upload any attached files to the OpenAI vector database
@@ -278,7 +279,7 @@ class OpenAIResponses(Model):
                     if file_id is not None:
                         file_ids.append(file_id)
 
-        vector_store_id = self._create_a_vector_store(file_ids) if file_ids else None
+        vector_store_id = self._create_vector_store(file_ids) if file_ids else None
 
         # Add the file IDs to the tool parameters
         for _tool in formatted_tools:
