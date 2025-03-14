@@ -13,6 +13,7 @@ from agno.playground.operator import (
     get_agent_by_id,
     get_session_title,
     get_session_title_from_workflow_session,
+    get_team_by_id,
     get_workflow_by_id,
 )
 from agno.playground.schemas import (
@@ -20,6 +21,10 @@ from agno.playground.schemas import (
     AgentModel,
     AgentRenameRequest,
     AgentSessionsResponse,
+    TeamGetResponse,
+    TeamRenameRequest,
+    TeamRunRequest,
+    TeamSessionResponse,
     WorkflowGetResponse,
     WorkflowRenameRequest,
     WorkflowRunRequest,
@@ -34,7 +39,7 @@ from agno.workflow.workflow import Workflow
 
 
 def get_async_playground_router(
-    agents: Optional[List[Agent]] = None, workflows: Optional[List[Workflow]] = None
+    agents: Optional[List[Agent]] = None, workflows: Optional[List[Workflow]] = None, teams: Optional[List[Team]] = None
 ) -> APIRouter:
     playground_router = APIRouter(prefix="/playground", tags=["Playground"])
 
@@ -499,4 +504,100 @@ def get_async_playground_router(
         workflow.delete_session(session_id)
         return JSONResponse(content={"message": f"successfully deleted workflow {workflow.name}"})
 
+
+    @playground_router.get("/teams")
+    async def get_teams():
+        if teams is None:
+            return []
+
+        return [
+            TeamGetResponse(
+                team_id=team.team_id,
+                name=team.name,
+                description=team.description,
+            )
+            for team in teams
+        ]
+    
+    @playground_router.get("/teams/{team_id}")
+    async def get_team(team_id: str):
+        team = get_team_by_id(team_id, teams)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        return TeamGetResponse(
+            team_id=team.team_id,
+            name=team.name,
+            description=team.description,
+        )
+
+    @playground_router.post("/teams/{team_id}/runs")
+    async def create_team_run(team_id: str, body: TeamRunRequest):
+        
+        team = get_team_by_id(team_id, teams)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        return StreamingResponse(
+            (json.dumps(asdict(result)) for result in team.run(**body.input)),
+            media_type="text/event-stream",
+        )
+
+    @playground_router.get("/teams/{team_id}/sessions", response_model=List[TeamSessionResponse])
+    async def get_all_team_sessions(team_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+        team = get_team_by_id(team_id, teams)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+        
+        try:
+            all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=user_id, team_id=team_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
+
+        return [
+            TeamSessionResponse(
+                title=get_session_title_from_team_session(session),
+                session_id=session.session_id,
+                session_name=session.session_data.get("session_name") if session.session_data else None,
+                created_at=session.created_at,
+            )
+            for session in all_team_sessions
+        ]
+
+    @playground_router.get("/teams/{team_id}/sessions/{session_id}")
+    async def get_team_session(team_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+        team = get_team_by_id(team_id, teams)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        try:
+            team_session: Optional[TeamSession] = team.storage.read(session_id, user_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error retrieving session: {str(e)}")
+
+        if not team_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        return team_session
+    
+
+    @playground_router.post("/teams/{team_id}/sessions/{session_id}/rename")
+    async def rename_team_session(team_id: str, session_id: str, body: TeamRenameRequest):
+        team = get_team_by_id(team_id, teams)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+    
+        team.session_id = session_id
+        team.rename_session(body.name)
+        return JSONResponse(content={"message": f"successfully renamed team {team.name}"})
+    
+    @playground_router.delete("/teams/{team_id}/sessions/{session_id}")
+    async def delete_team_session(team_id: str, session_id: str):
+        team = get_team_by_id(team_id, teams)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        team.delete_session(session_id)
+        return JSONResponse(content={"message": f"successfully deleted team {team.name}"})
+    
     return playground_router

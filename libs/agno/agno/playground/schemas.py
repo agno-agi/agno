@@ -74,3 +74,36 @@ class WorkflowsGetResponse(BaseModel):
     workflow_id: str
     name: str
     description: Optional[str] = None
+
+
+class TeamModel(BaseModel):
+    team_id: str
+    name: str
+    description: Optional[str] = None
+
+
+class TeamGetResponse(BaseModel):
+    team_id: str
+    name: str
+    description: Optional[str] = None
+    # agents: Optional[List[AgentGetResponse]] = None
+    # workflows: Optional[List[WorkflowGetResponse]] = None
+    # created_at: Optional[int] = None
+    # updated_at: Optional[int] = None
+
+
+class TeamRunRequest(BaseModel):
+    input: Dict[str, Any]
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+class TeamSessionResponse(BaseModel):
+    title: Optional[str] = None
+    session_id: Optional[str] = None
+    session_name: Optional[str] = None
+    created_at: Optional[int] = None
+
+
+class TeamRenameRequest(BaseModel):
+    name: str
