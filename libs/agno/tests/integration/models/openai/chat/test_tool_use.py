@@ -180,6 +180,7 @@ def test_tool_call_custom_tool_no_parameters():
     assert response.content is not None
     assert "70" in response.content
 
+
 def test_tool_call_custom_tool_untyped_parameters():
     def get_the_weather(city):
         """
@@ -208,6 +209,7 @@ def test_tool_call_custom_tool_untyped_parameters():
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "70" in response.content
+
 
 def test_tool_call_list_parameters():
     agent = Agent(

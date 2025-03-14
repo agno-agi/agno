@@ -177,7 +177,6 @@ def test_tool_call_custom_tool_optional_parameters():
     assert "70" in response.content
 
 
-
 def test_tool_call_custom_tool_untyped_parameters():
     def get_the_weather(city):
         """
