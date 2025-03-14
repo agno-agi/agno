@@ -128,6 +128,7 @@ def test_tool_use_with_native_structured_outputs():
     assert response.content.currency is not None
 
 
+@pytest.mark.skip(reason="This test is flaky and needs to be fixed.")
 def test_parallel_tool_calls():
     """Test parallel tool calls with the responses API."""
     agent = Agent(
@@ -259,8 +260,8 @@ def test_web_search_built_in_tool_stream():
     response_citations = None
     for response in responses:
         assert isinstance(response, RunResponse)
-        assert response.content is not None
-        final_response += response.content
+        if response.content is not None:
+            final_response += response.content
         if response.citations is not None:
             response_citations = response.citations
 

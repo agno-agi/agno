@@ -108,7 +108,6 @@ models = [
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
-  "agno[lmstudio]",
   "agno[ibm]"
 ]
 
@@ -192,6 +191,8 @@ include = ["LICENSE"]
 [tool.pytest.ini_options]
 log_cli = true
 testpaths = "tests"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 120

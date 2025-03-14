@@ -80,7 +80,7 @@ async def test_async_basic_stream():
 
 def test_with_memory():
     agent = Agent(
-        model=Claude(id="anthropic.claude-instant-v1"),
+        model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0"),
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
