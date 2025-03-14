@@ -4,7 +4,7 @@ import os
 from unittest.mock import Mock, patch
 
 import pytest
-from e2b_code_interpreter import Sandbox
+from e2b_code_interpreter import Sandbox  # type: ignore
 
 from agno.tools.e2b import E2BTools
 
