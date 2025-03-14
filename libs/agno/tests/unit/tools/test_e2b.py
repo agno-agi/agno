@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 import os
 import pytest
 
-from agno.tools.e2b import E2BTools
+from agno.tools.e2b import E2BTools  # type: ignore
 
 
 TEST_API_KEY = os.environ.get("E2B_API_KEY", "test_api_key")
