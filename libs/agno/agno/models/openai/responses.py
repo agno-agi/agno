@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import File
 from agno.models.base import MessageData, Model
-from agno.models.message import Citations, UrlCitation, Message
+from agno.models.message import Citations, Message, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 from agno.utils.openai_responses import images_to_message
@@ -59,7 +59,7 @@ class OpenAIResponses(Model):
     client_params: Optional[Dict[str, Any]] = None
 
     # Parameters affecting built-in tools
-    vector_store_name: Optional[str] = "knowledge_base"
+    vector_store_name: str = "knowledge_base"
 
     # OpenAI clients
     client: Optional[OpenAI] = None

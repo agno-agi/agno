@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.media import File, Image
 from agno.models.base import Model
-from agno.models.message import DocumentCitation, Citations, Message
+from agno.models.message import Citations, DocumentCitation, Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
@@ -650,7 +650,7 @@ class Claude(Model):
             elif response.delta.type == "citation_delta":
                 citation = response.delta.citation
                 model_response.citations = Citations(raw=citation)
-                model_response.citations.documents.append(
+                model_response.citations.documents.append(  # type: ignore
                     DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
                 )
             # Handle thinking content

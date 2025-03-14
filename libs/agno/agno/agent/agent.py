@@ -889,7 +889,7 @@ class Agent:
                     )
 
                     # If the model natively supports structured outputs, the content is already in the structured format
-                    if self.structured_outputs and self.model.supports_structured_outputs: # type: ignore
+                    if self.structured_outputs and self.model.supports_structured_outputs:  # type: ignore
                         # Do a final check confirming the content is in the response_model format
                         if isinstance(run_response.content, self.response_model):
                             return run_response
