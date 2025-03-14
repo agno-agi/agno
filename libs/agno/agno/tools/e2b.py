@@ -1,0 +1,609 @@
+import base64
+import json
+import os
+import time
+from os import getenv
+from typing import Any, Callable, Dict, Optional
+
+from agno.tools import Toolkit
+
+try:
+    from e2b_code_interpreter import Sandbox
+except ImportError:
+    raise ImportError("`e2b_code_interpreter` not installed. Please install using `pip install e2b_code_interpreter`")
+
+
+class E2BTools(Toolkit):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        run_code: bool = True,
+        upload_file: bool = True,
+        download_result: bool = True,
+        filesystem: bool = True,
+        internet_access: bool = True,
+        sandbox_management: bool = True,
+        timeout: int = 300,  # 5 minutes default timeout
+        sandbox_options: Optional[Dict[str, Any]] = None,
+        command_execution: bool = True,
+    ):
+        """Initialize E2B toolkit for code interpretation and running Python code in a sandbox.
+
+        Args:
+            api_key: E2B API key (defaults to E2B_API_KEY environment variable)
+            run_code: Whether to register the run_code function
+            upload_file: Whether to register the upload_file function
+            download_result: Whether to register the download_result function
+            filesystem: Whether to register filesystem operations
+            internet_access: Whether to register internet access functions
+            sandbox_management: Whether to register sandbox management functions
+            timeout: Timeout in seconds for the sandbox (default: 5 minutes)
+            sandbox_options: Additional options to pass to the Sandbox constructor
+        """
+        super().__init__(name="e2b_tools")
+
+        self.api_key = api_key or getenv("E2B_API_KEY")
+        if not self.api_key:
+            raise ValueError("E2B_API_KEY not set. Please set the E2B_API_KEY environment variable.")
+
+        # Create the sandbox once and reuse it
+        self.sandbox_options = sandbox_options or {}
+
+        # According to official docs, the parameter is 'timeout' (in seconds), not 'timeout_ms'
+        try:
+            self.sandbox = Sandbox(api_key=self.api_key, timeout=timeout, **self.sandbox_options)
+        except Exception as e:
+            print(f"Warning: Could not create sandbox: {e}")
+            raise e
+
+        # Last execution result for reference
+        self.last_execution = None
+        self.downloaded_files = {}
+
+        # Register the functions based on the parameters
+        if run_code:
+            self.register(self.run_python_code)
+
+        if upload_file:
+            self.register(self.upload_file)
+
+        if download_result:
+            self.register(self.download_png_result)
+            self.register(self.download_chart_data)
+            self.register(self.download_file_from_sandbox)
+
+        if filesystem:
+            self.register(self.list_files)
+            self.register(self.read_file_content)
+            self.register(self.write_file_content)
+            self.register(self.watch_directory)
+
+        if internet_access:
+            self.register(self.get_public_url)
+            self.register(self.run_server)
+
+        if sandbox_management:
+            self.register(self.set_sandbox_timeout)
+            self.register(self.get_sandbox_status)
+            self.register(self.shutdown_sandbox)
+
+        if command_execution:
+            self.register(self.run_command)
+            self.register(self.stream_command)
+            self.register(self.run_background_command)
+            self.register(self.kill_background_command)
+
+    # --- Code Execution Functions ---
+
+    def run_python_code(self, code: str) -> str:
+        """
+        Run Python code in an isolated E2B sandbox environment.
+
+        Args:
+            code (str): Python code to execute
+
+        Returns:
+            str: Execution results or error message
+        """
+        try:
+            # Execute the code in the sandbox using the correct method name for Python SDK
+            execution = self.sandbox.run_code(code)
+            self.last_execution = execution
+
+            # Check for errors
+            if execution.error:
+                return f"Error: {execution.error.name}\n{execution.error.value}\n{execution.error.traceback}"
+
+            # Process results
+            results = []
+
+            # Add logs if available
+            if hasattr(execution, "logs") and execution.logs:
+                results.append(f"Logs:\n{execution.logs}")
+
+            # Process individual results
+            for i, result in enumerate(execution.results):
+                if hasattr(result, "text") and result.text:
+                    results.append(f"Result {i + 1}: {result.text}")
+                elif hasattr(result, "png") and result.png:
+                    results.append(f"Result {i + 1}: Generated PNG image (use download_png_result to save)")
+                elif hasattr(result, "chart") and result.chart:
+                    chart_type = result.chart.get("type", "unknown")
+                    results.append(
+                        f"Result {i + 1}: Generated interactive {chart_type} chart (use download_chart_data to save)"
+                    )
+                else:
+                    results.append(f"Result {i + 1}: Output available")
+
+            return "\n".join(results) if results else "Code executed successfully with no output."
+
+        except Exception as e:
+            return f"Error executing code: {str(e)}"
+
+    # --- File Upload/Download Functions ---
+
+    def upload_file(self, file_path: str, sandbox_path: Optional[str] = None) -> str:
+        """
+        Upload a file to the E2B sandbox.
+
+        Args:
+            file_path (str): Path to the file on the local system
+            sandbox_path (str, optional): Destination path in the sandbox. Defaults to the same filename.
+
+        Returns:
+            str: Path to the file in the sandbox or error message
+        """
+        try:
+            # Determine the sandbox path if not provided
+            if not sandbox_path:
+                sandbox_path = os.path.basename(file_path)
+
+            # Upload the file
+            with open(file_path, "rb") as f:
+                file_in_sandbox = self.sandbox.files.write(sandbox_path, f)
+
+            return f"File uploaded successfully to {file_in_sandbox.path}"
+        except Exception as e:
+            return f"Error uploading file: {str(e)}"
+
+    def download_png_result(self, result_index: int = 0, output_path: Optional[str] = None) -> str:
+        """
+        Download a PNG image result from the last code execution.
+
+        Args:
+            result_index (int): Index of the result to download (default: 0, the first result)
+            output_path (str, optional): Path to save the PNG file. Defaults to 'chart-{result_index}.png'
+
+        Returns:
+            str: Path to the downloaded file or error message
+        """
+        if not self.last_execution:
+            return "No code has been executed yet"
+
+        try:
+            # Check if the result exists
+            if result_index >= len(self.last_execution.results):
+                return f"Result index {result_index} is out of range. Only {len(self.last_execution.results)} results available."
+
+            result = self.last_execution.results[result_index]
+
+            # Check if the result has a PNG
+            if not result.png:
+                return f"Result at index {result_index} is not a PNG image"
+
+            # Determine output path
+            if not output_path:
+                output_path = f"chart-{result_index}.png"
+
+            # Save the PNG
+            with open(output_path, "wb") as f:
+                f.write(base64.b64decode(result.png))
+
+            self.downloaded_files[result_index] = output_path
+            return f"PNG image saved to {output_path}"
+
+        except Exception as e:
+            return f"Error downloading PNG: {str(e)}"
+
+    def download_chart_data(self, result_index: int = 0, output_path: Optional[str] = None) -> str:
+        """
+        Extract chart data from an interactive chart in the execution results.
+
+        Args:
+            result_index (int): Index of the result to extract data from (default: 0)
+            output_path (str, optional): Path to save the JSON data. Defaults to 'chart-data-{result_index}.json'
+
+        Returns:
+            str: Information about the extracted chart data or error message
+        """
+        if not self.last_execution:
+            return "No code has been executed yet"
+
+        try:
+            # Check if the result exists
+            if result_index >= len(self.last_execution.results):
+                return f"Result index {result_index} is out of range. Only {len(self.last_execution.results)} results available."
+
+            result = self.last_execution.results[result_index]
+
+            # Check if the result has chart data
+            if not result.chart:
+                return f"Result at index {result_index} does not contain interactive chart data"
+
+            # Format chart data
+            chart_data = result.chart
+            chart_type = chart_data.get("type", "unknown")
+
+            # Determine output path
+            if not output_path:
+                output_path = f"chart-data-{result_index}.json"
+
+            # Save chart data as JSON
+            with open(output_path, "w") as f:
+                json.dump(chart_data, f, indent=2)
+
+            # Summarize data
+            summary = f"Interactive {chart_type} chart data saved to {output_path}\n"
+            if "title" in chart_data:
+                summary += f"Title: {chart_data['title']}\n"
+            if "x_label" in chart_data:
+                summary += f"X-axis: {chart_data['x_label']}\n"
+            if "y_label" in chart_data:
+                summary += f"Y-axis: {chart_data['y_label']}\n"
+
+            return summary
+
+        except Exception as e:
+            return f"Error extracting chart data: {str(e)}"
+
+    def download_file_from_sandbox(self, sandbox_path: str, local_path: Optional[str] = None) -> str:
+        """
+        Download a file from the E2B sandbox to the local system.
+
+        Args:
+            sandbox_path (str): Path to the file in the sandbox
+            local_path (str, optional): Destination path on the local system. Defaults to the same filename.
+
+        Returns:
+            str: Path to the downloaded file or error message
+        """
+        try:
+            # Determine local path if not provided
+            if not local_path:
+                local_path = os.path.basename(sandbox_path)
+
+            # Download the file
+            content = self.sandbox.files.read(sandbox_path)
+
+            with open(local_path, "wb") as f:
+                f.write(content)
+
+            return f"File downloaded successfully to {local_path}"
+        except Exception as e:
+            return f"Error downloading file: {str(e)}"
+
+    # --- Command Execution Functions ---
+
+    def run_command(
+        self,
+        command: str,
+        on_stdout: Optional[Callable] = None,
+        on_stderr: Optional[Callable] = None,
+        background: bool = False,
+    ) -> str:
+        """
+        Run a shell command in the sandbox environment.
+
+        Args:
+            command (str): Shell command to execute
+            on_stdout (callable, optional): Callback function for streaming stdout
+            on_stderr (callable, optional): Callback function for streaming stderr
+            background (bool): Whether to run the command in background
+
+        Returns:
+            str: Command results or error message, or the command object for background execution
+        """
+        try:
+            # Prepare streaming callbacks
+            kwargs = {}
+            if on_stdout:
+                kwargs["on_stdout"] = on_stdout
+            if on_stderr:
+                kwargs["on_stderr"] = on_stderr
+
+            # Set background execution if requested
+            kwargs["background"] = background
+
+            # Execute the command
+            result = self.sandbox.commands.run(command, **kwargs)
+
+            # For background execution, return the command object
+            if background:
+                return "Command started in background. Use the returned command object to interact with it."
+
+            # For synchronous execution, return the output
+            output = []
+            if hasattr(result, "stdout") and result.stdout:
+                output.append(f"STDOUT:\n{result.stdout}")
+            if hasattr(result, "stderr") and result.stderr:
+                output.append(f"STDERR:\n{result.stderr}")
+
+            return "\n".join(output) if output else "Command executed successfully with no output."
+
+        except Exception as e:
+            return f"Error executing command: {str(e)}"
+
+    def stream_command(self, command: str) -> str:
+        """
+        Run a shell command and stream its output.
+
+        Args:
+            command (str): Shell command to execute
+
+        Returns:
+            str: Summary of command execution
+        """
+        outputs = []
+
+        def stdout_callback(data):
+            outputs.append(f"STDOUT: {data}")
+            print(f"STDOUT: {data}")
+
+        def stderr_callback(data):
+            outputs.append(f"STDERR: {data}")
+            print(f"STDERR: {data}")
+
+        try:
+            self.run_command(command, on_stdout=stdout_callback, on_stderr=stderr_callback)
+            return "\n".join(outputs) if outputs else "Command completed with no output."
+        except Exception as e:
+            return f"Error streaming command: {str(e)}"
+
+    def run_background_command(self, command: str) -> Any:
+        """
+        Run a shell command in the background.
+
+        Args:
+            command (str): Shell command to execute in background
+
+        Returns:
+            object: Command object that can be used to interact with the background process
+        """
+        try:
+            # Execute the command in background
+            command_obj = self.sandbox.commands.run(command, background=True)
+            return command_obj
+        except Exception as e:
+            return f"Error starting background command: {str(e)}"
+
+    def kill_background_command(self, command_obj: Any) -> str:
+        """
+        Kill a background command.
+
+        Args:
+            command_obj: Command object returned from run_background_command
+
+        Returns:
+            str: Result of the kill operation
+        """
+        try:
+            if isinstance(command_obj, str):
+                return "Invalid command object. Please provide the object returned from run_background_command."
+
+            command_obj.kill()
+            return "Background command terminated successfully."
+        except Exception as e:
+            return f"Error killing background command: {str(e)}"
+
+    # --- Filesystem Operations ---
+
+    def list_files(self, directory_path: str = "/") -> str:
+        """
+        List files and directories in the specified path in the sandbox.
+
+        Args:
+            directory_path (str): Path to the directory to list (default: root directory)
+
+        Returns:
+            str: List of files and directories or error message
+        """
+        try:
+            files = self.sandbox.files.list(directory_path)
+            if not files:
+                return f"No files found in {directory_path}"
+
+            result = f"Contents of {directory_path}:\n"
+            for file in files:
+                file_type = "Directory" if file.is_dir else "File"
+                size = f"{file.size} bytes" if file.size is not None else "Unknown size"
+                result += f"- {file.name} ({file_type}, {size})\n"
+
+            return result
+        except Exception as e:
+            return f"Error listing files: {str(e)}"
+
+    def read_file_content(self, file_path: str, encoding: str = "utf-8") -> str:
+        """
+        Read the content of a file from the sandbox.
+
+        Args:
+            file_path (str): Path to the file in the sandbox
+            encoding (str): Encoding to use for text files (default: utf-8)
+
+        Returns:
+            str: File content or error message
+        """
+        try:
+            content = self.sandbox.files.read(file_path)
+
+            # Try to decode as text if encoding is provided
+            try:
+                text_content = content.decode(encoding)
+                return text_content
+            except UnicodeDecodeError:
+                return f"File read successfully but contains binary data ({len(content)} bytes). Use download_file_from_sandbox to save it."
+
+        except Exception as e:
+            return f"Error reading file: {str(e)}"
+
+    def write_file_content(self, file_path: str, content: str) -> str:
+        """
+        Write text content to a file in the sandbox.
+
+        Args:
+            file_path (str): Path to the file in the sandbox
+            content (str): Text content to write
+
+        Returns:
+            str: Success message or error message
+        """
+        try:
+            # Convert string to bytes
+            bytes_content = content.encode("utf-8")
+
+            # Write the file
+            file_info = self.sandbox.files.write(file_path, bytes_content)
+
+            return f"File written successfully to {file_info.path}"
+        except Exception as e:
+            return f"Error writing file: {str(e)}"
+
+    def watch_directory(self, directory_path: str, duration_seconds: int = 5) -> str:
+        """
+        Watch a directory for changes for a specified duration.
+
+        Args:
+            directory_path (str): Path to the directory to watch
+            duration_seconds (int): How long to watch for changes in seconds (default: 5 seconds)
+
+        Returns:
+            str: List of changes detected or error message
+        """
+        try:
+            changes = []
+
+            # Setup watcher
+            watcher = self.sandbox.files.watch_dir(directory_path)
+
+            # Watch for changes
+            start_time = time.time()
+            while time.time() - start_time < duration_seconds:
+                change = watcher.get_change(timeout=0.5)
+                if change:
+                    changes.append(f"{change.event} - {change.path}")
+
+            # Close watcher
+            watcher.close()
+
+            if changes:
+                return f"Changes detected in {directory_path} over {duration_seconds} seconds:\n" + "\n".join(changes)
+            else:
+                return f"No changes detected in {directory_path} over {duration_seconds} seconds"
+
+        except Exception as e:
+            return f"Error watching directory: {str(e)}"
+
+    # --- Internet Access Functions ---
+
+    def get_public_url(self, port: int) -> str:
+        """
+        Get a public URL for a service running in the sandbox on the specified port.
+
+        Args:
+            port (int): Port number the service is running on in the sandbox
+
+        Returns:
+            str: Public URL or error message
+        """
+        try:
+            host = self.sandbox.get_host(port)
+            print(f"Public URL for port {port}: http://{host}")
+            return f"Public URL for port {port}: http://{host}"
+        except Exception as e:
+            return f"Error getting public URL: {str(e)}"
+
+    def run_server(self, command: str, port: int) -> str:
+        """
+        Start a server in the sandbox and return its public URL.
+
+        Args:
+            command (str): Command to start the server
+            port (int): Port the server will listen on
+
+        Returns:
+            str: Server information including public URL or error message
+        """
+        try:
+            # Start the server in the background
+            # process = self.sandbox.commands.run(command, background=True)
+
+            # # Wait a moment for the server to start
+            # time.sleep(2)
+
+            # Get the public URL
+            host = self.sandbox.get_host(port)
+            url = f"http://{host}"
+
+            return f"Server started successfully\nCommand: {url}"
+        except Exception as e:
+            return f"Error starting server: {str(e)}"
+
+    # --- Sandbox Management Functions ---
+
+    def set_sandbox_timeout(self, timeout: int) -> str:
+        """
+        Update the timeout for the sandbox.
+
+        Args:
+            timeout: New timeout in seconds
+
+        Returns:
+            str: Success message or error message
+        """
+        try:
+            # According to the documentation, it might be set_timeout in Python SDK
+            if hasattr(self.sandbox, "set_timeout"):
+                self.sandbox.set_timeout(timeout)
+            # Fallback for direct property access if method doesn't exist
+            else:
+                self.sandbox.timeout = timeout
+
+            return f"Sandbox timeout updated to {timeout} seconds"
+        except Exception as e:
+            return f"Error updating sandbox timeout: {str(e)}"
+
+    def get_sandbox_status(self) -> str:
+        """
+        Get the current status of the sandbox.
+
+        Returns:
+            str: Sandbox status information
+        """
+        try:
+            # Collect sandbox information
+            sandbox_id = getattr(self.sandbox, "id", "Unknown")
+
+            return f"Sandbox Status:\nID: {sandbox_id}\nAPI Key: {self.api_key[:5]}...{self.api_key[-4:] if len(self.api_key) > 9 else ''}"
+        except Exception as e:
+            return f"Error getting sandbox status: {str(e)}"
+
+    def shutdown_sandbox(self) -> str:
+        """
+        Shutdown the sandbox immediately.
+
+        Returns:
+            str: Success message or error message
+        """
+        try:
+            self.sandbox.close()
+            return "Sandbox shut down successfully"
+        except Exception as e:
+            return f"Error shutting down sandbox: {str(e)}"
+
+    def __del__(self):
+        """Clean up resources when the object is destroyed."""
+        if hasattr(self, "sandbox"):
+            try:
+                self.sandbox.close()
+            except Exception:
+                pass
