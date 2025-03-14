@@ -26,7 +26,10 @@ class SentenceTransformerEmbedder(Embedder):
     sentence_transformer_client: Optional[SentenceTransformer] = None
 
     def get_embedding(self, text: Union[str, List[str]]) -> List[float]:
-        model = SentenceTransformer(model_name_or_path=self.id)
+        if not self.sentence_transformer_client:
+            model = SentenceTransformer(model_name_or_path=self.id)
+        else:
+            model = self.sentence_transformer_client
         embedding = model.encode(text)
         try:
             return embedding  # type: ignore
