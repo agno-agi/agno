@@ -51,6 +51,8 @@ openai = ["openai"]
 ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
 lmstudio = ["lmstudio"]
+litellm = ["litellm"]
+
 # Dependencies for Tools
 exa = ["exa_py"]
 yfinance = ["yfinance"]
