@@ -86,6 +86,7 @@ class E2BTools(Toolkit):
             self.register(self.set_sandbox_timeout)
             self.register(self.get_sandbox_status)
             self.register(self.shutdown_sandbox)
+            self.register(self.list_running_sandboxes)
 
         if command_execution:
             self.register(self.run_command)
@@ -607,16 +608,42 @@ class E2BTools(Toolkit):
             str: Success message or error message
         """
         try:
-            self.sandbox.close()
-            return json.dumps({"status": "success", "message": "Sandbox shut down successfully"})
+            cont = self.sandbox.kill()
+            return json.dumps({"status": "success", "message": "Sandbox shut down successfully", "content": cont})
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error shutting down sandbox: {str(e)}"})
 
-    def __del__(self):
-        """Clean up resources when the object is destroyed."""
-        if hasattr(self, "sandbox"):
-            try:
-                self.sandbox.close()
-                return json.dumps({"status": "success", "message": "Sandbox closed successfully"})
-            except Exception as e:
-                return json.dumps({"status": "error", "message": f"Error closing sandbox: {str(e)}"})
+    def list_running_sandboxes(self) -> str:
+        """
+        List all running sandboxes.
+
+        Returns:
+            str: JSON string containing information about running sandboxes or error message
+        """
+        try:
+            running_sandboxes = self.sandbox.list()
+
+            if not running_sandboxes:
+                return json.dumps({"status": "success", "message": "No running sandboxes found", "sandboxes": []})
+
+            sandboxes_info = []
+            for sandbox in running_sandboxes:
+                info = {
+                    "sandbox_id": getattr(sandbox, "sandbox_id", "Unknown"),
+                    "started_at": str(getattr(sandbox, "started_at", "Unknown")),
+                    "template_id": getattr(sandbox, "template_id", "Unknown"),
+                    "metadata": getattr(sandbox, "metadata", {}),
+                }
+                sandboxes_info.append(info)
+
+            return json.dumps(
+                {
+                    "status": "success",
+                    "message": f"Found {len(sandboxes_info)} running sandboxes",
+                    "sandboxes": sandboxes_info,
+                },
+                indent=2,
+            )
+
+        except Exception as e:
+            return json.dumps({"status": "error", "message": f"Error listing running sandboxes: {str(e)}"})

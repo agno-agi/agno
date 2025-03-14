@@ -53,6 +53,9 @@ def mock_e2b_tools():
             tools.watch_directory = Mock(
                 return_value='{"status": "success", "message": "Changes detected in /dir over 1 seconds:\\nmodified - /dir/file1.txt\\ncreated - /dir/file2.txt"}'
             )
+            tools.list_running_sandboxes = Mock(
+                return_value='{"status": "success", "message": "Found 2 running sandboxes", "sandboxes": [{"sandbox_id": "sb-123", "started_at": "2023-01-01T12:00:00", "template_id": "tmpl-123", "metadata": {}}]}'
+            )
 
             return tools
 
@@ -295,18 +298,13 @@ def test_watch_directory(mock_e2b_tools):
     assert '"message": "Changes detected in /dir' in result
 
 
-def test_dunder_del():
-    """Test the __del__ method."""
-    # Create a mock for the sandbox
-    mock_sandbox = Mock()
+def test_list_running_sandboxes(mock_e2b_tools):
+    """Test listing running sandboxes."""
+    # Call the method
+    result = mock_e2b_tools.list_running_sandboxes()
 
-    # Create E2BTools and set its _sandbox attribute
-    with patch("agno.tools.e2b.Sandbox", return_value=mock_sandbox):
-        with patch.dict("os.environ", {"E2B_API_KEY": "test_key"}):
-            tools = E2BTools()
-
-            # Call __del__
-            tools.__del__()
-
-            # Verify sandbox.close was called
-            mock_sandbox.close.assert_called_once()
+    # Verify
+    mock_e2b_tools.list_running_sandboxes.assert_called_once()
+    assert '"status": "success"' in result
+    assert '"message": "Found 2 running sandboxes"' in result
+    assert '"sandbox_id": "sb-123"' in result
