@@ -1,8 +1,7 @@
 import base64
 import json
-import os
 import time
-from os import getenv
+from os import getenv, path
 from typing import Any, Callable, Dict, Optional
 
 from agno.tools import Toolkit
@@ -157,7 +156,7 @@ class E2BTools(Toolkit):
         try:
             # Determine the sandbox path if not provided
             if not sandbox_path:
-                sandbox_path = os.path.basename(file_path)
+                sandbox_path = path.basename(file_path)
 
             # Upload the file
             with open(file_path, "rb") as f:
@@ -271,7 +270,7 @@ class E2BTools(Toolkit):
         try:
             # Determine local path if not provided
             if not local_path:
-                local_path = os.path.basename(sandbox_path)
+                local_path = path.basename(sandbox_path)
 
             # Download the file
             content = self.sandbox.files.read(sandbox_path)
