@@ -17,7 +17,7 @@ def test_image_input():
 
 def test_file_input():
     agent = Agent(
-        model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0"), markdown=True, telemetry=False, monitoring=False
+        model=Claude(id="claude-3-5-sonnet-20241022"), markdown=True, telemetry=False, monitoring=False
     )
 
     response = agent.run(

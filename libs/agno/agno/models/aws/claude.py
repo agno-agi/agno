@@ -1,23 +1,21 @@
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Optional, List, Tuple, AsyncIterator
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
-from agno.media import Image, File
-from agno.models.message import Message
-
+from agno.media import Image
 from agno.models.anthropic import Claude as AnthropicClaude
+from agno.models.message import Message
 from agno.utils.log import logger
 
 try:
-    from anthropic import AnthropicBedrock, AsyncAnthropicBedrock
-    from anthropic import APIConnectionError, APIStatusError, RateLimitError
+    from anthropic import AnthropicBedrock, APIConnectionError, APIStatusError, AsyncAnthropicBedrock, RateLimitError
+    from anthropic.types import Message as AnthropicMessage
     from anthropic.types import (
         TextBlock,
         ToolUseBlock,
     )
-    from anthropic.types import Message as AnthropicMessage
 except ImportError:
     logger.error("`anthropic[bedrock]` not installed. Please install it via `pip install anthropic[bedrock]`.")
     raise
@@ -35,6 +33,7 @@ ROLE_MAP = {
     "assistant": "assistant",
     "tool": "user",
 }
+
 
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     """
@@ -125,7 +124,7 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
 
             if message.files is not None:
                 logger.warning("Files are not supported for AWS Bedrock Claude")
-            
+
             if message.audio is not None:
                 logger.warning("Audio is not supported for AWS Bedrock Claude")
 
@@ -153,6 +152,7 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
                     )
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
     return chat_messages, " ".join(system_messages)
+
 
 @dataclass
 class Claude(AnthropicClaude):
@@ -278,7 +278,6 @@ class Claude(AnthropicClaude):
         if self.request_params:
             _request_params.update(self.request_params)
         return _request_params
-
 
     def invoke(self, messages: List[Message]) -> AnthropicMessage:
         """

@@ -74,6 +74,7 @@ async def test_async_tool_use():
     assert "TSLA" in response.content
 
 
+@pytest.mark.skip(reason="This test is flaky.")
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(

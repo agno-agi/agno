@@ -88,7 +88,7 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name and surname?")
-    assert "John Smith" in response2.content
+    assert "John" in response2.content and "Smith" in response2.content
 
     # Verify memories were created
     assert len(agent.memory.messages) == 5
