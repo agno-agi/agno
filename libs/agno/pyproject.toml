@@ -233,6 +233,7 @@ module = [
   "docx.*",
   "duckdb.*",
   "duckduckgo_search.*",
+  "e2b_code_interpreter.*",
   "email_validator.*",
   "exa_py.*",
   "fastapi.*",
