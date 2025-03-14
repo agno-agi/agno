@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.media import File, Image
 from agno.models.base import Model
-from agno.models.message import Message
+from agno.models.message import Citations, DocumentCitation, Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
@@ -112,6 +112,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
                 "type": "url",
                 "url": file.url,
             },
+            "citations": {"enabled": True},
         }
     # Case 2: Document is a local file path
     elif file.filepath is not None:
@@ -139,6 +140,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
                     "media_type": media_type,
                     "data": file_data,
                 },
+                "citations": {"enabled": True},
             }
         else:
             logger.error(f"Document file not found: {file}")
@@ -148,6 +150,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         return {
             "type": "document",
             "source": {"type": "base64", "media_type": "application/pdf", "data": file.content},
+            "citations": {"enabled": True},
         }
     return None
 
@@ -576,7 +579,17 @@ class Claude(Model):
         if response.content:
             for block in response.content:
                 if block.type == "text":
-                    model_response.content = block.text
+                    if model_response.content is None:
+                        model_response.content = block.text
+                    else:
+                        model_response.content += block.text
+
+                    if block.citations:
+                        model_response.citations = Citations(raw=block.citations, documents=[])
+                        for citation in block.citations:
+                            model_response.citations.documents.append(  # type: ignore
+                                DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
+                            )
                 elif block.type == "thinking":
                     model_response.thinking = block.thinking
                     model_response.provider_data = {
@@ -634,6 +647,12 @@ class Claude(Model):
             # Handle text content
             if response.delta.type == "text_delta":
                 model_response.content = response.delta.text
+            elif response.delta.type == "citation_delta":
+                citation = response.delta.citation
+                model_response.citations = Citations(raw=citation)
+                model_response.citations.documents.append(  # type: ignore
+                    DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
+                )
             # Handle thinking content
             elif response.delta.type == "thinking_delta":
                 model_response.thinking = response.delta.thinking

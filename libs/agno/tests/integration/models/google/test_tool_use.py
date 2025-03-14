@@ -297,7 +297,7 @@ def test_grounding():
     assert response.tools == []
     assert response.citations is not None
     assert len(response.citations.urls) > 0
-    assert response.citations.metadata is not None
+    assert response.citations.raw is not None
 
 
 def test_grounding_stream():

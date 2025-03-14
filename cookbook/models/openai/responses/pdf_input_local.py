@@ -2,7 +2,7 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import File
-from agno.models.anthropic import Claude
+from agno.models.openai.responses import OpenAIResponses
 from agno.utils.media import download_file
 
 pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")
@@ -13,18 +13,14 @@ download_file(
 )
 
 agent = Agent(
-    model=Claude(id="claude-3-5-sonnet-20241022"),
+    model=OpenAIResponses(id="gpt-4o-mini"),
+    tools=[{"type": "file_search"}],
     markdown=True,
+    add_history_to_messages=True,
 )
 
 agent.print_response(
     "Summarize the contents of the attached file.",
-    files=[
-        File(
-            filepath=pdf_path,
-        ),
-    ],
+    files=[File(filepath=pdf_path)],
 )
-
-print("Citations:")
-print(agent.run_response.citations)
+agent.print_response("Suggest me a recipe from the attached file.")

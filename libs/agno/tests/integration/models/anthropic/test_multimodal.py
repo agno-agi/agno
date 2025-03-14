@@ -15,9 +15,10 @@ def test_image_input():
     assert "bridge" in response.content.lower()
 
 
-def test_file_input():
+def test_file_upload():
     agent = Agent(
-        model=Claude(id="claude-3-5-sonnet-20241022"), markdown=True, telemetry=False, monitoring=False
+        model=Claude(id="claude-3-5-sonnet-20241022"),
+        markdown=True,
     )
 
     response = agent.run(
@@ -27,3 +28,4 @@ def test_file_input():
         ],
     )
     assert response.content is not None
+    assert response.citations is not None

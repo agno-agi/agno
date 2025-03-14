@@ -501,6 +501,7 @@ jobs:
     env:
       IBM_WATSONX_PROJECT_ID: ${{ secrets.IBM_WATSONX_PROJECT_ID }}
       IBM_WATSONX_API_KEY: ${{ secrets.IBM_WATSONX_API_KEY }}
+      IBM_WATSONX_URL: ${{ secrets.IBM_WATSONX_URL }}
       EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
@@ -521,7 +522,7 @@ jobs:
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/models/ibm/watsonx
-  
+
   test-deepinfra:
     runs-on: ubuntu-latest
     strategy:
@@ -550,9 +551,9 @@ jobs:
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/models/deepinfra
-  
 
-          
+
+
   # Run remaining integration tests
   test-remaining:
     runs-on: ubuntu-latest
