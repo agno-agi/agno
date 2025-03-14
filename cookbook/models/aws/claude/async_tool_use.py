@@ -5,7 +5,7 @@ Async example using Claude with tool calls.
 import asyncio
 
 from agno.agent import Agent
-from agno.models.aws import Claude
+from agno.models.aws.claude import Claude
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(

@@ -2,7 +2,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.azure import AzureOpenAI
+from agno.models.azure.openai_chat import AzureOpenAI
 from agno.storage.sqlite import SqliteStorage
 
 

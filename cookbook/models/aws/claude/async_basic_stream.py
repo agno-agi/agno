@@ -2,7 +2,7 @@ import asyncio
 from typing import Iterator  # noqa
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.aws import Claude
+from agno.models.aws.claude import Claude
 
 agent = Agent(
     model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0"), markdown=True

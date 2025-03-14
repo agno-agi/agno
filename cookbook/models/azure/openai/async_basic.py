@@ -1,7 +1,7 @@
 import asyncio
 
 from agno.agent import Agent
-from agno.models.azure import AzureOpenAI
+from agno.models.azure.openai_chat import AzureOpenAI
 
 agent = Agent(
     model=AzureOpenAI(id="gpt-4o-mini"),

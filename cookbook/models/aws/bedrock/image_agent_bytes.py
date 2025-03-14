@@ -2,7 +2,7 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import Image
-from agno.models.aws import AwsBedrock
+from agno.models.aws.bedrock import AwsBedrock
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils.media import download_image
 

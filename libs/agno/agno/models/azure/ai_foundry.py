@@ -4,7 +4,7 @@ from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Union
 
 import httpx
-from anthropic import BaseModel
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model

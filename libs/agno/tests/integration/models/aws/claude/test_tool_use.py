@@ -3,7 +3,7 @@ from typing import Optional
 import pytest
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.aws import Claude
+from agno.models.aws.claude import Claude
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools

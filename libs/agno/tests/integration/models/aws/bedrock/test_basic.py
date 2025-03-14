@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.aws import AwsBedrock
+from agno.models.aws.bedrock import AwsBedrock
 from agno.storage.sqlite import SqliteStorage
 
 

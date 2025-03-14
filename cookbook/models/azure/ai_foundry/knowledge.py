@@ -3,7 +3,7 @@
 from agno.agent import Agent
 from agno.embedder.azure_openai import AzureOpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.models.azure import AzureAIFoundry
+from agno.models.azure.ai_foundry import AzureAIFoundry
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

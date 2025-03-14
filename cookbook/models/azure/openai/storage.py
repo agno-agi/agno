@@ -1,7 +1,7 @@
 """Run `pip install duckduckgo-search sqlalchemy anthropic` to install dependencies."""
 
 from agno.agent import Agent
-from agno.models.azure import AzureOpenAI
+from agno.models.azure.openai_chat import AzureOpenAI
 from agno.storage.postgres import PostgresStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
