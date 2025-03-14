@@ -52,7 +52,7 @@ class E2BTools(Toolkit):
         try:
             self.sandbox = Sandbox(api_key=self.api_key, timeout=timeout, **self.sandbox_options)
         except Exception as e:
-            print(f"Warning: Could not create sandbox: {e}")
+            logger.error(f"Warning: Could not create sandbox: {e}")
             raise e
 
         # Last execution result for reference
