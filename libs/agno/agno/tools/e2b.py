@@ -5,6 +5,7 @@ from os import getenv, path
 from typing import Any, Callable, Dict, Optional
 
 from agno.tools import Toolkit
+from agno.utils.log import logger
 
 try:
     from e2b_code_interpreter import Sandbox
@@ -140,7 +141,7 @@ class E2BTools(Toolkit):
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error executing code: {str(e)}"})
 
-    # --- File Upload/Download Functions ---
+    #  File Upload/Download Functions
 
     def upload_file(self, file_path: str, sandbox_path: Optional[str] = None) -> str:
         """
