@@ -889,7 +889,7 @@ class Agent:
                     )
 
                     # If the model natively supports structured outputs, the content is already in the structured format
-                    if self.structured_outputs and self.model.supports_structured_outputs:
+                    if self.structured_outputs and self.model.supports_structured_outputs: # type: ignore
                         # Do a final check confirming the content is in the response_model format
                         if isinstance(run_response.content, self.response_model):
                             return run_response
@@ -1931,7 +1931,7 @@ class Agent:
                                 response_model_properties["$defs"][def_name] = {
                                     "type": "string",
                                     "enum": def_properties["enum"],
-                                    "description": def_properties.get("description", "")
+                                    "description": def_properties.get("description", ""),
                                 }
                             else:
                                 # This is a regular object definition
@@ -2008,7 +2008,9 @@ class Agent:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
 
             # Add the JSON output prompt if response_model is provided and structured_outputs is False
-            if self.response_model is not None and not (self.model.supports_structured_outputs and self.structured_outputs):
+            if self.response_model is not None and not (
+                self.model.supports_structured_outputs and self.structured_outputs  # type: ignore
+            ):
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
             return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
