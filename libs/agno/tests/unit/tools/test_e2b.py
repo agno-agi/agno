@@ -1,11 +1,12 @@
 """Unit tests for E2BTools class."""
 
-from unittest.mock import Mock, patch
 import os
+from unittest.mock import Mock, patch
+
 import pytest
+from e2b_code_interpreter import Sandbox
 
-from agno.tools.e2b import E2BTools  # type: ignore
-
+from agno.tools.e2b import E2BTools
 
 TEST_API_KEY = os.environ.get("E2B_API_KEY", "test_api_key")
 
@@ -16,7 +17,7 @@ def mock_e2b_tools():
     # First, create a mock for the Sandbox class
     with patch("agno.tools.e2b.Sandbox") as mock_sandbox_class:
         # Set up our mock sandbox instance
-        mock_sandbox = Mock()
+        mock_sandbox = Mock(spec=Sandbox)
         mock_sandbox_class.return_value = mock_sandbox
 
         # Create files/process structure
