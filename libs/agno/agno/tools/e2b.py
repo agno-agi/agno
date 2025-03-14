@@ -58,7 +58,7 @@ class E2BTools(Toolkit):
 
         # Last execution result for reference
         self.last_execution = None
-        self.downloaded_files = {}
+        self.downloaded_files: Dict[int, str] = {}
 
         # Register the functions based on the parameters
         if run_code:
@@ -313,10 +313,10 @@ class E2BTools(Toolkit):
                 kwargs["on_stderr"] = on_stderr
 
             # Set background execution if requested
-            kwargs["background"] = background
+            process_kwargs = {"background": background}  # Using a separate dict for process arguments
 
             # Execute the command
-            result = self.sandbox.commands.run(command, **kwargs)
+            result = self.sandbox.commands.run(command, **kwargs, **process_kwargs)
 
             # For background execution, return the command object
             if background:
@@ -580,7 +580,7 @@ class E2BTools(Toolkit):
             else:
                 self.sandbox.timeout = timeout
 
-            return timeout
+            return str(timeout)  # Convert int to str before returning
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error updating sandbox timeout: {str(e)}"})
 

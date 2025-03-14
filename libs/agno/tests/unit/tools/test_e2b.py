@@ -41,7 +41,7 @@ def mock_e2b_tools():
             tools.write_file_content = Mock(return_value="/sandbox/file.txt")
             tools.get_public_url = Mock(return_value="http://example.com")
             tools.run_server = Mock(return_value="http://example.com")
-            tools.set_sandbox_timeout = Mock(return_value=600)
+            tools.set_sandbox_timeout = Mock(return_value="600")
             tools.get_sandbox_status = Mock(return_value="sandbox-id-12345")
             tools.shutdown_sandbox = Mock(
                 return_value='{"status": "success", "message": "Sandbox shut down successfully"}'
@@ -240,7 +240,7 @@ def test_set_sandbox_timeout(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.set_sandbox_timeout.assert_called_once_with(600)
-    assert result == 600
+    assert result == "600"
 
 
 def test_get_sandbox_status(mock_e2b_tools):
