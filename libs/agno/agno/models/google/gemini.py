@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
-from agno.models.message import Citations, CitationUrl, Message, MessageMetrics
+from agno.models.message import Citations, UrlCitation, Message, MessageMetrics
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
@@ -768,7 +768,7 @@ class Gemini(Model):
                 )
 
                 # Create citation objects from filtered pairs
-                citations.urls = [CitationUrl(url=url, title=title) for url, title in citation_pairs]
+                citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
 
                 model_response.citations = citations
 
@@ -826,7 +826,7 @@ class Gemini(Model):
             ]
 
             # Create citation objects from filtered pairs
-            citations.urls = [CitationUrl(url=url, title=title) for url, title in citation_pairs]
+            citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
 
             model_response.citations = citations
 

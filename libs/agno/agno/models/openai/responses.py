@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import File
 from agno.models.base import MessageData, Model
-from agno.models.message import Citations, CitationUrl, Message
+from agno.models.message import Citations, UrlCitation, Message
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 from agno.utils.openai_responses import images_to_message
@@ -57,6 +57,9 @@ class OpenAIResponses(Model):
     default_query: Optional[Dict[str, str]] = None
     http_client: Optional[httpx.Client] = None
     client_params: Optional[Dict[str, Any]] = None
+
+    # Parameters affecting built-in tools
+    vector_store_name: Optional[str] = "knowledge_base"
 
     # OpenAI clients
     client: Optional[OpenAI] = None
@@ -234,7 +237,7 @@ class OpenAIResponses(Model):
 
     def _create_vector_store(self, file_ids: List[str]) -> str:
         """Create a vector store for the files."""
-        vector_store = self.get_client().vector_stores.create(name="knowledge_base")
+        vector_store = self.get_client().vector_stores.create(name=self.vector_store_name)
         for file_id in file_ids:
             self.get_client().vector_stores.files.create(vector_store_id=vector_store.id, file_id=file_id)
         while True:
@@ -617,7 +620,7 @@ class OpenAIResponses(Model):
                             if annotation.type == "url_citation":
                                 if citations.urls is None:
                                     citations.urls = []
-                                citations.urls.append(CitationUrl(url=annotation.url, title=annotation.title))
+                                citations.urls.append(UrlCitation(url=annotation.url, title=annotation.title))
                         if citations.urls or citations.documents:
                             model_response.citations = citations
             elif output.type == "function_call":
@@ -683,7 +686,7 @@ class OpenAIResponses(Model):
                 if stream_data.response_citations.urls is None:
                     stream_data.response_citations.urls = []
                 stream_data.response_citations.urls.append(
-                    CitationUrl(url=stream_event.annotation.url, title=stream_event.annotation.title)
+                    UrlCitation(url=stream_event.annotation.url, title=stream_event.annotation.title)
                 )
 
             model_response.citations = stream_data.response_citations
