@@ -21,20 +21,32 @@ class MessageReferences(BaseModel):
     time: Optional[float] = None
 
 
-class CitationUrl(BaseModel):
+class UrlCitation(BaseModel):
     """URL of the citation"""
 
     url: Optional[str] = None
     title: Optional[str] = None
 
 
+class DocumentCitation(BaseModel):
+    """Document of the citation"""
+
+    document_title: Optional[str] = None
+    cited_text: Optional[str] = None
+    file_name: Optional[str] = None
+
+
 class Citations(BaseModel):
     """Citations for the message"""
 
+    # Raw citations from the model
+    raw: Optional[Any] = None
+
     # URLs of the citations.
-    urls: Optional[List[CitationUrl]] = None
-    # Metadata of the citations.
-    metadata: Optional[Any] = None
+    urls: Optional[List[UrlCitation]] = None
+
+    # Document Citations
+    documents: Optional[List[DocumentCitation]] = None
 
 
 @dataclass

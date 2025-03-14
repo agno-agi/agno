@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
-from agno.models.message import Citations, CitationUrl, Message, MessageMetrics
+from agno.models.message import Citations, Message, MessageMetrics, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
@@ -753,6 +753,7 @@ class Gemini(Model):
             if response.candidates and response.candidates[0].grounding_metadata is not None:
                 citations = Citations()
                 grounding_metadata = response.candidates[0].grounding_metadata.model_dump()
+                citations.raw = grounding_metadata
 
                 # Extract url and title
                 chunks = grounding_metadata.pop("grounding_chunks", [])
@@ -767,8 +768,7 @@ class Gemini(Model):
                 )
 
                 # Create citation objects from filtered pairs
-                citations.urls = [CitationUrl(url=url, title=title) for url, title in citation_pairs]
-                citations.metadata = grounding_metadata
+                citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
 
                 model_response.citations = citations
 
@@ -815,6 +815,7 @@ class Gemini(Model):
         if response_delta.candidates and response_delta.candidates[0].grounding_metadata is not None:
             citations = Citations()
             grounding_metadata = response_delta.candidates[0].grounding_metadata.model_dump()
+            citations.raw = grounding_metadata
 
             # Extract url and title
             chunks = grounding_metadata.pop("grounding_chunks", [])
@@ -825,8 +826,7 @@ class Gemini(Model):
             ]
 
             # Create citation objects from filtered pairs
-            citations.urls = [CitationUrl(url=url, title=title) for url, title in citation_pairs]
-            citations.metadata = grounding_metadata
+            citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
 
             model_response.citations = citations
 

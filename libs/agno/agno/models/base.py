@@ -884,7 +884,7 @@ class Model(ABC):
 
     async def _arun_function_call(
         self, function_call: FunctionCall
-    ) -> tuple[Union[bool, AgentRunException], Timer, FunctionCall]:
+    ) -> Tuple[Union[bool, AgentRunException], Timer, FunctionCall]:
         """Run a single function call and return its success status, timer, and the FunctionCall object."""
         from inspect import iscoroutinefunction
 
