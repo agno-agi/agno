@@ -107,6 +107,7 @@ class Cohere(Model):
     presence_penalty: Optional[float] = None
     logprobs: Optional[bool] = None
     request_params: Optional[Dict[str, Any]] = None
+    strict_tools: bool = False
     # Add chat history to the cohere messages instead of using the conversation_id
     add_chat_history: bool = False
     # -*- Client parameters
@@ -184,7 +185,7 @@ class Cohere(Model):
                     # Cohere requires at least one required parameter, so if unset, set it to all parameters
                     if len(tool["function"]["parameters"].get("required", [])) == 0:
                         tool["function"]["parameters"]["required"] = params
-            _request_params["strict_tools"] = True
+            _request_params["strict_tools"] = self.strict_tools
 
         if self.request_params:
             _request_params.update(self.request_params)
