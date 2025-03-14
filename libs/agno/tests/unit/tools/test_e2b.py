@@ -1,10 +1,13 @@
 """Unit tests for E2BTools class."""
 
 from unittest.mock import Mock, patch
-
+import os
 import pytest
 
 from agno.tools.e2b import E2BTools
+
+
+TEST_API_KEY = os.environ.get("E2B_API_KEY", "test_api_key")
 
 
 @pytest.fixture
@@ -23,7 +26,7 @@ def mock_e2b_tools():
         mock_sandbox.close = Mock()
 
         # Create the E2BTools instance with our patched Sandbox
-        with patch.dict("os.environ", {"E2B_API_KEY": "test_key"}):
+        with patch.dict("os.environ", {"E2B_API_KEY": TEST_API_KEY}):
             tools = E2BTools()
 
             # Mock the methods we'll test with return values matching actual implementation

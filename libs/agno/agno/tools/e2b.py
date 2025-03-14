@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, Optional
 from agno.tools import Toolkit
 
 try:
-    from e2b_code_interpreter import Sandbox
+    from e2b_code_interpreter import Sandbox  # type: ignore
 except ImportError:
     raise ImportError("`e2b_code_interpreter` not installed. Please install using `pip install e2b_code_interpreter`")
 
