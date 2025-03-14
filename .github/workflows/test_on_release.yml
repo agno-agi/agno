@@ -3,7 +3,7 @@ name: Main Validation
 on:
   push:
     branches:
-      - '*'  # Run on release
+      - '*release*'  # Run on release
 
 jobs:
   style-check:
