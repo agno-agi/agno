@@ -74,7 +74,7 @@ async def test_async_basic_stream():
 
 def test_with_memory():
     agent = Agent(
-        model=Cohere(id="command-light"),
+        model=Cohere(id="command-r-08-2024"),
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,

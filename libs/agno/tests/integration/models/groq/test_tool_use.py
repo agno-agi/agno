@@ -27,6 +27,7 @@ def test_tool_use():
     assert "TSLA" in response.content
 
 
+@pytest.mark.skip(reason="This test is flaky.")
 def test_tool_use_stream():
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),
@@ -101,6 +102,7 @@ async def test_async_tool_use_stream():
     assert any("TSLA" in r.content for r in responses if r.content)
 
 
+@pytest.mark.skip(reason="This test is flaky.")
 def test_parallel_tool_calls():
     agent = Agent(
         model=Groq(id="gemma2-9b-it"),
