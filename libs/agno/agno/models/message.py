@@ -27,12 +27,14 @@ class CitationUrl(BaseModel):
     url: Optional[str] = None
     title: Optional[str] = None
 
+
 class CitationDocument(BaseModel):
     """Document of the citation"""
 
     document_title: Optional[str] = None
     cited_text: Optional[str] = None
     file_name: Optional[str] = None
+
 
 class Citations(BaseModel):
     """Citations for the message"""
@@ -45,8 +47,6 @@ class Citations(BaseModel):
 
     # Document Citations
     documents: Optional[List[CitationDocument]] = None
-
-    
 
 
 @dataclass

@@ -1,7 +1,6 @@
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from idlelib.rpc import response_queue
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -588,7 +587,9 @@ class Claude(Model):
                     if block.citations:
                         model_response.citations = Citations(raw=block.citations, documents=[])
                         for citation in block.citations:
-                            model_response.citations.documents.append(CitationDocument(document_title=citation.document_title, cited_text=citation.cited_text))
+                            model_response.citations.documents.append(  # type: ignore
+                                CitationDocument(document_title=citation.document_title, cited_text=citation.cited_text)
+                            )
                 elif block.type == "thinking":
                     model_response.thinking = block.thinking
                     model_response.provider_data = {
@@ -650,7 +651,9 @@ class Claude(Model):
                 print("HERE", response.delta)
                 citation = response.delta.citation
                 model_response.citations = Citations(raw=citation)
-                model_response.citations.documents.append(CitationDocument(document_title=citation.document_title, cited_text=citation.cited_text))
+                model_response.citations.documents.append(
+                    CitationDocument(document_title=citation.document_title, cited_text=citation.cited_text)
+                )
             # Handle thinking content
             elif response.delta.type == "thinking_delta":
                 model_response.thinking = response.delta.thinking

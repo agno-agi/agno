@@ -1,5 +1,5 @@
 from agno.agent.agent import Agent
-from agno.media import Image, File
+from agno.media import File, Image
 from agno.models.anthropic import Claude
 
 
@@ -13,6 +13,7 @@ def test_image_input():
 
     assert "golden" in response.content.lower()
     assert "bridge" in response.content.lower()
+
 
 def test_file_upload():
     agent = Agent(

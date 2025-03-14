@@ -89,31 +89,31 @@ jobs:
 #          python -m pytest --cov=agno_aws --cov-report=json:coverage-aws.json ./libs/infra/agno_aws/tests
 #          echo "AWS_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-aws.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
      # ![badge](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/dirkbrnd/9ba6033402f8be8ae2a63323a114211a/raw/agno-coverage.json)
-      - name: Create Coverage Badge
-        uses: schneegans/dynamic-badges-action@v1.7.0
-        with:
-          auth: ${{ secrets.GIST_SECRET }}
-          gistID: 9ba6033402f8be8ae2a63323a114211a
-          filename: agno-coverage.json
-          label: Coverage
-          message: ${{ env.AGNO_COVERAGE }}%
-          color: |
-            [
-              {
-                "value": 100,
-                "color": "brightgreen"
-              },
-              {
-                "value": 80,
-                "color": "green"
-              },
-              {
-                "value": 60,
-                "color": "yellow"
-              },
-              {
-                "value": 0,
-                "color": "red"
-              }
-            ]
+      # - name: Create Coverage Badge
+      #   uses: schneegans/dynamic-badges-action@v1.7.0
+      #   with:
+      #     auth: ${{ secrets.GIST_SECRET }}
+      #     gistID: 9ba6033402f8be8ae2a63323a114211a
+      #     filename: agno-coverage.json
+      #     label: Coverage
+      #     message: ${{ env.AGNO_COVERAGE }}%
+      #     color: |
+      #       [
+      #         {
+      #           "value": 100,
+      #           "color": "brightgreen"
+      #         },
+      #         {
+      #           "value": 80,
+      #           "color": "green"
+      #         },
+      #         {
+      #           "value": 60,
+      #           "color": "yellow"
+      #         },
+      #         {
+      #           "value": 0,
+      #           "color": "red"
+      #         }
+      #       ]
             

@@ -1,5 +1,5 @@
 from agno.agent.agent import Agent
-from agno.media import Image, File
+from agno.media import File, Image
 from agno.models.openai.responses import OpenAIResponses
 from agno.tools.duckduckgo import DuckDuckGoTools
 

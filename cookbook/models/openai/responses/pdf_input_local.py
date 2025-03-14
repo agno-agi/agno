@@ -24,4 +24,3 @@ agent.print_response(
     files=[File(filepath=pdf_path)],
 )
 agent.print_response("Suggest me a recipe from the attached file.")
-
