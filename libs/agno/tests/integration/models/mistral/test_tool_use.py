@@ -201,6 +201,36 @@ def test_tool_call_custom_tool_optional_parameters():
     assert "70" in response.content
 
 
+def test_tool_call_custom_tool_untyped_parameters():
+    def get_the_weather(city):
+        """
+        Get the weather in a city
+
+        Args:
+            city: The city to get the weather for
+        """
+        if city is None:
+            return "It is currently 70 degrees and cloudy in Tokyo"
+        else:
+            return f"It is currently 70 degrees and cloudy in {city}"
+
+    agent = Agent(
+        model=MistralChat(id="ministral-8b-latest"),
+        tools=[get_the_weather],
+        show_tool_calls=True,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run("What is the weather in Paris?")
+
+    # Verify tool usage
+    assert any(msg.tool_calls for msg in response.messages)
+    assert response.content is not None
+    assert "70" in response.content
+
+
 def test_tool_call_list_parameters():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
