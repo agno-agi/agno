@@ -4,9 +4,15 @@ import os
 from unittest.mock import Mock, patch
 
 import pytest
-from e2b_code_interpreter import Sandbox  # type: ignore
 
-from agno.tools.e2b import E2BTools
+# Mock the e2b_code_interpreter module
+with patch.dict("sys.modules", {"e2b_code_interpreter": Mock()}):
+    # Create a mock Sandbox class
+    sys_modules = __import__("sys").modules
+    sys_modules["e2b_code_interpreter"].Sandbox = Mock
+
+    # Now import the module that uses e2b_code_interpreter
+    from agno.tools.e2b import E2BTools
 
 TEST_API_KEY = os.environ.get("E2B_API_KEY", "test_api_key")
 
@@ -17,14 +23,14 @@ def mock_e2b_tools():
     # First, create a mock for the Sandbox class
     with patch("agno.tools.e2b.Sandbox") as mock_sandbox_class:
         # Set up our mock sandbox instance
-        mock_sandbox = Mock(spec=Sandbox)
+        mock_sandbox = Mock()
         mock_sandbox_class.return_value = mock_sandbox
 
         # Create files/process structure
-        mock_sandbox.files = Mock(spec=Sandbox.files)
-        mock_sandbox.commands = Mock(spec=Sandbox.commands)
-        mock_sandbox.get_host = Mock(spec=Sandbox.get_host)
-        mock_sandbox.kill = Mock(spec=Sandbox.kill)
+        mock_sandbox.files = Mock()
+        mock_sandbox.commands = Mock()
+        mock_sandbox.get_host = Mock()
+        mock_sandbox.kill = Mock()
 
         # Create the E2BTools instance with our patched Sandbox
         with patch.dict("os.environ", {"E2B_API_KEY": TEST_API_KEY}):
