@@ -17,36 +17,42 @@ def mock_e2b_tools():
         mock_sandbox_class.return_value = mock_sandbox
 
         # Create files/process structure
-        mock_sandbox.filesystem = Mock()
-        mock_sandbox.process = Mock()
-        mock_sandbox.url = Mock()
-        mock_sandbox.set_timeout = Mock()
-        mock_sandbox.metadata = Mock()
+        mock_sandbox.files = Mock()
+        mock_sandbox.commands = Mock()
+        mock_sandbox.get_host = Mock()
         mock_sandbox.close = Mock()
 
         # Create the E2BTools instance with our patched Sandbox
         with patch.dict("os.environ", {"E2B_API_KEY": "test_key"}):
             tools = E2BTools()
 
-            # Mock the methods we'll test
-            tools.run_python_code = Mock(return_value="Hello, World!")
-            tools.upload_file = Mock(return_value="File uploaded to /sandbox/file.txt")
-            tools.download_png_result = Mock(return_value="PNG downloaded to /local/output.png")
-            tools.download_chart_data = Mock(return_value="Chart data downloaded to /local/output.json")
-            tools.download_file_from_sandbox = Mock(return_value="File downloaded to /local/output.txt")
-            tools.list_files = Mock(return_value="file1.txt\ndir1/")
+            # Mock the methods we'll test with return values matching actual implementation
+            tools.run_python_code = Mock(return_value='["Logs:\\nHello, World!"]')
+            tools.upload_file = Mock(return_value="/sandbox/file.txt")
+            tools.download_png_result = Mock(return_value="/local/output.png")
+            tools.download_chart_data = Mock(
+                return_value="Interactive bar chart data saved to /local/output.json\nTitle: Sample Chart\nX-axis: Categories\nY-axis: Values\n"
+            )
+            tools.download_file_from_sandbox = Mock(return_value="/local/output.txt")
+            tools.list_files = Mock(
+                return_value="Contents of /:\n- file1.txt (File, 100 bytes)\n- dir1 (Directory, Unknown size)\n"
+            )
             tools.read_file_content = Mock(return_value="file content")
-            tools.write_file_content = Mock(return_value="File written successfully")
-            tools.get_public_url = Mock(return_value="https://example.com")
-            tools.run_server = Mock(return_value="Server running at https://example.com")
-            tools.set_sandbox_timeout = Mock(return_value="Timeout set to 600 seconds")
-            tools.get_sandbox_status = Mock(return_value="Status: running")
-            tools.shutdown_sandbox = Mock(return_value="Sandbox shut down")
-            tools.run_command = Mock(return_value="command output")
-            tools.stream_command = Mock(return_value="command output with streaming")
+            tools.write_file_content = Mock(return_value="/sandbox/file.txt")
+            tools.get_public_url = Mock(return_value="http://example.com")
+            tools.run_server = Mock(return_value="http://example.com")
+            tools.set_sandbox_timeout = Mock(return_value=600)
+            tools.get_sandbox_status = Mock(return_value="sandbox-id-12345")
+            tools.shutdown_sandbox = Mock(
+                return_value='{"status": "success", "message": "Sandbox shut down successfully"}'
+            )
+            tools.run_command = Mock(return_value='["STDOUT:\\ncommand output"]')
+            tools.stream_command = Mock(return_value='["STDOUT: command output", "STDERR: some warning"]')
             tools.run_background_command = Mock(return_value=Mock())
-            tools.kill_background_command = Mock(return_value="Command terminated")
-            tools.watch_directory = Mock(return_value="Changes detected: file1.txt, file2.txt")
+            tools.kill_background_command = Mock(return_value="Background command terminated successfully.")
+            tools.watch_directory = Mock(
+                return_value='{"status": "success", "message": "Changes detected in /dir over 1 seconds:\\nmodified - /dir/file1.txt\\ncreated - /dir/file2.txt"}'
+            )
 
             return tools
 
@@ -108,7 +114,7 @@ def test_run_python_code(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.run_python_code.assert_called_once_with("print('Hello, World!')")
-    assert result == "Hello, World!"
+    assert result == '["Logs:\\nHello, World!"]'
 
 
 def test_upload_file(mock_e2b_tools):
@@ -118,7 +124,7 @@ def test_upload_file(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.upload_file.assert_called_once_with("/local/file.txt")
-    assert result == "File uploaded to /sandbox/file.txt"
+    assert result == "/sandbox/file.txt"
 
 
 def test_download_png_result(mock_e2b_tools):
@@ -128,7 +134,7 @@ def test_download_png_result(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.download_png_result.assert_called_once_with(0, "/local/output.png")
-    assert result == "PNG downloaded to /local/output.png"
+    assert result == "/local/output.png"
 
 
 def test_download_chart_data(mock_e2b_tools):
@@ -138,7 +144,8 @@ def test_download_chart_data(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.download_chart_data.assert_called_once_with(0, "/local/output.json")
-    assert result == "Chart data downloaded to /local/output.json"
+    assert "Interactive bar chart data saved to" in result
+    assert "Title: Sample Chart" in result
 
 
 def test_download_file_from_sandbox(mock_e2b_tools):
@@ -148,7 +155,7 @@ def test_download_file_from_sandbox(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.download_file_from_sandbox.assert_called_once_with("/sandbox/file.txt", "/local/output.txt")
-    assert result == "File downloaded to /local/output.txt"
+    assert result == "/local/output.txt"
 
 
 def test_run_command(mock_e2b_tools):
@@ -158,7 +165,7 @@ def test_run_command(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.run_command.assert_called_once_with("ls -la")
-    assert result == "command output"
+    assert result == '["STDOUT:\\ncommand output"]'
 
 
 def test_stream_command(mock_e2b_tools):
@@ -168,7 +175,8 @@ def test_stream_command(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.stream_command.assert_called_once_with("echo hello")
-    assert result == "command output with streaming"
+    assert "STDOUT: command output" in result
+    assert "STDERR: some warning" in result
 
 
 def test_list_files(mock_e2b_tools):
@@ -178,7 +186,8 @@ def test_list_files(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.list_files.assert_called_once_with("/")
-    assert result == "file1.txt\ndir1/"
+    assert "Contents of /:" in result
+    assert "file1.txt (File, 100 bytes)" in result
 
 
 def test_read_file_content(mock_e2b_tools):
@@ -198,7 +207,7 @@ def test_write_file_content(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.write_file_content.assert_called_once_with("/file.txt", "content")
-    assert result == "File written successfully"
+    assert result == "/sandbox/file.txt"
 
 
 def test_get_public_url(mock_e2b_tools):
@@ -208,7 +217,7 @@ def test_get_public_url(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.get_public_url.assert_called_once_with(8080)
-    assert result == "https://example.com"
+    assert result == "http://example.com"
 
 
 def test_run_server(mock_e2b_tools):
@@ -218,7 +227,7 @@ def test_run_server(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.run_server.assert_called_once_with("python -m http.server", 8080)
-    assert result == "Server running at https://example.com"
+    assert result == "http://example.com"
 
 
 def test_set_sandbox_timeout(mock_e2b_tools):
@@ -228,7 +237,7 @@ def test_set_sandbox_timeout(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.set_sandbox_timeout.assert_called_once_with(600)
-    assert result == "Timeout set to 600 seconds"
+    assert result == 600
 
 
 def test_get_sandbox_status(mock_e2b_tools):
@@ -238,7 +247,7 @@ def test_get_sandbox_status(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.get_sandbox_status.assert_called_once()
-    assert result == "Status: running"
+    assert result == "sandbox-id-12345"
 
 
 def test_shutdown_sandbox(mock_e2b_tools):
@@ -248,7 +257,8 @@ def test_shutdown_sandbox(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.shutdown_sandbox.assert_called_once()
-    assert result == "Sandbox shut down"
+    assert '"status": "success"' in result
+    assert '"message": "Sandbox shut down successfully"' in result
 
 
 def test_run_background_command(mock_e2b_tools):
@@ -271,7 +281,7 @@ def test_kill_background_command(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.kill_background_command.assert_called_once_with(process_mock)
-    assert result == "Command terminated"
+    assert result == "Background command terminated successfully."
 
 
 def test_watch_directory(mock_e2b_tools):
@@ -281,7 +291,8 @@ def test_watch_directory(mock_e2b_tools):
 
     # Verify
     mock_e2b_tools.watch_directory.assert_called_once_with("/dir", 1)
-    assert result == "Changes detected: file1.txt, file2.txt"
+    assert '"status": "success"' in result
+    assert '"message": "Changes detected in /dir' in result
 
 
 def test_dunder_del():

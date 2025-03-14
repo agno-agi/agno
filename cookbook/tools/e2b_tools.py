@@ -139,9 +139,11 @@ agent = Agent(
 # agent.print_response(" use dataset sample_data.csv and create a matplotlib visualization of total sales by region and provide chart image")
 
 # agent.print_response(" run a server and Write a simple fast api web server that displays 'Hello from E2B Sandbox!' and run it and provide the url of api swagger docs")
-# agent.print_response(" run server and Create and run a Python script that featches latest news using duckduckgo search api")
+agent.print_response(
+    " run server and Create and run a Python script that fetch top 5 latest news from hackernews using hackernews api"
+)
 # agent.print_response("Extend the sandbox timeout to 20 minutes")
-agent.print_response("shutdown all sandboxes")
+# agent.print_response("shutdown all sandboxes")
 # app = Playground(agents=[agent]).get_app()
 
 # if __name__ == "__main__":
