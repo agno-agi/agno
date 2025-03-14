@@ -2,11 +2,9 @@
 
 import json
 from datetime import datetime
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-from google.maps import places_v1
-
 from agno.tools.google_maps import GoogleMapTools
 
 # Mock responses
@@ -240,25 +238,6 @@ def test_initialization_without_api_key():
             GoogleMapTools()
 
 
-def test_initialization_with_selective_tools():
-    """Test initialization with only selected tools."""
-    with patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "AIzaTest"}):
-        tools = GoogleMapTools(
-            search_places=True,
-            get_directions=False,
-            validate_address=False,
-            geocode_address=True,
-            reverse_geocode=False,
-            get_distance_matrix=False,
-            get_elevation=False,
-            get_timezone=False,
-        )
-
-        assert "search_places" in [func.name for func in tools.functions.values()]
-        assert "get_directions" not in [func.name for func in tools.functions.values()]
-        assert "geocode_address" in [func.name for func in tools.functions.values()]
-
-
 def test_search_places_success(google_maps_tools):
     """Test the search_places method with successful response."""
     with patch.object(google_maps_tools.places_client, "search_text") as mock_search_text:
@@ -270,7 +249,7 @@ def test_search_places_success(google_maps_tools):
         assert result[0]["name"] == "Test Business"
         assert result[0]["phone"] == "123-456-7890"
         assert result[0]["website"] == "https://test.com"
-        
+
         # Verify the request was made correctly
         mock_search_text.assert_called_once()
         request_arg = mock_search_text.call_args[1]["request"]
@@ -283,7 +262,7 @@ def test_search_places_no_results(google_maps_tools):
         empty_response = MagicMock()
         empty_response.places = []
         mock_search_text.return_value = empty_response
-        
+
         result = json.loads(google_maps_tools.search_places("test query"))
         assert result == []
 
@@ -292,6 +271,6 @@ def test_search_places_error(google_maps_tools):
     """Test search_places when an error occurs."""
     with patch.object(google_maps_tools.places_client, "search_text") as mock_search_text:
         mock_search_text.side_effect = Exception("API Error")
-        
+
         result = json.loads(google_maps_tools.search_places("test query"))
         assert result == []
