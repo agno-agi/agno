@@ -12,9 +12,18 @@ with patch.dict("sys.modules", {"e2b_code_interpreter": Mock()}):
     sys_modules["e2b_code_interpreter"].Sandbox = Mock
 
     # Now import the module that uses e2b_code_interpreter
-    from agno.tools.e2b import E2BTools
+
+from agno.tools.e2b import E2BTools
 
 TEST_API_KEY = os.environ.get("E2B_API_KEY", "test_api_key")
+
+
+@pytest.fixture
+def mock_agent():
+    """Create a mocked Agent instance."""
+    agent = Mock()
+    agent.add_image = Mock()
+    return agent
 
 
 @pytest.fixture
@@ -39,7 +48,7 @@ def mock_e2b_tools():
             # Mock the methods we'll test with return values matching actual implementation
             tools.run_python_code = Mock(return_value='["Logs:\\nHello, World!"]')
             tools.upload_file = Mock(return_value="/sandbox/file.txt")
-            tools.download_png_result = Mock(return_value="/local/output.png")
+            tools.download_png_result = Mock(return_value="Image added as artifact with ID test-image-id")
             tools.download_chart_data = Mock(
                 return_value="Interactive bar chart data saved to /local/output.json\nTitle: Sample Chart\nX-axis: Categories\nY-axis: Values\n"
             )
@@ -73,18 +82,18 @@ def mock_e2b_tools():
 def test_init_with_api_key():
     """Test initialization with provided API key."""
     with patch("agno.tools.e2b.Sandbox") as mock_sandbox_class:
-        tools = E2BTools(api_key="test_key")
+        tools = E2BTools(api_key=TEST_API_KEY)
         mock_sandbox_class.assert_called_once()
-        assert tools.api_key == "test_key"
+        assert tools.api_key == TEST_API_KEY
 
 
 def test_init_with_env_var():
     """Test initialization with environment variable."""
     with patch("agno.tools.e2b.Sandbox") as mock_sandbox_class:
-        with patch.dict("os.environ", {"E2B_API_KEY": "env_key"}):
+        with patch.dict("os.environ", {"E2B_API_KEY": TEST_API_KEY}):
             tools = E2BTools()
             mock_sandbox_class.assert_called_once()
-            assert tools.api_key == "env_key"
+            assert tools.api_key == TEST_API_KEY
 
 
 def test_init_without_api_key():
@@ -97,7 +106,7 @@ def test_init_without_api_key():
 def test_init_with_selective_tools():
     """Test initialization with only selected tools enabled."""
     with patch("agno.tools.e2b.Sandbox"):
-        with patch.dict("os.environ", {"E2B_API_KEY": "test_key"}):
+        with patch.dict("os.environ", {"E2B_API_KEY": TEST_API_KEY}):
             tools = E2BTools(
                 run_code=True,
                 upload_file=False,
@@ -140,14 +149,14 @@ def test_upload_file(mock_e2b_tools):
     assert result == "/sandbox/file.txt"
 
 
-def test_download_png_result(mock_e2b_tools):
+def test_download_png_result(mock_e2b_tools, mock_agent):
     """Test downloading a PNG result."""
     # Call the method
-    result = mock_e2b_tools.download_png_result(0, "/local/output.png")
+    result = mock_e2b_tools.download_png_result(mock_agent, 0, "/local/output.png")
 
     # Verify
-    mock_e2b_tools.download_png_result.assert_called_once_with(0, "/local/output.png")
-    assert result == "/local/output.png"
+    mock_e2b_tools.download_png_result.assert_called_once_with(mock_agent, 0, "/local/output.png")
+    assert "Image added as artifact with ID" in result
 
 
 def test_download_chart_data(mock_e2b_tools):

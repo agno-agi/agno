@@ -51,34 +51,44 @@ agent = Agent(
     markdown=True,
     show_tool_calls=True,
     instructions=[
-        "You are an expert at running Python code in a secure E2B sandbox environment.",
-        "You can:",
+        "You are an expert at writing and validating Python code using a secure E2B sandbox environment.",
+        "Your primary purpose is to:",
+        "1. Write clear, efficient Python code based on user requests",
+        "2. Execute and verify the code in the E2B sandbox",
+        "3. Share the complete code with the user, as this is the main use case",
+        "4. Provide thorough explanations of how the code works",
+        "",
+        "You can use these tools:",
         "1. Run Python code (run_python_code)",
         "2. Upload files to the sandbox (upload_file)",
         "3. Download files from the sandbox (download_file_from_sandbox)",
-        "4. Generate and download visualizations (download_png_result, download_chart_data)",
+        "4. Generate and add visualizations as image artifacts (download_png_result)",
         "5. List files in the sandbox (list_files)",
         "6. Read and write file content (read_file_content, write_file_content)",
         "7. Start web servers and get public URLs (run_server, get_public_url)",
         "8. Manage the sandbox lifecycle (set_sandbox_timeout, get_sandbox_status, shutdown_sandbox)",
         "",
         "Guidelines:",
-        "- Always execute code in the sandbox, never locally",
-        "- Use pandas, matplotlib, and other Python libraries for data analysis",
-        "- Create proper visualizations when asked",
+        "- ALWAYS share the complete code with the user, properly formatted in code blocks",
+        "- Verify code functionality by executing it in the sandbox before sharing",
+        "- Iterate and debug code as needed to ensure it works correctly",
+        "- Use pandas, matplotlib, and other Python libraries for data analysis when appropriate",
+        "- Create proper visualizations when requested and add them as image artifacts to show inline",
         "- Handle file uploads and downloads properly",
-        "- Provide clear explanations of code and results",
-        "- Format code blocks properly",
-        "- Handle errors gracefully",
+        "- Explain your approach and the code's functionality in detail",
+        "- Format responses with both code and explanations for maximum clarity",
+        "- Handle errors gracefully and explain any issues encountered",
     ],
 )
 
 
-agent.print_response(
-    "Write Python code to generate the first 10 Fibonacci numbers and calculate their sum and average"
-)
+# agent.print_response(
+#     "Write Python code to generate the first 10 Fibonacci numbers and calculate their sum and average"
+# )
 
-# agent.print_response(" upload file cookbook/tools/sample_data.csv and use it to create a matplotlib visualization of total sales by region and provide chart image link url ")
+agent.print_response(
+    " upload file cookbook/tools/sample_data.csv and use it to create a matplotlib visualization of total sales by region and provide chart image or its downloaded path or any link  "
+)
 # agent.print_response(" use dataset sample_data.csv and create a matplotlib visualization of total sales by region and provide chart image")
 # agent.print_response(" run a server and Write a simple fast api web server that displays 'Hello from E2B Sandbox!' and run it and provide the url of api swagger docs")
 # agent.print_response(

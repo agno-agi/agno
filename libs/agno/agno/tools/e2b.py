@@ -1,9 +1,13 @@
 import base64
 import json
+import tempfile
 import time
-from os import getenv, path
+from os import fdopen, getenv, path
 from typing import Any, Callable, Dict, Optional
+from uuid import uuid4
 
+from agno.agent import Agent
+from agno.media import ImageArtifact
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
@@ -20,12 +24,12 @@ class E2BTools(Toolkit):
         run_code: bool = True,
         upload_file: bool = True,
         download_result: bool = True,
-        filesystem: bool = True,
-        internet_access: bool = True,
-        sandbox_management: bool = True,
+        filesystem: bool = False,
+        internet_access: bool = False,
+        sandbox_management: bool = False,
         timeout: int = 300,  # 5 minutes default timeout
         sandbox_options: Optional[Dict[str, Any]] = None,
-        command_execution: bool = True,
+        command_execution: bool = False,
     ):
         """Initialize E2B toolkit for code interpretation and running Python code in a sandbox.
 
@@ -167,16 +171,17 @@ class E2BTools(Toolkit):
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error uploading file: {str(e)}"})
 
-    def download_png_result(self, result_index: int = 0, output_path: Optional[str] = None) -> str:
+    def download_png_result(self, agent: Agent, result_index: int = 0, output_path: Optional[str] = None) -> str:
         """
-        Download a PNG image result from the last code execution.
+        Add a PNG image result from the last code execution as an ImageArtifact to the agent.
 
         Args:
-            result_index (int): Index of the result to download (default: 0, the first result)
-            output_path (str, optional): Path to save the PNG file. Defaults to 'chart-{result_index}.png'
+            agent: The agent to add the image artifact to
+            result_index (int): Index of the result to use (default: 0, the first result)
+            output_path (str, optional): Optional path to also save the PNG file. If not provided, image is only added as artifact.
 
         Returns:
-            str: Path to the downloaded file or error message
+            str: Success message or error message
         """
         if not self.last_execution:
             return "No code has been executed yet"
@@ -192,27 +197,53 @@ class E2BTools(Toolkit):
             if not result.png:
                 return f"Result at index {result_index} is not a PNG image"
 
-            # Determine output path
-            if not output_path:
-                output_path = f"chart-{result_index}.png"
+            # Decode PNG data from base64
+            png_data = base64.b64decode(result.png)
 
-            # Save the PNG
-            with open(output_path, "wb") as f:
-                f.write(base64.b64decode(result.png))
+            # Optionally save to file if output_path is provided
+            if output_path:
+                with open(output_path, "wb") as f:
+                    f.write(png_data)
+                self.downloaded_files[result_index] = output_path
 
-            self.downloaded_files[result_index] = output_path
-            return output_path
+            # Create a temporary file to store the image for URL access
+
+            # Create a temp file with .png extension
+            fd, temp_path = tempfile.mkstemp(suffix=".png")
+            with fdopen(fd, "wb") as tmp:
+                tmp.write(png_data)
+
+            # Generate a file:// URL for the temp file
+            file_url = f"file://{temp_path}"
+
+            # Add image artifact to the agent
+            image_id = str(uuid4())
+            agent.add_image(
+                ImageArtifact(
+                    id=image_id, url=file_url, original_prompt=f"Generated from code execution result {result_index}"
+                )
+            )
+
+            if output_path:
+                return f"Image added as artifact with ID {image_id} and saved to {output_path}"
+            else:
+                return f"Image added as artifact with ID {image_id}"
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error downloading PNG: {str(e)}"})
+            return json.dumps({"status": "error", "message": f"Error processing PNG: {str(e)}"})
 
-    def download_chart_data(self, result_index: int = 0, output_path: Optional[str] = None) -> str:
+    def download_chart_data(
+        self, agent: Agent, result_index: int = 0, output_path: Optional[str] = None, add_as_artifact: bool = True
+    ) -> str:
         """
         Extract chart data from an interactive chart in the execution results.
+        Optionally add the chart as an image artifact to the agent.
 
         Args:
+            agent: The agent to add the chart artifact to
             result_index (int): Index of the result to extract data from (default: 0)
             output_path (str, optional): Path to save the JSON data. Defaults to 'chart-data-{result_index}.json'
+            add_as_artifact (bool): Whether to add the chart as an image artifact (default: True)
 
         Returns:
             str: Information about the extracted chart data or error message
@@ -243,7 +274,7 @@ class E2BTools(Toolkit):
             with open(output_path, "w") as f:
                 json.dump(chart_data, f, indent=2)
 
-            # Summarize data
+            # Create a summary
             summary = f"Interactive {chart_type} chart data saved to {output_path}\n"
             if "title" in chart_data:
                 summary += f"Title: {chart_data['title']}\n"
@@ -251,6 +282,33 @@ class E2BTools(Toolkit):
                 summary += f"X-axis: {chart_data['x_label']}\n"
             if "y_label" in chart_data:
                 summary += f"Y-axis: {chart_data['y_label']}\n"
+
+            # Add as an image artifact if requested
+            if add_as_artifact and result.png:
+                # Decode PNG data from base64
+                png_data = base64.b64decode(result.png)
+
+                # Create a temporary file to store the image for URL access
+                import os
+                import tempfile
+
+                # Create a temp file with .png extension
+                fd, temp_path = tempfile.mkstemp(suffix=".png")
+                with os.fdopen(fd, "wb") as tmp:
+                    tmp.write(png_data)
+
+                # Generate a file:// URL for the temp file
+                file_url = f"file://{temp_path}"
+
+                # Add image artifact to the agent
+                image_id = str(uuid4())
+                agent.add_image(
+                    ImageArtifact(
+                        id=image_id, url=file_url, original_prompt=f"Interactive {chart_type} chart from code execution"
+                    )
+                )
+
+                summary += f"\nChart image added as artifact with ID {image_id}"
 
             return summary
 
