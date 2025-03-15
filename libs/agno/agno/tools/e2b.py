@@ -348,11 +348,11 @@ class E2BTools(Toolkit):
 
         def stdout_callback(data):
             outputs.append(f"STDOUT: {data}")
-            print(f"STDOUT: {data}")
+            logger.info(f"STDOUT: {data}")
 
         def stderr_callback(data):
             outputs.append(f"STDERR: {data}")
-            print(f"STDERR: {data}")
+            logger.error(f"STDERR: {data}")
 
         try:
             self.run_command(command, on_stdout=stdout_callback, on_stderr=stderr_callback)
