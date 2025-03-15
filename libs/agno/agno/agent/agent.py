@@ -845,7 +845,7 @@ class Agent:
         self,
         message: Optional[Union[str, List, Dict, Message]] = None,
         *,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Any]] = None,
@@ -860,6 +860,10 @@ class Agent:
         # If no retries are set, use the agent's default retries
         if retries is None:
             retries = self.retries
+
+        # Use stream overrided value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
 
         last_exception = None
         num_attempts = retries + 1
@@ -1313,7 +1317,7 @@ class Agent:
         self,
         message: Optional[Union[str, List, Dict, Message]] = None,
         *,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1328,6 +1332,10 @@ class Agent:
         # If no retries are set, use the agent's default retries
         if retries is None:
             retries = self.retries
+
+        # Use stream overrided value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
 
         last_exception = None
         num_attempts = retries + 1
