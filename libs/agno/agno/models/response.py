@@ -4,6 +4,7 @@ from time import time
 from typing import Any, Dict, List, Optional
 
 from agno.media import AudioResponse
+from agno.models.message import Citations
 
 
 class ModelResponseEvent(str, Enum):
@@ -31,6 +32,8 @@ class ModelResponse:
     thinking: Optional[str] = None
     redacted_thinking: Optional[str] = None
     reasoning_content: Optional[str] = None
+
+    citations: Optional[Citations] = None
 
     response_usage: Optional[Any] = None
 
