@@ -80,7 +80,7 @@ def mock_e2b_tools():
 
 def test_init_with_api_key():
     """Test initialization with provided API key."""
-    with patch("agno.tools.e2b.Sandbox") as mock_sandbox_class:
+    with patch("agno.tools.e2b.Sandbox"):
         tools = E2BTools(api_key=TEST_API_KEY)
         # Instead of checking if the mock was called, just verify the API key is set
         assert tools.api_key == TEST_API_KEY
@@ -88,7 +88,7 @@ def test_init_with_api_key():
 
 def test_init_with_env_var():
     """Test initialization with environment variable."""
-    with patch("agno.tools.e2b.Sandbox") as mock_sandbox_class:
+    with patch("agno.tools.e2b.Sandbox"):
         with patch.dict("os.environ", {"E2B_API_KEY": TEST_API_KEY}):
             tools = E2BTools()
             # Instead of checking if the mock was called, just verify the API key is set
