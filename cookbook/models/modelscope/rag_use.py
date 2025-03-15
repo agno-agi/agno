@@ -1,16 +1,11 @@
 from agno.agent import Agent
-from agno.models.modelscope import Modelscope
-from agno.embedder.dashscope import DashscopeEmbedder
+from agno.models.modelscope import ModelScope
+from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.text import TextKnowledgeBase
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-'''
-If you want to use DashscopeEmbedder, you need to set the DASHSCOPE_API_KEY in the environment variables. 
-Click here to apply: https://dashscope.aliyun.com/
-'''
-
 agent = Agent(
-    model=Modelscope(id="Qwen/Qwen2.5-72B-Instruct"),
+    model=ModelScope(id="Qwen/Qwen2.5-72B-Instruct"),
     description="You are an expert in information at Albert College!",
     instructions=[
         "Search for information about Albert College in your knowledge base.",
@@ -21,7 +16,7 @@ agent = Agent(
         vector_db=LanceDb(
             uri="tmp/lancedb",
             table_name="recipes",
-            embedder=DashscopeEmbedder(id="text-embedding-v3")
+            embedder=OpenAIEmbedder(id="text-embedding-3-small")
         ),
     ),
     tools=[],

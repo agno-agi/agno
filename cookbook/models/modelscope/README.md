@@ -1,4 +1,4 @@
-# Modelscope Cookbook
+# ModelScope Cookbook
 
 > Note: Fork and clone this repository if needed
 
@@ -47,15 +47,6 @@ python cookbook/models/modelscope/tool_use.py
 
 ### 6. Run Agent with rag
 
-- Export `DASHSCOPE_API_KEY`
-
-Click here to apply: https://dashscope.aliyun.com/
-```shell
-pip install dashscope
-export DASHSCOPE_API_KEY=***
-```
-
-- run rag_use.py
 ```shell
 python cookbook/models/modelscope/rag_use.py
 ```

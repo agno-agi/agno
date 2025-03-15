@@ -1,14 +1,14 @@
 """
-Basic streaming async example using modelscope.
+Basic streaming async example using ModelScope.
 """
 
 import asyncio
 
 from agno.agent import Agent
-from agno.models.modelscope import Modelscope
+from agno.models.modelscope import ModelScope
 
 agent = Agent(
-    model=Modelscope(id="Qwen/QwQ-32B"),
+    model=ModelScope(id="Qwen/QwQ-32B"),
     markdown=True,
 )
 

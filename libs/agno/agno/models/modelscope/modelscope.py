@@ -8,16 +8,16 @@ from agno.exceptions import ModelProviderError
 
 
 @dataclass
-class Modelscope(OpenAILike):
+class ModelScope(OpenAILike):
     """
-    A class for interacting with Modelscope models.
+    A class for interacting with ModelScope models.
 
     For more information, see: https://www.modelscope.cn/
     """
 
     id: str = "modelscope-chat"
-    name: str = "Modelscope"
-    provider: str = "Modelscope"
+    name: str = "ModelScope"
+    provider: str = "ModelScope"
 
     api_key: Optional[str] = getenv("MODELSCOPE_API_KEY", None)
     base_url: str = "https://api-inference.modelscope.cn/v1/"

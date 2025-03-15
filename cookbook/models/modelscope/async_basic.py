@@ -1,14 +1,14 @@
 """
-Basic async example using modelscope.
+Basic async example using ModelScope.
 """
 
 import asyncio
 
 from agno.agent import Agent
-from agno.models.modelscope import Modelscope
+from agno.models.modelscope import ModelScope
 
 agent = Agent(
-    model=Modelscope(id="Qwen/Qwen2.5-7B-Instruct"),
+    model=ModelScope(id="Qwen/Qwen2.5-7B-Instruct"),
     markdown=True,
 )
 

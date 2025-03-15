@@ -1,1 +1,1 @@
-from agno.models.modelscope.modelscope import Modelscope
+from agno.models.modelscope.modelscope import ModelScope
