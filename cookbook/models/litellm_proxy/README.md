@@ -1,4 +1,4 @@
-# OpenAI Cookbook
+# LiteLLMOpenAI Cookbook
 
 > Note: Fork and clone this repository if needed
 ### 1. Create and activate a virtual environment
