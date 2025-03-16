@@ -28,15 +28,15 @@ pip install -r cookbook/examples/apps/answer_engine/requirements.txt
 
 Required:
 ```bash
-export OPENAI_API_KEY=your_openai_key_here
+export GROQ_API_KEY=your_groq_key_here
 export EXA_API_KEY=your_exa_key_here
 ```
 
 Optional (for additional models):
 ```bash
+export OPENAI_API_KEY=your_openai_key_here
 export ANTHROPIC_API_KEY=your_anthropic_key_here
 export GOOGLE_API_KEY=your_google_key_here
-export GROQ_API_KEY=your_groq_key_here
 ```
 
 ### 4. Launch the Application
@@ -52,10 +52,10 @@ Visit [localhost:8501](http://localhost:8501) to use the answer engine.
 ### Model Selection
 
 The application supports multiple model providers:
+- Groq (llama-3.3-70b-versatile)
 - OpenAI (o3-mini, gpt-4o)
 - Anthropic (claude-3-5-sonnet)
 - Google (gemini-2.0-flash-exp)
-- Groq (llama-3.3-70b-versatile)
 
 ### Agent Configuration
 

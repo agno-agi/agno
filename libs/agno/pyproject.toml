@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.1.9"
+version = "1.1.13"
 description = "Agno: a lightweight framework for building multi-modal Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -50,7 +50,7 @@ mistral = ["mistralai"]
 openai = ["openai"]
 ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
-
+lmstudio = ["lmstudio"]
 # Dependencies for Tools
 exa = ["exa_py"]
 yfinance = ["yfinance"]
@@ -61,21 +61,23 @@ youtube = ["youtube_transcript_api"]
 firecrawl = ["firecrawl-py"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
-googlemaps = ["googlemaps"]
+googlemaps = ["googlemaps", "google-maps-places"]
 todoist = ["todoist-api-python"]
 elevenlabs = ["elevenlabs"]
 fal = ["fal_client"]
 webex = ["webexpythonsdk"]
 mcp = ["mcp"]
+browserbase = ["browserbase", "playwright"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary", "psycopg"]
+sqlite = ["sqlalchemy"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb", "tantivy"]
+lancedb = ["lancedb==0.20.0", "tantivy"]
 qdrant = ["qdrant-client"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
@@ -106,6 +108,7 @@ models = [
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
+  "agno[ibm]"
 ]
 
 # All tools
@@ -124,12 +127,15 @@ tools = [
   "agno[fal]",
   "agno[webex]",
   "agno[mcp]",
+  "agno[browserbase]",
+  "agno[yfinance]",
 ]
 
 # All storage
 storage = [
   "agno[sql]",
   "agno[postgres]",
+  "agno[sqlite]",
 ]
 
 # All vector databases
@@ -185,6 +191,8 @@ include = ["LICENSE"]
 [tool.pytest.ini_options]
 log_cli = true
 testpaths = "tests"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 120
@@ -202,6 +210,7 @@ exclude = ["tests*"]
 
 [[tool.mypy.overrides]]
 module = [
+  "agentql.*",
   "altair.*",
   "anthropic.*",
   "apify_client.*",
@@ -213,6 +222,7 @@ module = [
   "botocore.*",
   "bs4.*",
   "bson.*",
+  "browserbase.*",
   "cassio.*",
   "chonkie.*",
   "chromadb.*",
@@ -231,6 +241,7 @@ module = [
   "github.*",
   "google.*",
   "googlemaps.*",
+  "google_maps_places.*",
   "google_auth_oauthlib.*",
   "googleapiclient.*",
   "googlesearch.*",
@@ -260,6 +271,7 @@ module = [
   "PIL.*",
   "pinecone_text.*",
   "pinecone.*",
+  "playwright.sync_api.*",
   "psycopg.*",
   "psycopg2.*",
   "pyarrow.*",
