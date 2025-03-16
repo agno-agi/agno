@@ -15,7 +15,7 @@ class Crawl4aiTools(Toolkit):
     def __init__(
         self,
         max_length: Optional[int] = 1000,
-        expand_url: bool = True,
+        expand_url: bool = False,
         retries: int = 3,
     ):
         super().__init__(name="crawl4ai_tools")
@@ -25,6 +25,8 @@ class Crawl4aiTools(Toolkit):
         self.retries = retries
 
         self.register(self.web_crawler)
+        if expand_url:
+            self.register(self.expand_url)
 
     def expand_url(self, url: str) -> str:
         """
