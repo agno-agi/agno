@@ -5,7 +5,7 @@ from agno.models.openai.like import OpenAILike
 
 
 @dataclass
-class LiteLLMProxy(OpenAILike):
+class LiteLLMOpenAI(OpenAILike):
     """
     A class for interacting with LiteLLM.
     Attributes:

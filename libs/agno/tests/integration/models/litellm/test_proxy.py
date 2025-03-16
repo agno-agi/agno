@@ -1,5 +1,5 @@
 from agno.agent import Agent, RunResponse
-from agno.models.litellm import LiteLLMProxy
+from agno.models.litellm import LiteLLMOpenAI
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 
@@ -27,7 +27,7 @@ def _assert_metrics(response: RunResponse):
 
 def test_basic():
     """Test basic functionality with LiteLLM Proxy"""
-    agent = Agent(model=LiteLLMProxy(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
 
     # Get the response
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -41,7 +41,7 @@ def test_basic():
 
 def test_basic_stream():
     """Test streaming functionality with LiteLLM Proxy"""
-    agent = Agent(model=LiteLLMProxy(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -60,7 +60,7 @@ def test_basic_stream():
 def test_tool_use():
     """Test tool use functionality with LiteLLM Proxy"""
     agent = Agent(
-        model=LiteLLMProxy(id="gpt-4o"),
+        model=LiteLLMOpenAI(id="gpt-4o"),
         markdown=True,
         tools=[DuckDuckGoTools()],
         telemetry=False,

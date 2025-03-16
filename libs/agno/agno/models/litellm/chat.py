@@ -1,12 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
-
-try:
-    import litellm
-except ImportError:
-    raise ImportError("`litellm` not installed. Please install it using `pip install litellm`")
-
+from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -34,6 +28,8 @@ class LiteLLM(Model):
     top_p: float = 1.0
     request_params: Optional[Dict[str, Any]] = None
 
+    client: Optional[Any] = None
+
     def __post_init__(self):
         """Initialize the model after the dataclass initialization."""
         super().__post_init__()
@@ -44,6 +40,21 @@ class LiteLLM(Model):
             self.api_key = getenv("LITELLM_API_KEY")
             if not self.api_key:
                 logger.warning("LITELLM_API_KEY not set. Please set the LITELLM_API_KEY environment variable.")
+
+    def get_client(self) -> Any:
+        """
+        Returns a LiteLLM client.
+
+        Returns:
+            Any: An instance of the LiteLLM client.
+        """
+        if self.client is not None:
+            return self.client
+
+        import litellm
+
+        self.client = litellm
+        return self.client
 
     def _format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
         """Format messages for LiteLLM API."""
@@ -102,26 +113,24 @@ class LiteLLM(Model):
 
         return request_params
 
-    def invoke(self, messages: List[Message]) -> Any:
+    def invoke(self, messages: List[Message]) -> Mapping[str, Any]:
         """Sends a chat completion request to the LiteLLM API."""
         completion_kwargs = self.request_kwargs
         completion_kwargs["messages"] = self._format_messages(messages)
-        return litellm.completion(**completion_kwargs)
+        return self.get_client().completion(**completion_kwargs)
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
+    def invoke_stream(self, messages: List[Message]) -> Iterator[Mapping[str, Any]]:
         """Sends a streaming chat completion request to the LiteLLM API."""
         completion_kwargs = self.request_kwargs
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
+        return self.get_client().completion(**completion_kwargs)
 
-        return litellm.completion(**completion_kwargs)
-
-    async def ainvoke(self, messages: List[Message]) -> Any:
-        """Sends an asynchronous chat request to the LiteLLM API."""
+    async def ainvoke(self, messages: List[Message]) -> Mapping[str, Any]:
+        """Sends an asynchronous chat completion request to the LiteLLM API."""
         completion_kwargs = self.request_kwargs
         completion_kwargs["messages"] = self._format_messages(messages)
-
-        return await litellm.acompletion(**completion_kwargs)
+        return await self.get_client().acompletion(**completion_kwargs)
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """Sends an asynchronous streaming chat request to the LiteLLM API."""
@@ -132,7 +141,7 @@ class LiteLLM(Model):
         try:
             # litellm.acompletion returns a coroutine that resolves to an async iterator
             # We need to await it first to get the actual async iterator
-            async_stream = await litellm.acompletion(**completion_kwargs)
+            async_stream = await self.get_client().acompletion(**completion_kwargs)
             async for chunk in async_stream:
                 yield chunk
         except Exception as e:
