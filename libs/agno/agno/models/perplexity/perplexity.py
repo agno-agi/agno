@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, Union
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.models.message import Citations, CitationUrl
+from agno.models.message import Citations, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.log import logger
 
@@ -135,7 +135,7 @@ class Perplexity(OpenAILike):
         # Add citations if present
         if hasattr(response, "citations") and response.citations is not None:
             model_response.citations = Citations(
-                urls=[CitationUrl(url=c) for c in response.citations],
+                urls=[UrlCitation(url=c) for c in response.citations],
             )
 
         if response.usage is not None:
@@ -168,7 +168,7 @@ class Perplexity(OpenAILike):
         # Add citations if present
         if hasattr(response_delta, "citations") and response_delta.citations is not None:
             model_response.citations = Citations(
-                urls=[CitationUrl(url=c) for c in response_delta.citations],
+                urls=[UrlCitation(url=c) for c in response_delta.citations],
             )
 
         # Add usage metrics if present

@@ -65,11 +65,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run OpenAI tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/openai') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/openai') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -100,11 +96,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run Google tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/google') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/google') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -134,11 +126,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run Anthropic tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/anthropic') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/anthropic') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -170,11 +158,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run AWS tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/aws') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/aws') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -204,11 +188,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run Cohere tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/cohere') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/cohere') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -237,11 +217,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run Deepseek tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/deepseek') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/deepseek') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -271,11 +247,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run Fireworks tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/fireworks') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/fireworks') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -305,11 +277,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run Groq tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/groq') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/groq') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -339,11 +307,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run Mistral tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/mistral') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/mistral') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -373,11 +337,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run Nvidia tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/nvidia') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/nvidia') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -407,11 +367,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run OpenRouter tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/openrouter') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/openrouter') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -440,11 +396,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run Perplexity tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/perplexity') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/perplexity') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -473,11 +425,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run SambaNova tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/sambanova') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/sambanova') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -508,11 +456,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run Together tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/together') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/together') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -542,11 +486,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run xAI tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/xai') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/xai') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -561,6 +501,7 @@ jobs:
     env:
       IBM_WATSONX_PROJECT_ID: ${{ secrets.IBM_WATSONX_PROJECT_ID }}
       IBM_WATSONX_API_KEY: ${{ secrets.IBM_WATSONX_API_KEY }}
+      IBM_WATSONX_URL: ${{ secrets.IBM_WATSONX_URL }}
       EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
@@ -576,16 +517,12 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run xAI tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/ibm/watsonx') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/ibm/watsonx') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/models/ibm/watsonx
-  
+
   test-deepinfra:
     runs-on: ubuntu-latest
     strategy:
@@ -609,17 +546,14 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@v41
       - name: Run DeepInfra tests
-        if: contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/models/deepinfra') || contains(steps.changed-files.outputs.all_changed_files, 'libs/agno/tests/integration/models/deepinfra') || contains(github.base_ref, 'release')
         working-directory: .
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/models/deepinfra
 
-          
+
+
   # Run remaining integration tests
   test-remaining:
     runs-on: ubuntu-latest

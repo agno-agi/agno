@@ -1,4 +1,6 @@
 # Create a knowledge base of PDFs from URLs
+import asyncio
+
 import pytest
 import pytest_asyncio
 
@@ -8,6 +10,15 @@ from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.openai.chat import OpenAIChat
 from agno.vectordb.lancedb.lance_db import LanceDb
 from agno.vectordb.search import SearchType
+
+
+# Add a session-scoped event loop fixture
+@pytest_asyncio.fixture(scope="session")
+def event_loop():
+    """Create an instance of the default event loop for each test case."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
 
 
 @pytest_asyncio.fixture(scope="session")

@@ -74,7 +74,7 @@ async def test_async_basic_stream():
 
 def test_with_memory():
     agent = Agent(
-        model=Cohere(id="command-light"),
+        model=Cohere(id="command-r-08-2024"),
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
@@ -88,7 +88,7 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name and surname?")
-    assert "John Smith" in response2.content
+    assert "John" in response2.content and "Smith" in response2.content
 
     # Verify memories were created
     assert len(agent.memory.messages) == 5
