@@ -646,9 +646,7 @@ class Agent:
                             }
                             # Process tool calls
                             for tool_call_dict in tool_calls_list:
-                                tool_call_id = (
-                                    tool_call_dict["tool_call_id"] if "tool_call_id" in tool_call_dict else None
-                                )
+                                tool_call_id = tool_call_dict.get("tool_call_id")
                                 index = tool_call_index_map.get(tool_call_id)
                                 if index is not None:
                                     self.run_response.tools[index] = tool_call_dict
@@ -1554,7 +1552,11 @@ class Agent:
             self.model = OpenAIChat(id="gpt-4o")
 
         # Update the response_format on the Model
-        if self.response_model is not None:
+        if self.response_model is None:
+            self.model.response_format = None
+        else:
+            json_response_format = {"type": "json_object"}
+
             if self.model.supports_native_structured_outputs:
                 if self.response_format == "structured" or self.structured_outputs:
                     logger.debug("Setting Model.response_format to Agent.response_model")
@@ -1562,10 +1564,11 @@ class Agent:
                     self.model.structured_outputs = True
                 else:
                     logger.debug("Model does not support native structured outputs")
-                    self.model.response_format = {"type": "json_object"}
+                    self.model.response_format = json_response_format
                     self.model.structured_outputs = False
+
             elif self.model.supports_json_schema_outputs:
-                if self.response_format == "json" or (not self.structured_outputs):
+                if self.response_format == "json" or not self.structured_outputs:
                     logger.debug("Setting Model.response_format to JSON response mode")
                     self.model.response_format = {
                         "type": "json_schema",
@@ -1574,21 +1577,13 @@ class Agent:
                             "schema": self.response_model.model_json_schema(),
                         },
                     }
-                    self.model.structured_outputs = False
                 else:
                     self.model.response_format = None
-                    self.model.structured_outputs = False
-            else:
-                if self.response_format == "json" or (not self.structured_outputs):
-                    logger.debug("Setting Model.response_format to JSON response mode")
-                    self.model.response_format = {"type": "json_object"}
-                    self.model.structured_outputs = False
-                else:
-                    self.model.response_format = None
-                    self.model.structured_outputs = False
+                self.model.structured_outputs = False
 
-        else:
-            self.model.response_format = None
+            else:  # Model does not support structured or JSON schema outputs
+                self.model.response_format = json_response_format if (self.response_format == "json" or not self.structured_outputs) else None
+                self.model.structured_outputs = False
 
         # Add tools to the Model
         self.add_tools_to_model(model=self.model)
