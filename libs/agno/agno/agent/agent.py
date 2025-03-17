@@ -105,7 +105,7 @@ class Agent:
     # --- Agent Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
-    tools: Optional[List[Union[Toolkit, Callable, Function]]] = None
+    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
     # Show tool calls in Agent response.
     show_tool_calls: bool = False
     # Maximum number of tool calls allowed.
@@ -252,7 +252,7 @@ class Agent:
         references_format: Literal["json", "yaml"] = "json",
         storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
+        tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         show_tool_calls: bool = False,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -889,7 +889,7 @@ class Agent:
                     )
 
                     # If the model natively supports structured outputs, the content is already in the structured format
-                    if self.structured_outputs:
+                    if self.structured_outputs and self.model.supports_structured_outputs:  # type: ignore
                         # Do a final check confirming the content is in the response_model format
                         if isinstance(run_response.content, self.response_model):
                             return run_response
@@ -1452,7 +1452,7 @@ class Agent:
             audio=self.run_response.audio,
             images=self.run_response.images,
             videos=self.run_response.videos,
-            citations=self.run_response.citations,
+            citations=citations or self.run_response.citations,
             response_audio=self.run_response.response_audio,
             model=self.run_response.model,
             messages=self.run_response.messages,
@@ -1465,9 +1465,9 @@ class Agent:
             rr.created_at = created_at
         return rr
 
-    def get_tools(self) -> Optional[List[Union[Toolkit, Callable, Function]]]:
+    def get_tools(self) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
         self.memory = cast(AgentMemory, self.memory)
-        agent_tools: List[Union[Toolkit, Callable, Function]] = []
+        agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Add provided tools
         if self.tools is not None:
@@ -1512,7 +1512,13 @@ class Agent:
                 self._functions_for_model = {}
 
                 for tool in agent_tools:
-                    if isinstance(tool, Toolkit):
+                    if isinstance(tool, Dict):
+                        # If a dict is passed, it is a builtin tool
+                        # that is run by the model provider and not the Agent
+                        self._tools_for_model.append(tool)
+                        logger.debug(f"Included builtin tool {tool}")
+
+                    elif isinstance(tool, Toolkit):
                         # For each function in the toolkit and process entrypoint
                         for name, func in tool.functions.items():
                             # If the function does not exist in self.functions
@@ -1563,7 +1569,7 @@ class Agent:
                 logger.exception(e)
                 logger.error(
                     "Agno agents use `openai` as the default model provider. "
-                    "Please provide a `model` or install `openai`."
+                    "Please provide a `model` or install `openai` using `pip install openai -U`."
                 )
                 exit(1)
             self.model = OpenAIChat(id="gpt-4o")
@@ -1906,23 +1912,41 @@ class Agent:
                                 for prop_name, prop_value in field_properties.items()
                                 if prop_name != "title"
                             }
+                            # Handle enum references
+                            if "allOf" in formatted_field_properties:
+                                ref = formatted_field_properties["allOf"][0].get("$ref", "")
+                                if ref.startswith("#/$defs/"):
+                                    enum_name = ref.split("/")[-1]
+                                    formatted_field_properties["enum_type"] = enum_name
+
                             response_model_properties[field_name] = formatted_field_properties
+
                     json_schema_defs = json_schema.get("$defs")
                     if json_schema_defs is not None:
                         response_model_properties["$defs"] = {}
                         for def_name, def_properties in json_schema_defs.items():
-                            def_fields = def_properties.get("properties")
-                            formatted_def_properties = {}
-                            if def_fields is not None:
-                                for field_name, field_properties in def_fields.items():
-                                    formatted_field_properties = {
-                                        prop_name: prop_value
-                                        for prop_name, prop_value in field_properties.items()
-                                        if prop_name != "title"
-                                    }
-                                    formatted_def_properties[field_name] = formatted_field_properties
-                            if len(formatted_def_properties) > 0:
-                                response_model_properties["$defs"][def_name] = formatted_def_properties
+                            # Handle both regular object definitions and enums
+                            if "enum" in def_properties:
+                                # This is an enum definition
+                                response_model_properties["$defs"][def_name] = {
+                                    "type": "string",
+                                    "enum": def_properties["enum"],
+                                    "description": def_properties.get("description", ""),
+                                }
+                            else:
+                                # This is a regular object definition
+                                def_fields = def_properties.get("properties")
+                                formatted_def_properties = {}
+                                if def_fields is not None:
+                                    for field_name, field_properties in def_fields.items():
+                                        formatted_field_properties = {
+                                            prop_name: prop_value
+                                            for prop_name, prop_value in field_properties.items()
+                                            if prop_name != "title"
+                                        }
+                                        formatted_def_properties[field_name] = formatted_field_properties
+                                if len(formatted_def_properties) > 0:
+                                    response_model_properties["$defs"][def_name] = formatted_def_properties
 
                     if len(response_model_properties) > 0:
                         json_output_prompt += "\n<json_fields>"
@@ -1984,7 +2008,9 @@ class Agent:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
 
             # Add the JSON output prompt if response_model is provided and structured_outputs is False
-            if self.response_model is not None and not self.structured_outputs:
+            if self.response_model is not None and not (
+                self.model.supports_structured_outputs and self.structured_outputs  # type: ignore
+            ):
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
             return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
@@ -2124,8 +2150,8 @@ class Agent:
                         "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
                     )
 
-        # Add the JSON output prompt if response_model is provided and structured_outputs is False
-        if self.response_model is not None and not self.structured_outputs:
+        # Add the JSON output prompt if response_model is provided and structured_outputs is False (only applicable if the model supports structured outputs)
+        if self.response_model is not None and not (self.model.supports_structured_outputs and self.structured_outputs):
             system_message_content += f"{self.get_json_output_prompt()}"
 
         # Return the system message

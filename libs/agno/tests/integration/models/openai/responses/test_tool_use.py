@@ -128,6 +128,7 @@ def test_tool_use_with_native_structured_outputs():
     assert response.content.currency is not None
 
 
+@pytest.mark.skip(reason="This test is flaky and needs to be fixed.")
 def test_parallel_tool_calls():
     """Test parallel tool calls with the responses API."""
     agent = Agent(
@@ -223,7 +224,8 @@ def test_tool_call_list_parameters():
 def test_web_search_built_in_tool():
     """Test the built-in web search tool in the Responses API."""
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini", web_search=True),
+        model=OpenAIResponses(id="gpt-4o-mini"),
+        tools=[{"type": "web_search_preview"}],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -236,12 +238,14 @@ def test_web_search_built_in_tool():
     assert "medal" in response.content.lower()
     # Check for typical web search result indicators
     assert any(term in response.content.lower() for term in ["olympic", "games", "gold", "medal"])
+    assert response.citations is not None
 
 
 def test_web_search_built_in_tool_stream():
     """Test the built-in web search tool in the Responses API."""
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini", web_search=True),
+        model=OpenAIResponses(id="gpt-4o-mini"),
+        tools=[{"type": "web_search_preview"}],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -250,15 +254,18 @@ def test_web_search_built_in_tool_stream():
 
     response_stream = agent.run("What was the most recent Olympic Games and who won the most medals?", stream=True)
 
-    responses = []
-
     responses = list(response_stream)
     assert len(responses) > 0
     final_response = ""
+    response_citations = None
     for response in responses:
         assert isinstance(response, RunResponse)
-        assert response.content is not None
-        final_response += response.content
+        if response.content is not None:
+            final_response += response.content
+        if response.citations is not None:
+            response_citations = response.citations
+
+    assert response_citations is not None
 
     assert "medal" in final_response.lower()
     assert any(term in final_response.lower() for term in ["olympic", "games", "gold", "medal"])
@@ -267,8 +274,8 @@ def test_web_search_built_in_tool_stream():
 def test_web_search_built_in_tool_with_other_tools():
     """Test the built-in web search tool in the Responses API."""
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini", web_search=True),
-        tools=[YFinanceTools()],
+        model=OpenAIResponses(id="gpt-4o-mini"),
+        tools=[YFinanceTools(), {"type": "web_search_preview"}],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,

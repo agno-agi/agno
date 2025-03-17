@@ -29,7 +29,7 @@ class MovieScript(BaseModel):
 
 agent = Agent(
     model=Cohere(
-        id="command-r-08-2024",
+        id="command-a-03-2025",
     ),
     tools=[DuckDuckGoTools()],
     description="You help people write movie scripts.",
