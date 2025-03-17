@@ -25,7 +25,7 @@ rmdir /s /q "%VENV_DIR%" 2>nul
 
 CALL :print_heading "Creating virtual env"
 ECHO [INFO] Creating virtual environment in %VENV_DIR%
-py -m venv "%VENV_DIR%"
+python -m venv "%VENV_DIR%"
 
 REM Activate virtual environment
 CALL :activate_venv
