@@ -11,7 +11,9 @@ source ~/.venvs/aienv/bin/activate
 
 ### 2. Export `MODELSCOPE_API_KEY`
 
-You can visit https://www.modelscope.cn to obtain your MODELSCOPE_API_KEY for free.
+You can visit https://www.modelscope.cn/my/myaccesstoken to obtain your MODELSCOPE_API_KEY for free.
+
+All LLMs that support api inference on ModelScope can be used in agno
 
 ```shell
 export MODELSCOPE_API_KEY=***
