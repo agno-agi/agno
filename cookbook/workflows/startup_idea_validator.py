@@ -44,18 +44,18 @@ Quick Start:
 The workflow will guide you through validating your startup idea with AI-powered
 analysis and research. Use the insights to refine your concept and business plan!
 """
-
 import json
-from typing import Iterator, Optional
+from typing import Iterator, Optional, List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
-from agno.tools.googlesearch import GoogleSearchTools
+from agno.storage.workflow.sqlite import SqliteWorkflowStorage
+from agno.tools.googlesearch import GoogleSearch
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.workflow import RunEvent, RunResponse, Workflow
 from pydantic import BaseModel, Field
+from googlesearch import search
 
 
 class IdeaClarification(BaseModel):
@@ -77,9 +77,28 @@ class MarketResearch(BaseModel):
     target_customer_segments: str = Field(..., description="Target customer segments.")
 
 
+class CustomGoogleSearch:
+    def __init__(self, proxy: Optional[str] = None):
+        self.proxy = proxy
+
+    def google_search(
+        self,
+        query: str,
+        max_results: int = 5,
+        language: str = "en",
+    ) -> List[str]:
+        try:
+            # Remove advanced=True and use num_results instead of max_results
+            results = list(search(query, num=max_results, lang=language, proxy=self.proxy))
+            return results
+        except Exception as e:
+            logger.error(f"Google search failed: {str(e)}")
+            return []
+
+
 class StartupIdeaValidator(Workflow):
     idea_clarifier_agent: Agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-4o"),
         instructions=[
             "Given a user's startup idea, its your goal to refine that idea. ",
             "Evaluates the originality of the idea by comparing it with existing concepts. ",
@@ -93,8 +112,8 @@ class StartupIdeaValidator(Workflow):
     )
 
     market_research_agent: Agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[GoogleSearchTools()],
+        model=OpenAIChat(id="gpt-4o"),
+        tools=[CustomGoogleSearch()],
         instructions=[
             "You are provided with a startup idea and the company's mission and objectives. ",
             "Estimate the total addressable market (TAM), serviceable available market (SAM), and serviceable obtainable market (SOM). ",
@@ -109,13 +128,13 @@ class StartupIdeaValidator(Workflow):
     )
 
     competitor_analysis_agent: Agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[GoogleSearchTools()],
+        model=OpenAIChat(id="gpt-4o"),
+        tools=[CustomGoogleSearch()],
         instructions=[
             "You are provided with a startup idea and some market research related to the idea. ",
             "Identify existing competitors in the market. ",
             "Perform Strengths, Weaknesses, Opportunities, and Threats (SWOT) analysis for each competitor. ",
-            "Assess the startup’s potential positioning relative to competitors.",
+            "Assess the startup's potential positioning relative to competitors.",
         ],
         add_history_to_messages=True,
         add_datetime_to_instructions=True,
@@ -124,7 +143,7 @@ class StartupIdeaValidator(Workflow):
     )
 
     report_agent: Agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-4o"),
         instructions=[
             "You are provided with a startup idea and other data about the idea. ",
             "Summarise everything into a single report.",
@@ -255,7 +274,7 @@ if __name__ == "__main__":
     # Get idea from user
     idea = Prompt.ask(
         "[bold]What is your startup idea?[/bold]\n✨",
-        default="A marketplace for Christmas Ornaments made from leather",
+        default="so my ideas is to create a startup which can fullfill the needs of HPC (High Performance Computing) to every user like we know that HPC is very expensive and not everyone can afford it so my idea is to create a startup which can provide HPC to every user at a very low price and the user can use it for their own purposes , like they can train and fine tune their own models and use softwares like blender and other softwares like photoshop , games everything that needs high performance computing we will provide a platform where user can enjoy HPC for every aspect of work , also it is very helpful because we dont need to replace existing infrastructure and we can use existing infrastructure and we can provide HPC to every user at a very low price , and every user means , Ai developer , game developer , data scientist , video editor , etc",
     )
 
     # Convert the idea to a URL-safe string for use in session_id
@@ -264,10 +283,11 @@ if __name__ == "__main__":
     startup_idea_validator = StartupIdeaValidator(
         description="Startup Idea Validator",
         session_id=f"validate-startup-idea-{url_safe_idea}",
-        storage=SqliteStorage(
+        storage=SqliteWorkflowStorage(
             table_name="validate_startup_ideas_workflow",
-            db_file="tmp/agno_workflows.db",
+            db_file="tmp/workflows.db",
         ),
+        debug_mode=True,
     )
 
     final_report: Iterator[RunResponse] = startup_idea_validator.run(startup_idea=idea)
