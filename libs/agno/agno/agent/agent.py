@@ -706,7 +706,10 @@ class Agent:
 
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:
-                self.run_response.tools = model_response.tool_calls
+                if self.run_response.tools is None:
+                    self.run_response.tools = model_response.tool_calls
+                else:
+                    self.run_response.tools.extend(model_response.tool_calls)
 
             # Update the run_response audio with the model response audio
             if model_response.audio is not None:
@@ -3699,6 +3702,17 @@ class Agent:
                     stream=True,
                     **kwargs,
                 ):
+                    if isinstance(resp, RunResponse):
+                        if resp.event == RunEvent.run_response:
+                            if isinstance(resp.content, str):
+                                _response_content += resp.content
+                            if resp.thinking is not None:
+                                _response_thinking += resp.thinking
+                        if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
+                            reasoning_steps = resp.extra_data.reasoning_steps
+
+                    response_content_stream: Union[str, Markdown] = _response_content
+                    
                     # Escape special tags before markdown conversion
                     if self.markdown:
                         escaped_content = self.escape_markdown_tags(_response_content, tags_to_include_in_markdown)
