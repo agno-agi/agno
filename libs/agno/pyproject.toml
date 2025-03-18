@@ -128,7 +128,7 @@ tools = [
   "agno[webex]",
   "agno[mcp]",
   "agno[browserbase]",
-  "agno[yfinance]",
+#  "agno[yfinance]",
 ]
 
 # All storage
