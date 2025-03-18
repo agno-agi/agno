@@ -1634,7 +1634,9 @@ class Agent:
                 self.model.structured_outputs = False
 
             else:  # Model does not support structured or JSON schema outputs
-                self.model.response_format = json_response_format if (self.response_format == "json" or not self.structured_outputs) else None
+                self.model.response_format = (
+                    json_response_format if (self.response_format == "json" or not self.structured_outputs) else None
+                )
                 self.model.structured_outputs = False
 
         # Add tools to the Model
@@ -2058,7 +2060,10 @@ class Agent:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
 
             # Add the JSON output prompt if response_model is provided and structured_outputs is False
-            if self.response_model is not None and (self.model.supports_native_structured_outputs and (self.response_format == "json" or self.structured_outputs is False)):
+            if self.response_model is not None and self.model and (
+                self.model.supports_native_structured_outputs
+                and (self.response_format == "json" or self.structured_outputs is False)
+            ):
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
             return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
@@ -2199,7 +2204,10 @@ class Agent:
                     )
 
         # Add the JSON output prompt if response_model is provided and structured_outputs is False (only applicable if the model supports structured outputs)
-        if self.response_model is not None and not (self.model.supports_native_structured_outputs and (self.response_format == "structured" or self.structured_outputs is True)):
+        if self.response_model is not None and not (
+            self.model.supports_native_structured_outputs
+            and (self.response_format == "structured" or self.structured_outputs is True)
+        ):
             system_message_content += f"{self.get_json_output_prompt()}"
 
         # Return the system message

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, List, Optional, Union, Literal, Dict
+from typing import Callable, Dict, List, Literal, Optional, Union
 
 from agno.models.base import Model
 from agno.reasoning.step import ReasoningSteps
