@@ -9,7 +9,7 @@ from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
 from agno.playground.playground import Playground
 from agno.playground.serve import serve_playground_app
-from agno.storage.agent.postgres import PostgresAgentStorage
+from agno.storage.postgres import PostgresStorage
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -40,7 +40,7 @@ file_agent = Agent(
     agent_id="file-upload-agent",
     role="Answer questions about the uploaded files",
     model=OpenAIChat(id="gpt-4o-mini"),
-    storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
+    storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
     knowledge=knowledge_base,
     show_tool_calls=True,
     markdown=True,
@@ -52,7 +52,7 @@ audio_agent = Agent(
     agent_id="audio-understanding-agent",
     role="Answer questions about audio files",
     model=OpenAIChat(id="gpt-4o-audio-preview"),
-    storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
+    storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     show_tool_calls=True,
@@ -64,7 +64,7 @@ video_agent = Agent(
     model=Gemini(id="gemini-2.0-flash"),
     agent_id="video-understanding-agent",
     role="Answer questions about video files",
-    storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
+    storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     show_tool_calls=True,

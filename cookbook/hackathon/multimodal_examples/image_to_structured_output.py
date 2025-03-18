@@ -22,7 +22,6 @@ class Invoice(BaseModel):
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     response_model=Invoice,
-    structured_outputs=True,
 )
 
 agent.print_response(

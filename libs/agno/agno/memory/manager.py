@@ -14,7 +14,7 @@ from agno.utils.log import logger
 class MemoryManager(BaseModel):
     model: Optional[Model] = None
     user_id: Optional[str] = None
-
+    limit: Optional[int] = None
     # Provide the system prompt for the manager as a string
     system_prompt: Optional[str] = None
     # Memory Database
@@ -73,7 +73,7 @@ class MemoryManager(BaseModel):
         if self.db is None:
             return None
 
-        return self.db.read_memories(user_id=self.user_id)
+        return self.db.read_memories(user_id=self.user_id, limit=self.limit)
 
     def add_memory(self, memory: str) -> str:
         """Use this function to add a memory to the database.
