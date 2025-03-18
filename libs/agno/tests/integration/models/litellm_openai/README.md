@@ -31,5 +31,6 @@ litellm --model gpt-4o --host 127.0.0.1 --port 4000
 ### 5. Run tests
 
 ```shell
-pytest libs/agno/tests/integration/models/litellm_openai/test_litellm_openai.py -v
+pytest libs/agno/tests/integration/models/litellm_openai/test_basic.py -v
+pytest libs/agno/tests/integration/models/litellm_openai/test_tool_use.py -v
 ```
