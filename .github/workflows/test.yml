@@ -35,7 +35,7 @@ jobs:
         run: |
           python -m pip install --upgrade \
             pip setuptools wheel \
-            ruff mypy pytest types-pyyaml
+            ruff mypy pytest types-pyyaml pytest-cov
           pip install --no-deps -r requirements.txt
       - name: Ruff format
         run: |
@@ -71,7 +71,7 @@ jobs:
           set -e
           ./scripts/dev_setup.sh
       - name: Run tests for Agno
-        working-directory: ${{ github.workspace }}
+        working-directory: .
         run: |
           source .venv/bin/activate
           python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit
