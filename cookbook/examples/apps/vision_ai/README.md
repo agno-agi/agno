@@ -5,8 +5,6 @@ The system is designed with two separate agents:
 - **Image Processing Agent**: Extracts structured insights based on the uploaded image and user instructions.
 - **Chat Agent**: Answers follow-up questions using the last extracted insights from image and (optionally) web search via DuckDuckGo.
 
-VisionAI allows users to interact with images in **Auto, Manual, and Hybrid modes**, offering a powerful and flexible workflow.
-
 ---
 
 ## 🚀 **Setup Instructions**
