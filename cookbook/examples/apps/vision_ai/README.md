@@ -3,7 +3,7 @@ VisionAI is a **smart image analysis agent** that extracts structured insights f
 
 The system is designed with two separate agents:
 - **Image Processing Agent**: Extracts structured insights based on the uploaded image and user instructions.
-- **Chat Agent**: Answers follow-up questions using the last extracted insights and (optionally) web search via DuckDuckGo.
+- **Chat Agent**: Answers follow-up questions using the last extracted insights from image and (optionally) web search via DuckDuckGo.
 
 VisionAI allows users to interact with images in **Auto, Manual, and Hybrid modes**, offering a powerful and flexible workflow.
 
@@ -26,33 +26,7 @@ source .venv/bin/activate
 pip install -r cookbook/examples/apps/vision_ai/requirements.txt
 ```
 
-### 3. Run PgVector
-
-Let's use Postgres for storing our data, but the VisionAI Agent should work with any database.
-
-> Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) first.
-
-- Run using a helper script
-
-```shell
-./cookbook/scripts/run_pgvector.sh
-```
-
-- OR run using the docker run command
-
-```shell
-docker run -d \
-  -e POSTGRES_DB=ai \
-  -e POSTGRES_USER=ai \
-  -e POSTGRES_PASSWORD=ai \
-  -e PGDATA=/var/lib/postgresql/data/pgdata \
-  -v pgvolume:/var/lib/postgresql/data \
-  -p 5532:5432 \
-  --name pgvector \
-  agnohq/pgvector:16
-```
-
-### 4. Export API Keys
+### 3. Export API Keys
 
 We recommend using gpt-4o for this task, but you can use any Model you like.
 
@@ -67,7 +41,7 @@ export GOOGLE_API_KEY=***
 export MISTRAL_API_KEY=***
 ```
 
-### 5. Run VisionAI Agent
+### 4. Run VisionAI Agent
 
 ```shell
 streamlit run cookbook/examples/apps/vision_ai/app.py
@@ -75,34 +49,34 @@ streamlit run cookbook/examples/apps/vision_ai/app.py
 
 - Open [localhost:8501](http://localhost:8501) to view the VisionAI Agent.
 
-### 6. Features
+### 5. Features
 
-### ✅ Multiple Image Processing Modes
-- **Auto Mode**: Image is processed as soon as it's uploaded.
-- **Manual Mode**: Users provide specific instructions before processing.
-- **Hybrid Mode**: A mix of auto-processing and user-defined instructions.
+### Image Processing Modes
+- **Auto**: Extracts the image automatically without any extra information from users
+- **Manual**: User provide specific instructions for image extraction
+- **Hybrid**: Combined auto-processing mode with user-defined instructions
 
-### ✅ Chat Agent for Follow-Up Queries
-- Ask follow-up questions based on extracted insights.
-- Supports **optional web search** using **DuckDuckGo**.
+### Smart Chat Agent for Follow-up Queries
+- Interactive follow-up questions on extracted image data
+- Optional web search integration via **DuckDuckGo**
+- Seamless switching between different AI models
 
-### ✅ Enable/Disable Web Search
-- Users can toggle **web search (DuckDuckGo)** **on/off** using a **radio button** in the sidebar.
-- If enabled, the chat agent uses **external search results** to enhance responses.
+### Enable/Disable Web Search
+- Users can easily toggle web search capability (DuckDuckGo) on/off using a convenient radio button in the sidebar
+- When enabled, the chat agent leverages web search results to enhance responses specifically when users request the agent to search online
 
 ---
 
-### 7. How to Use 🛠
+### 6. How to Use 🛠
 
-- **Upload an Image**: Choose any **PNG, JPG, or JPEG** file.
-- **Model Choice**: Choose whether you would like to use OpenAI or Gemini
-- **Toggle Web Search**: Enable/disable external web search if needed.
-- **Select Processing Mode**: Auto, Manual, or Hybrid.
-- **Enter Instructions** *(if required for Manual/Hybrid Mode).*
-- **Extract Insights**: The agent processes the image and extracts details.
-- **Ask Follow-Up Questions**: Chat agent answers based on extracted insights.
-- **Toggle Web Search**: Enable/disable external web search if needed.
+- **Upload Image**: Support for PNG, JPG, and JPEG (up to 20MB)
+- **Select Model**: Choose between OpenAI, Gemini, or Mistral
+- **Configure Mode**: Set processing approach (Auto/Manual/Hybrid)
+- **Enter Instructions** *(if required for Manual/Hybrid Mode).
+- **Toggle Search**: Enable/disable DuckDuckGo web search
+- **Process Image**: Extract structured insights from your image
+- **Ask Follow-Up Questions**: Chat with VisionAI about the extracted image data
 
-### 8. Message us on [discord](https://agno.link/discord) if you have any questions
+### 7. Message us on [discord](https://agno.link/discord) if you have any questions
 
 

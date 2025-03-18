@@ -86,9 +86,9 @@ def main():
             ["Auto", "Manual", "Hybrid"],
             index=0,
             help="Select how the image analysis should be performed:\n"
-            "- **Auto**: Fully automated image data extraction.\n"
-            "- **Manual**: User provides extraction instructions.\n"
-            "- **Hybrid**: A mix of both, user input with automation.",
+            "- **Auto**: Extracts the image automatically without any extra information from users.\n"
+            "- **Manual**: User provide specific instructions for image extraction.\n"
+            "- **Hybrid**: Combined auto-processing mode with user-defined instructions.",
         )
 
         # Web Search Option (Enable/Disable DuckDuckGo)
