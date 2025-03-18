@@ -110,7 +110,8 @@ models = [
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
-  "agno[ibm]"
+  "agno[ibm]",
+  "agno[litellm]"
 ]
 
 # All tools
@@ -257,6 +258,7 @@ module = [
   "langchain_core.*",
   "langchain.*",
   "llama_index.*",
+  "litellm.*",
   "mem0.*",
   "mcp.*",
   "memory_profiler.*",
