@@ -1,3 +1,5 @@
+import pytest
+
 from agno.agent import Agent, RunResponse
 from agno.models.litellm import LiteLLMOpenAI
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -69,6 +71,27 @@ def test_tool_use():
 
     # Get the response with a query that should trigger tool use
     response: RunResponse = agent.run("What's the latest news about SpaceX?")
+
+    assert response.content is not None
+    # system, user, assistant (and possibly tool messages)
+    assert len(response.messages) >= 3
+
+    # Check if tool was used
+    tool_messages = [m for m in response.messages if m.role == "tool"]
+    assert len(tool_messages) > 0, "Tool should have been used"
+
+    _assert_metrics(response)
+
+
+@pytest.mark.asyncio
+async def test_async_tool_use():
+    """Test async tool use functionality with LiteLLM"""
+    agent = Agent(
+        model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, tools=[DuckDuckGoTools()], telemetry=False, monitoring=False
+    )
+
+    # Get the response with a query that should trigger tool use
+    response = await agent.arun("What's the latest news about SpaceX?")
 
     assert response.content is not None
     # system, user, assistant (and possibly tool messages)
