@@ -1207,7 +1207,7 @@ class Agent:
             else:
                 # Update the run_response content with the model response content
                 self.run_response.content = model_response.content
-                
+
             # Update the run_response thinking with the model response thinking
             if model_response.thinking is not None:
                 self.run_response.thinking = model_response.thinking
@@ -3712,7 +3712,7 @@ class Agent:
                             reasoning_steps = resp.extra_data.reasoning_steps
 
                     response_content_stream: Union[str, Markdown] = _response_content
-                    
+
                     # Escape special tags before markdown conversion
                     if self.markdown:
                         escaped_content = self.escape_markdown_tags(_response_content, tags_to_include_in_markdown)
@@ -3993,11 +3993,7 @@ class Agent:
         tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
         **kwargs: Any,
     ) -> None:
-        import json
-        import re
-
         from rich.console import Group
-        from rich.json import JSON
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
@@ -4040,7 +4036,7 @@ class Agent:
                 if render:
                     live_log.update(Group(*panels))
 
-                async for resp in self.arun(
+                async for resp in await self.arun(
                     message=message,
                     messages=messages,
                     audio=audio,
