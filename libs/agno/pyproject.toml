@@ -258,6 +258,7 @@ module = [
   "langchain_core.*",
   "langchain.*",
   "llama_index.*",
+  "litellm.*",
   "mem0.*",
   "mcp.*",
   "memory_profiler.*",
