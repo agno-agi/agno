@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.models.cohere import Cohere
 
 agent = Agent(
-    model=Cohere(id="command-r-08-2024"),
+    model=Cohere(id="command-a-03-2025"),
     markdown=True,
 )
 

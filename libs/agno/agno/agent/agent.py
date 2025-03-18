@@ -28,17 +28,16 @@ from pydantic import BaseModel
 from agno.agent.metrics import SessionMetrics
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
-from agno.media import Audio, AudioArtifact, AudioResponse, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.models.base import Model
-from agno.models.message import Message, MessageReferences
-from agno.models.openai.like import OpenAILike
+from agno.models.message import Citations, Message, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
-from agno.storage.agent.base import AgentStorage
-from agno.storage.agent.session import AgentSession
+from agno.storage.base import Storage
+from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
@@ -100,14 +99,14 @@ class Agent:
     references_format: Literal["json", "yaml"] = "json"
 
     # --- Agent Storage ---
-    storage: Optional[AgentStorage] = None
+    storage: Optional[Storage] = None
     # Extra data stored with this agent
     extra_data: Optional[Dict[str, Any]] = None
 
     # --- Agent Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
-    tools: Optional[List[Union[Toolkit, Callable, Function]]] = None
+    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
     # Show tool calls in Agent response.
     show_tool_calls: bool = False
     # Maximum number of tool calls allowed.
@@ -254,9 +253,9 @@ class Agent:
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
-        storage: Optional[AgentStorage] = None,
+        storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
-        tools: Optional[List[Union[Toolkit, Callable, Function]]] = None,
+        tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         show_tool_calls: bool = False,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -440,6 +439,13 @@ class Agent:
         else:
             set_log_level_to_info()
 
+    def set_storage_mode(self):
+        if self.storage is not None:
+            if self.storage.mode == "workflow":
+                logger.warning("You cannot use storage in both workflow and agent mode")
+
+            self.storage.mode = "agent"
+
     def set_monitoring(self) -> None:
         """Override monitoring and telemetry settings based on environment variables."""
 
@@ -453,6 +459,7 @@ class Agent:
             self.telemetry = telemetry_env.lower() == "true"
 
     def initialize_agent(self) -> None:
+        self.set_storage_mode()
         self.set_debug()
         self.set_agent_id()
         self.set_session_id()
@@ -477,6 +484,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         **kwargs: Any,
@@ -521,7 +529,7 @@ class Agent:
 
         # 4. Prepare run messages
         run_messages: RunMessages = self.get_run_messages(
-            message=message, audio=audio, images=images, videos=videos, messages=messages, **kwargs
+            message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
         if len(run_messages.messages) == 0:
             logger.error("No messages to be sent to the model.")
@@ -571,16 +579,21 @@ class Agent:
                         # We only have thinking on response
                         self.run_response.thinking = model_response.redacted_thinking
 
+                    if model_response_chunk.citations is not None:
+                        self.run_response.citations = model_response_chunk.citations
+
                     # Only yield if we have content or thinking to show
                     if (
                         model_response_chunk.content is not None
                         or model_response_chunk.thinking is not None
                         or model_response_chunk.redacted_thinking is not None
+                        or model_response_chunk.citations is not None
                     ):
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
                             redacted_thinking=model_response_chunk.redacted_thinking,
+                            citations=model_response_chunk.citations,
                             created_at=model_response_chunk.created_at,
                         )
 
@@ -681,6 +694,10 @@ class Agent:
                     self.run_response.thinking = model_response.redacted_thinking
                 else:
                     self.run_response.thinking += model_response.redacted_thinking
+
+            # Update the run_response citations with the model response citations
+            if model_response.citations is not None:
+                self.run_response.citations = model_response.citations
 
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:
@@ -817,6 +834,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
@@ -832,6 +850,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
@@ -842,10 +861,11 @@ class Agent:
         self,
         message: Optional[Union[str, List, Dict, Message]] = None,
         *,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Any]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
@@ -856,6 +876,10 @@ class Agent:
         # If no retries are set, use the agent's default retries
         if retries is None:
             retries = self.retries
+
+        # Use stream overrided value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
 
         last_exception = None
         num_attempts = retries + 1
@@ -877,6 +901,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -914,6 +939,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -926,6 +952,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -962,6 +989,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         **kwargs: Any,
@@ -1007,7 +1035,7 @@ class Agent:
 
         # 4. Prepare run messages
         run_messages: RunMessages = self.get_run_messages(
-            message=message, audio=audio, images=images, videos=videos, messages=messages, **kwargs
+            message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
         if len(run_messages.messages) == 0:
             logger.error("No messages to be sent to the model.")
@@ -1057,16 +1085,21 @@ class Agent:
                         # We only have thinking on response
                         self.run_response.thinking = model_response.redacted_thinking
 
+                    if model_response_chunk.citations is not None:
+                        self.run_response.citations = model_response_chunk.citations
+
                     # Only yield if we have content or thinking to show
                     if (
                         model_response_chunk.content is not None
                         or model_response_chunk.thinking is not None
                         or model_response_chunk.redacted_thinking is not None
+                        or model_response_chunk.citations is not None
                     ):
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
                             redacted_thinking=model_response_chunk.redacted_thinking,
+                            citations=model_response_chunk.citations,
                             created_at=model_response_chunk.created_at,
                         )
 
@@ -1169,6 +1202,9 @@ class Agent:
                     self.run_response.thinking = model_response.redacted_thinking
                 else:
                     self.run_response.thinking += model_response.redacted_thinking
+
+            if model_response.citations is not None:
+                self.run_response.citations = model_response.citations
 
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:
@@ -1299,10 +1335,11 @@ class Agent:
         self,
         message: Optional[Union[str, List, Dict, Message]] = None,
         *,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
@@ -1313,6 +1350,10 @@ class Agent:
         # If no retries are set, use the agent's default retries
         if retries is None:
             retries = self.retries
+
+        # Use stream overrided value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
 
         last_exception = None
         num_attempts = retries + 1
@@ -1333,6 +1374,7 @@ class Agent:
                         audio=audio,
                         images=images,
                         videos=videos,
+                        files=files,
                         messages=messages,
                         stream_intermediate_steps=stream_intermediate_steps,
                         **kwargs,
@@ -1369,6 +1411,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -1381,6 +1424,7 @@ class Agent:
                             audio=audio,
                             images=images,
                             videos=videos,
+                            files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
                             **kwargs,
@@ -1418,6 +1462,7 @@ class Agent:
         event: RunEvent = RunEvent.run_response,
         content_type: Optional[str] = None,
         created_at: Optional[int] = None,
+        citations: Optional[Citations] = None,
     ) -> RunResponse:
         self.run_response = cast(RunResponse, self.run_response)
         thinking_combined = (thinking or "") + (redacted_thinking or "")
@@ -1431,6 +1476,7 @@ class Agent:
             audio=self.run_response.audio,
             images=self.run_response.images,
             videos=self.run_response.videos,
+            citations=citations or self.run_response.citations,
             response_audio=self.run_response.response_audio,
             model=self.run_response.model,
             messages=self.run_response.messages,
@@ -1443,9 +1489,9 @@ class Agent:
             rr.created_at = created_at
         return rr
 
-    def get_tools(self) -> Optional[List[Union[Toolkit, Callable, Function]]]:
+    def get_tools(self) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
         self.memory = cast(AgentMemory, self.memory)
-        agent_tools: List[Union[Toolkit, Callable, Function]] = []
+        agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Add provided tools
         if self.tools is not None:
@@ -1495,7 +1541,13 @@ class Agent:
                 self._functions_for_model = {}
 
                 for tool in agent_tools:
-                    if isinstance(tool, Toolkit):
+                    if isinstance(tool, Dict):
+                        # If a dict is passed, it is a builtin tool
+                        # that is run by the model provider and not the Agent
+                        self._tools_for_model.append(tool)
+                        logger.debug(f"Included builtin tool {tool}")
+
+                    elif isinstance(tool, Toolkit):
                         # For each function in the toolkit and process entrypoint
                         for name, func in tool.functions.items():
                             # If the function does not exist in self.functions
@@ -1546,7 +1598,7 @@ class Agent:
                 logger.exception(e)
                 logger.error(
                     "Agno agents use `openai` as the default model provider. "
-                    "Please provide a `model` or install `openai`."
+                    "Please provide a `model` or install `openai` using `pip install openai -U`."
                 )
                 exit(1)
             self.model = OpenAIChat(id="gpt-4o")
@@ -1798,7 +1850,7 @@ class Agent:
             Optional[AgentSession]: The loaded AgentSession or None if not found.
         """
         if self.storage is not None and self.session_id is not None:
-            self.agent_session = self.storage.read(session_id=self.session_id)
+            self.agent_session = cast(AgentSession, self.storage.read(session_id=self.session_id))
             if self.agent_session is not None:
                 self.load_agent_session(session=self.agent_session)
             self.load_user_memories()
@@ -1811,7 +1863,7 @@ class Agent:
             Optional[AgentSession]: The saved AgentSession or None if not saved.
         """
         if self.storage is not None:
-            self.agent_session = self.storage.upsert(session=self.get_agent_session())
+            self.agent_session = cast(AgentSession, self.storage.upsert(session=self.get_agent_session()))
         return self.agent_session
 
     def add_introduction(self, introduction: str) -> None:
@@ -1910,23 +1962,41 @@ class Agent:
                                 for prop_name, prop_value in field_properties.items()
                                 if prop_name != "title"
                             }
+                            # Handle enum references
+                            if "allOf" in formatted_field_properties:
+                                ref = formatted_field_properties["allOf"][0].get("$ref", "")
+                                if ref.startswith("#/$defs/"):
+                                    enum_name = ref.split("/")[-1]
+                                    formatted_field_properties["enum_type"] = enum_name
+
                             response_model_properties[field_name] = formatted_field_properties
+
                     json_schema_defs = json_schema.get("$defs")
                     if json_schema_defs is not None:
                         response_model_properties["$defs"] = {}
                         for def_name, def_properties in json_schema_defs.items():
-                            def_fields = def_properties.get("properties")
-                            formatted_def_properties = {}
-                            if def_fields is not None:
-                                for field_name, field_properties in def_fields.items():
-                                    formatted_field_properties = {
-                                        prop_name: prop_value
-                                        for prop_name, prop_value in field_properties.items()
-                                        if prop_name != "title"
-                                    }
-                                    formatted_def_properties[field_name] = formatted_field_properties
-                            if len(formatted_def_properties) > 0:
-                                response_model_properties["$defs"][def_name] = formatted_def_properties
+                            # Handle both regular object definitions and enums
+                            if "enum" in def_properties:
+                                # This is an enum definition
+                                response_model_properties["$defs"][def_name] = {
+                                    "type": "string",
+                                    "enum": def_properties["enum"],
+                                    "description": def_properties.get("description", ""),
+                                }
+                            else:
+                                # This is a regular object definition
+                                def_fields = def_properties.get("properties")
+                                formatted_def_properties = {}
+                                if def_fields is not None:
+                                    for field_name, field_properties in def_fields.items():
+                                        formatted_field_properties = {
+                                            prop_name: prop_value
+                                            for prop_name, prop_value in field_properties.items()
+                                            if prop_name != "title"
+                                        }
+                                        formatted_def_properties[field_name] = formatted_field_properties
+                                if len(formatted_def_properties) > 0:
+                                    response_model_properties["$defs"][def_name] = formatted_def_properties
 
                     if len(response_model_properties) > 0:
                         json_output_prompt += "\n<json_fields>"
@@ -1988,7 +2058,7 @@ class Agent:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
 
             # Add the JSON output prompt if response_model is provided and structured_outputs is False
-            if self.response_model is not None and (self.response_format == "json" or self.structured_outputs is False):
+            if self.response_model is not None and (self.model.supports_native_structured_outputs and (self.response_format == "json" or self.structured_outputs is False)):
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
             return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
@@ -2128,8 +2198,8 @@ class Agent:
                         "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
                     )
 
-        # Add the JSON output prompt if response_model is provided and structured_outputs is False
-        if self.response_model is not None and (self.response_format == "json" or self.structured_outputs is False):
+        # Add the JSON output prompt if response_model is provided and structured_outputs is False (only applicable if the model supports structured outputs)
+        if self.response_model is not None and not (self.model.supports_native_structured_outputs and (self.response_format == "structured" or self.structured_outputs is True)):
             system_message_content += f"{self.get_json_output_prompt()}"
 
         # Return the system message
@@ -2146,6 +2216,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent.
@@ -2203,13 +2274,20 @@ class Agent:
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 **kwargs,
             )
 
         # 2. If create_default_user_message is False or message is a list, return the message as is.
         if not self.create_default_user_message or isinstance(message, list):
             return Message(
-                role=self.user_message_role, content=message, images=images, audio=audio, videos=videos, **kwargs
+                role=self.user_message_role,
+                content=message,
+                images=images,
+                audio=audio,
+                videos=videos,
+                files=files,
+                **kwargs,
             )
 
         # 3. Build the default user message for the Agent
@@ -2245,6 +2323,7 @@ class Agent:
             audio=audio,
             images=images,
             videos=videos,
+            files=files,
             **kwargs,
         )
 
@@ -2255,6 +2334,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         **kwargs: Any,
     ) -> RunMessages:
@@ -2278,7 +2358,7 @@ class Agent:
 
         Typical usage:
         run_messages = self.get_run_messages(
-            message=message, audio=audio, images=images, videos=videos, messages=messages, **kwargs
+            message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
         """
         # Initialize the RunMessages object
@@ -2352,7 +2432,9 @@ class Agent:
         user_message: Optional[Message] = None
         # 4.1 Build user message if message is None, str or list
         if message is None or isinstance(message, str) or isinstance(message, list):
-            user_message = self.get_user_message(message=message, audio=audio, images=images, videos=videos, **kwargs)
+            user_message = self.get_user_message(
+                message=message, audio=audio, images=images, videos=videos, files=files, **kwargs
+            )
         # 4.2 If message is provided as a Message, use it directly
         elif isinstance(message, Message):
             user_message = message
@@ -2882,6 +2964,8 @@ class Agent:
 
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
+            from agno.models.openai.like import OpenAILike
+
             # Use DeepSeek for reasoning
             if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id.lower() == "deepseek-reasoner":
                 from agno.reasoning.deepseek import get_deepseek_reasoning, get_deepseek_reasoning_agent
@@ -3066,6 +3150,8 @@ class Agent:
 
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
+            from agno.models.openai.like import OpenAILike
+
             # Use DeepSeek for reasoning
             if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id == "deepseek-reasoner":
                 from agno.reasoning.deepseek import aget_deepseek_reasoning, get_deepseek_reasoning_agent
@@ -3521,6 +3607,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         stream: bool = False,
         markdown: bool = False,
         show_message: bool = True,
@@ -3577,7 +3664,14 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 for resp in self.run(
-                    message=message, messages=messages, audio=audio, images=images, videos=videos, stream=True, **kwargs
+                    message=message,
+                    messages=messages,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    stream=True,
+                    **kwargs,
                 ):
                     if isinstance(resp, RunResponse):
                         if resp.event == RunEvent.run_response:
@@ -3662,6 +3756,21 @@ class Agent:
                         panels.append(response_panel)
                     if render:
                         live_log.update(Group(*panels))
+
+                if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                    md_content = "\n".join(
+                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                        for i, citation in enumerate(resp.citations.urls)
+                        if citation.url  # Only include citations with valid URLs
+                    )
+                    if md_content:  # Only create panel if there are citations
+                        citations_panel = self.create_panel(
+                            content=Markdown(md_content),
+                            title="Citations",
+                            border_style="green",
+                        )
+                        panels.append(citations_panel)
+                        live_log.update(Group(*panels))
                 response_timer.stop()
 
                 # Final update to remove the "Thinking..." status
@@ -3694,6 +3803,7 @@ class Agent:
                     audio=audio,
                     images=images,
                     videos=videos,
+                    files=files,
                     stream=False,
                     **kwargs,
                 )
@@ -3776,6 +3886,25 @@ class Agent:
                 )
                 panels.append(response_panel)
 
+                if (
+                    isinstance(run_response, RunResponse)
+                    and run_response.citations is not None
+                    and run_response.citations.urls is not None
+                ):
+                    md_content = "\n".join(
+                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                        for i, citation in enumerate(run_response.citations.urls)
+                        if citation.url  # Only include citations with valid URLs
+                    )
+                    if md_content:  # Only create panel if there are citations
+                        citations_panel = self.create_panel(
+                            content=Markdown(md_content),
+                            title="Citations",
+                            border_style="green",
+                        )
+                        panels.append(citations_panel)
+                        live_log.update(Group(*panels))
+
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]
                 live_log.update(Group(*panels))
@@ -3788,6 +3917,7 @@ class Agent:
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
         stream: bool = False,
         markdown: bool = False,
         show_message: bool = True,
@@ -3844,7 +3974,14 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 _arun_generator = await self.arun(
-                    message=message, messages=messages, audio=audio, images=images, videos=videos, stream=True, **kwargs
+                    message=message,
+                    messages=messages,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    stream=True,
+                    **kwargs,
                 )
                 async for resp in _arun_generator:
                     if isinstance(resp, RunResponse):
@@ -3929,6 +4066,21 @@ class Agent:
                         )
                         panels.append(response_panel)
                     if render:
+                        live_log.update(Group(*panels))
+
+                if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                    md_content = "\n".join(
+                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                        for i, citation in enumerate(resp.citations.urls)
+                        if citation.url  # Only include citations with valid URLs
+                    )
+                    if md_content:  # Only create panel if there are citations
+                        citations_panel = self.create_panel(
+                            content=Markdown(md_content),
+                            title="Citations",
+                            border_style="green",
+                        )
+                        panels.append(citations_panel)
                         live_log.update(Group(*panels))
                 response_timer.stop()
 
@@ -4043,6 +4195,25 @@ class Agent:
                     border_style="blue",
                 )
                 panels.append(response_panel)
+
+                if (
+                    isinstance(run_response, RunResponse)
+                    and run_response.citations is not None
+                    and run_response.citations.urls is not None
+                ):
+                    md_content = "\n".join(
+                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                        for i, citation in enumerate(run_response.citations.urls)
+                        if citation.url  # Only include citations with valid URLs
+                    )
+                    if md_content:  # Only create panel if there are citations
+                        citations_panel = self.create_panel(
+                            content=Markdown(md_content),
+                            title="Citations",
+                            border_style="green",
+                        )
+                        panels.append(citations_panel)
+                        live_log.update(Group(*panels))
 
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]

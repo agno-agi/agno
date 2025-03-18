@@ -14,7 +14,7 @@ knowledge_base = PDFUrlKnowledgeBase(
 knowledge_base.load(recreate=False)  # Comment out after first run
 
 agent = Agent(
-    model=Cohere(id="command-r-08-2024"),
+    model=Cohere(id="command-a-03-2025"),
     knowledge=knowledge_base,
     show_tool_calls=True,
 )

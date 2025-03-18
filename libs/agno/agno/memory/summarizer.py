@@ -167,7 +167,12 @@ class MemorySummarizer(BaseModel):
             )
 
         # Prepare the List of messages to send to the Model
-        messages_for_model: List[Message] = [self.get_system_message(messages_for_summarization)]
+        messages_for_model: List[Message] = [
+            self.get_system_message(messages_for_summarization),
+            # For models that require a non-system message
+            Message(role="user", content="Provide the summary of the conversation."),
+        ]
+
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
         response = await self.model.aresponse(messages=messages_for_model)

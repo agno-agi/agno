@@ -26,14 +26,14 @@ try:
         ChoiceDeltaToolCall,
     )
     from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
-except ModuleNotFoundError:
+except (ImportError, ModuleNotFoundError):
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
 
 @dataclass
 class OpenAIChat(Model):
     """
-    A class for interacting with OpenAI models.
+    A class for interacting with OpenAI models using the Chat completions API.
 
     For more information, see: https://platform.openai.com/docs/api-reference/chat/create
     """
@@ -112,8 +112,10 @@ class OpenAIChat(Model):
             "default_headers": self.default_headers,
             "default_query": self.default_query,
         }
+
         # Create client_params dict with non-None values
         client_params = {k: v for k, v in base_params.items() if v is not None}
+
         # Add additional client params if provided
         if self.client_params:
             client_params.update(self.client_params)
@@ -189,12 +191,14 @@ class OpenAIChat(Model):
 
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
+
         # Add tools
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
 
             if self.tool_choice is not None:
                 request_params["tool_choice"] = self.tool_choice
+
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
@@ -654,7 +658,7 @@ class OpenAIChat(Model):
             response_delta: Raw response chunk from OpenAI
 
         Returns:
-            ProviderResponse: Iterator of parsed response data
+            ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
         if response_delta.choices and len(response_delta.choices) > 0:

@@ -96,7 +96,7 @@ class MongoMemoryDb(MemoryDb):
             for doc in cursor:
                 # Remove MongoDB _id before converting to MemoryRow
                 doc.pop("_id", None)
-                memories.append(MemoryRow(id=doc["id"], user_id=doc["user_id"], memory=doc["memory"]))
+                memories.append(MemoryRow(user_id=doc["user_id"], memory=doc["memory"]))
         except PyMongoError as e:
             logger.error(f"Error reading memories: {e}")
         return memories
