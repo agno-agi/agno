@@ -110,7 +110,8 @@ models = [
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
-  "agno[ibm]"
+  "agno[ibm]",
+  "agno[litellm]"
 ]
 
 # All tools
