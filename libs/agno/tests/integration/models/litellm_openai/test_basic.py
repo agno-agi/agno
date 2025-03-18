@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent, RunResponse
 from agno.models.litellm import LiteLLMOpenAI
 from agno.storage.sqlite import SqliteStorage
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 
 def _assert_metrics(response: RunResponse):
