@@ -71,7 +71,7 @@ jobs:
           set -e
           ./scripts/dev_setup.sh
       - name: Run tests for Agno
-        working-directory: .
+        working-directory: ${{ github.workspace }}
         run: |
           source .venv/bin/activate
           python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit
@@ -116,4 +116,3 @@ jobs:
       #           "color": "red"
       #         }
       #       ]
-            
