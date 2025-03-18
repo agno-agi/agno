@@ -2060,9 +2060,13 @@ class Agent:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
 
             # Add the JSON output prompt if response_model is provided and structured_outputs is False
-            if self.response_model is not None and self.model and (
-                self.model.supports_native_structured_outputs
-                and (self.response_format == "json" or self.structured_outputs is False)
+            if (
+                self.response_model is not None
+                and self.model
+                and (
+                    self.model.supports_native_structured_outputs
+                    and (self.response_format == "json" or self.structured_outputs is False)
+                )
             ):
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
