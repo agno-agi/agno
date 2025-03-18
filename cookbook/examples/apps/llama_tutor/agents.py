@@ -50,30 +50,31 @@ agent_storage = SqliteAgentStorage(
 
 def tutor_agent(
     user_id: Optional[str] = None,
-    model_id: str = "openai:gpt-4o",
+    model_id: str = "groq:llama-3.3-70b-versatile",
     session_id: Optional[str] = None,
     num_history_responses: int = 5,
     debug_mode: bool = True,
     education_level: str = "High School",
 ) -> Agent:
     """
-    Returns an instance of Sage, the Answer Engine Agent with integrated tools for web search,
+    Returns an instance of Llama Tutor, an educational AI assistant with integrated tools for web search,
     deep contextual analysis, and file management.
 
-    Sage will:
-      - Decide whether a query requires a real-time web search (using DuckDuckGoTools)
-        or an in-depth analysis (using ExaTools).
-      - Generate a comprehensive answer that includes:
-          • A direct, succinct answer.
-          • Detailed explanations and supporting evidence.
-          • Examples and clarification of misconceptions.
+    Llama Tutor will:
+      - Use DuckDuckGoTools for real-time web searches and ExaTools for in-depth analysis to gather information.
+      - Generate comprehensive educational answers tailored to the specified education level that include:
+          • Direct, succinct answers appropriate for the student's level.
+          • Detailed explanations with supporting evidence.
+          • Examples and clarification of common misconceptions.
+          • Interactive elements like questions to check understanding.
       - Prompt the user:
             "Would you like to save this answer to a file? (yes/no)"
         If confirmed, it will use FileTools to save the answer in markdown format in the output directory.
 
     Args:
         user_id: Optional identifier for the user.
-        model_id: Model identifier in the format 'provider:model_name' (e.g., "openai:gpt-4o").
+        model_id: Model identifier in the format 'groq:model_name' (e.g., "groq:llama-3.3-70b-versatile"). 
+                 Will always use Groq with a Llama model regardless of provider specified.
         session_id: Optional session identifier for tracking conversation history.
         num_history_responses: Number of previous responses to include for context.
         debug_mode: Enable logging and debug features.
@@ -86,24 +87,19 @@ def tutor_agent(
     # Parse model provider and name
     provider, model_name = model_id.split(":")
 
-    # Select appropriate model class based on provider
-    if provider == "openai":
-        model = OpenAIChat(id=model_name)
-    # elif provider == "google":
-    #     model = Gemini(id=model_name)
-    elif provider == "anthropic":
-        model = Claude(id=model_name)
-    elif provider == "groq":
-        # Get Groq API key from environment variable
-        groq_api_key = os.environ.get("GROQ_API_KEY")
-        model = Groq(id=model_name, api_key=groq_api_key)
-    else:
-        raise ValueError(f"Unsupported model provider: {provider}")
+    # Always use Groq with Llama model
+    groq_api_key = os.environ.get("GROQ_API_KEY")
+    
+    # Default to llama-3.3-70b-versatile if the model name doesn't contain "llama"
+    if "llama" not in model_name.lower():
+        model_name = "llama-3.3-70b-versatile"
+        
+    model = Groq(id=model_name, api_key=groq_api_key)
 
     # Get Exa API key from environment variable
     exa_api_key = os.environ.get("EXA_API_KEY")
     
-    # Tools for Sage
+    # Tools for Llama Tutor
     tools = [
         ExaTools(
             api_key=exa_api_key,
@@ -177,7 +173,7 @@ def tutor_agent(
         session_id=session_id or str(uuid.uuid4()),
         storage=agent_storage,
         tools=tools,
-        # Allow Sage to read both chat history and tool call history for better context.
+        # Allow Llama Tutor to read both chat history and tool call history for better context.
         read_chat_history=True,
         read_tool_call_history=True,
         # Append previous conversation responses into the new messages for context.

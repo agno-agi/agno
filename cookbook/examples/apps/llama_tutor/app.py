@@ -37,22 +37,9 @@ def main() -> None:
     )
 
     ####################################################################
-    # Model selector
+    # Model configuration - always use Llama 3.3 70B
     ####################################################################
-    model_options = {
-        "llama-3.3-70b": "groq:llama-3.3-70b-versatile",
-        # "gpt-4o": "openai:gpt-4o",
-        # "o3-mini": "openai:o3-mini",
-        # "gemini-2.0-flash-exp": "google:gemini-2.0-flash-exp",
-        # "claude-3-5-sonnet": "anthropic:claude-3-5-sonnet-20241022",
-    }
-    selected_model = st.sidebar.selectbox(
-        "Choose a model",
-        options=list(model_options.keys()),
-        index=0,
-        key="model_selector",
-    )
-    model_id = model_options[selected_model]
+    model_id = "groq:llama-3.3-70b-versatile"
     
     ####################################################################
     # Education level selector
@@ -79,30 +66,30 @@ def main() -> None:
     elif st.session_state["education_level"] != selected_education_level:
         st.session_state["education_level"] = selected_education_level
         # Reset the agent if education level changes
-        if "sage" in st.session_state:
-            st.session_state["sage"] = None
+        if "llama_tutor" in st.session_state:
+            st.session_state["llama_tutor"] = None
 
     ####################################################################
     # Initialize Agent
     ####################################################################
-    sage: Agent
+    llama_tutor: Agent
     if (
-        "sage" not in st.session_state
-        or st.session_state["sage"] is None
+        "llama_tutor" not in st.session_state
+        or st.session_state["llama_tutor"] is None
         or st.session_state.get("current_model") != model_id
     ):
-        logger.info("---*--- Creating new Sage agent ---*---")
-        sage = tutor_agent(model_id=model_id, education_level=st.session_state["education_level"])
-        st.session_state["sage"] = sage
+        logger.info("---*--- Creating new Llama Tutor agent ---*---")
+        llama_tutor = tutor_agent(model_id=model_id, education_level=st.session_state["education_level"])
+        st.session_state["llama_tutor"] = llama_tutor
         st.session_state["current_model"] = model_id
     else:
-        sage = st.session_state["sage"]
+        llama_tutor = st.session_state["llama_tutor"]
 
     ####################################################################
     # Load Agent Session from the database
     ####################################################################
     try:
-        st.session_state["sage_session_id"] = sage.load_session()
+        st.session_state["llama_tutor_session_id"] = llama_tutor.load_session()
     except Exception:
         st.warning("Could not create Agent session, is the database running?")
         return
@@ -110,7 +97,7 @@ def main() -> None:
     ####################################################################
     # Load runs from memory
     ####################################################################
-    agent_runs = sage.memory.runs
+    agent_runs = llama_tutor.memory.runs
     if len(agent_runs) > 0:
         logger.debug("Loading run history")
         st.session_state["messages"] = []
@@ -163,7 +150,7 @@ def main() -> None:
                 response = ""
                 try:
                     # Run the agent and stream the response
-                    run_response = sage.run(question, stream=True)
+                    run_response = llama_tutor.run(question, stream=True)
                     for _resp_chunk in run_response:
                         # Display tool calls if available
                         if _resp_chunk.tools and len(_resp_chunk.tools) > 0:
@@ -174,7 +161,7 @@ def main() -> None:
                             response += _resp_chunk.content
                             resp_container.markdown(response)
 
-                    add_message("assistant", response, sage.run_response.tools)
+                    add_message("assistant", response, llama_tutor.run_response.tools)
                 except Exception as e:
                     error_message = f"Sorry, I encountered an error: {str(e)}"
                     add_message("assistant", error_message)
@@ -183,8 +170,8 @@ def main() -> None:
     ####################################################################
     # Session selector
     ####################################################################
-    session_selector_widget(sage, model_id)
-    rename_session_widget(sage)
+    session_selector_widget(llama_tutor, model_id)
+    rename_session_widget(llama_tutor)
 
     ####################################################################
     # About section

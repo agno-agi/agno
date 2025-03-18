@@ -22,8 +22,8 @@ def add_message(
 def restart_agent():
     """Reset the agent and clear chat history."""
     logger.debug("---*--- Restarting agent ---*---")
-    st.session_state["sage"] = None
-    st.session_state["sage_session_id"] = None
+    st.session_state["llama_tutor"] = None
+    st.session_state["llama_tutor_session_id"] = None
     st.session_state["messages"] = []
     st.rerun()
 
@@ -123,8 +123,8 @@ def sidebar_widget() -> None:
                 restart_agent()
         with col2:
             fn = "llama_tutor_chat_history.md"
-            if "sage_session_id" in st.session_state:
-                fn = f"llama_tutor_{st.session_state.sage_session_id}.md"
+            if "llama_tutor_session_id" in st.session_state:
+                fn = f"llama_tutor_{st.session_state.llama_tutor_session_id}.md"
             if st.download_button(
                 "💾 Export Chat",
                 export_chat_history(),
@@ -161,11 +161,11 @@ def session_selector_widget(agent: Agent, model_id: str) -> None:
             s["id"] for s in session_options if s["display"] == selected_session
         )
 
-        if st.session_state.get("sage_session_id") != selected_session_id:
+        if st.session_state.get("llama_tutor_session_id") != selected_session_id:
             logger.info(
                 f"---*--- Loading {model_id} run: {selected_session_id} ---*---"
             )
-            st.session_state["sage"] = tutor_agent(
+            st.session_state["llama_tutor"] = tutor_agent(
                 model_id=model_id,
                 session_id=selected_session_id,
             )
