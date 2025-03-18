@@ -1,9 +1,10 @@
 import pytest
 from pydantic import BaseModel, Field
+
 from agno.agent import Agent, RunResponse
 from agno.models.litellm import LiteLLMOpenAI
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.storage.sqlite import SqliteStorage
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 
 def _assert_metrics(response: RunResponse):
@@ -58,28 +59,25 @@ def test_basic_stream():
         assert response.content is not None
 
     _assert_metrics(agent.run_response)
-    
+
 
 @pytest.mark.asyncio
 async def test_async_basic():
     """Test async functionality with LiteLLM"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True,
-                  telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
     assert len(response.messages) == 3
-    assert [m.role for m in response.messages] == [
-        "system", "user", "assistant"]
+    assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
 
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     """Test async streaming functionality with LiteLLM"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True,
-                  telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -109,8 +107,7 @@ def test_with_memory():
 
     # Verify memories were created
     assert len(agent.memory.messages) == 5
-    assert [m.role for m in agent.memory.messages] == [
-        "system", "user", "assistant", "user", "assistant"]
+    assert [m.role for m in agent.memory.messages] == ["system", "user", "assistant", "user", "assistant"]
 
     _assert_metrics(response2)
 
@@ -141,8 +138,7 @@ def test_response_model():
 def test_history():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
-        storage=SqliteStorage(
-            table_name="agent_sessions_storage", db_file="tmp/data.db"),
+        storage=SqliteStorage(table_name="agent_sessions_storage", db_file="tmp/data.db"),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,
@@ -212,15 +208,12 @@ def test_parallel_tool_calls():
         monitoring=False,
     )
 
-    response = agent.run(
-        "What are the latest news about both SpaceX and NASA?")
+    response = agent.run("What are the latest news about both SpaceX and NASA?")
 
     # Verify tool usage
-    tool_calls = [
-        msg.tool_calls for msg in response.messages if msg.tool_calls]
+    tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
     assert len(tool_calls) >= 1  # At least one message has tool calls
-    assert sum(len(calls)
-               for calls in tool_calls) == 2  # Total of 2 tool calls made
+    assert sum(len(calls) for calls in tool_calls) == 2  # Total of 2 tool calls made
     assert response.content is not None
     assert "SpaceX" in response.content and "NASA" in response.content
     _assert_metrics(response)
@@ -228,6 +221,7 @@ def test_parallel_tool_calls():
 
 def test_multiple_tool_calls():
     """Test multiple different tools functionality with LiteLLM"""
+
     def get_weather():
         return "It's sunny and 75°F"
 
@@ -239,15 +233,12 @@ def test_multiple_tool_calls():
         monitoring=False,
     )
 
-    response = agent.run(
-        "What's the latest news about SpaceX and what's the weather?")
+    response = agent.run("What's the latest news about SpaceX and what's the weather?")
 
     # Verify tool usage
-    tool_calls = [
-        msg.tool_calls for msg in response.messages if msg.tool_calls]
+    tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
     assert len(tool_calls) >= 1  # At least one message has tool calls
-    assert sum(len(calls)
-               for calls in tool_calls) == 2  # Total of 2 tool calls made
+    assert sum(len(calls) for calls in tool_calls) == 2  # Total of 2 tool calls made
     assert response.content is not None
     assert "SpaceX" in response.content and "75°F" in response.content
     _assert_metrics(response)
@@ -255,6 +246,7 @@ def test_multiple_tool_calls():
 
 def test_tool_call_custom_tool_no_parameters():
     """Test custom tool without parameters"""
+
     def get_time():
         return "It is 12:00 PM UTC"
 
@@ -276,6 +268,7 @@ def test_tool_call_custom_tool_no_parameters():
 
 def test_tool_call_custom_tool_untyped_parameters():
     """Test custom tool with untyped parameters"""
+
     def echo_message(message):
         """
         Echo back the message

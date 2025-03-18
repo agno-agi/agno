@@ -79,15 +79,12 @@ def test_parallel_tool_calls():
         monitoring=False,
     )
 
-    response = agent.run(
-        "What are the latest news about both SpaceX and NASA?")
+    response = agent.run("What are the latest news about both SpaceX and NASA?")
 
     # Verify tool usage
-    tool_calls = [
-        msg.tool_calls for msg in response.messages if msg.tool_calls]
+    tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
     assert len(tool_calls) >= 1  # At least one message has tool calls
-    assert sum(len(calls)
-               for calls in tool_calls) == 2  # Total of 2 tool calls made
+    assert sum(len(calls) for calls in tool_calls) == 2  # Total of 2 tool calls made
     assert response.content is not None
     assert "SpaceX" in response.content and "NASA" in response.content
     _assert_metrics(response)
@@ -95,6 +92,7 @@ def test_parallel_tool_calls():
 
 def test_multiple_tool_calls():
     """Test multiple different tools functionality with LiteLLM"""
+
     def get_weather():
         return "It's sunny and 75°F"
 
@@ -106,15 +104,12 @@ def test_multiple_tool_calls():
         monitoring=False,
     )
 
-    response = agent.run(
-        "What's the latest news about SpaceX and what's the weather?")
+    response = agent.run("What's the latest news about SpaceX and what's the weather?")
 
     # Verify tool usage
-    tool_calls = [
-        msg.tool_calls for msg in response.messages if msg.tool_calls]
+    tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
     assert len(tool_calls) >= 1  # At least one message has tool calls
-    assert sum(len(calls)
-               for calls in tool_calls) == 2  # Total of 2 tool calls made
+    assert sum(len(calls) for calls in tool_calls) == 2  # Total of 2 tool calls made
     assert response.content is not None
     assert "SpaceX" in response.content and "75°F" in response.content
     _assert_metrics(response)
@@ -122,6 +117,7 @@ def test_multiple_tool_calls():
 
 def test_tool_call_custom_tool_no_parameters():
     """Test custom tool without parameters"""
+
     def get_time():
         return "It is 12:00 PM UTC"
 
@@ -143,6 +139,7 @@ def test_tool_call_custom_tool_no_parameters():
 
 def test_tool_call_custom_tool_untyped_parameters():
     """Test custom tool with untyped parameters"""
+
     def echo_message(message):
         """
         Echo back the message
