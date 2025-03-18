@@ -14,6 +14,7 @@ from prompt import extraction_prompt
 from utils import (
     about_widget,
     add_message,
+    clear_chat
 )
 
 load_dotenv()
@@ -68,10 +69,6 @@ def main():
     if "extract_triggered" not in st.session_state:
         st.session_state["extract_triggered"] = False
 
-    old_model_choice = st.session_state.get("model_choice", None)
-    old_enable_search = st.session_state.get("enable_search", None)
-    print(old_model_choice, old_enable_search)
-
     ####################################################################
     # Sidebar Configuration
     ####################################################################
@@ -99,23 +96,26 @@ def main():
         enable_search = True if enable_search_option == "Yes" else False
 
     ####################################################################
-    # Store selections in session_state
-    ####################################################################
-    st.session_state["model_choice"] = model_choice
-    st.session_state["enable_search"] = enable_search
-
-    ####################################################################
     # Ensure Model is Initialized Properly
     ####################################################################
-    if "model_instance" not in st.session_state or old_model_choice != model_choice:
+    if "model_instance" not in st.session_state or st.session_state.get("model_choice", None) != model_choice:
         if model_choice == "OpenAI":
+            if not OPENAI_API_KEY:
+                st.error("⚠️ OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
             model = OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY)
         elif model_choice == "Gemini":
+            if not GOOGLE_API_KEY:
+                st.error("⚠️ Google API key not found. Please set the GOOGLE_API_KEY environment variable.")
             model = Gemini(id="gemini-2.0-flash", api_key=GOOGLE_API_KEY)
-        else:
+        elif model_choice == "Mistral":
+            if not MISTRAL_API_KEY:
+                st.error("⚠️ Mistral API key not found. Please set the MISTRAL_API_KEY environment variable.")
             model = MistralChat(id="pixtral-12b-2409", api_key=MISTRAL_API_KEY)
+        else:
+            st.error("⚠️ Unsupported model provider. Please select OpenAI, Gemini, or Mistral.")
+            st.stop()  # Stop execution if model is not supported
+
         st.session_state["model_instance"] = model
-        st.session_state["model_choice"] = model_choice
     else:
         model = st.session_state["model_instance"]
 
@@ -125,16 +125,20 @@ def main():
     if (
         "image_agent" not in st.session_state
         or "chat_agent" not in st.session_state
-        or old_model_choice != model_choice
-        or old_enable_search != enable_search
+        or st.session_state.get("model_choice", None) != model_choice
+        or st.session_state.get("enable_search", None) != enable_search
     ):
-        logger.info("---*--- Updating Agents ---*---")
-        logger.info(f"---*--- Model ---*--- {model.id}")
-        logger.info(f"---*--- Search Enabled ---*--- {enable_search}")
-        image_agent = image_processing_agent(model=model, enable_search=enable_search)
+        logger.info(f"Updating Agents with model {model.id} and search enabled {enable_search}")
+        image_agent = image_processing_agent(model=model)
         st.session_state["image_agent"] = image_agent
         chat_agent = chat_followup_agent(model=model, enable_search=enable_search)
         st.session_state["chat_agent"] = chat_agent
+        st.session_state["enable_search"] = enable_search
+
+        ####################################################################
+        # Store new selections in session_state
+        ####################################################################
+        st.session_state["model_choice"] = model_choice
         st.session_state["enable_search"] = enable_search
 
     else:
@@ -156,12 +160,16 @@ def main():
     image_path = None
 
     if uploaded_file:
-        temp_dir = Path("temp_images")
+        temp_dir = Path("tmp/")
         temp_dir.mkdir(exist_ok=True)
         image_path = temp_dir / uploaded_file.name
 
         with open(image_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
+
+            # Display image preview in sidebar if an image is uploaded
+            st.sidebar.markdown("#### 🖼️ Current Image")
+            st.sidebar.image(uploaded_file, use_container_width=True)
 
         logger.info(f"✅ Image successfully saved at: {image_path}")
 
@@ -280,6 +288,10 @@ def main():
                             error_message = f"❌ Error: {str(e)}"
                             add_message("assistant", error_message)
                             st.error(error_message)
+
+    # Add clear chat button in sidebar
+    if st.sidebar.button("🧹 Clear Chat History", key="clear_chat"):
+        clear_chat()
 
     # About Section
     about_widget()

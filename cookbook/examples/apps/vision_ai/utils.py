@@ -1,5 +1,3 @@
-from typing import Any, Dict, List, Optional
-
 import streamlit as st
 from agents import image_processing_agent
 from agno.agent import Agent
@@ -23,6 +21,15 @@ def restart_agent():
     st.session_state["image_agent"] = None
     st.session_state["image_agent_session_id"] = None
     st.session_state["messages"] = []
+    st.rerun()
+
+
+def clear_chat():
+    """Clear chat history and reset relevant session state variables"""
+    st.session_state["messages"] = []
+    st.session_state["last_image_response"] = None
+    st.session_state["last_extracted_image"] = None
+    st.session_state["extract_triggered"] = False
     st.rerun()
 
 
@@ -87,7 +94,7 @@ def session_selector_widget(agent: Agent) -> None:
 
             # Reload the agent with the selected session
             st.session_state["image_agent"] = image_processing_agent(
-                model=model, user_id=st.session_state["user_id"]
+                model=model
             )
             st.session_state["image_agent"].load_session(selected_session_id)
             st.session_state["image_agent_session_id"] = selected_session_id

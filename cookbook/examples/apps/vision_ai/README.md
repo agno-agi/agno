@@ -64,6 +64,7 @@ Other API keys are optional, but if you'd like to test:
 
 ```shell
 export GOOGLE_API_KEY=***
+export MISTRAL_API_KEY=***
 ```
 
 ### 5. Run VisionAI Agent
@@ -83,7 +84,6 @@ streamlit run cookbook/examples/apps/vision_ai/app.py
 
 ### ✅ Chat Agent for Follow-Up Queries
 - Ask follow-up questions based on extracted insights.
-- Uses stored session history to improve responses.
 - Supports **optional web search** using **DuckDuckGo**.
 
 ### ✅ Enable/Disable Web Search
