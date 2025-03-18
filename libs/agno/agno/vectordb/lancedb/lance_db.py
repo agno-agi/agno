@@ -39,6 +39,12 @@ class LanceDb(VectorDb):
         fill_value: The value to fill the vector with if on_bad_vectors is "fill".
     """
 
+    async_table: Optional[lancedb.db.AsyncTable] = None
+    table: Optional[lancedb.db.LanceTable] = None
+
+    connection: Optional[lancedb.LanceDBConnection] = None
+    async_connection: Optional[lancedb.AsyncConnection] = None
+
     def __init__(
         self,
         uri: lancedb.URI = "/tmp/lancedb",
@@ -90,6 +96,7 @@ class LanceDb(VectorDb):
             self._id = self.table.schema.names[1]  # type: ignore
 
         # LanceDB table details
+
         if self.table is None:
             # LanceDB table details
             if table:
@@ -138,7 +145,7 @@ class LanceDb(VectorDb):
     def create(self) -> None:
         """Create the table if it does not exist."""
         if not self.exists():
-            self.table = self._init_table()
+            self.table = self._init_table()  # Connection update is needed
 
     async def async_create(self) -> None:
         """Create the table asynchronously if it does not exist."""
@@ -167,7 +174,7 @@ class LanceDb(VectorDb):
     def _init_table(self) -> lancedb.db.LanceTable:
         schema = self._base_schema()
 
-        logger.info(f"Creating table: {self.table_name}")
+        logger.debug(f"Creating table: {self.table_name}")
         tbl = self.connection.create_table(self.table_name, schema=schema, mode="overwrite", exist_ok=True)  # type: ignore
         return tbl  # type: ignore
 
@@ -268,7 +275,6 @@ class LanceDb(VectorDb):
         logger.info(f"Inserting {len(documents)} documents")
         data = []
 
-        # Prepare documents for insertion
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -348,6 +354,32 @@ class LanceDb(VectorDb):
         # TODO: Search is not yet supported in async (https://github.com/lancedb/lancedb/pull/2049)
         if self.connection:
             self.table = self.connection.open_table(name=self.table_name)
+        if self.search_type == SearchType.vector:
+            return self.vector_search(query, limit)
+        elif self.search_type == SearchType.keyword:
+            return self.keyword_search(query, limit)
+        elif self.search_type == SearchType.hybrid:
+            return self.hybrid_search(query, limit)
+        else:
+            logger.error(f"Invalid search type '{self.search_type}'.")
+            return []
+
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        """
+        Asynchronously search for documents matching the query.
+
+        Args:
+            query (str): Query string to search for
+            limit (int): Maximum number of results to return
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search
+
+        Returns:
+            List[Document]: List of matching documents
+        """
+        # TODO: Search is not yet supported in async (https://github.com/lancedb/lancedb/pull/2049)
+        self.table = self.connection.open_table(name=self.table_name)
         if self.search_type == SearchType.vector:
             return self.vector_search(query, limit)
         elif self.search_type == SearchType.keyword:
