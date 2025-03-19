@@ -12,15 +12,6 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# Create CSV knowledge base
-csv_kb = CSVKnowledgeBase(
-    path=Path("data/csvs"),
-    vector_db=PgVector(
-        table_name="csv_documents",
-        db_url=db_url,
-    ),
-)
-
 # Create PDF URL knowledge base
 pdf_url_kb = PDFUrlKnowledgeBase(
     urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
@@ -40,22 +31,11 @@ website_kb = WebsiteKnowledgeBase(
     ),
 )
 
-# Create Local PDF knowledge base
-local_pdf_kb = PDFKnowledgeBase(
-    path="data/pdfs",
-    vector_db=PgVector(
-        table_name="pdf_documents",
-        db_url=db_url,
-    ),
-)
-
 # Combine knowledge bases
 knowledge_base = CombinedKnowledgeBase(
     sources=[
-        csv_kb,
         pdf_url_kb,
         website_kb,
-        local_pdf_kb,
     ],
     vector_db=PgVector(
         table_name="combined_documents",
@@ -67,13 +47,10 @@ knowledge_base = CombinedKnowledgeBase(
 agent = Agent(
     knowledge=knowledge_base,
     search_knowledge=True,
+    tools=[ WebsiteTools(knowledge_base=knowledge_base)],  # Set combined or website knowledge base
 )
 
 knowledge_base.load(recreate=False)
 
 # Use the agent
-agent.print_response("Ask me about something from the knowledge base", markdown=True)
-
-implement_agent = Agent(
-    tools=[ WebsiteTools(knowledge_base=website_kb)],
-)
+agent.print_response("How do I get started on Groq: https://console.groq.com/docs/overview", markdown=True)
