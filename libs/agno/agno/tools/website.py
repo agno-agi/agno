@@ -13,8 +13,11 @@ class WebsiteTools(Toolkit):
         super().__init__(name="website_tools")
         self.knowledge_base: Optional[WebsiteKnowledgeBase | CombinedKnowledgeBase] = knowledge_base
 
-        if self.knowledge_base is not None and isinstance(self.knowledge_base, WebsiteKnowledgeBase):
-            self.register(self.add_website_to_knowledge_base)
+        if self.knowledge_base is not None:
+            if isinstance(self.knowledge_base, WebsiteKnowledgeBase):
+                self.register(self.add_website_to_knowledge_base)
+            elif isinstance(self.knowledge_base, CombinedKnowledgeBase):
+                self.register(self.add_website_to_combined_knowledge_base)
         else:
             self.register(self.read_url)
 
@@ -49,12 +52,18 @@ class WebsiteTools(Toolkit):
             return "Knowledge base not provided"
 
         website_knowledge_base = None
+        for knowledge_base in self.knowledge_base.sources:
+            if isinstance(knowledge_base, WebsiteKnowledgeBase):
+                website_knowledge_base = knowledge_base
+                break
 
+        if website_knowledge_base is None:
+            return "Website knowledge base not found"
 
         logger.debug(f"Adding to knowledge base: {url}")
-        self.knowledge_base.urls.append(url)
+        website_knowledge_base.urls.append(url)
         logger.debug("Loading knowledge base.")
-        self.knowledge_base.load(recreate=False)
+        website_knowledge_base.load(recreate=False)
         return "Success"
 
     def read_url(self, url: str) -> str:
