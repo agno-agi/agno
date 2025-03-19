@@ -164,6 +164,15 @@ def main():
         temp_dir.mkdir(exist_ok=True)
         image_path = temp_dir / uploaded_file.name
 
+        # Check if this is a new image different from the last one
+        if (
+            "last_extracted_image" in st.session_state
+            and st.session_state["last_extracted_image"] is not None
+            and str(st.session_state["last_extracted_image"]) != str(image_path)
+        ):
+            logger.info(f"New image detected. Resetting chat history and reinitializing agents.")
+            clear_chat()
+
         with open(image_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 

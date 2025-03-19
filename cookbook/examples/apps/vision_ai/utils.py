@@ -25,11 +25,21 @@ def restart_agent():
 
 
 def clear_chat():
-    """Clear chat history and reset relevant session state variables"""
+    """Clear chat history and reset relevant session state variables
+    while preserving model settings"""
+
+    # Clear chat and extraction data
     st.session_state["messages"] = []
     st.session_state["last_image_response"] = None
     st.session_state["last_extracted_image"] = None
     st.session_state["extract_triggered"] = False
+
+    # Remove agents so they'll be reinitialized
+    if "image_agent" in st.session_state:
+        del st.session_state["image_agent"]
+    if "chat_agent" in st.session_state:
+        del st.session_state["chat_agent"]
+
     st.rerun()
 
 
