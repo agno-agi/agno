@@ -202,7 +202,11 @@ class Function(BaseModel):
         self.description = self.description or get_entrypoint_docstring(self.entrypoint)
         if not params_set_by_user:
             self.parameters = parameters
-        self.entrypoint = validate_call(self.entrypoint, config=dict(arbitrary_types_allowed=True))  # type: ignore
+
+        try:
+            self.entrypoint = validate_call(self.entrypoint, config=dict(arbitrary_types_allowed=True))  # type: ignore
+        except Exception as e:
+            logger.warning(f"Failed to add validate decorator to entrypoint: {e}")
 
     def get_type_name(self, t: Type[T]):
         name = str(t)
