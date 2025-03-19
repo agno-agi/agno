@@ -24,7 +24,6 @@ class ApiRoutes:
     AGENT_RUN_CREATE: str = "/v1/agent-runs"
 
     # Team paths
-    TEAM_SESSION_CREATE: str = "/v1/team-sessions"
     TEAM_RUN_CREATE: str = "/v1/team-runs"
 
     # Telemetry paths
@@ -32,7 +31,6 @@ class ApiRoutes:
     AGENT_TELEMETRY_SESSION_CREATE: str = "/v1/telemetry/agent/session/create"
     AGENT_TELEMETRY_RUN_CREATE: str = "/v1/telemetry/agent/run/create"
 
-    TEAM_TELEMETRY_SESSION_CREATE: str = "/v1/telemetry/team-sessions"
     TEAM_TELEMETRY_RUN_CREATE: str = "/v1/telemetry/team-runs"
 
     # Playground paths

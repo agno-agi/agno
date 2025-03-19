@@ -127,7 +127,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=xAI(id="grok-2-latest"),
-        response_format="json",
+        use_json_mode=True,
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,

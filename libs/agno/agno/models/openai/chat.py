@@ -283,7 +283,7 @@ class OpenAIChat(Model):
             message_dict["content"] = None
             message_dict["audio"] = {"id": message.audio_output.id}
 
-        if message.videos is not None:
+        if message.videos is not None and len(message.videos) > 0:
             log_warning("Video input is currently unsupported.")
 
         # OpenAI expects the tool_calls to be None if empty, not an empty list

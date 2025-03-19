@@ -119,23 +119,23 @@ class TeamMemory:
         else:
             self.team_context = TeamContext(text=text)
 
-    def get_team_context_str(self, include_member_interactions: bool = False) -> str:
-        team_context_str = ""
-        if self.team_context:
-            if self.team_context.text:
-                team_context_str += f"<team context>\n{self.team_context.text}\n</team context>\n"
+    def get_team_context_str(self) -> str:
+        if self.team_context and self.team_context.text:
+            return f"<team context>\n{self.team_context.text}\n</team context>\n"
+        return ""
 
-            if include_member_interactions and self.team_context.member_interactions:
-                team_context_str += "<member interactions>\n"
-                for interaction in self.team_context.member_interactions:
-                    response_dict = interaction.response.to_dict()
+    def get_team_member_interactions_str(self) -> str:
+        team_member_interactions_str = ""
+        if self.team_context and self.team_context.member_interactions:
+            team_member_interactions_str += "<member interactions>\n"
 
-                    team_context_str += f"Member: {interaction.member_name}\n"
-                    team_context_str += f"Task: {interaction.task}\n"
-                    team_context_str += f"Response: {response_dict.get('content', '')}\n"
-                    team_context_str += "\n"
-                team_context_str += "</member interactions>\n"
-        return team_context_str
+            for interaction in self.team_context.member_interactions:
+                team_member_interactions_str += f"Member: {interaction.member_name}\n"
+                team_member_interactions_str += f"Task: {interaction.task}\n"
+                team_member_interactions_str += f"Response: {interaction.response.to_dict().get('content', '')}\n"
+                team_member_interactions_str += "\n"
+            team_member_interactions_str += "</member interactions>\n"
+        return team_member_interactions_str
 
     def get_team_context_images(self) -> List[ImageArtifact]:
         images = []
