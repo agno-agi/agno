@@ -45,7 +45,7 @@ agent_team = Team(
         "You have to stop the game when one of the players has won.",
     ],
     enable_agentic_context=True,
-    send_team_member_interactions_to_members=False,
+    share_member_interactions=True,
     show_tool_calls=True,
     debug_mode=True,
     markdown=True,

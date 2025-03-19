@@ -74,8 +74,7 @@ hn_team = Team(
     markdown=True,
     debug_mode=True,
     show_members_responses=True,
-    update_team_context=True,
-    send_team_context_to_members=True,
+    enable_agentic_context=True,
 )
 
 if __name__ == "__main__":

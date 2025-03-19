@@ -114,7 +114,6 @@ agent_team = Team(
     show_tool_calls=True,
     markdown=True,
     enable_agentic_context=True,
-    send_team_member_interactions_to_members=False,
     show_members_responses=False,
 )
 
