@@ -24,7 +24,7 @@ except ImportError:
 class SentenceTransformerEmbedder(Embedder):
     id: str = "sentence-transformers/all-MiniLM-L6-v2"
     sentence_transformer_client: Optional[SentenceTransformer] = None
-    prompt: str | None = None
+    prompt: Optional[str] = None
     normalize_embeddings: bool = False
 
     def get_embedding(self, text: Union[str, List[str]]) -> List[float]:
