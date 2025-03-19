@@ -121,7 +121,7 @@ def _convert_schema(schema_dict) -> Optional[Schema]:
         else:
             return None
 
-    if schema_type == "ARRAY":
+    if schema_type == "ARRAY" and "items" in schema_dict:
         items = _convert_schema(schema_dict["items"])
         return Schema(type=schema_type, description=description, items=items)
     else:
@@ -363,7 +363,6 @@ class Gemini(Model):
         formatted_messages, system_message = self._format_messages(messages)
 
         request_kwargs = self._get_request_kwargs(system_message)
-
         try:
             yield from self.get_client().models.generate_content_stream(
                 model=self.id,
