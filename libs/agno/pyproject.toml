@@ -51,6 +51,8 @@ openai = ["openai"]
 ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
 lmstudio = ["lmstudio"]
+litellm = ["litellm"]
+
 # Dependencies for Tools
 exa = ["exa_py"]
 yfinance = ["yfinance"]
@@ -108,7 +110,8 @@ models = [
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
-  "agno[ibm]"
+  "agno[ibm]",
+  "agno[litellm]"
 ]
 
 # All tools
@@ -128,7 +131,7 @@ tools = [
   "agno[webex]",
   "agno[mcp]",
   "agno[browserbase]",
-  "agno[yfinance]",
+#  "agno[yfinance]",
 ]
 
 # All storage
@@ -255,6 +258,7 @@ module = [
   "langchain_core.*",
   "langchain.*",
   "llama_index.*",
+  "litellm.*",
   "mem0.*",
   "mcp.*",
   "memory_profiler.*",

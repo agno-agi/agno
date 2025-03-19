@@ -50,7 +50,9 @@ class Model(ABC):
     # Whether to generate structured outputs from this Model.
     structured_outputs: bool = False
     # True if the Model supports structured outputs natively (e.g. OpenAI)
-    supports_structured_outputs: bool = False
+    supports_native_structured_outputs: bool = False
+    # True if the Model requires a json_schema for structured outputs (e.g. LMStudio)
+    supports_json_schema_outputs: bool = False
 
     # Controls which (if any) function is called by the model.
     # "none" means the model will not call a function and instead generates a message.

@@ -171,7 +171,7 @@ class Gemini(Model):
     name: str = "Gemini"
     provider: str = "Google"
 
-    supports_structured_outputs: bool = True
+    supports_native_structured_outputs: bool = True
 
     # Request parameters
     function_declarations: Optional[List[Any]] = None

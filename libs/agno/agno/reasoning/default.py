@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Literal, Optional, Union
 
 from agno.models.base import Model
 from agno.reasoning.step import ReasoningSteps
@@ -13,7 +13,7 @@ def get_default_reasoning_agent(
     min_steps: int,
     max_steps: int,
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
-    structured_outputs: bool = False,
+    response_format: Literal["structured", "json"] = "structured",
     monitoring: bool = False,
 ) -> Optional["Agent"]:  # type: ignore  # noqa: F821
     from agno.agent import Agent
@@ -64,6 +64,6 @@ def get_default_reasoning_agent(
         tools=tools,
         show_tool_calls=False,
         response_model=ReasoningSteps,
-        structured_outputs=structured_outputs,
+        response_format=response_format,
         monitoring=monitoring,
     )
