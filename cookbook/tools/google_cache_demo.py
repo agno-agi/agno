@@ -14,16 +14,14 @@ from textwrap import dedent
 
 from agno.agent import Agent
 
-from cookbook.tools.googlesearch_cache import CachedGoogleSearchTools, CachedGoogleSearchToolsFactory
+from libs.agno.agno.tools.googlesearch_cache import CachedGoogleSearchTools
 from libs.agno.agno.models import model_factory
 from agno.models.mistral import MistralChat
 
 # Create an instance of ModelFactory
 model_factory = model_factory.ModelFactory()
 
-cache_factory = CachedGoogleSearchToolsFactory()
 mistral_api_key="HERE GOES YOUR MISTRAL API KEY"
-
 
 # Create a News Reporter Agent with a fun personality
 

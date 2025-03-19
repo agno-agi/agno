@@ -7,12 +7,7 @@ from agno.tools import Toolkit
 from agno.utils.log import logger
 from googlesearch import search
 from pycountry import pycountry
-from dotenv import load_dotenv
-import os
 
-load_dotenv()
-language = os.getenv("LANG")
-db_url = os.getenv("DB_URL")
 
 
 
@@ -95,17 +90,4 @@ class CachedGoogleSearchTools(Toolkit):
 
         return results_json
 
-class CachedGoogleSearchToolsFactory(object):
-    load_dotenv()
-    language = os.getenv("LANG")
-    db_url = os.getenv("DB_URL")
 
-    cached_search_tool = CachedGoogleSearchTools(
-        db_url=db_url,
-        table_name="search_cache",
-        fixed_max_results=10,
-        fixed_language=language
-    )
-
-    def get_search_tool(self) -> CachedGoogleSearchTools:
-        return self.cached_search_tool
