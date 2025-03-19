@@ -1,5 +1,5 @@
 import json
-from typing import List, Optional
+from typing import List, Optional, cast
 
 from agno.document import Document
 from agno.knowledge.combined import CombinedKnowledgeBase
@@ -30,6 +30,7 @@ class WebsiteTools(Toolkit):
         :param url: The url of the website to add.
         :return: 'Success' if the website was added to the knowledge base.
         """
+        self.knowledge_base = cast(WebsiteKnowledgeBase, self.knowledge_base)
         if self.knowledge_base is None:
             return "Knowledge base not provided"
 
@@ -48,6 +49,7 @@ class WebsiteTools(Toolkit):
         :param url: The url of the website to add.
         :return: 'Success' if the website was added to the knowledge base.
         """
+        self.knowledge_base = cast(CombinedKnowledgeBase, self.knowledge_base)
         if self.knowledge_base is None:
             return "Knowledge base not provided"
 

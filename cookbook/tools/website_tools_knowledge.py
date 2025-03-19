@@ -1,6 +1,6 @@
-from agno.agent import Agent
 from pathlib import Path
 
+from agno.agent import Agent
 from agno.knowledge.combined import CombinedKnowledgeBase
 from agno.knowledge.csv import CSVKnowledgeBase
 from agno.knowledge.pdf import PDFKnowledgeBase
@@ -8,7 +8,6 @@ from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.knowledge.website import WebsiteKnowledgeBase
 from agno.tools.website import WebsiteTools
 from agno.vectordb.pgvector import PgVector
-
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -47,10 +46,17 @@ knowledge_base = CombinedKnowledgeBase(
 agent = Agent(
     knowledge=knowledge_base,
     search_knowledge=True,
-    tools=[ WebsiteTools(knowledge_base=knowledge_base)],  # Set combined or website knowledge base
+    show_tool_calls=True,
+    tools=[
+        WebsiteTools(knowledge_base=knowledge_base)  # Set combined or website knowledge base
+    ],
 )
 
 knowledge_base.load(recreate=False)
 
 # Use the agent
-agent.print_response("How do I get started on Groq: https://console.groq.com/docs/overview", markdown=True)
+agent.print_response(
+    "How do I get started on Mistral: https://docs.mistral.ai/getting-started/models/models_overview",
+    markdown=True,
+    stream=True
+)
