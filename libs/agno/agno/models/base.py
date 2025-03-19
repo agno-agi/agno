@@ -990,22 +990,7 @@ class Model(ABC):
         """
         Show tool calls in the model response.
         """
-        # Only add to content for regular text responses
-        if len(function_calls_to_run) == 1:
-            if model_response.content and len(model_response.content) > 0 and model_response.content[-1] != "\n":
-                model_response.content += "\n\n"
-            else:
-                model_response.content = ""
-            model_response.content += f"Running: \n\n • {function_calls_to_run[0].get_call_str()}\n\n"
-        elif len(function_calls_to_run) > 1:
-            if model_response.content and len(model_response.content) > 0 and model_response.content[-1] != "\n":
-                model_response.content += "\n\n"
-            else:
-                model_response.content = ""
-            model_response.content += "Running:\n\n"
-            for _f in function_calls_to_run:
-                model_response.content += f" • {_f.get_call_str()}\n"
-            model_response.content += "\n"
+        pass
 
     def _show_stream_tool_calls(self, function_calls_to_run: List[FunctionCall]) -> Iterator[ModelResponse]:
         if len(function_calls_to_run) == 1:

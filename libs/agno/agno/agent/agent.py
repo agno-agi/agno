@@ -892,9 +892,6 @@ class Agent:
             try:
                 # If a response_model is set, return the response as a structured output
                 if self.response_model is not None and self.parse_response:
-                    # Save original show_tool_calls value
-                    original_show_tool_calls = self.show_tool_calls
-
                     # Set stream=False and run the agent
                     logger.debug("Setting stream=False as response_model is set")
                     self.stream = False
@@ -912,10 +909,8 @@ class Agent:
                         )
                     )
 
-                    # Do a final check confirming the content is in the response_model format
+                    # Do a final check confirming the content is in the response_model formatba
                     if isinstance(run_response.content, self.response_model):
-                        # Restore original show_tool_calls value
-                        self.show_tool_calls = original_show_tool_calls
                         return run_response
 
                     # Otherwise convert the response to the structured format
@@ -937,8 +932,6 @@ class Agent:
                     else:
                         logger.warning("Something went wrong. Run response content is not a string")
 
-                    # Restore original show_tool_calls value
-                    self.show_tool_calls = original_show_tool_calls
                     return run_response
                 else:
                     if stream and self.is_streamable:
