@@ -45,7 +45,7 @@ class Perplexity(OpenAILike):
     max_tokens: int = 1024
     top_k: Optional[float] = None
 
-    supports_structured_outputs: bool = True
+    supports_native_structured_outputs: bool = True
 
     @property
     def request_kwargs(self) -> Dict[str, Any]:

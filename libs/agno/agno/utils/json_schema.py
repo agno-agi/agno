@@ -3,6 +3,16 @@ from typing import Any, Dict, Optional, Union, get_args, get_origin
 from agno.utils.log import logger
 
 
+def is_origin_union_type(origin: Any) -> bool:
+    import sys
+    if sys.version_info.minor >= 10:
+        from types import UnionType  # type: ignore
+
+        return origin in [Union, UnionType]
+
+    return origin is Union
+
+
 def get_json_type_for_py_type(arg: str) -> str:
     """
     Get the JSON schema type for a given type.
@@ -43,16 +53,15 @@ def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
             key_schema = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
             value_schema = get_json_schema_for_arg(type_args[1]) if len(type_args) > 1 else {"type": "string"}
             return {"type": "object", "propertyNames": key_schema, "additionalProperties": value_schema}
-        elif type_origin is Union:
+        elif is_origin_union_type(type_origin):
             types = []
             for arg in type_args:
-                if arg is not type(None):
-                    try:
-                        schema = get_json_schema_for_arg(arg)
-                        if schema:
-                            types.append(schema)
-                    except Exception:
-                        continue
+                try:
+                    schema = get_json_schema_for_arg(arg)
+                    if schema:
+                        types.append(schema)
+                except Exception:
+                    continue
             return {"anyOf": types} if types else None
 
     return {"type": get_json_type_for_py_type(t.__name__)}
@@ -96,7 +105,6 @@ def get_json_schema(
                         arg_json_schema["type"].append("null")
                     else:
                         arg_json_schema["type"] = [arg_json_schema["type"], "null"]
-
                 # Add description
                 if param_descriptions and k in param_descriptions and param_descriptions[k]:
                     arg_json_schema["description"] = param_descriptions[k]

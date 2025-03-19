@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -195,6 +196,8 @@ class Agent:
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
     structured_outputs: bool = False
+    # Sets the response_format mode of the model, i.e. to either respond with a Pydantic model or with JSON.
+    response_format: Literal["structured", "json"] = "structured"
     # Save the response to a file
     save_response_to_file: Optional[str] = None
 
@@ -286,7 +289,8 @@ class Agent:
         exponential_backoff: bool = False,
         response_model: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
-        structured_outputs: bool = False,
+        structured_outputs: Optional[bool] = None,
+        response_format: Literal["structured", "json"] = "structured",
         save_response_to_file: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
@@ -367,7 +371,17 @@ class Agent:
         self.exponential_backoff = exponential_backoff
         self.response_model = response_model
         self.parse_response = parse_response
-        self.structured_outputs = structured_outputs
+
+        if structured_outputs is not None:
+            warnings.warn(
+                "The 'structured_outputs' parameter is deprecated and will be removed in a future version. "
+                "Please use the new 'response_format' parameter instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.structured_outputs = structured_outputs
+
+        self.response_format = response_format
         self.save_response_to_file = save_response_to_file
 
         self.stream = stream
@@ -652,20 +666,22 @@ class Agent:
                         else:
                             self.run_response.tools = tool_calls_list
 
-                        if self.stream_intermediate_steps:
-                            yield self.create_run_response(
-                                content=model_response_chunk.content,
-                                event=RunEvent.tool_call_completed,
-                            )
+                    if self.stream_intermediate_steps:
+                        yield self.create_run_response(
+                            content=model_response_chunk.content,
+                            event=RunEvent.tool_call_completed,
+                        )
         else:
             # Get the model response
             model_response = self.model.response(messages=run_messages.messages)
             # Handle structured outputs
-            if self.response_model is not None and self.structured_outputs and model_response.parsed is not None:
-                # Update the run_response content with the structured output
-                self.run_response.content = model_response.parsed
-                # Update the run_response content_type with the structured output class name
-                self.run_response.content_type = self.response_model.__name__
+            if self.response_model is not None and model_response.parsed is not None:
+                # We get native structured outputs from the model
+                if self.model.structured_outputs:
+                    # Update the run_response content with the structured output
+                    self.run_response.content = model_response.parsed
+                    # Update the run_response content_type with the structured output class name
+                    self.run_response.content_type = self.response_model.__name__
             else:
                 # Update the run_response content with the model response content
                 self.run_response.content = model_response.content
@@ -845,7 +861,7 @@ class Agent:
         self,
         message: Optional[Union[str, List, Dict, Message]] = None,
         *,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Any]] = None,
@@ -860,6 +876,10 @@ class Agent:
         # If no retries are set, use the agent's default retries
         if retries is None:
             retries = self.retries
+
+        # Use stream overrided value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
 
         last_exception = None
         num_attempts = retries + 1
@@ -888,11 +908,9 @@ class Agent:
                         )
                     )
 
-                    # If the model natively supports structured outputs, the content is already in the structured format
-                    if self.structured_outputs and self.model.supports_structured_outputs:  # type: ignore
-                        # Do a final check confirming the content is in the response_model format
-                        if isinstance(run_response.content, self.response_model):
-                            return run_response
+                    # Do a final check confirming the content is in the response_model format
+                    if isinstance(run_response.content, self.response_model):
+                        return run_response
 
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
@@ -1141,7 +1159,9 @@ class Agent:
                         if self.run_response.tools:
                             # Create a mapping of tool_call_id to index
                             tool_call_index_map = {
-                                tc["tool_call_id"]: i for i, tc in enumerate(self.run_response.tools)
+                                tc["tool_call_id"]: i
+                                for i, tc in enumerate(self.run_response.tools)
+                                if tc.get("tool_call_id") is not None
                             }
                             # Process tool calls
                             for tool_call_dict in tool_calls_list:
@@ -1163,11 +1183,13 @@ class Agent:
             # Get the model response
             model_response = await self.model.aresponse(messages=run_messages.messages)
             # Handle structured outputs
-            if self.response_model is not None and self.structured_outputs and model_response.parsed is not None:
-                # Update the run_response content with the structured output
-                self.run_response.content = model_response.parsed
-                # Update the run_response content_type with the structured output class name
-                self.run_response.content_type = self.response_model.__name__
+            if self.response_model is not None and model_response.parsed is not None:
+                # We get native structured outputs from the model
+                if self.model.structured_outputs:
+                    # Update the run_response content with the structured output
+                    self.run_response.content = model_response.parsed
+                    # Update the run_response content_type with the structured output class name
+                    self.run_response.content_type = self.response_model.__name__
             else:
                 # Update the run_response content with the model response content
                 self.run_response.content = model_response.content
@@ -1313,7 +1335,7 @@ class Agent:
         self,
         message: Optional[Union[str, List, Dict, Message]] = None,
         *,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1328,6 +1350,10 @@ class Agent:
         # If no retries are set, use the agent's default retries
         if retries is None:
             retries = self.retries
+
+        # Use stream overrided value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
 
         last_exception = None
         num_attempts = retries + 1
@@ -1354,11 +1380,9 @@ class Agent:
                         **kwargs,
                     ).__anext__()
 
-                    # If the model natively supports structured outputs, the content is already in the structured format
-                    if self.structured_outputs:
-                        # Do a final check confirming the content is in the response_model format
-                        if isinstance(run_response.content, self.response_model):
-                            return run_response
+                    # Do a final check confirming the content is in the response_model format
+                    if isinstance(run_response.content, self.response_model):
+                        return run_response
 
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
@@ -1503,9 +1527,14 @@ class Agent:
             agent_tools = self.get_tools()
             if agent_tools is not None and len(agent_tools) > 0:
                 logger.debug("Processing tools for model")
-                # Check if we need strict mode for the model
+
+                # Check if we need strict mode for the functions for the model
                 strict = False
-                if self.response_model is not None and self.structured_outputs and model.supports_structured_outputs:
+                if (
+                    self.response_model is not None
+                    and (self.structured_outputs or (self.response_format == "structured"))
+                    and model.supports_native_structured_outputs
+                ):
                     strict = True
 
                 self._tools_for_model = []
@@ -1575,17 +1604,40 @@ class Agent:
             self.model = OpenAIChat(id="gpt-4o")
 
         # Update the response_format on the Model
-        if self.response_model is not None:
-            # This will pass the pydantic model to the model
-            if self.structured_outputs and self.model.supports_structured_outputs:
-                logger.debug("Setting Model.response_format to Agent.response_model")
-                self.model.response_format = self.response_model
-                self.model.structured_outputs = True
-            else:
-                # Otherwise we just want JSON
-                self.model.response_format = {"type": "json_object"}
-        else:
+        if self.response_model is None:
             self.model.response_format = None
+        else:
+            json_response_format = {"type": "json_object"}
+
+            if self.model.supports_native_structured_outputs:
+                if self.response_format == "structured" or self.structured_outputs:
+                    logger.debug("Setting Model.response_format to Agent.response_model")
+                    self.model.response_format = self.response_model
+                    self.model.structured_outputs = True
+                else:
+                    logger.debug("Model does not support native structured outputs")
+                    self.model.response_format = json_response_format
+                    self.model.structured_outputs = False
+
+            elif self.model.supports_json_schema_outputs:
+                if self.response_format == "json" or not self.structured_outputs:
+                    logger.debug("Setting Model.response_format to JSON response mode")
+                    self.model.response_format = {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": self.response_model.__name__,
+                            "schema": self.response_model.model_json_schema(),
+                        },
+                    }
+                else:
+                    self.model.response_format = None
+                self.model.structured_outputs = False
+
+            else:  # Model does not support structured or JSON schema outputs
+                self.model.response_format = (
+                    json_response_format if (self.response_format == "json" or not self.structured_outputs) else None
+                )
+                self.model.structured_outputs = False
 
         # Add tools to the Model
         self.add_tools_to_model(model=self.model)
@@ -2008,8 +2060,9 @@ class Agent:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
 
             # Add the JSON output prompt if response_model is provided and structured_outputs is False
-            if self.response_model is not None and not (
-                self.model.supports_structured_outputs and self.structured_outputs  # type: ignore
+            if self.response_model is not None and self.model and (
+                self.model.supports_native_structured_outputs
+                and (self.response_format == "json" or self.structured_outputs is False)
             ):
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
@@ -2151,7 +2204,10 @@ class Agent:
                     )
 
         # Add the JSON output prompt if response_model is provided and structured_outputs is False (only applicable if the model supports structured outputs)
-        if self.response_model is not None and not (self.model.supports_structured_outputs and self.structured_outputs):
+        if self.response_model is not None and not (
+            self.model.supports_native_structured_outputs
+            and (self.response_format == "structured" or self.structured_outputs is True)
+        ):
             system_message_content += f"{self.get_json_output_prompt()}"
 
         # Return the system message
@@ -2989,12 +3045,15 @@ class Agent:
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
+                response_format: Literal["structured", "json"] = self.response_format
+                if self.structured_outputs is not None:
+                    response_format = "structured" if self.structured_outputs else "json"  # type: ignore
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    structured_outputs=self.structured_outputs,
+                    response_format=response_format,
                     monitoring=self.monitoring,
                 )
 
@@ -3173,12 +3232,15 @@ class Agent:
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
+                response_format: Literal["structured", "json"] = self.response_format
+                if self.structured_outputs is not None:
+                    response_format = "structured" if self.structured_outputs else "json"  # type: ignore
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    structured_outputs=self.structured_outputs,
+                    response_format=response_format,
                     monitoring=self.monitoring,
                 )
 

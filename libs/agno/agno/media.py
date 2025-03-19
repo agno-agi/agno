@@ -263,21 +263,6 @@ class File(BaseModel):
     content: Optional[Any] = None
     mime_type: Optional[str] = None
 
-    VALID_MIME_TYPES: List[str] = [
-        "application/pdf",
-        "application/x-javascript",
-        "text/javascript",
-        "application/x-python",
-        "text/x-python",
-        "text/plain",
-        "text/html",
-        "text/css",
-        "text/md",
-        "text/csv",
-        "text/xml",
-        "text/rtf",
-    ]
-
     @model_validator(mode="before")
     @classmethod
     def check_at_least_one_source(cls, data):
@@ -290,9 +275,26 @@ class File(BaseModel):
     @classmethod
     def validate_mime_type(cls, v):
         """Validate that the mime_type is one of the allowed types."""
-        if v is not None and v not in cls.VALID_MIME_TYPES:
-            raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.VALID_MIME_TYPES}")
+        if v is not None and v not in cls.valid_mime_types():
+            raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}")
         return v
+
+    @classmethod
+    def valid_mime_types(cls) -> List[str]:
+        return [
+            "application/pdf",
+            "application/x-javascript",
+            "text/javascript",
+            "application/x-python",
+            "text/x-python",
+            "text/plain",
+            "text/html",
+            "text/css",
+            "text/md",
+            "text/csv",
+            "text/xml",
+            "text/rtf",
+        ]
 
     @property
     def file_url_content(self) -> Optional[Tuple[bytes, str]]:
