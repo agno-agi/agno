@@ -257,6 +257,7 @@ module = [
   "lancedb.*",
   "langchain_core.*",
   "langchain.*",
+  "litellm.*",
   "llama_index.*",
   "litellm.*",
   "mem0.*",
