@@ -125,9 +125,8 @@ class Team:
     # --- Tools ---
     # If True, enable the team agent to update the team context and automatically send the team context to the members
     enable_agentic_context: bool = False
-
     # If True, send all previous member interactions to members
-    send_team_member_interactions_to_members: bool = False
+    share_member_interactions: bool = False
 
     # If True, read the team history
     read_team_history: bool = False
@@ -180,7 +179,6 @@ class Team:
         model: Optional[Model] = None,
         name: Optional[str] = None,
         team_id: Optional[str] = None,
-        tasks: Optional[List[str]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -195,7 +193,7 @@ class Team:
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
         enable_agentic_context: bool = False,
-        send_team_member_interactions_to_members: bool = False,
+        share_member_interactions: bool = False,
         read_team_history: bool = False,
         show_tool_calls: bool = False,
         response_model: Optional[Type[BaseModel]] = None,
@@ -206,10 +204,6 @@ class Team:
         num_of_interactions_from_history: int = 3,
         storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
-        reasoning: bool = False,
-        reasoning_model: Optional[Model] = None,
-        reasoning_min_steps: int = 1,
-        reasoning_max_steps: int = 10,
         debug_mode: bool = False,
         show_members_responses: bool = False,
         monitoring: bool = False,
@@ -223,8 +217,6 @@ class Team:
 
         self.name = name
         self.team_id = team_id
-
-        self.tasks = tasks
 
         self.user_id = user_id
         self.session_id = session_id
@@ -243,7 +235,7 @@ class Team:
         self.add_context = add_context
 
         self.enable_agentic_context = enable_agentic_context
-        self.send_team_member_interactions_to_members = send_team_member_interactions_to_members
+        self.share_member_interactions = share_member_interactions
 
         self.read_team_history = read_team_history
         self.show_tool_calls = show_tool_calls
@@ -3562,7 +3554,7 @@ class Team:
                 team_context_str = self.memory.get_team_context_str()
 
             team_member_interactions_str = None
-            if self.send_team_member_interactions_to_members:
+            if self.share_member_interactions:
                 team_member_interactions_str = self.memory.get_team_member_interactions_str()
                 if context_images := self.memory.get_team_context_images():
                     images.extend([Image.from_artifact(img) for img in context_images])
@@ -3658,7 +3650,7 @@ class Team:
                 team_context_str = self.memory.get_team_context_str()
 
             team_member_interactions_str = None
-            if self.send_team_member_interactions_to_members:
+            if self.share_member_interactions:
                 team_member_interactions_str = self.memory.get_team_member_interactions_str()
                 if context_images := self.memory.get_team_context_images():
                     images.extend([Image.from_artifact(img) for img in context_images])
@@ -3791,7 +3783,7 @@ class Team:
                 team_context_str = self.memory.get_team_context_str()
 
             team_member_interactions_str = None
-            if self.send_team_member_interactions_to_members:
+            if self.share_member_interactions:
                 team_member_interactions_str = self.memory.get_team_member_interactions_str()
                 if context_images := self.memory.get_team_context_images():
                     images.extend([Image.from_artifact(img) for img in context_images])
@@ -3894,7 +3886,7 @@ class Team:
                 team_context_str = self.memory.get_team_context_str()
 
             team_member_interactions_str = None
-            if self.send_team_member_interactions_to_members:
+            if self.share_member_interactions:
                 team_member_interactions_str = self.memory.get_team_member_interactions_str()
                 if context_images := self.memory.get_team_context_images():
                     images.extend([Image.from_artifact(img) for img in context_images])
