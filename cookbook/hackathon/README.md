@@ -30,6 +30,13 @@ uv venv --python 3.12
 source .venv/bin/activate
 ```
 
+- for Windows
+
+```shell
+python -m venv venv
+venv\scripts\activate
+```
+
 ### Install libraries
 
 Install the `agno` python package along with the models and tools you want to use.
@@ -54,6 +61,12 @@ Export the API keys for the models and tools you want to use.
 export OPENAI_API_KEY=***
 export GOOGLE_API_KEY=***
 export ELEVEN_LABS_API_KEY=***
+```
+
+for Windows
+
+```shell
+$env:OPENAI_API_KEY="your-api-key"
 ```
 
 ## Text Agents
