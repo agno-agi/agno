@@ -62,8 +62,7 @@ def test_coordinator_team_with_context_sharing():
             "Then, ask the web searcher to search for each story to get more information.",
             "Finally, provide a thoughtful and engaging summary.",
         ],
-        send_team_context_to_members=True,
-        update_team_context=True,
+        enable_agentic_context=True,
     )
 
     response = team.run("Summarize the top story on hackernews")
@@ -139,8 +138,7 @@ def test_coordinator_team_sequential_tasks():
             "Then, have the Data Analyzer analyze the collected data.",
             "Finally, have the Report Writer create a comprehensive report.",
         ],
-        send_team_context_to_members=True,
-        update_team_context=True,
+        enable_agentic_context=True,
     )
 
     response = team.run("Research the impact of AI on job markets")

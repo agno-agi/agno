@@ -51,9 +51,8 @@ post_team = Team(
     show_tool_calls=True,
     markdown=True,
     success_criteria="A post on Reddit with a title and content that is engaging and informative in the subreddit.",
-    send_team_context_to_members=True,
+    enable_agentic_context=True,
     send_team_member_interactions_to_members=False,
-    update_team_context=True,
 )
 
 post_team.print_response(

@@ -201,9 +201,8 @@ def get_tic_tac_toe_team(
             debug_mode=debug_mode,
             markdown=True,
             show_members_responses=True,
-            send_team_context_to_members=True,
+            enable_agentic_context=True,
             add_context=True,
-            select_team_context_to_send_to_members=False,
         )
 
     except Exception as e:

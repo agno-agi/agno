@@ -69,7 +69,7 @@ agent_team = Team(
         "You have to stop the discussion when you think the team has reached a consensus.",
     ],
     success_criteria="The team has reached a consensus.",
-    send_team_context_to_members=True,
+    enable_agentic_context=True,
     show_tool_calls=True,
     markdown=True,
     debug_mode=True,
