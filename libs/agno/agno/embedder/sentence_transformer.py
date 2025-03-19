@@ -24,13 +24,15 @@ except ImportError:
 class SentenceTransformerEmbedder(Embedder):
     id: str = "sentence-transformers/all-MiniLM-L6-v2"
     sentence_transformer_client: Optional[SentenceTransformer] = None
+    prompt: str | None = None
+    normalize_embeddings: bool = False
 
     def get_embedding(self, text: Union[str, List[str]]) -> List[float]:
         if not self.sentence_transformer_client:
             model = SentenceTransformer(model_name_or_path=self.id)
         else:
             model = self.sentence_transformer_client
-        embedding = model.encode(text)
+        embedding = model.encode(text, prompt=self.prompt, normalize_embeddings=self.normalize_embeddings)
         try:
             return embedding  # type: ignore
         except Exception as e:
