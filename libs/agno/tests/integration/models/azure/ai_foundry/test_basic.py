@@ -126,6 +126,53 @@ def test_response_model():
     assert response.content.plot is not None
 
 
+def test_json_response_mode():
+    class MovieScript(BaseModel):
+        title: str = Field(..., description="Movie title")
+        genre: str = Field(..., description="Movie genre")
+        plot: str = Field(..., description="Brief plot summary")
+
+    agent = Agent(
+        model=AzureAIFoundry(id="Phi-4"),
+        response_model=MovieScript,
+        response_format="json",
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run("Create a movie about time travel")
+
+    # Verify structured output
+    assert isinstance(response.content, MovieScript)
+    assert response.content.title is not None
+    assert response.content.genre is not None
+    assert response.content.plot is not None
+
+
+# For backward compatibility
+def test_structured_outputs_deprecated():
+    class MovieScript(BaseModel):
+        title: str = Field(..., description="Movie title")
+        genre: str = Field(..., description="Movie genre")
+        plot: str = Field(..., description="Brief plot summary")
+
+    agent = Agent(
+        model=AzureAIFoundry(id="Phi-4"),
+        response_model=MovieScript,
+        structured_outputs=False,  # They don't support native structured outputs
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run("Create a movie about time travel")
+
+    # Verify structured output
+    assert isinstance(response.content, MovieScript)
+    assert response.content.title is not None
+    assert response.content.genre is not None
+    assert response.content.plot is not None
+
+
 def test_history():
     agent = Agent(
         model=AzureAIFoundry(id="Phi-4"),
@@ -133,7 +180,6 @@ def test_history():
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,
-        markdown=True,
     )
     agent.run("Hello")
     assert len(agent.run_response.messages) == 2

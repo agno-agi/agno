@@ -30,8 +30,8 @@ TEMPLATE_TO_NAME_MAP: Dict[WorkspaceStarterTemplate, str] = {
     WorkspaceStarterTemplate.agent_api: "agent-api",
 }
 TEMPLATE_TO_REPO_MAP: Dict[WorkspaceStarterTemplate, str] = {
-    WorkspaceStarterTemplate.agent_app: "https://github.com/agno-agi/agent-app-template",
-    WorkspaceStarterTemplate.agent_api: "https://github.com/agno-agi/agent-api-template",
+    WorkspaceStarterTemplate.agent_app: "https://github.com/agno-agi/agent-app-aws",
+    WorkspaceStarterTemplate.agent_api: "https://github.com/agno-agi/agent-api-aws",
 }
 
 

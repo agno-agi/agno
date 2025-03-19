@@ -111,7 +111,52 @@ def test_response_model():
 
     agent = Agent(
         model=Groq(id="mixtral-8x7b-32768"),
-        markdown=True,
+        telemetry=False,
+        monitoring=False,
+        response_model=MovieScript,
+    )
+
+    response = agent.run("Create a movie about time travel")
+
+    # Verify structured output
+    assert isinstance(response.content, MovieScript)
+    assert response.content.title is not None
+    assert response.content.genre is not None
+    assert response.content.plot is not None
+
+
+def test_json_response_mode():
+    class MovieScript(BaseModel):
+        title: str = Field(..., description="Movie title")
+        genre: str = Field(..., description="Movie genre")
+        plot: str = Field(..., description="Brief plot summary")
+
+    agent = Agent(
+        model=Groq(id="mixtral-8x7b-32768"),
+        response_format="json",
+        telemetry=False,
+        monitoring=False,
+        response_model=MovieScript,
+    )
+
+    response = agent.run("Create a movie about time travel")
+
+    # Verify structured output
+    assert isinstance(response.content, MovieScript)
+    assert response.content.title is not None
+    assert response.content.genre is not None
+    assert response.content.plot is not None
+
+
+def test_structured_outputs_deprecated():
+    class MovieScript(BaseModel):
+        title: str = Field(..., description="Movie title")
+        genre: str = Field(..., description="Movie genre")
+        plot: str = Field(..., description="Brief plot summary")
+
+    agent = Agent(
+        model=Groq(id="mixtral-8x7b-32768"),
+        structured_outputs=False,  # They don't support native structured outputs
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,

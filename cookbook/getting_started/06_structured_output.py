@@ -124,7 +124,6 @@ structured_output_agent = Agent(
         Transform every location into an unforgettable cinematic experience!\
     """),
     response_model=MovieScript,
-    structured_outputs=True,
 )
 
 # Example usage with different locations

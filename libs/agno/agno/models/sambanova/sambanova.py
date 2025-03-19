@@ -24,3 +24,5 @@ class Sambanova(OpenAILike):
 
     api_key: Optional[str] = getenv("SAMBANOVA_API_KEY")
     base_url: str = "https://api.sambanova.ai/v1"
+
+    supports_native_structured_outputs: bool = False
