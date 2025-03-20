@@ -43,7 +43,7 @@ class ModelResponse:
 
     def format_tool_calls(self) -> List[str]:
         """Format tool calls for display in a readable format.
-        
+
         Returns:
             List[str]: List of formatted tool call strings
         """
