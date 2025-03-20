@@ -1,10 +1,9 @@
 from typing import List
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.openai import OpenAIChat
-from agno.models.openai.responses import OpenAIResponses  # noqa
+from agno.models.openai import OpenAIResponses
 from pydantic import BaseModel, Field
-from rich.pretty import pprint
+from rich.pretty import pprint  # noqa
 
 
 class MovieScript(BaseModel):
@@ -36,7 +35,7 @@ json_mode_agent = Agent(
 
 # Agent that uses structured outputs
 structured_output_agent = Agent(
-    model=OpenAIResponses(id="gpt-4o-2024-08-06"),
+    model=OpenAIResponses(id="gpt-4o"),
     description="You write movie scripts.",
     response_model=MovieScript,
 )

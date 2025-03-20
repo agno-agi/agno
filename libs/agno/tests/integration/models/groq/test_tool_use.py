@@ -1,6 +1,7 @@
 from typing import Optional
 
 import pytest
+from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.groq import Groq
@@ -124,6 +125,28 @@ def test_parallel_tool_calls():
     assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
     assert response.content is not None
     assert "TSLA" in response.content and "AAPL" in response.content
+
+
+@pytest.mark.skip(reason="Groq does not support native structured outputs for tool calls at this time.")
+def test_tool_use_with_native_structured_outputs():
+    class StockPrice(BaseModel):
+        price: float = Field(..., description="The price of the stock")
+        currency: str = Field(..., description="The currency of the stock")
+
+    agent = Agent(
+        model=Groq(id="llama-3.3-70b-versatile"),
+        tools=[YFinanceTools()],
+        show_tool_calls=True,
+        markdown=True,
+        response_model=StockPrice,
+        telemetry=False,
+        monitoring=False,
+    )
+    response = agent.run("What is the current price of TSLA?")
+    assert isinstance(response.content, StockPrice)
+    assert response.content is not None
+    assert response.content.price is not None
+    assert response.content.currency is not None
 
 
 def test_multiple_tool_calls():

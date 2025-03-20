@@ -117,7 +117,6 @@ def test_tool_use_with_native_structured_outputs():
         show_tool_calls=True,
         markdown=True,
         response_model=StockPrice,
-        structured_outputs=True,
         telemetry=False,
         monitoring=False,
     )

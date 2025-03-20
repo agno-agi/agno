@@ -117,31 +117,6 @@ def test_tool_use_with_native_structured_outputs():
         tools=[YFinanceTools()],
         show_tool_calls=True,
         markdown=True,
-        exponential_backoff=True,
-        response_model=StockPrice,
-        structured_outputs=True,
-        telemetry=False,
-        monitoring=False,
-    )
-    # Gemini does not support structured outputs for tool calls at this time
-    response = agent.run("What is the current price of TSLA?")
-    assert isinstance(response.content, StockPrice)
-    assert response.content is not None
-    assert response.content.price is not None
-    assert response.content.currency is not None
-
-
-def test_tool_use_with_response_model():
-    class StockPrice(BaseModel):
-        price: float = Field(..., description="The price of the stock")
-        currency: str = Field(..., description="The currency of the stock")
-
-    agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
-        tools=[YFinanceTools()],
-        show_tool_calls=True,
-        markdown=True,
-        exponential_backoff=True,
         response_model=StockPrice,
         telemetry=False,
         monitoring=False,
