@@ -8,12 +8,13 @@ import yaml
 from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
+from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import logger
 
 
 class YamlStorage(Storage):
-    def __init__(self, dir_path: Union[str, Path], mode: Optional[Literal["agent", "workflow"]] = "agent"):
+    def __init__(self, dir_path: Union[str, Path], mode: Optional[Literal["agent", "team", "workflow"]] = "agent"):
         super().__init__(mode)
         self.dir_path = Path(dir_path)
         self.dir_path.mkdir(parents=True, exist_ok=True)
@@ -38,6 +39,8 @@ class YamlStorage(Storage):
                     return None
                 if self.mode == "agent":
                     return AgentSession.from_dict(data)
+                elif self.mode == "team":
+                    return TeamSession.from_dict(data)
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(data)
         except FileNotFoundError:
@@ -53,6 +56,8 @@ class YamlStorage(Storage):
                     if user_id and entity_id:
                         if self.mode == "agent" and data["agent_id"] == entity_id and data["user_id"] == user_id:
                             session_ids.append(data["session_id"])
+                        elif self.mode == "team" and data["team_id"] == entity_id and data["user_id"] == user_id:
+                            session_ids.append(data["session_id"])
                         elif (
                             self.mode == "workflow" and data["workflow_id"] == entity_id and data["user_id"] == user_id
                         ):
@@ -61,6 +66,8 @@ class YamlStorage(Storage):
                         session_ids.append(data["session_id"])
                     elif entity_id:
                         if self.mode == "agent" and data["agent_id"] == entity_id:
+                            session_ids.append(data["session_id"])
+                        elif self.mode == "team" and data["team_id"] == entity_id:
                             session_ids.append(data["session_id"])
                         elif self.mode == "workflow" and data["workflow_id"] == entity_id:
                             session_ids.append(data["session_id"])
@@ -80,6 +87,8 @@ class YamlStorage(Storage):
                     if user_id and entity_id:
                         if self.mode == "agent" and data["agent_id"] == entity_id and data["user_id"] == user_id:
                             _session = AgentSession.from_dict(data)
+                        elif self.mode == "team" and data["team_id"] == entity_id and data["user_id"] == user_id:
+                            _session = TeamSession.from_dict(data)
                         elif (
                             self.mode == "workflow" and data["workflow_id"] == entity_id and data["user_id"] == user_id
                         ):
@@ -87,11 +96,15 @@ class YamlStorage(Storage):
                     elif user_id and data["user_id"] == user_id:
                         if self.mode == "agent":
                             _session = AgentSession.from_dict(data)
+                        elif self.mode == "team":
+                            _session = TeamSession.from_dict(data)
                         elif self.mode == "workflow":
                             _session = WorkflowSession.from_dict(data)
                     elif entity_id:
                         if self.mode == "agent" and data["agent_id"] == entity_id:
                             _session = AgentSession.from_dict(data)
+                        elif self.mode == "team" and data["team_id"] == entity_id:
+                            _session = TeamSession.from_dict(data)
                         elif self.mode == "workflow" and data["workflow_id"] == entity_id:
                             _session = WorkflowSession.from_dict(data)
 
@@ -101,6 +114,8 @@ class YamlStorage(Storage):
                     # No filters applied, add all sessions
                     if self.mode == "agent":
                         _session = AgentSession.from_dict(data)
+                    elif self.mode == "team":
+                        _session = TeamSession.from_dict(data)
                     elif self.mode == "workflow":
                         _session = WorkflowSession.from_dict(data)
                     if _session:

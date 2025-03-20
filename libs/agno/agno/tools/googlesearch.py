@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug
 
 try:
     from googlesearch import search
@@ -69,7 +69,7 @@ class GoogleSearchTools(Toolkit):
             else:
                 language = "en"
 
-        logger.debug(f"Searching Google [{language}] for: {query}")
+        log_debug(f"Searching Google [{language}] for: {query}")
 
         # Perform Google search using the googlesearch-python package
         results = list(search(query, num_results=max_results, lang=language, proxy=self.proxy, advanced=True))

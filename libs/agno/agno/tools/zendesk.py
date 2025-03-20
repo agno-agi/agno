@@ -4,7 +4,7 @@ from os import getenv
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     import requests
@@ -60,7 +60,7 @@ class ZendeskTools(Toolkit):
         if not self.username or not self.password or not self.company_name:
             return "Username, password, or company name not provided."
 
-        logger.debug(f"Searching Zendesk for: {search_string}")
+        log_debug(f"Searching Zendesk for: {search_string}")
 
         auth = (self.username, self.password)
         url = f"https://{self.company_name}.zendesk.com/api/v2/help_center/articles/search.json?query={search_string}"

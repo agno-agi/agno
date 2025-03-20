@@ -15,7 +15,7 @@ except ImportError:
 from agno.document import Document
 from agno.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate.index import Distance, VectorIndex
@@ -59,7 +59,7 @@ class Weaviate(VectorDb):
             from agno.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
 
         # Search setup
@@ -81,12 +81,12 @@ class Weaviate(VectorDb):
             return self.client
 
         if self.wcd_url and self.wcd_api_key and not self.local:
-            logger.info("Initializing Weaviate Cloud client")
+            log_info("Initializing Weaviate Cloud client")
             self.client = weaviate.connect_to_weaviate_cloud(
                 cluster_url=self.wcd_url, auth_credentials=Auth.api_key(self.wcd_api_key)
             )
         else:
-            logger.info("Initializing local Weaviate client")
+            log_info("Initializing local Weaviate client")
             self.client = weaviate.connect_to_local()
 
         # Verify connection
@@ -96,7 +96,7 @@ class Weaviate(VectorDb):
     def create(self) -> None:
         """Create the collection in Weaviate if it doesn't exist."""
         if not self.exists():
-            logger.debug(f"Creating collection '{self.collection}' in Weaviate.")
+            log_debug(f"Creating collection '{self.collection}' in Weaviate.")
             self.get_client().collections.create(
                 name=self.collection,
                 properties=[
@@ -107,7 +107,7 @@ class Weaviate(VectorDb):
                 vectorizer_config=Configure.Vectorizer.none(),
                 vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
             )
-            logger.debug(f"Collection '{self.collection}' created in Weaviate.")
+            log_debug(f"Collection '{self.collection}' created in Weaviate.")
 
     def doc_exists(self, document: Document) -> bool:
         """
@@ -155,7 +155,7 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
         """
-        logger.debug(f"Inserting {len(documents)} documents into Weaviate.")
+        log_debug(f"Inserting {len(documents)} documents into Weaviate.")
         collection = self.get_client().collections.get(self.collection)
 
         for document in documents:
@@ -180,7 +180,7 @@ class Weaviate(VectorDb):
                 vector=document.embedding,
                 uuid=doc_uuid,
             )
-            logger.debug(f"Inserted document: {document.name} ({document.meta_data})")
+            log_debug(f"Inserted document: {document.name} ({document.meta_data})")
 
     def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -190,7 +190,7 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        logger.debug(f"Upserting {len(documents)} documents into Weaviate.")
+        log_debug(f"Upserting {len(documents)} documents into Weaviate.")
         self.insert(documents)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
@@ -317,7 +317,7 @@ class Weaviate(VectorDb):
     def drop(self) -> None:
         """Delete the Weaviate collection."""
         if self.exists():
-            logger.debug(f"Deleting collection '{self.collection}' from Weaviate.")
+            log_debug(f"Deleting collection '{self.collection}' from Weaviate.")
             self.get_client().collections.delete(self.collection)
 
     def optimize(self) -> None:

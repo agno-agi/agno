@@ -2,7 +2,7 @@ from collections import OrderedDict
 from typing import Any, Callable, Dict
 
 from agno.tools.function import Function
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 
 class Toolkit:
@@ -31,7 +31,7 @@ class Toolkit:
                 sanitize_arguments=sanitize_arguments,
             )
             self.functions[f.name] = f
-            logger.debug(f"Function: {f.name} registered with {self.name}")
+            log_debug(f"Function: {f.name} registered with {self.name}")
         except Exception as e:
             logger.warning(f"Failed to create Function for: {function.__name__}")
             raise e

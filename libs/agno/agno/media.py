@@ -92,6 +92,10 @@ class Video(BaseModel):
         }
         return {k: v for k, v in response_dict.items() if v is not None}
 
+    @classmethod
+    def from_artifact(cls, artifact: VideoArtifact) -> "Video":
+        return cls(url=artifact.url)
+
 
 class Audio(BaseModel):
     content: Optional[Any] = None  # Actual audio bytes content
@@ -157,6 +161,10 @@ class Audio(BaseModel):
         }
 
         return {k: v for k, v in response_dict.items() if v is not None}
+
+    @classmethod
+    def from_artifact(cls, artifact: AudioArtifact) -> "Audio":
+        return cls(url=artifact.url, content=artifact.base64_audio, format=artifact.mime_type)
 
 
 class AudioResponse(BaseModel):
@@ -256,27 +264,16 @@ class Image(BaseModel):
 
         return {k: v for k, v in response_dict.items() if v is not None}
 
+    @classmethod
+    def from_artifact(cls, artifact: ImageArtifact) -> "Image":
+        return cls(url=artifact.url)
+
 
 class File(BaseModel):
     url: Optional[str] = None
     filepath: Optional[Union[Path, str]] = None
     content: Optional[Any] = None
     mime_type: Optional[str] = None
-
-    VALID_MIME_TYPES: List[str] = [
-        "application/pdf",
-        "application/x-javascript",
-        "text/javascript",
-        "application/x-python",
-        "text/x-python",
-        "text/plain",
-        "text/html",
-        "text/css",
-        "text/md",
-        "text/csv",
-        "text/xml",
-        "text/rtf",
-    ]
 
     @model_validator(mode="before")
     @classmethod
@@ -290,9 +287,26 @@ class File(BaseModel):
     @classmethod
     def validate_mime_type(cls, v):
         """Validate that the mime_type is one of the allowed types."""
-        if v is not None and v not in cls.VALID_MIME_TYPES:
-            raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.VALID_MIME_TYPES}")
+        if v is not None and v not in cls.valid_mime_types():
+            raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}")
         return v
+
+    @classmethod
+    def valid_mime_types(cls) -> List[str]:
+        return [
+            "application/pdf",
+            "application/x-javascript",
+            "text/javascript",
+            "application/x-python",
+            "text/x-python",
+            "text/plain",
+            "text/html",
+            "text/css",
+            "text/md",
+            "text/csv",
+            "text/xml",
+            "text/rtf",
+        ]
 
     @property
     def file_url_content(self) -> Optional[Tuple[bytes, str]]:

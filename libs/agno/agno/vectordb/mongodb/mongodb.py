@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -69,7 +69,7 @@ class MongoDb(VectorDb):
             from agno.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder = embedder
 
         self.distance_metric = distance_metric
@@ -88,7 +88,7 @@ class MongoDb(VectorDb):
 
         if client:
             self._client = client
-            logger.info("Using provided MongoDB client.")
+            log_info("Using provided MongoDB client.")
         else:
             self._client = self._get_client()
         self._db = self._client[self.database]
@@ -97,11 +97,11 @@ class MongoDb(VectorDb):
     def _get_client(self) -> MongoClient:
         """Create or retrieve the MongoDB client."""
         try:
-            logger.debug("Creating MongoDB Client")
+            log_debug("Creating MongoDB Client")
             client: MongoClient = MongoClient(self.connection_string, **self.kwargs)
             # Trigger a connection to verify the client
             client.admin.command("ping")
-            logger.info("Connected to MongoDB successfully.")
+            log_info("Connected to MongoDB successfully.")
             return client
         except errors.ConnectionFailure as e:
             logger.error(f"Failed to connect to MongoDB: {e}")
@@ -116,15 +116,15 @@ class MongoDb(VectorDb):
         self._collection = self._db[self.collection_name]
 
         if not self.collection_exists():
-            logger.info(f"Creating collection '{self.collection_name}'.")
+            log_info(f"Creating collection '{self.collection_name}'.")
             self._db.create_collection(self.collection_name)
             self._create_search_index()
         else:
-            logger.info(f"Using existing collection '{self.collection_name}'.")
+            log_info(f"Using existing collection '{self.collection_name}'.")
             # check if index exists
-            logger.info(f"Checking if search index '{self.collection_name}' exists.")
+            log_info(f"Checking if search index '{self.collection_name}' exists.")
             if not self._search_index_exists():
-                logger.info(f"Search index '{self.collection_name}' does not exist. Creating it.")
+                log_info(f"Search index '{self.collection_name}' does not exist. Creating it.")
                 self._create_search_index()
                 if self.wait_until_index_ready:
                     self._wait_for_index_ready()
@@ -139,14 +139,14 @@ class MongoDb(VectorDb):
         for attempt in range(max_retries):
             try:
                 if overwrite and self._search_index_exists():
-                    logger.info(f"Dropping existing search index '{index_name}'.")
+                    log_info(f"Dropping existing search index '{index_name}'.")
                     try:
                         self._collection.drop_search_index(index_name)
                         # Wait longer after index deletion
                         time.sleep(retry_delay * 2)
                     except errors.OperationFailure as e:
                         if "Index already requested to be deleted" in str(e):
-                            logger.info("Index is already being deleted, waiting...")
+                            log_info("Index is already being deleted, waiting...")
                             time.sleep(retry_delay * 2)  # Wait longer for deletion to complete
                         else:
                             raise
@@ -154,11 +154,11 @@ class MongoDb(VectorDb):
                 # Verify index is gone before creating new one
                 retries = 3
                 while retries > 0 and self._search_index_exists():
-                    logger.info("Waiting for index deletion to complete...")
+                    log_info("Waiting for index deletion to complete...")
                     time.sleep(retry_delay)
                     retries -= 1
 
-                logger.info(f"Creating search index '{index_name}'.")
+                log_info(f"Creating search index '{index_name}'.")
 
                 # Get embedding dimension from embedder
                 embedding_dim = getattr(self.embedder, "embedding_dim", 1536)
@@ -183,7 +183,7 @@ class MongoDb(VectorDb):
                 if self.wait_until_index_ready:
                     self._wait_for_index_ready()
 
-                logger.info(f"Search index '{index_name}' created successfully.")
+                log_info(f"Search index '{index_name}' created successfully.")
                 return
 
             except errors.OperationFailure as e:
@@ -215,7 +215,7 @@ class MongoDb(VectorDb):
         while True:
             try:
                 if self._search_index_exists():
-                    logger.info(f"Search index '{index_name}' is ready.")
+                    log_info(f"Search index '{index_name}' is ready.")
                     break
             except Exception as e:
                 logger.error(f"Error checking index status: {e}")
@@ -238,7 +238,7 @@ class MongoDb(VectorDb):
             doc_id = md5(document.content.encode("utf-8")).hexdigest()
             result = self._collection.find_one({"_id": doc_id})
             exists = result is not None
-            logger.debug(f"Document {'exists' if exists else 'does not exist'}: {doc_id}")
+            log_debug(f"Document {'exists' if exists else 'does not exist'}: {doc_id}")
             return exists
         except Exception as e:
             logger.error(f"Error checking document existence: {e}")
@@ -248,7 +248,7 @@ class MongoDb(VectorDb):
         """Check if a document with a given name exists in the collection."""
         try:
             exists = self._collection.find_one({"name": name}) is not None
-            logger.debug(f"Document with name '{name}' {'exists' if exists else 'does not exist'}")
+            log_debug(f"Document with name '{name}' {'exists' if exists else 'does not exist'}")
             return exists
         except Exception as e:
             logger.error(f"Error checking document name existence: {e}")
@@ -258,7 +258,7 @@ class MongoDb(VectorDb):
         """Check if a document with a given ID exists in the collection."""
         try:
             exists = self._collection.find_one({"_id": id}) is not None
-            logger.debug(f"Document with ID '{id}' {'exists' if exists else 'does not exist'}")
+            log_debug(f"Document with ID '{id}' {'exists' if exists else 'does not exist'}")
             return exists
         except Exception as e:
             logger.error(f"Error checking document ID existence: {e}")
@@ -266,7 +266,7 @@ class MongoDb(VectorDb):
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the MongoDB collection."""
-        logger.info(f"Inserting {len(documents)} documents")
+        log_info(f"Inserting {len(documents)} documents")
 
         prepared_docs = []
         for document in documents:
@@ -279,7 +279,7 @@ class MongoDb(VectorDb):
         if prepared_docs:
             try:
                 self._collection.insert_many(prepared_docs, ordered=False)
-                logger.info(f"Inserted {len(prepared_docs)} documents successfully.")
+                log_info(f"Inserted {len(prepared_docs)} documents successfully.")
                 if self.wait_after_insert and self.wait_after_insert > 0:
                     time.sleep(self.wait_after_insert)
             except errors.BulkWriteError as e:
@@ -289,7 +289,7 @@ class MongoDb(VectorDb):
 
     def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents into the MongoDB collection."""
-        logger.info(f"Upserting {len(documents)} documents")
+        log_info(f"Upserting {len(documents)} documents")
 
         for document in documents:
             try:
@@ -299,7 +299,7 @@ class MongoDb(VectorDb):
                     {"$set": doc_data},
                     upsert=True,
                 )
-                logger.info(f"Upserted document: {doc_data['_id']}")
+                log_info(f"Upserted document: {doc_data['_id']}")
             except Exception as e:
                 logger.error(f"Error upserting document '{document.name}': {e}")
 
@@ -361,7 +361,7 @@ class MongoDb(VectorDb):
                 for doc in results
             ]
 
-            logger.info(f"Search completed. Found {len(docs)} documents.")
+            log_info(f"Search completed. Found {len(docs)} documents.")
             return docs
 
         except Exception as e:
@@ -370,7 +370,7 @@ class MongoDb(VectorDb):
 
     def vector_search(self, query: str, limit: int = 5) -> List[Document]:
         """Perform a vector-based search."""
-        logger.debug("Performing vector search.")
+        log_debug("Performing vector search.")
         return self.search(query, limit=limit)
 
     def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
@@ -389,7 +389,7 @@ class MongoDb(VectorDb):
                 )
                 for doc in cursor
             ]
-            logger.debug(f"Keyword search completed. Found {len(results)} documents.")
+            log_debug(f"Keyword search completed. Found {len(results)} documents.")
             return results
         except Exception as e:
             logger.error(f"Error during keyword search: {e}")
@@ -397,7 +397,7 @@ class MongoDb(VectorDb):
 
     def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
         """Perform a hybrid search combining vector and keyword-based searches."""
-        logger.debug("Performing hybrid search is not yet implemented.")
+        log_debug("Performing hybrid search is not yet implemented.")
         return []
 
     def drop(self) -> None:
@@ -412,7 +412,7 @@ class MongoDb(VectorDb):
 
                 # Then drop the collection
                 self._collection.drop()
-                logger.info(f"Collection '{self.collection_name}' dropped successfully")
+                log_info(f"Collection '{self.collection_name}' dropped successfully")
 
                 # Wait to ensure cleanup
                 time.sleep(2)
@@ -424,7 +424,7 @@ class MongoDb(VectorDb):
     def exists(self) -> bool:
         """Check if the MongoDB collection exists."""
         exists = self.collection_exists()
-        logger.debug(f"Collection '{self.collection_name}' existence: {exists}")
+        log_debug(f"Collection '{self.collection_name}' existence: {exists}")
         return exists
 
     def optimize(self) -> None:
@@ -437,7 +437,7 @@ class MongoDb(VectorDb):
             try:
                 result = self._collection.delete_many({})
                 success = result.deleted_count >= 0  # Consider any deletion (even 0) as success
-                logger.info(f"Deleted {result.deleted_count} documents from collection.")
+                log_info(f"Deleted {result.deleted_count} documents from collection.")
                 return success
             except Exception as e:
                 logger.error(f"Error deleting documents: {e}")
@@ -459,14 +459,14 @@ class MongoDb(VectorDb):
             "meta_data": document.meta_data,
             "embedding": document.embedding,
         }
-        logger.debug(f"Prepared document: {doc_data['_id']}")
+        log_debug(f"Prepared document: {doc_data['_id']}")
         return doc_data
 
     def get_count(self) -> int:
         """Get the count of documents in the MongoDB collection."""
         try:
             count = self._collection.count_documents({})
-            logger.debug(f"Collection '{self.collection_name}' has {count} documents.")
+            log_debug(f"Collection '{self.collection_name}' has {count} documents.")
             return count
         except Exception as e:
             logger.error(f"Error getting document count: {e}")
