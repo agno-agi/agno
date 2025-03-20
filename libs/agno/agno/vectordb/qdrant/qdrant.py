@@ -135,7 +135,6 @@ class Qdrant(VectorDb):
 
     async def async_create(self) -> None:
         """Create the collection asynchronously."""
-        print("inside async create")
         # Collection distance
         _distance = models.Distance.COSINE
         if self.distance == Distance.l2:
@@ -169,7 +168,6 @@ class Qdrant(VectorDb):
 
     async def async_doc_exists(self, document: Document) -> bool:
         """Check if a document exists asynchronously."""
-        print("inside async doc exists")
         cleaned_content = document.content.replace("\x00", "\ufffd")
         doc_id = md5(cleaned_content.encode()).hexdigest()
         collection_points = await self.async_client.retrieve(
@@ -233,7 +231,6 @@ class Qdrant(VectorDb):
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents asynchronously."""
-        print("inside async insert")
         log_debug(f"Inserting {len(documents)} documents asynchronously")
         points = []
         for document in documents:
@@ -320,7 +317,6 @@ class Qdrant(VectorDb):
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         """Search for documents asynchronously."""
-        print("inside async search")
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
