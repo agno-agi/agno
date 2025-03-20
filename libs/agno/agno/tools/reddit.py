@@ -26,6 +26,8 @@ class RedditTools(Toolkit):
         get_trending_subreddits: bool = True,
         get_subreddit_stats: bool = True,
         create_post: bool = True,
+        reply_to_post: bool = True,
+        reply_to_comment: bool = True,
     ):
         super().__init__(name="reddit")
 
@@ -76,6 +78,10 @@ class RedditTools(Toolkit):
             self.register(self.get_subreddit_stats)
         if create_post:
             self.register(self.create_post)
+        if reply_to_post:
+            self.register(self.reply_to_post)
+        if reply_to_comment:
+            self.register(self.reply_to_comment)
 
     def _check_user_auth(self) -> bool:
         """
@@ -295,3 +301,180 @@ class RedditTools(Toolkit):
 
         except Exception as e:
             return f"Error creating post: {e}"
+
+    def reply_to_post(self, post_id: str, content: str, subreddit: Optional[str] = None) -> str:
+        """
+        Post a reply to an existing Reddit post or comment.
+
+        Args:
+            post_id (str): The ID of the post or comment to reply to.
+                          Can be a full URL, permalink, or just the ID.
+            content (str): The content of the reply.
+            subreddit (Optional[str]): The subreddit name if known.
+                                     This helps with error handling and validation.
+
+        Returns:
+            str: JSON string containing information about the created reply.
+        """
+        if not self.reddit:
+            logger.error("Reddit instance not initialized")
+            return "Please provide Reddit API credentials"
+
+        if not self._check_user_auth():
+            logger.error("User authentication failed")
+            return "User authentication required for posting replies. Please provide username and password."
+
+        try:
+            logger.debug(f"Creating reply to post {post_id}")
+
+            # Clean up the post_id if it's a full URL or permalink
+            if "/" in post_id:
+                # Extract the actual ID from the URL/permalink
+                original_id = post_id
+                post_id = post_id.split("/")[-1]
+                logger.debug(f"Extracted post ID {post_id} from {original_id}")
+
+            # Verify post exists
+            if not self._check_post_exists(post_id):
+                error_msg = f"Post with ID {post_id} does not exist or is not accessible"
+                logger.error(error_msg)
+                return error_msg
+
+            # Get the submission object
+            submission = self.reddit.submission(id=post_id)
+
+            logger.debug(
+                f"Post details: Title: {submission.title}, Author: {submission.author}, Subreddit: {submission.subreddit.display_name}"
+            )
+
+            # If subreddit was provided, verify we're in the right place
+            if subreddit and submission.subreddit.display_name.lower() != subreddit.lower():
+                error_msg = f"Error: Post ID belongs to r/{submission.subreddit.display_name}, not r/{subreddit}"
+                logger.error(error_msg)
+                return error_msg
+
+            # Create the reply
+            logger.debug(f"Attempting to post reply with content length: {len(content)}")
+            reply = submission.reply(body=content)
+
+            # Prepare the response information
+            reply_info: Dict[str, Union[str, int, float]] = {
+                "id": reply.id,
+                "body": reply.body,
+                "score": reply.score,
+                "permalink": reply.permalink,
+                "created_utc": reply.created_utc,
+                "author": str(reply.author),
+                "parent_id": reply.parent_id,
+                "submission_id": submission.id,
+                "subreddit": str(reply.subreddit),
+            }
+
+            logger.debug(f"Reply created successfully: {reply.permalink}")
+            return json.dumps({"reply": reply_info})
+
+        except praw.exceptions.RedditAPIException as api_error:
+            # Handle specific Reddit API errors
+            error_messages = [f"{error.error_type}: {error.message}" for error in api_error.items]
+            error_msg = f"Reddit API Error: {'; '.join(error_messages)}"
+            logger.error(error_msg)
+            return error_msg
+
+        except Exception as e:
+            error_msg = f"Error creating reply: {str(e)}"
+            logger.error(error_msg)
+            return error_msg
+
+    def reply_to_comment(self, comment_id: str, content: str, subreddit: Optional[str] = None) -> str:
+        """
+        Post a reply to an existing Reddit comment.
+
+        Args:
+            comment_id (str): The ID of the comment to reply to.
+                            Can be a full URL, permalink, or just the ID.
+            content (str): The content of the reply.
+            subreddit (Optional[str]): The subreddit name if known.
+                                     This helps with error handling and validation.
+
+        Returns:
+            str: JSON string containing information about the created reply.
+        """
+        if not self.reddit:
+            logger.error("Reddit instance not initialized")
+            return "Please provide Reddit API credentials"
+
+        if not self._check_user_auth():
+            logger.error("User authentication failed")
+            return "User authentication required for posting replies. Please provide username and password."
+
+        try:
+            logger.debug(f"Creating reply to comment {comment_id}")
+
+            # Clean up the comment_id if it's a full URL or permalink
+            if "/" in comment_id:
+                original_id = comment_id
+                comment_id = comment_id.split("/")[-1]
+                logger.info(f"Extracted comment ID {comment_id} from {original_id}")
+
+            # Get the comment object
+            comment = self.reddit.comment(id=comment_id)
+
+            logger.debug(f"Comment details: Author: {comment.author}, Subreddit: {comment.subreddit.display_name}")
+
+            # If subreddit was provided, verify we're in the right place
+            if subreddit and comment.subreddit.display_name.lower() != subreddit.lower():
+                error_msg = f"Error: Comment ID belongs to r/{comment.subreddit.display_name}, not r/{subreddit}"
+                logger.error(error_msg)
+                return error_msg
+
+            # Create the reply
+            logger.debug(f"Attempting to post reply with content length: {len(content)}")
+            reply = comment.reply(body=content)
+
+            # Prepare the response information
+            reply_info: Dict[str, Union[str, int, float]] = {
+                "id": reply.id,
+                "body": reply.body,
+                "score": reply.score,
+                "permalink": reply.permalink,
+                "created_utc": reply.created_utc,
+                "author": str(reply.author),
+                "parent_id": reply.parent_id,
+                "submission_id": comment.submission.id,
+                "subreddit": str(reply.subreddit),
+            }
+
+            logger.debug(f"Reply created successfully: {reply.permalink}")
+            return json.dumps({"reply": reply_info})
+
+        except praw.exceptions.RedditAPIException as api_error:
+            # Handle specific Reddit API errors
+            error_messages = [f"{error.error_type}: {error.message}" for error in api_error.items]
+            error_msg = f"Reddit API Error: {'; '.join(error_messages)}"
+            logger.error(error_msg)
+            return error_msg
+
+        except Exception as e:
+            error_msg = f"Error creating reply: {str(e)}"
+            logger.error(error_msg)
+            return error_msg
+
+    def _check_post_exists(self, post_id: str) -> bool:
+        """
+        Verify that a post exists and is accessible.
+
+        Args:
+            post_id (str): The ID of the post to check
+
+        Returns:
+            bool: True if post exists and is accessible, False otherwise
+        """
+        try:
+            submission = self.reddit.submission(id=post_id)
+            # Try to access some attributes to verify the post exists
+            _ = submission.title
+            _ = submission.author
+            return True
+        except Exception as e:
+            logger.error(f"Error checking post existence: {str(e)}")
+            return False

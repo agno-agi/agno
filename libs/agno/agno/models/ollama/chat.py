@@ -41,7 +41,7 @@ class Ollama(Model):
     name: str = "Ollama"
     provider: str = "Ollama"
 
-    supports_structured_outputs: bool = True
+    supports_native_structured_outputs: bool = True
 
     # Request parameters
     format: Optional[Any] = None
@@ -118,7 +118,7 @@ class Ollama(Model):
             for tool in request_params["tools"]:  # type: ignore
                 if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
                     for _, obj in tool["function"]["parameters"].get("properties", {}).items():  # type: ignore
-                        if isinstance(obj["type"], list):
+                        if "type" in obj and isinstance(obj["type"], list) and len(obj["type"]) > 1:
                             obj["type"] = obj["type"][0]
             if self.tool_choice is not None:
                 request_params["tool_choice"] = self.tool_choice

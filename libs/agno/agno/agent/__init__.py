@@ -3,10 +3,10 @@ from agno.agent.agent import (
     AgentKnowledge,
     AgentMemory,
     AgentSession,
-    AgentStorage,
     Function,
     Message,
     RunEvent,
     RunResponse,
+    Storage,
     Toolkit,
 )

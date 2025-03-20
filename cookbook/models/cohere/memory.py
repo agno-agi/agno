@@ -9,11 +9,11 @@ Steps:
 from agno.agent import Agent, AgentMemory
 from agno.memory.db.postgres import PgMemoryDb
 from agno.models.cohere import Cohere
-from agno.storage.agent.postgres import PostgresAgentStorage
+from agno.storage.postgres import PostgresStorage
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
-    model=Cohere(id="command-r-08-2024"),
+    model=Cohere(id="command-a-03-2025"),
     # Store the memories and summary in a database
     memory=AgentMemory(
         db=PgMemoryDb(table_name="agent_memory", db_url=db_url),
@@ -21,9 +21,7 @@ agent = Agent(
         create_session_summary=True,
     ),
     # Store agent sessions in a database
-    storage=PostgresAgentStorage(
-        table_name="personalized_agent_sessions", db_url=db_url
-    ),
+    storage=PostgresStorage(table_name="personalized_agent_sessions", db_url=db_url),
     # Show debug logs so, you can see the memory being created
     # debug_mode=True,
 )

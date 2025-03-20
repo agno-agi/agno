@@ -23,6 +23,7 @@
 # Ignore .envrc files (used by direnv: https://direnv.net/)
 .envrc
 
+certs/
 
 # ignore storage dir
 /storage

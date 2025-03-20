@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from agno.exceptions import AgentRunException
 from agno.media import AudioResponse
-from agno.models.message import Message, MessageMetrics
+from agno.models.message import Citations, Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.tools.function import Function, FunctionCall
 from agno.utils.log import logger
@@ -22,6 +22,7 @@ class MessageData:
     response_content: Any = ""
     response_thinking: Any = ""
     response_redacted_thinking: Any = ""
+    response_citations: Optional[Citations] = None
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     response_audio: Optional[AudioResponse] = None
 
@@ -49,7 +50,9 @@ class Model(ABC):
     # Whether to generate structured outputs from this Model.
     structured_outputs: bool = False
     # True if the Model supports structured outputs natively (e.g. OpenAI)
-    supports_structured_outputs: bool = False
+    supports_native_structured_outputs: bool = False
+    # True if the Model requires a json_schema for structured outputs (e.g. LMStudio)
+    supports_json_schema_outputs: bool = False
 
     # Controls which (if any) function is called by the model.
     # "none" means the model will not call a function and instead generates a message.
@@ -161,6 +164,7 @@ class Model(ABC):
             ModelResponse: The model's response
         """
         logger.debug(f"---------- {self.get_provider()} Response Start ----------")
+        logger.debug(f"---------- Model: {self.id} ----------")
         self._log_messages(messages)
         model_response = ModelResponse()
 
@@ -223,6 +227,7 @@ class Model(ABC):
             ModelResponse: The model's response
         """
         logger.debug(f"---------- {self.get_provider()} Async Response Start ----------")
+        logger.debug(f"---------- Model: {self.id} ----------")
         self._log_messages(messages)
         model_response = ModelResponse()
 
@@ -319,6 +324,8 @@ class Model(ABC):
             model_response.thinking = assistant_message.thinking
         if assistant_message.redacted_thinking is not None:
             model_response.redacted_thinking = assistant_message.redacted_thinking
+        if assistant_message.citations is not None:
+            model_response.citations = assistant_message.citations
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if provider_response.extra is not None:
@@ -373,6 +380,8 @@ class Model(ABC):
             model_response.thinking = assistant_message.thinking
         if assistant_message.redacted_thinking is not None:
             model_response.redacted_thinking = assistant_message.redacted_thinking
+        if assistant_message.citations is not None:
+            model_response.citations = assistant_message.citations
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if provider_response.extra is not None:
@@ -429,6 +438,10 @@ class Model(ABC):
         if provider_response.provider_data is not None:
             assistant_message.provider_data = provider_response.provider_data
 
+        # Add citations to assistant message
+        if provider_response.citations is not None:
+            assistant_message.citations = provider_response.citations
+
         # Add usage metrics if provided
         if provider_response.response_usage is not None:
             self._add_usage_metrics_to_assistant_message(
@@ -460,6 +473,7 @@ class Model(ABC):
             Iterator[ModelResponse]: Iterator of model responses
         """
         logger.debug(f"---------- {self.get_provider()} Response Stream Start ----------")
+        logger.debug(f"---------- Model: {self.id} ----------")
         self._log_messages(messages)
 
         while True:
@@ -483,6 +497,8 @@ class Model(ABC):
                 assistant_message.redacted_thinking = stream_data.response_redacted_thinking
             if stream_data.response_provider_data:
                 assistant_message.provider_data = stream_data.response_provider_data
+            if stream_data.response_citations:
+                assistant_message.citations = stream_data.response_citations
             if stream_data.response_audio:
                 assistant_message.audio_output = stream_data.response_audio
             if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
@@ -555,6 +571,7 @@ class Model(ABC):
             AsyncIterator[ModelResponse]: Async iterator of model responses
         """
         logger.debug(f"---------- {self.get_provider()} Async Response Stream Start ----------")
+        logger.debug(f"---------- Model: {self.id} ----------")
         self._log_messages(messages)
 
         while True:
@@ -653,6 +670,10 @@ class Model(ABC):
 
         if model_response.redacted_thinking is not None:
             stream_data.response_redacted_thinking += model_response.redacted_thinking
+            should_yield = True
+
+        if model_response.citations is not None:
+            stream_data.response_citations = model_response.citations
             should_yield = True
 
         if model_response.provider_data:
@@ -865,7 +886,7 @@ class Model(ABC):
 
     async def _arun_function_call(
         self, function_call: FunctionCall
-    ) -> tuple[Union[bool, AgentRunException], Timer, FunctionCall]:
+    ) -> Tuple[Union[bool, AgentRunException], Timer, FunctionCall]:
         """Run a single function call and return its success status, timer, and the FunctionCall object."""
         from inspect import iscoroutinefunction
 
