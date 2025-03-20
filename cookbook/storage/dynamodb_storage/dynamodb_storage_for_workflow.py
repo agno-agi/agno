@@ -82,7 +82,10 @@ class HackerNewsReporter(Workflow):
 if __name__ == "__main__":
     # Run workflow
     report: Iterator[RunResponse] = HackerNewsReporter(
-        storage=DynamoDbStorage(table_name="workflow_sessions", region_name="us-east-1"), debug_mode=False
+        storage=DynamoDbStorage(
+            table_name="workflow_sessions", region_name="us-east-1"
+        ),
+        debug_mode=False,
     ).run(num_stories=5)
     # Print the report
     pprint_run_response(report, markdown=True, show_time=True)

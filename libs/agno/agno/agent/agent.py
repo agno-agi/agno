@@ -3780,14 +3780,18 @@ class Agent:
                         live_log.update(Group(*panels))
 
                     # Add tool calls panel if available
-                    if self.show_tool_calls and self.run_response is not None and self.run_response.formatted_tool_calls:
+                    if (
+                        self.show_tool_calls
+                        and self.run_response is not None
+                        and self.run_response.formatted_tool_calls
+                    ):
                         render = True
                         # Create bullet points for each tool call
                         tool_calls_content = Text()
                         for tool_call in self.run_response.formatted_tool_calls:
                             tool_calls_content.append(f"• {tool_call}\n")
 
-                        tool_calls_panel = self.create_panel(
+                        tool_calls_panel = create_panel(
                             content=tool_calls_content,
                             title="Tool Calls",
                             border_style="yellow",
@@ -3911,7 +3915,7 @@ class Agent:
                     for tool_call in run_response.formatted_tool_calls:
                         tool_calls_content.append(f"• {tool_call}\n")
 
-                    tool_calls_panel = self.create_panel(
+                    tool_calls_panel = create_panel(
                         content=tool_calls_content,
                         title="Tool Calls",
                         border_style="yellow",
@@ -4065,7 +4069,7 @@ class Agent:
                         render = True
                         # Convert message to a panel
                         message_content = get_text_from_message(message)
-                        message_panel = self.create_panel(
+                        message_panel = create_panel(
                             content=Text(message_content, style="green"),
                             title="Message",
                             border_style="cyan",
@@ -4117,14 +4121,18 @@ class Agent:
                         live_log.update(Group(*panels))
 
                     # Add tool calls panel if available
-                    if self.show_tool_calls and self.run_response is not None and self.run_response.formatted_tool_calls:
+                    if (
+                        self.show_tool_calls
+                        and self.run_response is not None
+                        and self.run_response.formatted_tool_calls
+                    ):
                         render = True
                         # Create bullet points for each tool call
                         tool_calls_content = Text()
                         for tool_call in self.run_response.formatted_tool_calls:
                             tool_calls_content.append(f"• {tool_call}\n")
 
-                        tool_calls_panel = self.create_panel(
+                        tool_calls_panel = create_panel(
                             content=tool_calls_content,
                             title="Tool Calls",
                             border_style="yellow",
@@ -4246,7 +4254,7 @@ class Agent:
                     for tool_call in run_response.formatted_tool_calls:
                         tool_calls_content.append(f"• {tool_call}\n")
 
-                    tool_calls_panel = self.create_panel(
+                    tool_calls_panel = create_panel(
                         content=tool_calls_content,
                         title="Tool Calls",
                         border_style="yellow",
