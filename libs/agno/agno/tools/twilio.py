@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 try:
     from twilio.base.exceptions import TwilioRestException
@@ -114,7 +114,7 @@ class TwilioTools(Toolkit):
                 return "Error: Message body cannot be empty"
 
             message = self.client.messages.create(to=to, from_=from_, body=body)
-            logger.info(f"SMS sent. SID: {message.sid}, to: {to}")
+            log_info(f"SMS sent. SID: {message.sid}, to: {to}")
             return f"Message sent successfully. SID: {message.sid}"
         except TwilioRestException as e:
             logger.error(f"Failed to send SMS to {to}: {e}")
@@ -132,7 +132,7 @@ class TwilioTools(Toolkit):
         """
         try:
             call = self.client.calls(call_sid).fetch()
-            logger.info(f"Fetched details for call SID: {call_sid}")
+            log_info(f"Fetched details for call SID: {call_sid}")
             return {
                 "to": call.to,
                 "from": call.from_,
@@ -170,7 +170,7 @@ class TwilioTools(Toolkit):
                         "date_sent": str(message.date_sent),
                     }
                 )
-            logger.info(f"Retrieved {len(messages)} messages")
+            log_info(f"Retrieved {len(messages)} messages")
             return messages
         except TwilioRestException as e:
             logger.error(f"Failed to list messages: {e}")

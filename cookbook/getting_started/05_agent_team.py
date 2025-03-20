@@ -20,6 +20,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 
@@ -81,9 +82,13 @@ finance_agent = Agent(
     markdown=True,
 )
 
-agent_team = Agent(
-    team=[web_agent, finance_agent],
+agent_team = Team(
+    members=[web_agent, finance_agent],
     model=OpenAIChat(id="gpt-4o"),
+    mode="coordinate",
+    success_criteria=dedent("""\
+        A comprehensive financial news report with clear sections and data-driven insights.
+    """),
     instructions=dedent("""\
         You are the lead editor of a prestigious financial news desk! 📰
 
@@ -108,18 +113,22 @@ agent_team = Agent(
     add_datetime_to_instructions=True,
     show_tool_calls=True,
     markdown=True,
+    enable_agentic_context=True,
+    show_members_responses=False,
 )
 
 # Example usage with diverse queries
 agent_team.print_response(
-    "Summarize analyst recommendations and share the latest news for NVDA", stream=True
-)
-agent_team.print_response(
-    "What's the market outlook and financial performance of AI semiconductor companies?",
+    message="Summarize analyst recommendations and share the latest news for NVDA",
     stream=True,
 )
 agent_team.print_response(
-    "Analyze recent developments and financial performance of TSLA", stream=True
+    message="What's the market outlook and financial performance of AI semiconductor companies?",
+    stream=True,
+)
+agent_team.print_response(
+    message="Analyze recent developments and financial performance of TSLA",
+    stream=True,
 )
 
 # More example prompts to try:

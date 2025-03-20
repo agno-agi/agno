@@ -129,7 +129,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=Nvidia(id="meta/llama-3.3-70b-instruct"),
-        response_format="json",
+        use_json_mode=True,
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,

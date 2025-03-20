@@ -3,13 +3,24 @@ from typing import Any, Dict, Optional, Union, get_args, get_origin
 from agno.utils.log import logger
 
 
+def is_origin_union_type(origin: Any) -> bool:
+    import sys
+
+    if sys.version_info.minor >= 10:
+        from types import UnionType  # type: ignore
+
+        return origin in [Union, UnionType]
+
+    return origin is Union
+
+
 def get_json_type_for_py_type(arg: str) -> str:
     """
     Get the JSON schema type for a given type.
     :param arg: The type to get the JSON schema type for.
     :return: The JSON schema type.
     """
-    # logger.info(f"Getting JSON type for: {arg}")
+    # log_info(f"Getting JSON type for: {arg}")
     if arg in ("int", "float", "complex", "Decimal"):
         return "number"
     elif arg in ("str", "string"):
@@ -28,11 +39,11 @@ def get_json_type_for_py_type(arg: str) -> str:
 
 
 def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
-    # logger.info(f"Getting JSON schema for arg: {t}")
+    # log_info(f"Getting JSON schema for arg: {t}")
     type_args = get_args(t)
-    # logger.info(f"Type args: {type_args}")
+    # log_info(f"Type args: {type_args}")
     type_origin = get_origin(t)
-    # logger.info(f"Type origin: {type_origin}")
+    # log_info(f"Type origin: {type_origin}")
 
     if type_origin is not None:
         if type_origin in (list, tuple, set, frozenset):
@@ -43,16 +54,15 @@ def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
             key_schema = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
             value_schema = get_json_schema_for_arg(type_args[1]) if len(type_args) > 1 else {"type": "string"}
             return {"type": "object", "propertyNames": key_schema, "additionalProperties": value_schema}
-        elif type_origin is Union:
+        elif is_origin_union_type(type_origin):
             types = []
             for arg in type_args:
-                if arg is not type(None):
-                    try:
-                        schema = get_json_schema_for_arg(arg)
-                        if schema:
-                            types.append(schema)
-                    except Exception:
-                        continue
+                try:
+                    schema = get_json_schema_for_arg(arg)
+                    if schema:
+                        types.append(schema)
+                except Exception:
+                    continue
             return {"anyOf": types} if types else None
 
     return {"type": get_json_type_for_py_type(t.__name__)}
@@ -69,7 +79,7 @@ def get_json_schema(
         json_schema["additionalProperties"] = False
 
     for k, v in type_hints.items():
-        # logger.info(f"Parsing arg: {k} | {v}")
+        # log_info(f"Parsing arg: {k} | {v}")
         if k == "return":
             continue
 
@@ -96,7 +106,6 @@ def get_json_schema(
                         arg_json_schema["type"].append("null")
                     else:
                         arg_json_schema["type"] = [arg_json_schema["type"], "null"]
-
                 # Add description
                 if param_descriptions and k in param_descriptions and param_descriptions[k]:
                     arg_json_schema["description"] = param_descriptions[k]

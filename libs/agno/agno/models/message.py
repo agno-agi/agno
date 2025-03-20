@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.media import Audio, AudioResponse, File, Image, Video
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 
 
@@ -280,15 +280,24 @@ class Message(BaseModel):
             level (str): The level to log the message at. One of debug, info, warning, or error.
                 Defaults to debug.
         """
-        _logger = logger.debug
+        _logger = log_debug
         if level == "info":
-            _logger = logger.info
+            _logger = log_info
         elif level == "warning":
-            _logger = logger.warning
+            _logger = log_warning
         elif level == "error":
-            _logger = logger.error
+            _logger = log_error
 
-        _logger(f"============== {self.role} ==============")
+        try:
+            import shutil
+
+            terminal_width = shutil.get_terminal_size().columns
+        except Exception:
+            terminal_width = 80  # fallback width
+
+        header = f" {self.role} "
+        _logger(f"{header.center(terminal_width - 20, '=')}")
+
         if self.name:
             _logger(f"Name: {self.name}")
         if self.tool_call_id:
@@ -301,7 +310,18 @@ class Message(BaseModel):
             elif isinstance(self.content, dict):
                 _logger(json.dumps(self.content, indent=2))
         if self.tool_calls:
-            _logger(f"Tool Calls: {json.dumps(self.tool_calls, indent=2)}")
+            tool_calls_str = "Tool Calls:\n"
+            for tool_call in self.tool_calls:
+                tool_calls_str += f"  - ID: '{tool_call.get('id', 'Unknown')}'\n"
+                tool_calls_str += f"    Name: '{tool_call.get('function', {}).get('name', 'Unknown')}'\n"
+                tool_call_arguments = tool_call.get("function", {}).get("arguments")
+                arguments = []
+                if tool_call_arguments:
+                    for k, v in json.loads(tool_call_arguments).items():
+                        arguments.append(f"{k}: {v}")
+                    tool_calls_str += f"    Arguments: '{', '.join(arguments)}'\n"
+
+            _logger(tool_calls_str)
         if self.images:
             _logger(f"Images added: {len(self.images)}")
         if self.videos:
@@ -311,14 +331,20 @@ class Message(BaseModel):
         if self.files:
             _logger(f"Files added: {len(self.files)}")
 
+        metrics_header = " TOOL METRICS " if self.role == "tool" else " METRICS "
         if metrics and self.metrics is not None and self.metrics != MessageMetrics():
-            _logger("**************** METRICS ****************")
+            _logger(metrics_header, center=True, symbol="*")
+
+            # Combine token metrics into a single line
+            token_metrics = []
             if self.metrics.input_tokens:
-                _logger(f"* Input tokens:                {self.metrics.input_tokens}")
+                token_metrics.append(f"input={self.metrics.input_tokens}")
             if self.metrics.output_tokens:
-                _logger(f"* Output tokens:               {self.metrics.output_tokens}")
+                token_metrics.append(f"output={self.metrics.output_tokens}")
             if self.metrics.total_tokens:
-                _logger(f"* Total tokens:                {self.metrics.total_tokens}")
+                token_metrics.append(f"total={self.metrics.total_tokens}")
+            if token_metrics:
+                _logger(f"* Tokens:                      {', '.join(token_metrics)}")
             if self.metrics.prompt_tokens_details:
                 _logger(f"* Prompt tokens details:       {self.metrics.prompt_tokens_details}")
             if self.metrics.completion_tokens_details:
@@ -331,7 +357,9 @@ class Message(BaseModel):
                 _logger(f"* Time to first token:         {self.metrics.time_to_first_token:.4f}s")
             if self.metrics.additional_metrics:
                 _logger(f"* Additional metrics:          {self.metrics.additional_metrics}")
-            _logger("**************** METRICS ******************")
+            _logger(metrics_header, center=True, symbol="*")
+
+        _logger("")
 
     def content_is_valid(self) -> bool:
         """Check if the message content is valid."""

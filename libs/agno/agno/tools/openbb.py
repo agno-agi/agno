@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Literal, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from openbb import obb as openbb_app
@@ -56,7 +56,7 @@ class OpenBBTools(Toolkit):
           str: The current stock prices or error message.
         """
         try:
-            logger.debug(f"Fetching current price for {symbol}")
+            log_debug(f"Fetching current price for {symbol}")
             result = self.obb.equity.price.quote(symbol=symbol, provider=self.provider).to_polars()  # type: ignore
             clean_results = []
             for row in result.to_dicts():
@@ -90,7 +90,7 @@ class OpenBBTools(Toolkit):
             str: A JSON string containing the ticker symbols.
         """
 
-        logger.debug(f"Search ticker for {company_name}")
+        log_debug(f"Search ticker for {company_name}")
         result = self.obb.equity.search(company_name).to_polars()  # type: ignore
         clean_results = []
         if len(result) > 0:
@@ -110,7 +110,7 @@ class OpenBBTools(Toolkit):
             str: JSON containing consensus price target and recommendations.
         """
         try:
-            logger.debug(f"Fetching price targets for {symbol}")
+            log_debug(f"Fetching price targets for {symbol}")
             result = self.obb.equity.estimates.consensus(symbol=symbol, provider=self.provider).to_polars()  # type: ignore
             return json.dumps(result.to_dicts(), indent=2, default=str)
         except Exception as e:
@@ -128,7 +128,7 @@ class OpenBBTools(Toolkit):
             str: JSON containing company news and press releases.
         """
         try:
-            logger.debug(f"Fetching news for {symbol}")
+            log_debug(f"Fetching news for {symbol}")
             result = self.obb.news.company(symbol=symbol, provider=self.provider, limit=num_stories).to_polars()  # type: ignore
             clean_results = []
             if len(result) > 0:
@@ -150,7 +150,7 @@ class OpenBBTools(Toolkit):
             str: JSON containing company profile and overview.
         """
         try:
-            logger.debug(f"Fetching company profile for {symbol}")
+            log_debug(f"Fetching company profile for {symbol}")
             result = self.obb.equity.profile(symbol=symbol, provider=self.provider).to_polars()  # type: ignore
             return json.dumps(result.to_dicts(), indent=2, default=str)
         except Exception as e:

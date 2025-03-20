@@ -2,7 +2,7 @@ from os import getenv
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info
 
 try:
     import agentql
@@ -25,7 +25,7 @@ class AgentQLTools(Toolkit):
             self.register(self.scrape_website)
 
         if agentql_query:
-            logger.info("Custom AgentQL query provided. Registering custom scrape function.")
+            log_info("Custom AgentQL query provided. Registering custom scrape function.")
             self.register(self.custom_scrape_website)
 
     def scrape_website(self, url: str) -> str:
