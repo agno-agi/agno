@@ -1,5 +1,6 @@
 import json
 import time
+from encodings import search_function
 from typing import Any, Dict, List, Optional
 from sqlalchemy import create_engine, Table, Column, String, MetaData, select
 from sqlalchemy.dialects.postgresql import insert
@@ -7,23 +8,21 @@ from agno.tools import Toolkit
 from agno.utils.log import logger
 from googlesearch import search
 from pycountry import pycountry
-from agno.tools.function import Function
 
 class CachedSearchTools(Toolkit):
     def __init__(
         self,
         db_url: str,
         table_name: str,
-        search_function: Function,
+        search_tool: Toolkit,
         fixed_max_results: Optional[int] = None,
         fixed_language: Optional[str] = None,
         sleep: Optional[float] = 0.1,
     ):
 
-        #super().__init__(name="cached_search_" + search_function.name)
-        super().__init__(name="cached_web_search")
-
-        self.search_function = search_function
+        super().__init__(name="cached_" + search_tool.name)
+        
+        self.search_tool = search_tool
         # Set up the database connection and table
         self.engine = create_engine(db_url)
         self.metadata = MetaData()
@@ -39,6 +38,18 @@ class CachedSearchTools(Toolkit):
         self.sleep = sleep
 
         self.register(self.web_search)
+
+    def getSearchFunction(self):
+        # Assuming search_tool.functions is a dictionary of function names and their corresponding function objects
+        #earch_function = next((func for func in self.search_tool.functions if "search" in func), None)
+        search_function = next((self.search_tool.functions[func] for func in self.search_tool.functions if "search" in func), None)
+
+        if search_function:
+            print(f"Found function: {search_function}")
+            return search_function
+        else:
+            print("No function containing 'search' found.")
+            return None
 
     def web_search(self, query: str, max_results: int = 5, language: str = "en") -> str:
         max_results = self.fixed_max_results or max_results
@@ -65,7 +76,11 @@ class CachedSearchTools(Toolkit):
 
         time.sleep(self.sleep) # prevent rate limiting. Open for suggestions to handle this better.
         # Perform Google search using the googlesearch-python package
-        results_json = self.search_function(query, max_results=max_results, language=language)
+
+        search_function = self.getSearchFunction()
+        results_json = search_function.entrypoint(query)
+
+   # results_json = self.search_tool(query, max_results=max_results, language=language)
 
         # Store the results in the cache
         with self.engine.connect() as conn:
