@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from textwrap import dedent
+
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.url import UrlKnowledge
@@ -53,14 +54,15 @@ agno_support = Agent(
         ),
         DalleTools(model="dall-e-3", size="1792x1024", quality="hd", style="vivid"),
     ],
-    storage=SqliteStorage(table_name="agno_assist_sessions", db_file=str(tmp_dir.joinpath("agents.db"))),
+    storage=SqliteStorage(
+        table_name="agno_assist_sessions", db_file=str(tmp_dir.joinpath("agents.db"))
+    ),
     markdown=True,
     search_knowledge=True,
-    debug_mode=True
+    debug_mode=True,
 )
 
 # agno_support.print_response("How do I implement RAG with Agno? Generate a diagram of the process.", stream=True)
-
 
 
 """
