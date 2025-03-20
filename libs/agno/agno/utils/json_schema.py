@@ -5,6 +5,7 @@ from agno.utils.log import logger
 
 def is_origin_union_type(origin: Any) -> bool:
     import sys
+
     if sys.version_info.minor >= 10:
         from types import UnionType  # type: ignore
 

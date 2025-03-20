@@ -48,7 +48,9 @@ agent = Agent(
     search_knowledge=True,
     show_tool_calls=True,
     tools=[
-        WebsiteTools(knowledge_base=knowledge_base)  # Set combined or website knowledge base
+        WebsiteTools(
+            knowledge_base=knowledge_base
+        )  # Set combined or website knowledge base
     ],
 )
 
@@ -58,5 +60,5 @@ knowledge_base.load(recreate=False)
 agent.print_response(
     "How do I get started on Mistral: https://docs.mistral.ai/getting-started/models/models_overview",
     markdown=True,
-    stream=True
+    stream=True,
 )

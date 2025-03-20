@@ -62,9 +62,9 @@ class WebsiteTools(Toolkit):
         if website_knowledge_base is None:
             return "Website knowledge base not found"
 
-        logger.debug(f"Adding to knowledge base: {url}")
+        log_debug(f"Adding to knowledge base: {url}")
         website_knowledge_base.urls.append(url)
-        logger.debug("Loading knowledge base.")
+        log_debug("Loading knowledge base.")
         website_knowledge_base.load(recreate=False)
         return "Success"
 
