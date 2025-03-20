@@ -31,7 +31,7 @@ class OpenAIResponses(Model):
     id: str = "gpt-4o"
     name: str = "OpenAIResponses"
     provider: str = "OpenAI"
-    supports_structured_outputs: bool = True
+    supports_native_structured_outputs: bool = True
 
     # Request parameters
     include: Optional[List[str]] = None
