@@ -1,5 +1,5 @@
 import json
-from typing import List, Optional, cast
+from typing import List, Optional, cast, Union
 
 from agno.document import Document
 from agno.knowledge.combined import CombinedKnowledgeBase
@@ -9,9 +9,9 @@ from agno.utils.log import log_debug
 
 
 class WebsiteTools(Toolkit):
-    def __init__(self, knowledge_base: Optional[WebsiteKnowledgeBase | CombinedKnowledgeBase] = None):
+    def __init__(self, knowledge_base: Optional[Union[WebsiteKnowledgeBase, CombinedKnowledgeBase]] = None):
         super().__init__(name="website_tools")
-        self.knowledge_base: Optional[WebsiteKnowledgeBase | CombinedKnowledgeBase] = knowledge_base
+        self.knowledge_base: Optional[Union[WebsiteKnowledgeBase, CombinedKnowledgeBase]] = knowledge_base
 
         if self.knowledge_base is not None:
             if isinstance(self.knowledge_base, WebsiteKnowledgeBase):

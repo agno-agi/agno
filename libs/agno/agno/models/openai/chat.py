@@ -317,7 +317,7 @@ class OpenAIChat(Model):
                     )
                 else:
                     raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
-    
+
             return self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
