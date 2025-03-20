@@ -656,8 +656,7 @@ class Agent:
 
                         # Format tool calls whenever new ones are added during streaming
                         model_response.tool_calls = self.run_response.tools
-                        model_response.format_tool_calls()
-                        self.run_response.formatted_tool_calls = model_response.formatted_tool_calls
+                        self.run_response.formatted_tool_calls = model_response.format_tool_calls()
 
                     # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                     if self.stream_intermediate_steps:
@@ -697,8 +696,7 @@ class Agent:
             model_response = self.model.response(messages=run_messages.messages)
             # Format tool calls if they exist
             if model_response.tool_calls:
-                model_response.format_tool_calls()
-                self.run_response.formatted_tool_calls = model_response.formatted_tool_calls
+                self.run_response.formatted_tool_calls = model_response.format_tool_calls()
 
             # Handle structured outputs
             if self.response_model is not None and model_response.parsed is not None:
@@ -1180,8 +1178,7 @@ class Agent:
 
                         # Format tool calls whenever new ones are added during streaming
                         model_response.tool_calls = self.run_response.tools
-                        model_response.format_tool_calls()
-                        self.run_response.formatted_tool_calls = model_response.formatted_tool_calls
+                        self.run_response.formatted_tool_calls = model_response.format_tool_calls()
 
                     # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                     if self.stream_intermediate_steps:
@@ -1223,8 +1220,7 @@ class Agent:
             model_response = await self.model.aresponse(messages=run_messages.messages)
             # Format tool calls if they exist
             if model_response.tool_calls:
-                model_response.format_tool_calls()
-                self.run_response.formatted_tool_calls = model_response.formatted_tool_calls
+                self.run_response.formatted_tool_calls = model_response.format_tool_calls()
 
             # Handle structured outputs
             if self.response_model is not None and model_response.parsed is not None:
