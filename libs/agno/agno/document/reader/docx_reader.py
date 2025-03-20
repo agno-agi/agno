@@ -4,7 +4,7 @@ from typing import List, Union
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 try:
     from docx import Document as DocxDocument  # type: ignore
@@ -18,11 +18,11 @@ class DocxReader(Reader):
     def read(self, file: Union[Path, io.BytesIO]) -> List[Document]:
         try:
             if isinstance(file, Path):
-                logger.info(f"Reading: {file}")
+                log_info(f"Reading: {file}")
                 docx_document = DocxDocument(str(file))
                 doc_name = file.stem
             else:  # Handle file-like object from upload
-                logger.info(f"Reading uploaded file: {file.name}")
+                log_info(f"Reading uploaded file: {file.name}")
                 docx_document = DocxDocument(file)
                 doc_name = file.name.split(".")[0]
 

@@ -42,6 +42,7 @@ dependencies = [
 dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
 
 # Dependencies for Models
+azure = ["azure-ai-inference", "aiohttp"]
 anthropic = ["anthropic"]
 cohere = ["cohere"]
 google = ["google-genai"]
@@ -104,6 +105,7 @@ aws = ["agno-aws", "agno-docker"]
 # All models
 models = [
   "agno[anthropic]",
+  "agno[azure]",
   "agno[cohere]",
   "agno[google]",
   "agno[groq]",
@@ -131,7 +133,7 @@ tools = [
   "agno[webex]",
   "agno[mcp]",
   "agno[browserbase]",
-#  "agno[yfinance]",
+#  "agno[yfinance]",  # Broken right now
 ]
 
 # All storage
@@ -193,7 +195,6 @@ include = ["LICENSE"]
 
 [tool.pytest.ini_options]
 log_cli = true
-testpaths = "tests"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
@@ -302,6 +303,7 @@ module = [
   "tavily.*",
   "textract.*",
   "timeout_decorator.*",
+  "tiktoken.*",
   "torch.*",
   "todoist_api_python.*",
   "tweepy.*",

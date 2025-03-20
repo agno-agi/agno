@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.log import log_error, log_warning
 
 
 @dataclass
@@ -39,7 +39,7 @@ class LiteLLM(Model):
         if not self.api_key:
             self.api_key = getenv("LITELLM_API_KEY")
             if not self.api_key:
-                logger.warning("LITELLM_API_KEY not set. Please set the LITELLM_API_KEY environment variable.")
+                log_warning("LITELLM_API_KEY not set. Please set the LITELLM_API_KEY environment variable.")
 
     def get_client(self) -> Any:
         """
@@ -145,7 +145,7 @@ class LiteLLM(Model):
             async for chunk in async_stream:
                 yield chunk
         except Exception as e:
-            logger.error(f"Error in streaming response: {e}")
+            log_error(f"Error in streaming response: {e}")
             raise
 
     def parse_provider_response(self, response: Any) -> ModelResponse:
