@@ -208,8 +208,11 @@ class Function(BaseModel):
         if not params_set_by_user:
             self.parameters = parameters
 
-        if not isasyncgenfunction(self.entrypoint):
-            self.entrypoint = validate_call(self.entrypoint, config=dict(arbitrary_types_allowed=True))  # type: ignore
+        try:
+            if not isasyncgenfunction(self.entrypoint):
+                self.entrypoint = validate_call(self.entrypoint, config=dict(arbitrary_types_allowed=True))  # type: ignore
+        except Exception as e:
+            log_warning(f"Failed to add validate decorator to entrypoint: {e}")
 
     def get_type_name(self, t: Type[T]):
         name = str(t)
