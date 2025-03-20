@@ -2,7 +2,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 
 class LangChainKnowledgeBase(AgentKnowledge):
@@ -27,7 +27,7 @@ class LangChainKnowledgeBase(AgentKnowledge):
             )
 
         if self.vectorstore is not None and self.retriever is None:
-            logger.debug("Creating retriever")
+            log_debug("Creating retriever")
             if self.search_kwargs is None:
                 self.search_kwargs = {"k": self.num_documents}
             if filters is not None:
@@ -42,7 +42,7 @@ class LangChainKnowledgeBase(AgentKnowledge):
             raise ValueError(f"Retriever is not of type BaseRetriever: {self.retriever}")
 
         _num_documents = num_documents or self.num_documents
-        logger.debug(f"Getting {_num_documents} relevant documents for query: {query}")
+        log_debug(f"Getting {_num_documents} relevant documents for query: {query}")
         lc_documents: List[LangChainDocument] = self.retriever.invoke(input=query)
         documents = []
         for lc_doc in lc_documents:

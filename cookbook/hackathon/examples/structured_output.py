@@ -29,18 +29,17 @@ class MovieScript(BaseModel):
     )
 
 
-# Agent that uses JSON mode
-json_mode_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    response_model=MovieScript,
-)
-
 # Agent that uses structured outputs
 structured_output_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     response_model=MovieScript,
 )
 
+# Agent that uses JSON mode
+json_mode_agent = Agent(
+    model=OpenAIChat(id="gpt-4o"), response_model=MovieScript, use_json_mode=True
+)
+
 if __name__ == "__main__":
-    json_mode_agent.print_response("Tokyo", stream=True)
     structured_output_agent.print_response("Ancient Rome", stream=True)
+    json_mode_agent.print_response("Tokyo", stream=True)

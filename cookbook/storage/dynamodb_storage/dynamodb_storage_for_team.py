@@ -1,15 +1,16 @@
 """
 1. Run: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
-2. Run: `python cookbook/teams/01_hn_team.py` to run the agent
+2. Run: `python cookbook/storage/dynamodb_storage/dynamodb_storage_for_team.py` to run the team
 """
 
 from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.storage.dynamodb import DynamoDbStorage
+from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.tools.newspaper4k import Newspaper4kTools
 from pydantic import BaseModel
 
 
@@ -34,20 +35,15 @@ web_searcher = Agent(
     add_datetime_to_instructions=True,
 )
 
-article_reader = Agent(
-    name="Article Reader",
-    role="Reads articles from URLs.",
-    tools=[Newspaper4kTools()],
-)
 
-hn_team = Agent(
-    name="Hackernews Team",
+hn_team = Team(
+    name="HackerNews Team",
+    mode="coordinate",
     model=OpenAIChat("gpt-4o"),
-    team=[hn_researcher, web_searcher, article_reader],
+    members=[hn_researcher, web_searcher],
+    storage=DynamoDbStorage(table_name="team_sessions", region_name="us-east-1"),
     instructions=[
         "First, search hackernews for what the user is asking about.",
-        "Then, ask the article reader to read the links for the stories to get more information.",
-        "Important: you must provide the article reader with the links to read.",
         "Then, ask the web searcher to search for each story to get more information.",
         "Finally, provide a thoughtful and engaging summary.",
     ],
@@ -55,7 +51,7 @@ hn_team = Agent(
     show_tool_calls=True,
     markdown=True,
     debug_mode=True,
+    show_members_responses=True,
 )
-hn_team.print_response(
-    "Write an article about the top 2 stories on hackernews", stream=True
-)
+
+hn_team.print_response("Write an article about the top 2 stories on hackernews")

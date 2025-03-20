@@ -5,7 +5,7 @@ from pydantic import model_validator
 from agno.document import Document
 from agno.document.reader.website_reader import WebsiteReader
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 
 class WebsiteKnowledgeBase(AgentKnowledge):
@@ -52,13 +52,13 @@ class WebsiteKnowledgeBase(AgentKnowledge):
             return
 
         if recreate:
-            logger.debug("Dropping collection")
+            log_debug("Dropping collection")
             self.vector_db.drop()
 
-        logger.debug("Creating collection")
+        log_debug("Creating collection")
         self.vector_db.create()
 
-        logger.info("Loading knowledge base")
+        log_info("Loading knowledge base")
         num_documents = 0
 
         # Given that the crawler needs to parse the URL before existence can be checked
@@ -66,9 +66,9 @@ class WebsiteKnowledgeBase(AgentKnowledge):
         urls_to_read = self.urls.copy()
         if not recreate:
             for url in urls_to_read:
-                logger.debug(f"Checking if {url} exists in the vector db")
+                log_debug(f"Checking if {url} exists in the vector db")
                 if self.vector_db.name_exists(name=url):
-                    logger.debug(f"Skipping {url} as it exists in the vector db")
+                    log_debug(f"Skipping {url} as it exists in the vector db")
                     urls_to_read.remove(url)
 
         for url in urls_to_read:
@@ -81,8 +81,8 @@ class WebsiteKnowledgeBase(AgentKnowledge):
             else:
                 self.vector_db.insert(documents=document_list, filters=filters)
             num_documents += len(document_list)
-            logger.info(f"Loaded {num_documents} documents to knowledge base")
+            log_info(f"Loaded {num_documents} documents to knowledge base")
 
         if self.optimize_on is not None and num_documents > self.optimize_on:
-            logger.debug("Optimizing Vector DB")
+            log_debug("Optimizing Vector DB")
             self.vector_db.optimize()

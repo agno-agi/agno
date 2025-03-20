@@ -1,13 +1,14 @@
 """
 1. Run: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
-2. Run: `python cookbook/teams/02_news_reporter.py` to run the agent
+2. Run: `python cookbook/teams/coordinate/news_agency_team.py` to run the agent
 """
 
 from pathlib import Path
 
 from agno.agent import Agent
+from agno.models.openai.chat import OpenAIChat
+from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.file import FileTools
 from agno.tools.newspaper4k import Newspaper4kTools
 
 urls_file = Path(__file__).parent.joinpath("tmp", "urls__{session_id}.md")
@@ -23,7 +24,6 @@ searcher = Agent(
         "You are writing for the New York Times, so the quality of the sources is important.",
     ],
     tools=[DuckDuckGoTools()],
-    save_response_to_file=str(urls_file),
     add_datetime_to_instructions=True,
 )
 writer = Agent(
@@ -34,7 +34,7 @@ writer = Agent(
         "your goal is to write a high-quality NYT-worthy article on the topic."
     ),
     instructions=[
-        f"First read all urls in {urls_file.name} using `get_article_text`."
+        "First read all urls using `read_article`."
         "Then write a high-quality NYT-worthy article on the topic."
         "The article should be well-structured, informative, engaging and catchy.",
         "Ensure the length is at least as long as a NYT cover story -- at a minimum, 15 paragraphs.",
@@ -43,13 +43,15 @@ writer = Agent(
         "Never make up facts or plagiarize. Always provide proper attribution.",
         "Remember: you are writing for the New York Times, so the quality of the article is important.",
     ],
-    tools=[Newspaper4kTools(), FileTools(base_dir=urls_file.parent)],
+    tools=[Newspaper4kTools()],
     add_datetime_to_instructions=True,
 )
 
-editor = Agent(
+editor = Team(
     name="Editor",
-    team=[searcher, writer],
+    mode="coordinate",
+    model=OpenAIChat("gpt-4o"),
+    members=[searcher, writer],
     description="You are a senior NYT editor. Given a topic, your goal is to write a NYT worthy article.",
     instructions=[
         "First ask the search journalist to search for the most relevant URLs for that topic.",
@@ -60,7 +62,9 @@ editor = Agent(
         "Remember: you are the final gatekeeper before the article is published, so make sure the article is perfect.",
     ],
     add_datetime_to_instructions=True,
+    enable_agentic_context=True,
     markdown=True,
     debug_mode=True,
+    show_members_responses=True,
 )
 editor.print_response("Write an article about latest developments in AI.")
