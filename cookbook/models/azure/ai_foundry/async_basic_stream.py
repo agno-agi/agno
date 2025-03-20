@@ -1,7 +1,7 @@
 import asyncio
 
 from agno.agent import Agent
-from agno.models.azure import AzureAIFoundry
+from agno.models.azure.ai_foundry import AzureAIFoundry
 
 assistant = Agent(
     model=AzureAIFoundry(id="Phi-4"),

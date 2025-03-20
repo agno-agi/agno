@@ -2,7 +2,7 @@ from pathlib import Path
 
 from agno.agent.agent import Agent
 from agno.media import Image
-from agno.models.aws import AwsBedrock
+from agno.models.aws.bedrock import AwsBedrock
 
 
 def test_image_input_bytes():

@@ -2,7 +2,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
-from agno.models.azure import AzureAIFoundry
+from agno.models.azure.ai_foundry import AzureAIFoundry
 from agno.storage.sqlite import SqliteStorage
 
 

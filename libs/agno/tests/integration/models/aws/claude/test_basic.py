@@ -2,7 +2,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.aws import Claude
+from agno.models.aws.claude import Claude
 from agno.storage.sqlite import SqliteStorage
 
 

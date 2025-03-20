@@ -3,7 +3,7 @@ from typing import Optional
 import pytest
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.azure import AzureOpenAI
+from agno.models.azure.openai_chat import AzureOpenAI
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools

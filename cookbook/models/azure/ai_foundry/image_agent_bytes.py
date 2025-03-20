@@ -2,7 +2,7 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import Image
-from agno.models.azure import AzureAIFoundry
+from agno.models.azure.ai_foundry import AzureAIFoundry
 from agno.utils.media import download_image
 
 agent = Agent(

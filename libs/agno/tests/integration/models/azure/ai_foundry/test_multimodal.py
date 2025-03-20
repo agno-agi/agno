@@ -1,6 +1,6 @@
 from agno.agent.agent import Agent
 from agno.media import Image
-from agno.models.azure import AzureAIFoundry
+from agno.models.azure.ai_foundry import AzureAIFoundry
 
 
 def test_image_input():

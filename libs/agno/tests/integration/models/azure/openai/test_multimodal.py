@@ -1,6 +1,6 @@
 from agno.agent.agent import Agent
 from agno.media import Image
-from agno.models.azure import AzureOpenAI
+from agno.models.azure.openai_chat import AzureOpenAI
 
 
 def test_image_input():

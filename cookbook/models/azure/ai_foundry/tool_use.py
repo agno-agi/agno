@@ -1,7 +1,7 @@
 """Run `pip install duckduckgo-search` to install dependencies."""
 
 from agno.agent import Agent
-from agno.models.azure import AzureAIFoundry
+from agno.models.azure.ai_foundry import AzureAIFoundry
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
