@@ -1369,10 +1369,6 @@ class Agent:
             try:
                 # If a response_model is set, return the response as a structured output
                 if self.response_model is not None and self.parse_response:
-                    # Set show_tool_calls=False if we have response_model
-                    self.show_tool_calls = False
-                    logger.debug("Setting show_tool_calls=False as response_model is set")
-
                     # Set stream=False and run the agent
                     logger.debug("Setting stream=False as response_model is set")
                     run_response = await self._arun(
@@ -3639,7 +3635,6 @@ class Agent:
         **kwargs: Any,
     ) -> None:
         import json
-        import re
 
         from rich.console import Group
         from rich.json import JSON
@@ -3981,10 +3976,10 @@ class Agent:
         **kwargs: Any,
     ) -> None:
         import json
-        
+
         from rich.console import Group
-        from rich.live import Live
         from rich.json import JSON
+        from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
         from rich.text import Text
@@ -4236,9 +4231,7 @@ class Agent:
                     panels.append(thinking_panel)
                     live_log.update(Group(*panels))
 
-                # Add tool calls panel if available
                 if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
-                    # Create bullet points for each tool call
                     tool_calls_content = Text()
                     for tool_call in run_response.formatted_tool_calls:
                         tool_calls_content.append(f"• {tool_call}\n")
@@ -4250,7 +4243,7 @@ class Agent:
                     )
                     panels.append(tool_calls_panel)
                     live_log.update(Group(*panels))
-                
+
                 response_content_batch: Union[str, JSON, Markdown] = ""
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
@@ -4260,23 +4253,19 @@ class Agent:
                             )
                             response_content_batch = Markdown(escaped_content)
                         else:
-                            response_content_batch = run_response.get_content_as_string(
-                                indent=4)
+                            response_content_batch = run_response.get_content_as_string(indent=4)
                     elif self.response_model is not None and isinstance(run_response.content, BaseModel):
                         try:
                             response_content_batch = JSON(
                                 run_response.content.model_dump_json(exclude_none=True), indent=2
                             )
                         except Exception as e:
-                            logger.warning(
-                                f"Failed to convert response to JSON: {e}")
+                            logger.warning(f"Failed to convert response to JSON: {e}")
                     else:
                         try:
-                            response_content_batch = JSON(
-                                json.dumps(run_response.content), indent=4)
+                            response_content_batch = JSON(json.dumps(run_response.content), indent=4)
                         except Exception as e:
-                            logger.warning(
-                                f"Failed to convert response to JSON: {e}")
+                            logger.warning(f"Failed to convert response to JSON: {e}")
 
                 # Create panel for response
                 response_panel = self.create_panel(
