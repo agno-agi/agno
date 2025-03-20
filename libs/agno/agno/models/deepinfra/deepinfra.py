@@ -26,3 +26,5 @@ class DeepInfra(OpenAILike):
 
     api_key: Optional[str] = getenv("DEEPINFRA_API_KEY", None)
     base_url: str = "https://api.deepinfra.com/v1/openai"
+
+    supports_native_structured_outputs: bool = False
