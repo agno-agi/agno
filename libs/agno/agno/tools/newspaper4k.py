@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     import newspaper
@@ -68,7 +68,7 @@ class Newspaper4kTools(Toolkit):
         """
 
         try:
-            logger.debug(f"Reading news: {url}")
+            log_debug(f"Reading news: {url}")
             article_data = self.get_article_data(url)
             if not article_data:
                 return f"Error reading article from {url}: No data found."

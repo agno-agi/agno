@@ -1,5 +1,5 @@
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug
 
 try:
     from newspaper import Article
@@ -28,7 +28,7 @@ class NewspaperTools(Toolkit):
         """
 
         try:
-            logger.debug(f"Reading news: {url}")
+            log_debug(f"Reading news: {url}")
             article = Article(url)
             article.download()
             article.parse()

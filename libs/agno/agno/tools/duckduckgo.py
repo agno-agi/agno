@@ -2,7 +2,7 @@ import json
 from typing import Any, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug
 
 try:
     from duckduckgo_search import DDGS
@@ -60,7 +60,7 @@ class DuckDuckGoTools(Toolkit):
         Returns:
             The result from DuckDuckGo.
         """
-        logger.debug(f"Searching DDG for: {query}")
+        log_debug(f"Searching DDG for: {query}")
         ddgs = DDGS(
             headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl
         )
@@ -81,7 +81,7 @@ class DuckDuckGoTools(Toolkit):
         Returns:
             The latest news from DuckDuckGo.
         """
-        logger.debug(f"Searching DDG news for: {query}")
+        log_debug(f"Searching DDG news for: {query}")
         ddgs = DDGS(
             headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl
         )

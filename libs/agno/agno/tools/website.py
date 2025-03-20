@@ -5,7 +5,7 @@ from agno.document import Document
 from agno.knowledge.combined import CombinedKnowledgeBase
 from agno.knowledge.website import WebsiteKnowledgeBase
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug
 
 
 class WebsiteTools(Toolkit):
@@ -34,9 +34,9 @@ class WebsiteTools(Toolkit):
         if self.knowledge_base is None:
             return "Knowledge base not provided"
 
-        logger.debug(f"Adding to knowledge base: {url}")
+        log_debug(f"Adding to knowledge base: {url}")
         self.knowledge_base.urls.append(url)
-        logger.debug("Loading knowledge base.")
+        log_debug("Loading knowledge base.")
         self.knowledge_base.load(recreate=False)
         return "Success"
 
@@ -78,6 +78,6 @@ class WebsiteTools(Toolkit):
 
         website = WebsiteReader()
 
-        logger.debug(f"Reading website: {url}")
+        log_debug(f"Reading website: {url}")
         relevant_docs: List[Document] = website.read(url=url)
         return json.dumps([doc.to_dict() for doc in relevant_docs])

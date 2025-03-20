@@ -129,7 +129,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=LMStudio(id="qwen2.5-7b-instruct-1m"),
-        response_format="json",
+        use_json_mode=True,
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,

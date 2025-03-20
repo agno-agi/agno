@@ -6,7 +6,7 @@ from urllib.parse import urljoin, urlparse
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from bs4 import BeautifulSoup, Tag  # noqa: F401
@@ -114,7 +114,7 @@ class WebsiteReader(Reader):
             self.delay()
 
             try:
-                logger.debug(f"Crawling: {current_url}")
+                log_debug(f"Crawling: {current_url}")
                 response = httpx.get(current_url, timeout=10)
 
                 response.raise_for_status()
@@ -165,7 +165,7 @@ class WebsiteReader(Reader):
         :return: A list of documents.
         """
 
-        logger.debug(f"Reading: {url}")
+        log_debug(f"Reading: {url}")
         crawler_result = self.crawl(url)
         documents = []
         for crawled_url, crawled_content in crawler_result.items():

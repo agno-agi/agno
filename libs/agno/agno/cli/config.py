@@ -2,8 +2,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from agno.api.schemas.team import TeamSchema
-from agno.api.schemas.user import UserSchema
+from agno.api.schemas.user import TeamSchema, UserSchema
 from agno.api.schemas.workspace import WorkspaceSchema
 from agno.cli.console import print_heading, print_info
 from agno.cli.settings import agno_cli_settings
