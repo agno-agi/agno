@@ -3792,7 +3792,7 @@ class Agent:
                             tool_calls_content.append(f"• {tool_call}\n")
 
                         tool_calls_panel = create_panel(
-                            content=tool_calls_content,
+                            content=tool_calls_content.plain.rstrip(),
                             title="Tool Calls",
                             border_style="yellow",
                         )
@@ -3916,7 +3916,7 @@ class Agent:
                         tool_calls_content.append(f"• {tool_call}\n")
 
                     tool_calls_panel = create_panel(
-                        content=tool_calls_content,
+                        content=tool_calls_content.plain.rstrip(),
                         title="Tool Calls",
                         border_style="yellow",
                     )
@@ -4133,7 +4133,7 @@ class Agent:
                             tool_calls_content.append(f"• {tool_call}\n")
 
                         tool_calls_panel = create_panel(
-                            content=tool_calls_content,
+                            content=tool_calls_content.plain.rstrip(),
                             title="Tool Calls",
                             border_style="yellow",
                         )
@@ -4255,7 +4255,7 @@ class Agent:
                         tool_calls_content.append(f"• {tool_call}\n")
 
                     tool_calls_panel = create_panel(
-                        content=tool_calls_content,
+                        content=tool_calls_content.plain.rstrip(),
                         title="Tool Calls",
                         border_style="yellow",
                     )
