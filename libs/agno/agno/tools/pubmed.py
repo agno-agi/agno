@@ -13,10 +13,12 @@ class PubmedTools(Toolkit):
         self,
         email: str = "your_email@example.com",
         max_results: Optional[int] = None,
+        results_expanded: bool = True,  # New parameter
     ):
         super().__init__(name="pubmed")
         self.max_results: Optional[int] = max_results
         self.email: str = email
+        self.results_expanded: bool = results_expanded  # Store the parameter
 
         self.register(self.search_pubmed)
 
@@ -131,7 +133,6 @@ class PubmedTools(Toolkit):
 
         Args:
             query (str): The search query.
-            max_results (int): The maximum number of results to return.
 
         Returns:
             str: A JSON string containing the search results.
@@ -142,22 +143,32 @@ class PubmedTools(Toolkit):
             details_root = self.fetch_details(ids)
             articles = self.parse_details(details_root)
             
-            # Create comprehensive result strings with all new fields
+            # Create result strings based on configured detail level
             results = []
             for article in articles:
-                article_text = (
-                    f"Published: {article.get('Published')}\n"
-                    f"Title: {article.get('Title')}\n"
-                    f"First Author: {article.get('First_Author')}\n"
-                    f"Journal: {article.get('Journal')}\n"
-                    f"Publication Type: {article.get('Publication_Type')}\n"
-                    f"DOI: {article.get('DOI')}\n"
-                    f"PubMed URL: {article.get('PubMed_URL')}\n"
-                    f"Full Text URL: {article.get('Full_Text_URL')}\n"
-                    f"Keywords: {article.get('Keywords')}\n"
-                    f"MeSH Terms: {article.get('MeSH_Terms')}\n"
-                    f"Summary:\n{article.get('Summary')}"
-                )
+                if self.results_expanded:
+                    # Comprehensive format with all metadata
+                    article_text = (
+                        f"Published: {article.get('Published')}\n"
+                        f"Title: {article.get('Title')}\n"
+                        f"First Author: {article.get('First_Author')}\n"
+                        f"Journal: {article.get('Journal')}\n"
+                        f"Publication Type: {article.get('Publication_Type')}\n"
+                        f"DOI: {article.get('DOI')}\n"
+                        f"PubMed URL: {article.get('PubMed_URL')}\n"
+                        f"Full Text URL: {article.get('Full_Text_URL')}\n"
+                        f"Keywords: {article.get('Keywords')}\n"
+                        f"MeSH Terms: {article.get('MeSH_Terms')}\n"
+                        f"Summary:\n{article.get('Summary')}"
+                    )
+                else:
+                    # Concise format with just essential information
+                    article_text = (
+                        f"Title: {article.get('Title')}\n"
+                        f"Published: {article.get('Published')}\n"
+                        f"Summary: {article.get('Summary')[:200]}..." if len(article.get('Summary', '')) > 200 
+                        else f"Summary: {article.get('Summary')}"
+                    )
                 results.append(article_text)
             
             return json.dumps(results)

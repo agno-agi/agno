@@ -49,24 +49,44 @@ if abstract_sections:
     abstract_text = abstract_text.strip()
 ```
 
-#### 3. Rich Search Results Formatting
+#### 3. Configurable Results Format
 
-Search results now include all extracted metadata in a readable format:
+A new `results_expanded` parameter has been added to allow users to choose between comprehensive and concise output formats:
 
 ```python
-article_text = (
-    f"Published: {article.get('Published')}\n"
-    f"Title: {article.get('Title')}\n"
-    f"First Author: {article.get('First_Author')}\n"
-    f"Journal: {article.get('Journal')}\n"
-    f"Publication Type: {article.get('Publication_Type')}\n"
-    f"DOI: {article.get('DOI')}\n"
-    f"PubMed URL: {article.get('PubMed_URL')}\n"
-    f"Full Text URL: {article.get('Full_Text_URL')}\n"
-    f"Keywords: {article.get('Keywords')}\n"
-    f"MeSH Terms: {article.get('MeSH_Terms')}\n"
-    f"Summary:\n{article.get('Summary')}"
-)
+def __init__(
+    self,
+    email: str = "your_email@example.com",
+    max_results: Optional[int] = None,
+    results_expanded: bool = True,  # New parameter
+):
+    super().__init__(name="pubmed")
+    self.max_results: Optional[int] = max_results
+    self.email: str = email
+    self.results_expanded: bool = results_expanded  # Store the parameter
+```
+
+The search method now uses this parameter to format results appropriately:
+
+```python
+# Create result strings based on configured detail level
+results = []
+for article in articles:
+    if self.results_expanded:
+        # Comprehensive format with all metadata
+        article_text = (
+            f"Published: {article.get('Published')}\n"
+            f"Title: {article.get('Title')}\n"
+            # ... full detailed format
+        )
+    else:
+        # Concise format with just essential information
+        article_text = (
+            f"Title: {article.get('Title')}\n"
+            f"Published: {article.get('Published')}\n"
+            f"Summary: {article.get('Summary')[:200]}..." if len(article.get('Summary', '')) > 200 
+            else f"Summary: {article.get('Summary')}"
+        )
 ```
 
 ## Benefits for Agno AI Agents
@@ -79,26 +99,32 @@ These improvements make Agno a more capable platform for building multimodal age
 2. **Enabling Domain-Specific Context**: MeSH terms and keywords allow agents to better understand medical/scientific context
 3. **Supporting Evidence-Based Responses**: Structured abstracts help agents distinguish between methods, results, and conclusions
 4. **Facilitating Literature Analysis**: Comprehensive metadata enables better filtering and aggregation of research findings
+5. **Flexible Output Formats**: The configurable output allows for both detailed analysis and concise summaries depending on the agent's needs
 
 ### Use Case Examples
 
 - **Medical Research Assistants**: Agents can quickly gather and summarize recent research on specific medical conditions
 - **Scientific Literature Review**: Agents can process large volumes of publications to identify trends and consensus
 - **Clinical Decision Support**: Agents can find relevant evidence-based guidelines and recent studies
+- **Quick Reference Tools**: Using the concise format for rapid information retrieval when complete details aren't needed
 
 ## Documentation and Examples
 
-### Example 1: Creating a PubMed-powered Research Assistant
+### Example 1: Creating a PubMed-powered Research Assistant (Expanded Results)
 
 ```python
 from agno.agent import Agent
 from agno.tools.pubmed import PubmedTools
 
-# Create a research agent with PubMed capabilities
+# Create a research agent with detailed PubMed results (default behavior)
 researcher = Agent(
     name="MedicalResearcher",
     description="I help researchers find and summarize the latest medical research",
-    tools=[PubmedTools(email="your_email@example.com", max_results=5)]
+    tools=[PubmedTools(
+        email="your_email@example.com", 
+        max_results=5,
+        results_expanded=True  # Default setting - comprehensive output
+    )]
 )
 
 # Example query to research recent findings
@@ -108,28 +134,29 @@ response = researcher.run(
 print(response)
 ```
 
-### Example 2: Comparing Multiple Research Topics
+### Example 2: Concise Research Results
 
 ```python
 from agno.agent import Agent
 from agno.tools.pubmed import PubmedTools
 from agno.memory import ConversationMemory
 
-# Create a comparative research agent
+# Create a comparative research agent with concise output
 comparative_researcher = Agent(
-    name="ComparativeAnalysis",
-    description="I help compare research findings across different medical topics",
-    tools=[PubmedTools(email="your_email@example.com", max_results=3)],
+    name="QuickResearcher",
+    description="I provide quick research summaries on medical topics",
+    tools=[PubmedTools(
+        email="your_email@example.com", 
+        max_results=3,
+        results_expanded=False  # Use concise format for simpler output
+    )],
     memory=ConversationMemory()
 )
 
-# Compare research on different treatment approaches
-result = comparative_researcher.run("""
-Please compare the latest research on:
-1. Cognitive behavioral therapy for anxiety
-2. SSRI medications for anxiety
-Focus on effectiveness, side effects, and long-term outcomes.
-""")
+# Get brief overview of research
+result = comparative_researcher.run(
+    "Give me a quick overview of recent diabetes research"
+)
 ```
 
 ### Example 3: Specialized Medical Literature Bot
@@ -139,11 +166,15 @@ from agno.agent import Agent
 from agno.tools.pubmed import PubmedTools
 from agno.llms import OpenAI
 
-# Create a specialized oncology research agent
+# Create a specialized oncology research agent with detailed output
 oncology_researcher = Agent(
     name="OncologyResearcher",
     llm=OpenAI(model="gpt-4o"),
-    tools=[PubmedTools(email="your_email@example.com", max_results=10)],
+    tools=[PubmedTools(
+        email="your_email@example.com", 
+        max_results=10,
+        results_expanded=True  # Comprehensive output for detailed analysis
+    )],
     system_prompt="""
     You are an expert oncology researcher. Use the PubMed tool to find relevant 
     research on cancer treatments, diagnostics, and outcomes. When analyzing 
@@ -171,6 +202,7 @@ response = oncology_researcher.run(
 - **Literature Review Bot**: Automating systematic literature reviews across multiple database sources
 - **Clinical Trial Finder**: Helping researchers identify relevant clinical trials based on specific criteria
 - **Medical Education Support**: Creating agents that can provide medical students with latest research on topics they're studying
+- **Quick Research Briefing**: Using the concise format for rapid information scanning across multiple topics
 
 ## Future Improvements
 
@@ -180,5 +212,6 @@ response = oncology_researcher.run(
 - Automated evidence grading and quality assessment
 - Meta-analysis capabilities to synthesize findings across multiple studies
 - Integration with medical knowledge graphs for enhanced context
+- Additional output format options for specific use cases
 
-By enhancing the PubMed tool, Agno has significantly improved its capabilities for building AI agents that can browser and analyze scientific literature in a more informed and context-aware manner.
+By enhancing the PubMed tool, Agno has significantly improved its capabilities for building AI agents that can navigate and leverage scientific literature in a more informed and context-aware manner, with flexible output options to suit different needs.
