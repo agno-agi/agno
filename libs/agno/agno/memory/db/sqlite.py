@@ -22,7 +22,7 @@ except ImportError:
 
 from agno.memory.db import MemoryDb
 from agno.memory.row import MemoryRow
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 
 class SqliteMemoryDb(MemoryDb):
@@ -92,7 +92,7 @@ class SqliteMemoryDb(MemoryDb):
     def create(self) -> None:
         if not self.table_exists():
             try:
-                logger.debug(f"Creating table: {self.table_name}")
+                log_debug(f"Creating table: {self.table_name}")
                 self.table.create(self.db_engine, checkfirst=True)
             except Exception as e:
                 logger.error(f"Error creating table '{self.table_name}': {e}")
@@ -126,9 +126,9 @@ class SqliteMemoryDb(MemoryDb):
                 for row in result:
                     memories.append(MemoryRow(id=row.id, user_id=row.user_id, memory=eval(row.memory)))
         except SQLAlchemyError as e:
-            logger.debug(f"Exception reading from table: {e}")
-            logger.debug(f"Table does not exist: {self.table_name}")
-            logger.debug("Creating table for future transactions")
+            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Table does not exist: {self.table_name}")
+            log_debug("Creating table for future transactions")
             self.create()
         return memories
 
@@ -154,8 +154,8 @@ class SqliteMemoryDb(MemoryDb):
         except SQLAlchemyError as e:
             logger.error(f"Exception upserting into table: {e}")
             if not self.table_exists():
-                logger.info(f"Table does not exist: {self.table_name}")
-                logger.info("Creating table for future transactions")
+                log_info(f"Table does not exist: {self.table_name}")
+                log_info("Creating table for future transactions")
                 self.create()
                 if create_and_retry:
                     return self.upsert_memory(memory, create_and_retry=False)
@@ -170,11 +170,11 @@ class SqliteMemoryDb(MemoryDb):
 
     def drop_table(self) -> None:
         if self.table_exists():
-            logger.debug(f"Deleting table: {self.table_name}")
+            log_debug(f"Deleting table: {self.table_name}")
             self.table.drop(self.db_engine)
 
     def table_exists(self) -> bool:
-        logger.debug(f"Checking if table exists: {self.table.name}")
+        log_debug(f"Checking if table exists: {self.table.name}")
         try:
             return self.inspector.has_table(self.table.name)
         except Exception as e:

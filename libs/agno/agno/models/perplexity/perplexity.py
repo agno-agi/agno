@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.message import Citations, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.log import log_warning
 
 try:
     from openai.types.chat.chat_completion import ChatCompletion
@@ -115,7 +115,7 @@ class Perplexity(OpenAILike):
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
         except Exception as e:
-            logger.warning(f"Error retrieving structured outputs: {e}")
+            log_warning(f"Error retrieving structured outputs: {e}")
 
         # Add role
         if response_message.role is not None:
@@ -130,7 +130,7 @@ class Perplexity(OpenAILike):
             try:
                 model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
             except Exception as e:
-                logger.warning(f"Error processing tool calls: {e}")
+                log_warning(f"Error processing tool calls: {e}")
 
         # Add citations if present
         if hasattr(response, "citations") and response.citations is not None:

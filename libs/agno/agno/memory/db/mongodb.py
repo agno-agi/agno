@@ -11,7 +11,7 @@ except ImportError:
 
 from agno.memory.db import MemoryDb
 from agno.memory.row import MemoryRow
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 
 class MongoMemoryDb(MemoryDb):
@@ -152,9 +152,9 @@ class MongoMemoryDb(MemoryDb):
         try:
             result = self.collection.delete_one({"id": id})
             if result.deleted_count == 0:
-                logger.debug(f"No memory found with id: {id}")
+                log_debug(f"No memory found with id: {id}")
             else:
-                logger.debug(f"Successfully deleted memory with id: {id}")
+                log_debug(f"Successfully deleted memory with id: {id}")
         except PyMongoError as e:
             logger.error(f"Error deleting memory: {e}")
             raise

@@ -493,6 +493,7 @@ jobs:
           python -m pytest ./libs/agno/tests/integration/models/xai
 
   test-ibm-watsonx:
+    if: false # Our account is not working
     runs-on: ubuntu-latest
     strategy:
       matrix:
