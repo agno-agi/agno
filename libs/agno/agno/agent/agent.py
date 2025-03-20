@@ -3910,12 +3910,6 @@ class Agent:
                 response_content_batch: Union[str, JSON, Markdown] = ""
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
-                        # Clean up response content to remove "Running:" section
-                        if isinstance(run_response.content, str):
-                            run_response.content = re.sub(
-                                r"Running:\s*\n\s*\n(\s*• [^\n]+\n)+\s*\n", "", run_response.content
-                            )
-
                         if self.markdown:
                             escaped_content = self.escape_markdown_tags(
                                 run_response.content, tags_to_include_in_markdown
