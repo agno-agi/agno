@@ -251,7 +251,6 @@ class Team:
         self.storage = storage
         self.extra_data = extra_data
 
-        # TODO: enable reasoning
         # self.reasoning = reasoning
         # self.reasoning_model = reasoning_model
         # self.reasoning_min_steps = reasoning_min_steps
@@ -1543,7 +1542,6 @@ class Team:
         message: Optional[Union[List, Dict, str, Message]] = None,
         *,
         stream: bool = False,
-        markdown: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_reasoning_verbose: bool = False,
@@ -1553,16 +1551,18 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        markdown: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
-        if markdown:
-            self.markdown = True
+        if markdown is None:
+            markdown = self.markdown
+        else:
+            self.markdown = markdown
 
         if self.response_model is not None:
-            self.markdown = False
             stream = False
 
         if stream:
@@ -1577,6 +1577,7 @@ class Team:
                 images=images,
                 videos=videos,
                 files=files,
+                markdown=markdown,
                 **kwargs,
             )
         else:
@@ -1591,6 +1592,7 @@ class Team:
                 images=images,
                 videos=videos,
                 files=files,
+                markdown=markdown,
                 **kwargs,
             )
 
@@ -1606,6 +1608,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        markdown: bool = False,
         **kwargs: Any,
     ) -> None:
         from rich.console import Group
@@ -1617,8 +1620,6 @@ class Team:
 
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
-
-        self.run_response = cast(TeamRunResponse, self.run_response)
 
         with Live(console=console) as live_console:
             status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
@@ -1651,6 +1652,24 @@ class Team:
                 **kwargs,
             )
             response_timer.stop()
+
+            if markdown:
+                member_markdown = {}
+                for member in self.members:
+                    if isinstance(member, Agent) and member.agent_id is not None:
+                        member_markdown[member.agent_id] = True
+                    if isinstance(member, Team) and member.team_id is not None:
+                        member_markdown[member.team_id] = True
+                team_markdown = True
+
+            if self.response_model is not None:
+                team_markdown = False
+
+            for member in self.members:
+                if member.response_model is not None and isinstance(member, Agent) and member.agent_id is not None:
+                    member_markdown[member.agent_id] = False
+                if member.response_model is not None and isinstance(member, Team) and member.team_id is not None:
+                    member_markdown[member.team_id] = False
 
             # Handle reasoning
             reasoning_steps = []
@@ -1700,7 +1719,7 @@ class Team:
                                 panels.append(member_reasoning_panel)
 
                         member_response_content: Union[str, JSON, Markdown] = self._parse_response_content(
-                            member_response, tags_to_include_in_markdown
+                            member_response, tags_to_include_in_markdown, show_markdown=member_markdown.get(member_response.agent_id, False)
                         )
 
                         # Create panel for member response
@@ -1735,7 +1754,7 @@ class Team:
                     live_console.update(Group(*panels))
 
                 response_content_batch: Union[str, JSON, Markdown] = self._parse_response_content(
-                    run_response, tags_to_include_in_markdown
+                    run_response, tags_to_include_in_markdown, show_markdown=team_markdown
                 )
 
                 # Create panel for response
@@ -1777,6 +1796,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        markdown: bool = False,
         **kwargs: Any,
     ) -> None:
         from rich.console import Group
@@ -1788,8 +1808,6 @@ class Team:
 
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
-
-        self.run_response = cast(TeamRunResponse, self.run_response)
 
         _response_content: str = ""
         _response_thinking: str = ""
@@ -1822,10 +1840,24 @@ class Team:
             stream_resp = self.run(  # type: ignore
                 message=message, audio=audio, images=images, videos=videos, files=files, stream=True, **kwargs
             )
+
+            team_markdown = None
+            member_markdown = {}
+
             for resp in stream_resp:
+                
+                if team_markdown is None:
+                    if markdown:
+                        team_markdown = True
+                    else:
+                        team_markdown = False
+                    
+                    if self.response_model is not None:
+                        team_markdown = False
+
+
                 if isinstance(resp, TeamRunResponse):
                     if resp.event == RunEvent.run_response:
-                        # TODO: handle tool calls
                         if isinstance(resp.content, str):
                             _response_content += resp.content
                         if resp.thinking is not None:
@@ -1835,7 +1867,7 @@ class Team:
 
                 response_content_stream: Union[str, Markdown] = _response_content
                 # Escape special tags before markdown conversion
-                if self.markdown:
+                if team_markdown:
                     escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
                     response_content_stream = Markdown(escaped_content)
 
@@ -1908,6 +1940,20 @@ class Team:
             # Final update to remove the "Thinking..." status
             panels = [p for p in panels if not isinstance(p, Status)]
 
+
+            if markdown:
+                for member in self.members:
+                    if isinstance(member, Agent) and member.agent_id is not None: 
+                        member_markdown[member.agent_id] = True
+                    if isinstance(member, Team) and member.team_id is not None:
+                        member_markdown[member.team_id] = True
+
+            for member in self.members:
+                if member.response_model is not None and isinstance(member, Agent) and member.agent_id is not None:
+                    member_markdown[member.agent_id] = False
+                if member.response_model is not None and isinstance(member, Team) and member.team_id is not None:
+                    member_markdown[member.team_id] = False
+                        
             # Create panel for member responses
             for i, member_response in enumerate(self.run_response.member_responses):
                 reasoning_steps = []
@@ -1922,7 +1968,7 @@ class Team:
                         panels.insert(i + 1, member_reasoning_panel)
 
                 member_response_content: Union[str, JSON, Markdown] = self._parse_response_content(
-                    member_response, tags_to_include_in_markdown
+                    member_response, tags_to_include_in_markdown, show_markdown=member_markdown.get(member_response.agent_id, False)
                 )
 
                 if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
@@ -1960,7 +2006,6 @@ class Team:
         message: Optional[Union[List, Dict, str, Message]] = None,
         *,
         stream: bool = False,
-        markdown: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_reasoning_verbose: bool = False,
@@ -1970,16 +2015,18 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        markdown: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
-        if markdown:
-            self.markdown = True
+        if markdown is None:
+            markdown = self.markdown
+        else:
+            self.markdown = markdown
 
         if self.response_model is not None:
-            self.markdown = False
             stream = False
 
         if stream:
@@ -1994,6 +2041,7 @@ class Team:
                 images=images,
                 videos=videos,
                 files=files,
+                markdown=markdown,
                 **kwargs,
             )
         else:
@@ -2008,6 +2056,7 @@ class Team:
                 images=images,
                 videos=videos,
                 files=files,
+                markdown=markdown,
                 **kwargs,
             )
 
@@ -2023,6 +2072,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        markdown: bool = False,
         **kwargs: Any,
     ) -> None:
         from rich.console import Group
@@ -2068,6 +2118,24 @@ class Team:
                 **kwargs,
             )
             response_timer.stop()
+
+            if markdown:
+                member_markdown = {}
+                for member in self.members:
+                    if isinstance(member, Agent) and member.agent_id is not None:
+                        member_markdown[member.agent_id] = True
+                    if isinstance(member, Team) and member.team_id is not None:
+                        member_markdown[member.team_id] = True
+                team_markdown = True
+
+            if self.response_model is not None:
+                team_markdown = False
+
+            for member in self.members:
+                if member.response_model is not None and isinstance(member, Agent) and member.agent_id is not None:
+                    member_markdown[member.agent_id] = False
+                if member.response_model is not None and isinstance(member, Team) and member.team_id is not None:
+                    member_markdown[member.team_id] = False
 
             # Handle reasoning
             reasoning_steps = []
@@ -2118,7 +2186,7 @@ class Team:
                                 panels.append(member_reasoning_panel)
 
                         member_response_content: Union[str, JSON, Markdown] = self._parse_response_content(
-                            member_response, tags_to_include_in_markdown
+                            member_response, tags_to_include_in_markdown, show_markdown=member_markdown.get(member_response.agent_id, False)
                         )
 
                         # Create panel for member response
@@ -2147,7 +2215,7 @@ class Team:
                     live_console.update(Group(*panels))
 
                 response_content_batch: Union[str, JSON, Markdown] = self._parse_response_content(
-                    run_response, tags_to_include_in_markdown
+                    run_response, tags_to_include_in_markdown, show_markdown=team_markdown
                 )
 
                 # Create panel for response
@@ -2189,6 +2257,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        markdown: bool = False,
         **kwargs: Any,
     ) -> None:
         from rich.console import Group
@@ -2234,7 +2303,19 @@ class Team:
             stream_resp = await self.arun(  # type: ignore
                 message=message, audio=audio, images=images, videos=videos, files=files, stream=True, **kwargs
             )
+            team_markdown = None
+            member_markdown = {}
+
             async for resp in stream_resp:
+                if team_markdown is None:
+                    if markdown:
+                        team_markdown = True
+                    else:
+                        team_markdown = False
+                    
+                    if self.response_model is not None:
+                        team_markdown = False
+
                 if isinstance(resp, TeamRunResponse):
                     if resp.event == RunEvent.run_response:
                         # TODO: handle tool calls
@@ -2247,7 +2328,7 @@ class Team:
 
                 response_content_stream: Union[str, Markdown] = _response_content
                 # Escape special tags before markdown conversion
-                if self.markdown:
+                if team_markdown:
                     escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
                     response_content_stream = Markdown(escaped_content)
 
@@ -2320,6 +2401,19 @@ class Team:
             # Final update to remove the "Thinking..." status
             panels = [p for p in panels if not isinstance(p, Status)]
 
+            if markdown:
+                for member in self.members:
+                    if isinstance(member, Agent) and member.agent_id is not None: 
+                        member_markdown[member.agent_id] = True
+                    if isinstance(member, Team) and member.team_id is not None:
+                        member_markdown[member.team_id] = True
+
+            for member in self.members:
+                if member.response_model is not None and isinstance(member, Agent) and member.agent_id is not None:
+                    member_markdown[member.agent_id] = False
+                if member.response_model is not None and isinstance(member, Team) and member.team_id is not None:
+                    member_markdown[member.team_id] = False
+
             # Create panel for member responses
             for i, member_response in enumerate(self.run_response.member_responses):
                 reasoning_steps = []
@@ -2334,7 +2428,7 @@ class Team:
                         panels.insert(i + 1, member_reasoning_panel)
 
                 member_response_content: Union[str, JSON, Markdown] = self._parse_response_content(
-                    member_response, tags_to_include_in_markdown
+                    member_response, tags_to_include_in_markdown, show_markdown=member_markdown.get(member_response.agent_id, False)
                 )
 
                 if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
@@ -2400,13 +2494,13 @@ class Team:
         return entity_id
 
     def _parse_response_content(
-        self, run_response: Union[TeamRunResponse, RunResponse], tags_to_include_in_markdown: Set[str]
+        self, run_response: Union[TeamRunResponse, RunResponse], tags_to_include_in_markdown: Set[str], show_markdown: bool = True
     ) -> Any:
         from rich.json import JSON
         from rich.markdown import Markdown
 
         if isinstance(run_response.content, str):
-            if self.markdown:
+            if show_markdown:
                 escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
                 return Markdown(escaped_content)
             else:
@@ -3167,7 +3261,7 @@ class Team:
 
         if self.enable_agentic_context:
             system_message_content += (
-                "You can update the context of the team. Use the set_team_context tool to update the context.\n"
+                "You can and should update the context of the team. Use the `set_team_context` tool to update the shared team context.\n"
             )
 
         if self.name is not None:

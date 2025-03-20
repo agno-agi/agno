@@ -208,6 +208,7 @@ autonomous_startup_team = Team(
     markdown=True,
     debug_mode=True,
     show_members_responses=True,
+    enable_team_history=True,
 )
 
 autonomous_startup_team.print_response(

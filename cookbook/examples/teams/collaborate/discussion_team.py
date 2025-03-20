@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -8,6 +9,9 @@ from agno.tools.arxiv import ArxivTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
+
+arxiv_download_dir = Path(__file__).parent.joinpath("tmp", "arxiv_pdfs__{session_id}")
+arxiv_download_dir.mkdir(parents=True, exist_ok=True)
 
 reddit_researcher = Agent(
     name="Reddit Researcher",
@@ -39,7 +43,7 @@ academic_paper_researcher = Agent(
     name="Academic Paper Researcher",
     model=OpenAIChat("gpt-4o"),
     role="Research academic papers and scholarly content",
-    tools=[GoogleSearchTools(), ArxivTools()],
+    tools=[GoogleSearchTools(), ArxivTools(download_dir=arxiv_download_dir)],
     add_name_to_instructions=True,
     instructions=dedent("""
     You are a academic paper researcher.
@@ -84,13 +88,12 @@ agent_team = Team(
     enable_agentic_context=True,
     show_tool_calls=True,
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
 )
 
 if __name__ == "__main__":
     asyncio.run(
-        agent_team.print_response(
+        agent_team.aprint_response(
             message="Start the discussion on the topic: 'What is the best way to learn to code?'",
             stream=True,
             stream_intermediate_steps=True,

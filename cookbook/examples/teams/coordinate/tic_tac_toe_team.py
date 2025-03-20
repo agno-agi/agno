@@ -29,7 +29,7 @@ player_2 = Agent(
     """),
 )
 
-
+# This is a simple team that plays Tic Tac Toe. It is not perfect and would work better with reasoning.
 agent_team = Team(
     name="Tic Tac Toe Team",
     mode="coordinate",
@@ -39,7 +39,7 @@ agent_team = Team(
     instructions=[
         "You are a games master.",
         "Initialize the board state as an empty 3x3 grid with numbers 1-9.",
-        "Ask the players to make their moves one by one and wait for their responses.",
+        "Ask the players to make their moves one by one and wait for their responses. Transfer the turn to the other player after each move.",
         "After each move, store the updated board state so that players have access to the board state.",
         "Don't confirm the results of the game afterwards, just report the final board state and the results.",
         "You have to stop the game when one of the players has won.",
@@ -53,7 +53,7 @@ agent_team = Team(
 )
 
 agent_team.print_response(
-    message="Start the Tic Tac Toe game",
+    message="Run a full Tic Tac Toe game. After the game, report the final board state and the results.",
     stream=True,
     stream_intermediate_steps=True,
 )

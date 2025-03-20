@@ -3,7 +3,7 @@ import json
 import httpx
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_debug, logger
 
 
 class HackerNewsTools(Toolkit):
@@ -30,7 +30,7 @@ class HackerNewsTools(Toolkit):
             str: JSON string of top stories.
         """
 
-        log_info(f"Getting top {num_stories} stories from Hacker News")
+        log_debug(f"Getting top {num_stories} stories from Hacker News")
         # Fetch top story IDs
         response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
         story_ids = response.json()
@@ -55,7 +55,7 @@ class HackerNewsTools(Toolkit):
         """
 
         try:
-            log_info(f"Getting details for user: {username}")
+            log_debug(f"Getting details for user: {username}")
             user = httpx.get(f"https://hacker-news.firebaseio.com/v0/user/{username}.json").json()
             user_details = {
                 "id": user.get("user_id"),
