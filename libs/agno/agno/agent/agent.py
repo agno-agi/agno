@@ -909,7 +909,7 @@ class Agent:
                         )
                     )
 
-                    # Do a final check confirming the content is in the response_model formatba
+                    # Do a final check confirming the content is in the response_model format
                     if isinstance(run_response.content, self.response_model):
                         return run_response
 
