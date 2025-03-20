@@ -3772,7 +3772,7 @@ class Agent:
                         live_log.update(Group(*panels))
 
                     # Add tool calls panel if available
-                    if self.show_tool_calls and self.run_response.formatted_tool_calls:
+                    if self.show_tool_calls and self.run_response is not None and self.run_response.formatted_tool_calls:
                         render = True
                         # Create bullet points for each tool call
                         tool_calls_content = Text()
@@ -4005,7 +4005,6 @@ class Agent:
             _response_content: str = ""
             _response_thinking: str = ""
             reasoning_steps: List[ReasoningStep] = []
-            formatted_tool_calls: List[str] = []
 
             with Live(console=console) as live_log:
                 status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
@@ -4113,7 +4112,7 @@ class Agent:
                         live_log.update(Group(*panels))
 
                     # Add tool calls panel if available
-                    if self.show_tool_calls and self.run_response.formatted_tool_calls:
+                    if self.show_tool_calls and self.run_response is not None and self.run_response.formatted_tool_calls:
                         render = True
                         # Create bullet points for each tool call
                         tool_calls_content = Text()

@@ -68,6 +68,7 @@ agent = Agent(
 asyncio.run(agent.aprint_response(
     "What is current prince of stock TSLA? Also give brief history of company tesla", stream=True))
 
+agent.run_response.metrics
 
 # from typing import List, Optional
 
