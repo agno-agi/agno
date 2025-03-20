@@ -1,13 +1,12 @@
 """
 1. Run: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
-2. Run: `python cookbook/teams/coordinate/hackernews_team.py` to run the agent
+2. Run: `python cookbook/storage/sqlite_storage/sqlite_storage_for_team.py` to run the team
 """
 
 from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.team import TeamRunResponse  # type: ignore
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools

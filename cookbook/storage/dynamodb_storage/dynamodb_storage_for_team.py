@@ -1,13 +1,13 @@
 """
 1. Run: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
-2. Run: `python cookbook/storage/json_storage/json_storage_for_team.py` to run the team
+2. Run: `python cookbook/storage/dynamodb_storage/dynamodb_storage_for_team.py` to run the team
 """
 
 from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.storage.json import JsonStorage
+from agno.storage.dynamodb import DynamoDbStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -41,7 +41,7 @@ hn_team = Team(
     mode="coordinate",
     model=OpenAIChat("gpt-4o"),
     members=[hn_researcher, web_searcher],
-    storage=JsonStorage(dir_path="tmp/team_sessions_json"),
+    storage=DynamoDbStorage(table_name="team_sessions", region_name="us-east-1"),
     instructions=[
         "First, search hackernews for what the user is asking about.",
         "Then, ask the web searcher to search for each story to get more information.",

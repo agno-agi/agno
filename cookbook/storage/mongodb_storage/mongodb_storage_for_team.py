@@ -1,17 +1,20 @@
 """
 1. Run: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
-2. Run: `python cookbook/storage/json_storage/json_storage_for_team.py` to run the team
+2. Run: `python cookbook/storage/mongodb_storage/mongodb_storage_for_team.py` to run the agent
 """
 
 from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.storage.json import JsonStorage
+from agno.storage.mongodb import MongoDbStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel
+
+# MongoDB connection settings
+db_url = "mongodb://localhost:27017"
 
 
 class Article(BaseModel):
@@ -41,7 +44,9 @@ hn_team = Team(
     mode="coordinate",
     model=OpenAIChat("gpt-4o"),
     members=[hn_researcher, web_searcher],
-    storage=JsonStorage(dir_path="tmp/team_sessions_json"),
+    storage=MongoDbStorage(
+        collection_name="team_sessions", db_url=db_url, db_name="agno"
+    ),
     instructions=[
         "First, search hackernews for what the user is asking about.",
         "Then, ask the web searcher to search for each story to get more information.",
