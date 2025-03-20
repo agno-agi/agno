@@ -993,13 +993,11 @@ class Model(ABC):
         pass
 
     def _show_stream_tool_calls(self, function_calls_to_run: List[FunctionCall]) -> Iterator[ModelResponse]:
-        if len(function_calls_to_run) == 1:
-            yield ModelResponse(content=f" - Running: {function_calls_to_run[0].get_call_str()}\n\n")
-        else:
-            yield ModelResponse(content="\nRunning:")
-            for _f in function_calls_to_run:
-                yield ModelResponse(content=f"\n - {_f.get_call_str()}")
-            yield ModelResponse(content="\n\n")
+        """
+        No longer needed as we are now showing the tool calls in a different block.
+        """
+        # Return an empty iterator
+        return iter([])
 
     def _prepare_function_calls(
         self,

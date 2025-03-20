@@ -637,6 +637,11 @@ class Agent:
                             self.run_response.tools = tool_calls_list
                         else:
                             self.run_response.tools.extend(tool_calls_list)
+                            
+                        # Format tool calls whenever new ones are added during streaming
+                        model_response.tool_calls = self.run_response.tools
+                        model_response.format_tool_calls()
+                        self.run_response.formatted_tool_calls = model_response.formatted_tool_calls
 
                     # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                     if self.stream_intermediate_steps:
@@ -1145,6 +1150,11 @@ class Agent:
                             self.run_response.tools = tool_calls_list
                         else:
                             self.run_response.tools.extend(tool_calls_list)
+                            
+                        # Format tool calls whenever new ones are added during streaming
+                        model_response.tool_calls = self.run_response.tools
+                        model_response.format_tool_calls()
+                        self.run_response.formatted_tool_calls = model_response.formatted_tool_calls
 
                     # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                     if self.stream_intermediate_steps:
@@ -3763,11 +3773,11 @@ class Agent:
                         live_log.update(Group(*panels))
 
                     # Add tool calls panel if available
-                    if self.show_tool_calls and formatted_tool_calls:
+                    if self.show_tool_calls and self.run_response.formatted_tool_calls:
                         render = True
                         # Create bullet points for each tool call
                         tool_calls_content = Text()
-                        for tool_call in formatted_tool_calls:
+                        for tool_call in self.run_response.formatted_tool_calls:
                             tool_calls_content.append(f"• {tool_call}\n")
 
                         tool_calls_panel = self.create_panel(
@@ -4107,11 +4117,11 @@ class Agent:
                         live_log.update(Group(*panels))
 
                     # Add tool calls panel if available
-                    if self.show_tool_calls and formatted_tool_calls:
+                    if self.show_tool_calls and self.run_response.formatted_tool_calls:
                         render = True
                         # Create bullet points for each tool call
                         tool_calls_content = Text()
-                        for tool_call in formatted_tool_calls:
+                        for tool_call in self.run_response.formatted_tool_calls:
                             tool_calls_content.append(f"• {tool_call}\n")
 
                         tool_calls_panel = self.create_panel(
