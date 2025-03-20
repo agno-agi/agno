@@ -135,7 +135,7 @@ def test_json_response_mode():
     agent = Agent(
         model=AzureOpenAI(id="gpt-4o-mini"),
         response_model=MovieScript,
-        response_format="json",
+        use_json_mode=True,
         telemetry=False,
         monitoring=False,
     )

@@ -19,3 +19,6 @@ class DeepSeek(OpenAILike):
 
     api_key: Optional[str] = getenv("DEEPSEEK_API_KEY", None)
     base_url: str = "https://api.deepseek.com"
+
+    # Their support for structured outputs is currently broken
+    supports_native_structured_outputs: bool = False

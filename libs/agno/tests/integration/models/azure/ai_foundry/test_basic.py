@@ -135,7 +135,7 @@ def test_json_response_mode():
     agent = Agent(
         model=AzureAIFoundry(id="Phi-4"),
         response_model=MovieScript,
-        response_format="json",
+        use_json_mode=True,
         telemetry=False,
         monitoring=False,
     )
