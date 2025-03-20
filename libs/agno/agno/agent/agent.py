@@ -637,7 +637,7 @@ class Agent:
                             self.run_response.tools = tool_calls_list
                         else:
                             self.run_response.tools.extend(tool_calls_list)
-                            
+
                         # Format tool calls whenever new ones are added during streaming
                         model_response.tool_calls = self.run_response.tools
                         model_response.format_tool_calls()
@@ -1150,7 +1150,7 @@ class Agent:
                             self.run_response.tools = tool_calls_list
                         else:
                             self.run_response.tools.extend(tool_calls_list)
-                            
+
                         # Format tool calls whenever new ones are added during streaming
                         model_response.tool_calls = self.run_response.tools
                         model_response.format_tool_calls()
@@ -3665,7 +3665,6 @@ class Agent:
             _response_content: str = ""
             _response_thinking: str = ""
             reasoning_steps: List[ReasoningStep] = []
-            formatted_tool_calls: List[str] = []
 
             with Live(console=console) as live_log:
                 status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
@@ -4049,9 +4048,6 @@ class Agent:
                                 _response_thinking += resp.thinking
                         if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
                             reasoning_steps = resp.extra_data.reasoning_steps
-                        # Capture formatted tool calls
-                        if resp.formatted_tool_calls:
-                            formatted_tool_calls = resp.formatted_tool_calls
 
                     response_content_stream: Union[str, Markdown] = _response_content
                     # Escape special tags before markdown conversion
