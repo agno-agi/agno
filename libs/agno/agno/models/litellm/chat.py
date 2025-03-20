@@ -7,6 +7,11 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
 
+try:
+    import litellm
+except ImportError:
+    raise ImportError("`litellm` not installed. Please install it via `pip install litellm`")
+
 
 @dataclass
 class LiteLLM(Model):
@@ -33,7 +38,6 @@ class LiteLLM(Model):
     def __post_init__(self):
         """Initialize the model after the dataclass initialization."""
         super().__post_init__()
-        self.model_name = self.id
 
         # Set up API key from environment variable if not already set
         if not self.api_key:
@@ -50,8 +54,6 @@ class LiteLLM(Model):
         """
         if self.client is not None:
             return self.client
-
-        import litellm
 
         self.client = litellm
         return self.client
@@ -91,7 +93,7 @@ class LiteLLM(Model):
             Dict[str, Any]: The API kwargs for the model.
         """
         base_params: Dict[str, Any] = {
-            "model": self.model_name,
+            "model": self.id,
             "temperature": self.temperature,
             "top_p": self.top_p,
         }
