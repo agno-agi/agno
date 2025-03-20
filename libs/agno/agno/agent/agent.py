@@ -3986,8 +3986,11 @@ class Agent:
         tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
         **kwargs: Any,
     ) -> None:
+        import json
+        
         from rich.console import Group
         from rich.live import Live
+        from rich.json import JSON
         from rich.markdown import Markdown
         from rich.status import Status
         from rich.text import Text
@@ -4072,7 +4075,7 @@ class Agent:
                     if render:
                         live_log.update(Group(*panels))
 
-                    if len(reasoning_steps) > 0 and show_reasoning:
+                    if len(reasoning_steps) > 0 and (show_reasoning or show_full_reasoning):
                         render = True
                         # Create panels for reasoning steps
                         for i, step in enumerate(reasoning_steps, 1):
@@ -4253,10 +4256,37 @@ class Agent:
                     )
                     panels.append(tool_calls_panel)
                     live_log.update(Group(*panels))
+                
+                response_content_batch: Union[str, JSON, Markdown] = ""
+                if isinstance(run_response, RunResponse):
+                    if isinstance(run_response.content, str):
+                        if self.markdown:
+                            escaped_content = self.escape_markdown_tags(
+                                run_response.content, tags_to_include_in_markdown
+                            )
+                            response_content_batch = Markdown(escaped_content)
+                        else:
+                            response_content_batch = run_response.get_content_as_string(
+                                indent=4)
+                    elif self.response_model is not None and isinstance(run_response.content, BaseModel):
+                        try:
+                            response_content_batch = JSON(
+                                run_response.content.model_dump_json(exclude_none=True), indent=2
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to convert response to JSON: {e}")
+                    else:
+                        try:
+                            response_content_batch = JSON(
+                                json.dumps(run_response.content), indent=4)
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to convert response to JSON: {e}")
 
                 # Create panel for response
                 response_panel = self.create_panel(
-                    content=run_response.content,
+                    content=response_content_batch,
                     title=f"Response ({response_timer.elapsed:.1f}s)",
                     border_style="blue",
                 )
