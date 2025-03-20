@@ -2117,7 +2117,7 @@ class Agent:
                 and self.model
                 and (
                     self.model.supports_native_structured_outputs
-                    and (self.response_format == "json" or self.structured_outputs is False)
+                    and (self.use_json_mode or self.structured_outputs is False)
                 )
             ):
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
