@@ -4,7 +4,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     import requests
@@ -175,7 +175,7 @@ class ClickUpTools(Toolkit):
 
         # Get first list in space
         response = self._make_request("GET", f"space/{space['id']}/list")
-        logger.debug(f"Lists: {response}")
+        log_debug(f"Lists: {response}")
         lists_data = response.get("lists", [])
         if not lists_data:
             return json.dumps({"error": f"No lists found in space '{space_name}'"}, indent=2)

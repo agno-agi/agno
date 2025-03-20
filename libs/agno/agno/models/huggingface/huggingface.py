@@ -11,7 +11,7 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.log import log_error, log_warning
 
 try:
     from huggingface_hub import (
@@ -97,7 +97,7 @@ class HuggingFace(Model):
     def get_client_params(self) -> Dict[str, Any]:
         self.api_key = self.api_key or getenv("HF_TOKEN")
         if not self.api_key:
-            logger.error("HF_TOKEN not set. Please set the HF_TOKEN environment variable.")
+            log_error("HF_TOKEN not set. Please set the HF_TOKEN environment variable.")
 
         _client_params: Dict[str, Any] = {}
         if self.api_key is not None:
@@ -258,10 +258,10 @@ class HuggingFace(Model):
                 **self.request_kwargs,
             )
         except InferenceTimeoutError as e:
-            logger.error(f"Error invoking HuggingFace model: {e}")
+            log_error(f"Error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            logger.error(f"Unexpected error invoking HuggingFace model: {e}")
+            log_error(f"Unexpected error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletionOutput]:
@@ -282,10 +282,10 @@ class HuggingFace(Model):
                     **self.request_kwargs,
                 )
         except InferenceTimeoutError as e:
-            logger.error(f"Error invoking HuggingFace model: {e}")
+            log_error(f"Error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            logger.error(f"Unexpected error invoking HuggingFace model: {e}")
+            log_error(f"Unexpected error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionStreamOutput]:
@@ -307,10 +307,10 @@ class HuggingFace(Model):
                 **self.request_kwargs,
             )  # type: ignore
         except InferenceTimeoutError as e:
-            logger.error(f"Error invoking HuggingFace model: {e}")
+            log_error(f"Error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            logger.error(f"Unexpected error invoking HuggingFace model: {e}")
+            log_error(f"Unexpected error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
@@ -335,10 +335,10 @@ class HuggingFace(Model):
                 async for chunk in stream:
                     yield chunk
         except InferenceTimeoutError as e:
-            logger.error(f"Error invoking HuggingFace model: {e}")
+            log_error(f"Error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            logger.error(f"Unexpected error invoking HuggingFace model: {e}")
+            log_error(f"Unexpected error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
@@ -410,7 +410,7 @@ class HuggingFace(Model):
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
         except Exception as e:
-            logger.warning(f"Error retrieving structured outputs: {e}")
+            log_warning(f"Error retrieving structured outputs: {e}")
 
         if response.usage is not None:
             model_response.response_usage = response.usage

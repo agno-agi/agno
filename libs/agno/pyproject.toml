@@ -42,6 +42,7 @@ dependencies = [
 dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
 
 # Dependencies for Models
+azure = ["azure-ai-inference", "aiohttp"]
 anthropic = ["anthropic"]
 cohere = ["cohere"]
 google = ["google-genai"]
@@ -51,6 +52,8 @@ openai = ["openai"]
 ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
 lmstudio = ["lmstudio"]
+litellm = ["litellm"]
+
 # Dependencies for Tools
 exa = ["exa_py"]
 yfinance = ["yfinance"]
@@ -102,13 +105,15 @@ aws = ["agno-aws", "agno-docker"]
 # All models
 models = [
   "agno[anthropic]",
+  "agno[azure]",
   "agno[cohere]",
   "agno[google]",
   "agno[groq]",
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
-  "agno[ibm]"
+  "agno[ibm]",
+  "agno[litellm]"
 ]
 
 # All tools
@@ -128,7 +133,7 @@ tools = [
   "agno[webex]",
   "agno[mcp]",
   "agno[browserbase]",
-  "agno[yfinance]",
+#  "agno[yfinance]",  # Broken right now
 ]
 
 # All storage
@@ -190,7 +195,6 @@ include = ["LICENSE"]
 
 [tool.pytest.ini_options]
 log_cli = true
-testpaths = "tests"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
@@ -255,7 +259,9 @@ module = [
   "lancedb.*",
   "langchain_core.*",
   "langchain.*",
+  "litellm.*",
   "llama_index.*",
+  "litellm.*",
   "mem0.*",
   "mcp.*",
   "memory_profiler.*",
@@ -298,6 +304,7 @@ module = [
   "tavily.*",
   "textract.*",
   "timeout_decorator.*",
+  "tiktoken.*",
   "torch.*",
   "todoist_api_python.*",
   "tweepy.*",

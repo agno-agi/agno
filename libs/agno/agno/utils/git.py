@@ -3,7 +3,7 @@ from typing import Optional
 
 import git
 
-from agno.utils.log import logger
+from agno.utils.log import log_debug
 
 
 def get_remote_origin_for_dir(
@@ -42,11 +42,11 @@ class GitCloneProgress(git.RemoteProgress):
 
     def update(self, op_code, cur_count, max_count=None, message=""):
         if op_code == 5:
-            logger.debug("Starting copy")
+            log_debug("Starting copy")
         if op_code == 10:
-            logger.debug("Copy complete")
-        # logger.debug(f"op_code: {op_code}")
-        # logger.debug(f"cur_count: {cur_count}")
-        # logger.debug(f"max_count: {max_count}")
-        # logger.debug(f"message: {message}")
+            log_debug("Copy complete")
+        # log_debug(f"op_code: {op_code}")
+        # log_debug(f"cur_count: {cur_count}")
+        # log_debug(f"max_count: {max_count}")
+        # log_debug(f"message: {message}")
         # print(self._cur_line)

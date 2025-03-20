@@ -13,7 +13,7 @@ except ImportError:
 
 from agno.memory.db import MemoryDb
 from agno.memory.row import MemoryRow
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 
 class PgMemoryDb(MemoryDb):
@@ -70,9 +70,9 @@ class PgMemoryDb(MemoryDb):
             try:
                 with self.Session() as sess, sess.begin():
                     if self.schema is not None:
-                        logger.debug(f"Creating schema: {self.schema}")
+                        log_debug(f"Creating schema: {self.schema}")
                         sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
-                logger.debug(f"Creating table: {self.table_name}")
+                log_debug(f"Creating table: {self.table_name}")
                 self.table.create(self.db_engine, checkfirst=True)
             except Exception as e:
                 logger.error(f"Error creating table '{self.table.fullname}': {e}")
@@ -107,9 +107,9 @@ class PgMemoryDb(MemoryDb):
                     if row is not None:
                         memories.append(MemoryRow.model_validate(row))
         except Exception as e:
-            logger.debug(f"Exception reading from table: {e}")
-            logger.debug(f"Table does not exist: {self.table.name}")
-            logger.debug("Creating table for future transactions")
+            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Table does not exist: {self.table.name}")
+            log_debug("Creating table for future transactions")
             self.create()
         return memories
 
@@ -137,9 +137,9 @@ class PgMemoryDb(MemoryDb):
 
                 sess.execute(stmt)
         except Exception as e:
-            logger.debug(f"Exception upserting into table: {e}")
-            logger.debug(f"Table does not exist: {self.table.name}")
-            logger.debug("Creating table for future transactions")
+            log_debug(f"Exception upserting into table: {e}")
+            log_debug(f"Table does not exist: {self.table.name}")
+            log_debug("Creating table for future transactions")
             self.create()
             if create_and_retry:
                 return self.upsert_memory(memory, create_and_retry=False)
@@ -152,11 +152,11 @@ class PgMemoryDb(MemoryDb):
 
     def drop_table(self) -> None:
         if self.table_exists():
-            logger.debug(f"Deleting table: {self.table_name}")
+            log_debug(f"Deleting table: {self.table_name}")
             self.table.drop(self.db_engine)
 
     def table_exists(self) -> bool:
-        logger.debug(f"Checking if table exists: {self.table.name}")
+        log_debug(f"Checking if table exists: {self.table.name}")
         try:
             return inspect(self.db_engine).has_table(self.table.name, schema=self.schema)
         except Exception as e:

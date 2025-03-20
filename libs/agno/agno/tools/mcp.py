@@ -6,7 +6,7 @@ from agno.agent import Agent
 from agno.media import ImageArtifact
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from mcp import ClientSession, ListToolsResult
@@ -66,11 +66,11 @@ class MCPTools(Toolkit):
 
                     # Register the Function with the toolkit
                     self.functions[f.name] = f
-                    logger.debug(f"Function: {f.name} registered with {self.name}")
+                    log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception as e:
                     logger.error(f"Failed to register tool {tool.name}: {e}")
 
-            logger.debug(f"{self.name} initialized with {len(self.available_tools.tools)} tools")
+            log_debug(f"{self.name} initialized with {len(self.available_tools.tools)} tools")
         except Exception as e:
             logger.error(f"Failed to get MCP tools: {e}")
 
@@ -87,7 +87,7 @@ class MCPTools(Toolkit):
 
         async def call_tool(agent: Agent, tool_name: str, **kwargs) -> str:
             try:
-                logger.debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
+                log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
                 result: CallToolResult = await self.session.call_tool(tool_name, kwargs)
 
                 # Return an error if the tool call failed

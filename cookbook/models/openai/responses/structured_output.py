@@ -31,7 +31,7 @@ json_mode_agent = Agent(
     model=OpenAIResponses(id="gpt-4o"),
     description="You write movie scripts.",
     response_model=MovieScript,
-    structured_outputs=True,
+    use_json_mode=True,
 )
 
 # Agent that uses structured outputs
@@ -39,7 +39,6 @@ structured_output_agent = Agent(
     model=OpenAIResponses(id="gpt-4o-2024-08-06"),
     description="You write movie scripts.",
     response_model=MovieScript,
-    structured_outputs=True,
 )
 
 

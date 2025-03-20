@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug
 
 try:
     from youtube_transcript_api import YouTubeTranscriptApi
@@ -71,7 +71,7 @@ class YouTubeTools(Toolkit):
         if not url:
             return "No URL provided"
 
-        logger.debug(f"Getting video data for youtube video: {url}")
+        log_debug(f"Getting video data for youtube video: {url}")
 
         try:
             video_id = self.get_youtube_video_id(url)
@@ -115,7 +115,7 @@ class YouTubeTools(Toolkit):
         if not url:
             return "No URL provided"
 
-        logger.debug(f"Getting captions for youtube video: {url}")
+        log_debug(f"Getting captions for youtube video: {url}")
 
         try:
             video_id = self.get_youtube_video_id(url)
@@ -130,7 +130,7 @@ class YouTubeTools(Toolkit):
             if self.proxies:
                 kwargs["proxies"] = self.proxies
             captions = YouTubeTranscriptApi.get_transcript(video_id, **kwargs)
-            # logger.debug(f"Captions for video {video_id}: {captions}")
+            # log_debug(f"Captions for video {video_id}: {captions}")
             if captions:
                 return " ".join(line["text"] for line in captions)
             return "No captions found for video"
@@ -149,7 +149,7 @@ class YouTubeTools(Toolkit):
         if not url:
             return "No URL provided"
 
-        logger.debug(f"Getting timestamps for youtube video: {url}")
+        log_debug(f"Getting timestamps for youtube video: {url}")
 
         try:
             video_id = self.get_youtube_video_id(url)

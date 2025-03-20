@@ -51,7 +51,7 @@ async def create_github_agent(session):
 
 async def run_agent(message: str) -> None:
     """Run the GitHub agent with the given message."""
-    github_token = os.getenv("GITHUB_TOKEN")
+    github_token = os.getenv("GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN_AGNO")
     if not github_token:
         raise ValueError("GITHUB_TOKEN environment variable is required")
 

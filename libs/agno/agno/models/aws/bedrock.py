@@ -7,14 +7,14 @@ from agno.exceptions import AgnoError, ModelProviderError
 from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.log import log_error, log_warning
 
 try:
     from boto3 import client as AwsClient
     from boto3.session import Session
     from botocore.exceptions import ClientError
 except ImportError:
-    logger.error("`boto3` not installed. Please install it via `pip install boto3`.")
+    log_error("`boto3` not installed. Please install it via `pip install boto3`.")
     raise
 
 
@@ -177,7 +177,7 @@ class AwsBedrock(Model):
                             raise ValueError("Image content and format are required.")
 
                 if message.audio:
-                    logger.warning("Audio input is currently unsupported.")
+                    log_warning("Audio input is currently unsupported.")
 
                 if message.videos:
                     for video in message.videos:
@@ -238,10 +238,10 @@ class AwsBedrock(Model):
 
             return self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
         except ClientError as e:
-            logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Dict[str, Any]]:
@@ -271,10 +271,10 @@ class AwsBedrock(Model):
 
             return self.get_client().converse_stream(modelId=self.id, messages=formatted_messages, **body)["stream"]
         except ClientError as e:
-            logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Overwrite the default from the base model
@@ -380,7 +380,7 @@ class AwsBedrock(Model):
                     try:
                         tool_use["input"] = json.loads(tool_use["input"])
                     except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse tool input as JSON: {e}")
+                        log_error(f"Failed to parse tool input as JSON: {e}")
                         tool_use["input"] = {}
                     content.append({"toolUse": tool_use})
                     tool_ids.append(tool_use["toolUseId"])

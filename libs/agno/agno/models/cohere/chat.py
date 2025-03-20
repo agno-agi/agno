@@ -8,7 +8,7 @@ from agno.media import Image
 from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.log import log_error, log_warning
 
 try:
     from cohere import AsyncClientV2 as CohereAsyncClient
@@ -41,7 +41,7 @@ def _format_images_for_message(message: Message, images: Sequence[Image]) -> Lis
                     with open(image.filepath, "rb") as f:
                         image_content = f.read()
             else:
-                logger.warning(f"Unsupported image format: {image}")
+                log_warning(f"Unsupported image format: {image}")
                 continue
 
             if image_content is not None:
@@ -53,7 +53,7 @@ def _format_images_for_message(message: Message, images: Sequence[Image]) -> Lis
                 message_content_with_image.append(image_payload)
 
         except Exception as e:
-            logger.error(f"Failed to process image: {str(e)}")
+            log_error(f"Failed to process image: {str(e)}")
 
     # Update the message content with the images
     return message_content_with_image
@@ -125,7 +125,7 @@ class Cohere(Model):
 
         self.api_key = self.api_key or getenv("CO_API_KEY")
         if not self.api_key:
-            logger.error("CO_API_KEY not set. Please set the CO_API_KEY environment variable.")
+            log_error("CO_API_KEY not set. Please set the CO_API_KEY environment variable.")
 
         _client_params["api_key"] = self.api_key
 
@@ -141,7 +141,7 @@ class Cohere(Model):
         self.api_key = self.api_key or getenv("CO_API_KEY")
 
         if not self.api_key:
-            logger.error("CO_API_KEY not set. Please set the CO_API_KEY environment variable.")
+            log_error("CO_API_KEY not set. Please set the CO_API_KEY environment variable.")
 
         _client_params["api_key"] = self.api_key
 
@@ -207,7 +207,7 @@ class Cohere(Model):
         try:
             return self.get_client().chat(model=self.id, messages=_format_messages(messages), **request_kwargs)  # type: ignore
         except Exception as e:
-            logger.error(f"Unexpected error calling Cohere API: {str(e)}")
+            log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[StreamedChatResponseV2]:
@@ -229,7 +229,7 @@ class Cohere(Model):
                 **request_kwargs,
             )
         except Exception as e:
-            logger.error(f"Unexpected error calling Cohere API: {str(e)}")
+            log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> ChatResponse:
@@ -251,7 +251,7 @@ class Cohere(Model):
                 **request_kwargs,
             )
         except Exception as e:
-            logger.error(f"Unexpected error calling Cohere API: {str(e)}")
+            log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[StreamedChatResponseV2]:
@@ -274,7 +274,7 @@ class Cohere(Model):
             ):
                 yield response
         except Exception as e:
-            logger.error(f"Unexpected error calling Cohere API: {str(e)}")
+            log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def parse_provider_response(self, response: ChatResponse) -> ModelResponse:
