@@ -11,11 +11,7 @@ from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
 from dotenv import load_dotenv
 from prompt import extraction_prompt
-from utils import (
-    about_widget,
-    add_message,
-    clear_chat
-)
+from utils import about_widget, add_message, clear_chat
 
 load_dotenv()
 
@@ -98,21 +94,32 @@ def main():
     ####################################################################
     # Ensure Model is Initialized Properly
     ####################################################################
-    if "model_instance" not in st.session_state or st.session_state.get("model_choice", None) != model_choice:
+    if (
+        "model_instance" not in st.session_state
+        or st.session_state.get("model_choice", None) != model_choice
+    ):
         if model_choice == "OpenAI":
             if not OPENAI_API_KEY:
-                st.error("⚠️ OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
+                st.error(
+                    "⚠️ OpenAI API key not found. Please set the OPENAI_API_KEY environment variable."
+                )
             model = OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY)
         elif model_choice == "Gemini":
             if not GOOGLE_API_KEY:
-                st.error("⚠️ Google API key not found. Please set the GOOGLE_API_KEY environment variable.")
+                st.error(
+                    "⚠️ Google API key not found. Please set the GOOGLE_API_KEY environment variable."
+                )
             model = Gemini(id="gemini-2.0-flash", api_key=GOOGLE_API_KEY)
         elif model_choice == "Mistral":
             if not MISTRAL_API_KEY:
-                st.error("⚠️ Mistral API key not found. Please set the MISTRAL_API_KEY environment variable.")
+                st.error(
+                    "⚠️ Mistral API key not found. Please set the MISTRAL_API_KEY environment variable."
+                )
             model = MistralChat(id="pixtral-12b-2409", api_key=MISTRAL_API_KEY)
         else:
-            st.error("⚠️ Unsupported model provider. Please select OpenAI, Gemini, or Mistral.")
+            st.error(
+                "⚠️ Unsupported model provider. Please select OpenAI, Gemini, or Mistral."
+            )
             st.stop()  # Stop execution if model is not supported
 
         st.session_state["model_instance"] = model
@@ -128,7 +135,9 @@ def main():
         or st.session_state.get("model_choice", None) != model_choice
         or st.session_state.get("enable_search", None) != enable_search
     ):
-        logger.info(f"Updating Agents with model {model.id} and search enabled {enable_search}")
+        logger.info(
+            f"Updating Agents with model {model.id} and search enabled {enable_search}"
+        )
         image_agent = image_processing_agent(model=model)
         st.session_state["image_agent"] = image_agent
         chat_agent = chat_followup_agent(model=model, enable_search=enable_search)
@@ -170,7 +179,9 @@ def main():
             and st.session_state["last_extracted_image"] is not None
             and str(st.session_state["last_extracted_image"]) != str(image_path)
         ):
-            logger.info(f"New image detected. Resetting chat history and reinitializing agents.")
+            logger.info(
+                f"New image detected. Resetting chat history and reinitializing agents."
+            )
             clear_chat()
 
         with open(image_path, "wb") as f:
@@ -278,7 +289,7 @@ def main():
                                 f"""You are a chat agent who answers followup questions based on extracted image data.
     Understand the requirement properly and then answer the question correctly.
 
-    Extracted Image Data: {st.session_state['last_image_response']}
+    Extracted Image Data: {st.session_state["last_image_response"]}
 
     Use the above image insights to answer the following question.
     Answer the following question from the above given extracted image data: {user_question}""",
