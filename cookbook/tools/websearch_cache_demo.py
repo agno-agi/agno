@@ -1,20 +1,21 @@
 """🗽 Demonstration how to use the google search cache
-This example uses a cache to store the results of the google search.
+This example uses a cache to store the results of the google or Duck Duck Go search.
 based on 02_agent_with_tools.py
 This example follows the same logic.
-We use mistral as the model and the google as the search tool..
+We use mistral as the model and ddg or google as the search tool.
 During developement, you will probably hit the rate limit of the Duck Duck go or the google search API.
 This example uses a cache to store the results of the google search.
 You also need a postgres database on port 5532
 
 Run `pip install dotenv googlesearch agno sqlalchemy pycountry mistralai` to install dependencies.
 """
-
 from textwrap import dedent
-
 from agno.agent import Agent
 
-from libs.agno.agno.tools.googlesearch_cache import CachedGoogleSearchTools
+from libs.agno.agno.tools.cached_search import CachedSearchTools
+from libs.agno.agno.tools.duckduckgo import DuckDuckGoTools
+from libs.agno.agno.tools.googlesearch import GoogleSearchTools
+
 from libs.agno.agno.models import model_factory
 from agno.models.mistral import MistralChat
 
@@ -23,12 +24,27 @@ model_factory = model_factory.ModelFactory()
 
 mistral_api_key="HERE GOES YOUR MISTRAL API KEY"
 
-# Create a News Reporter Agent with a fun personality
+google_search = GoogleSearchTools(
+    fixed_max_results=5,
+    fixed_language="de"
+)
+
+ddg_search = DuckDuckGoTools(
+    fixed_max_results=5,
+)
+
+
+cached_search_tool = CachedSearchTools(
+    search_tool=google_search, # ddg works, too
+    db_url="postgresql://ai:ai@localhost:5532",
+    table_name="search_cache",
+    sleep=0.1,
+)
 
 agent = Agent(
-    model=MistralChat(
+    model=MistralChat( # yes, you can use this with other models, too
         id="open-mistral-nemo",
-        api_key=mistral_api_key
+        api_key=mistral_api_key,
     ),
     instructions=dedent("""\
         You are an enthusiastic news reporter with a flair for storytelling! 🗽
@@ -54,12 +70,7 @@ agent = Agent(
 
         Remember: Always verify facts through web searches and maintain that authentic NYC energy!\
     """),
-    tools=[CachedGoogleSearchTools(
-        db_url="postgresql://ai:ai@localhost:5532",
-        table_name="search_cache",
-        fixed_max_results=10,
-        fixed_language="en"
-    )],
+    tools=[cached_search_tool],
     show_tool_calls=True,
     markdown=True,
 )
