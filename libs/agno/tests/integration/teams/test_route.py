@@ -33,6 +33,8 @@ def test_route_team_basic():
     assert len(response.content) > 0
     assert len(response.member_responses) == 1
     assert response.member_responses[0].agent_id == finance_agent.agent_id
+    assert team.session_id is not None
+    assert team.session_id == finance_agent.team_session_id
 
 
 def test_route_team_structured_output():

@@ -116,12 +116,13 @@ class SqliteStorage(Storage):
             specific_columns = [
                 Column("agent_id", String, index=True),
                 Column("agent_data", sqlite.JSON),
-                Column("team_id", String, index=True, nullable=True),
+                Column("team_session_id", String, index=True, nullable=True),
             ]
         elif self.mode == "team":
             specific_columns = [
                 Column("team_id", String, index=True),
                 Column("team_data", sqlite.JSON),
+                Column("team_session_id", String, index=True, nullable=True),
             ]
         else:
             specific_columns = [
@@ -331,7 +332,7 @@ class SqliteStorage(Storage):
     def upgrade_schema(self) -> None:
         """
         Upgrade the schema of the storage table.
-        Currently handles adding the team_id column for agent mode.
+        Currently handles adding the team_session_id column for agent mode.
         """
         if not self.auto_upgrade_schema:
             log_debug("Auto schema upgrade disabled. Skipping upgrade.")
@@ -340,14 +341,14 @@ class SqliteStorage(Storage):
         try:
             if self.mode == "agent" and self.table_exists():
                 with self.SqlSession() as sess:
-                    # Check if team_id column exists using SQLite PRAGMA
+                    # Check if team_session_id column exists using SQLite PRAGMA
                     column_exists_query = text(f"PRAGMA table_info({self.table_name})")
                     columns = sess.execute(column_exists_query).fetchall()
-                    column_exists = any(col[1] == "team_id" for col in columns)
+                    column_exists = any(col[1] == "team_session_id" for col in columns)
 
                     if not column_exists:
-                        log_info(f"Adding 'team_id' column to {self.table_name}")
-                        alter_table_query = text(f"ALTER TABLE {self.table_name} ADD COLUMN team_id TEXT")
+                        log_info(f"Adding 'team_session_id' column to {self.table_name}")
+                        alter_table_query = text(f"ALTER TABLE {self.table_name} ADD COLUMN team_session_id TEXT")
                         sess.execute(alter_table_query)
                         sess.commit()
                         log_info("Schema upgrade completed successfully")
@@ -377,7 +378,7 @@ class SqliteStorage(Storage):
                     stmt = sqlite.insert(self.table).values(
                         session_id=session.session_id,
                         agent_id=session.agent_id,  # type: ignore
-                        team_id=session.team_id,  # type: ignore
+                        team_session_id=session.team_session_id,  # type: ignore
                         user_id=session.user_id,
                         memory=session.memory,
                         agent_data=session.agent_data,  # type: ignore
@@ -391,7 +392,7 @@ class SqliteStorage(Storage):
                         index_elements=["session_id"],
                         set_=dict(
                             agent_id=session.agent_id,  # type: ignore
-                            team_id=session.team_id,  # type: ignore
+                            team_session_id=session.team_session_id,  # type: ignore
                             user_id=session.user_id,
                             memory=session.memory,
                             agent_data=session.agent_data,  # type: ignore
@@ -406,6 +407,7 @@ class SqliteStorage(Storage):
                         session_id=session.session_id,
                         team_id=session.team_id,  # type: ignore
                         user_id=session.user_id,
+                        team_session_id=session.team_session_id,  # type: ignore
                         memory=session.memory,
                         team_data=session.team_data,  # type: ignore
                         session_data=session.session_data,
@@ -419,6 +421,7 @@ class SqliteStorage(Storage):
                         set_=dict(
                             team_id=session.team_id,  # type: ignore
                             user_id=session.user_id,
+                            team_session_id=session.team_session_id,  # type: ignore
                             memory=session.memory,
                             team_data=session.team_data,  # type: ignore
                             session_data=session.session_data,
