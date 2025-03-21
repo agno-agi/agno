@@ -232,8 +232,8 @@ class Agent:
     # Separator between responses from the team
     team_response_separator: str = "\n"
 
-    # Optional team session ID, set by the team leader agent
-    team_id: Optional[str] = None
+    # Optional team session ID, set by the team leader agent. Indicates this agent is part of a team.
+    team_session_id: Optional[str] = None
 
     # --- Debug & Monitoring ---
     # Enable debug logs
@@ -1757,12 +1757,13 @@ class Agent:
         """Get an AgentSession object, which can be saved to the database"""
         self.memory = cast(AgentMemory, self.memory)
         self.session_id = cast(str, self.session_id)
+        self.team_session_id = cast(str, self.team_session_id)
         self.agent_id = cast(str, self.agent_id)
         return AgentSession(
             session_id=self.session_id,
             agent_id=self.agent_id,
             user_id=self.user_id,
-            team_id=self.team_id,
+            team_session_id=self.team_session_id,
             memory=self.memory.to_dict() if self.memory is not None else None,
             agent_data=self.get_agent_data(),
             session_data=self.get_session_data(),
@@ -3585,7 +3586,7 @@ class Agent:
                     run_data=run_data,
                     session_id=agent_session.session_id,
                     agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
-                    team_id=self.team_id,
+                    team_session_id=agent_session.team_session_id,
                 ),
                 monitor=self.monitoring,
             )
@@ -3610,7 +3611,7 @@ class Agent:
                     run_data=run_data,
                     session_id=agent_session.session_id,
                     agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
-                    team_id=self.team_id,
+                    team_session_id=agent_session.team_session_id,
                 ),
                 monitor=self.monitoring,
             )

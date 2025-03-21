@@ -99,7 +99,7 @@ class SingleStoreStorage(Storage):
         if self.mode == "agent":
             specific_columns = [
                 Column("agent_id", mysql.TEXT),
-                Column("team_id", mysql.TEXT, nullable=True),
+                Column("team_session_id", mysql.TEXT, nullable=True),
                 Column("agent_data", mysql.JSON),
             ]
         elif self.mode == "team":
@@ -236,7 +236,7 @@ class SingleStoreStorage(Storage):
     def upgrade_schema(self) -> None:
         """
         Upgrade the schema to the latest version.
-        Currently handles adding the team_id column for agent mode.
+        Currently handles adding the team_session_id column for agent mode.
         """
         if not self.auto_upgrade_schema:
             log_debug("Auto schema upgrade disabled. Skipping upgrade.")
@@ -245,12 +245,12 @@ class SingleStoreStorage(Storage):
         try:
             if self.mode == "agent" and self.table_exists():
                 with self.SqlSession() as sess:
-                    # Check if team_id column exists
+                    # Check if team_session_id column exists
                     column_exists_query = text(
                         """
                         SELECT 1 FROM information_schema.columns
                         WHERE table_schema = :schema AND table_name = :table
-                        AND column_name = 'team_id'
+                        AND column_name = 'team_session_id'
                         """
                     )
                     column_exists = (
@@ -259,8 +259,8 @@ class SingleStoreStorage(Storage):
                     )
 
                     if not column_exists:
-                        log_info(f"Adding 'team_id' column to {self.schema}.{self.table_name}")
-                        alter_table_query = text(f"ALTER TABLE {self.schema}.{self.table_name} ADD COLUMN team_id TEXT")
+                        log_info(f"Adding 'team_session_id' column to {self.schema}.{self.table_name}")
+                        alter_table_query = text(f"ALTER TABLE {self.schema}.{self.table_name} ADD COLUMN team_session_id TEXT")
                         sess.execute(alter_table_query)
                         sess.commit()
                         log_info("Schema upgrade completed successfully")
@@ -282,12 +282,12 @@ class SingleStoreStorage(Storage):
                 upsert_sql = text(
                     f"""
                     INSERT INTO {self.schema}.{self.table_name}
-                    (session_id, agent_id, team_id, user_id, memory, agent_data, session_data, extra_data, created_at, updated_at)
+                    (session_id, agent_id, team_session_id, user_id, memory, agent_data, session_data, extra_data, created_at, updated_at)
                     VALUES
-                    (:session_id, :agent_id, :team_id, :user_id, :memory, :agent_data, :session_data, :extra_data, UNIX_TIMESTAMP(), NULL)
+                    (:session_id, :agent_id, :team_session_id, :user_id, :memory, :agent_data, :session_data, :extra_data, UNIX_TIMESTAMP(), NULL)
                     ON DUPLICATE KEY UPDATE
                         agent_id = VALUES(agent_id),
-                        team_id = VALUES(team_id),
+                        team_session_id = VALUES(team_session_id),
                         user_id = VALUES(user_id),
                         memory = VALUES(memory),
                         agent_data = VALUES(agent_data),
@@ -338,7 +338,7 @@ class SingleStoreStorage(Storage):
                         {
                             "session_id": session.session_id,
                             "agent_id": session.agent_id,  # type: ignore
-                            "team_id": session.team_id,  # type: ignore
+                            "team_session_id": session.team_session_id,  # type: ignore
                             "user_id": session.user_id,
                             "memory": json.dumps(session.memory, ensure_ascii=False)
                             if session.memory is not None
@@ -405,7 +405,7 @@ class SingleStoreStorage(Storage):
                         {
                             "session_id": session.session_id,
                             "agent_id": session.agent_id,  # type: ignore
-                            "team_id": session.team_id,  # type: ignore
+                            "team_session_id": session.team_session_id,  # type: ignore
                             "user_id": session.user_id,
                             "memory": json.dumps(session.memory, ensure_ascii=False)
                             if session.memory is not None
