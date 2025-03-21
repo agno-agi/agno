@@ -4507,6 +4507,7 @@ class Team:
             session_id=self.session_id,  # type: ignore
             team_id=self.team_id,
             user_id=self.user_id,
+            team_session_id=self.team_session_id,
             memory=self.memory.to_dict() if self.memory is not None else None,
             team_data=self._get_team_data(),
             session_data=self._get_session_data(),
