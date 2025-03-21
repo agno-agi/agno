@@ -3884,18 +3884,13 @@ class Team:
                 str: The result of the delegated task.
             """
             self.memory = cast(TeamMemory, self.memory)
-            # 1. Find the member agent
-            member_agent_tuple: Optional[Tuple[int, Union[Agent, "Team"]]] = next(
-                ((i, member_agent) for i, member_agent in enumerate(self.members) if member_agent.name == agent_name),
-                None,
-            )
-            if member_agent_tuple is not None:
-                member_agent_index, member_agent = member_agent_tuple
-            else:
-                member_agent_index = -1
-                member_agent = None
-            if member_agent is None:
-                raise ValueError(f"Agent with name {agent_name} not found in the team.")
+
+            # Find the member agent using the helper function
+            result = self._find_member_by_name(agent_name)
+            if result is None:
+                raise ValueError(f"Agent with name {agent_name} not found in the team or any subteams.")
+
+            member_agent_index, member_agent = result
             self._initialize_member(member_agent)
 
             # 2. Determine team context to send
@@ -3988,18 +3983,13 @@ class Team:
                 str: The result of the delegated task.
             """
             self.memory = cast(TeamMemory, self.memory)
-            # 1. Find the member agent
-            member_agent_tuple: Optional[Tuple[int, Union[Agent, "Team"]]] = next(
-                ((i, member_agent) for i, member_agent in enumerate(self.members) if member_agent.name == agent_name),
-                None,
-            )
-            if member_agent_tuple is not None:
-                member_agent_index, member_agent = member_agent_tuple
-            else:
-                member_agent_index = -1
-                member_agent = None
-            if member_agent is None:
-                raise ValueError(f"Agent with name {agent_name} not found in the team.")
+
+            # Find the member agent using the helper function
+            result = self._find_member_by_name(agent_name)
+            if result is None:
+                raise ValueError(f"Agent with name {agent_name} not found in the team or any subteams.")
+
+            member_agent_index, member_agent = result
             self._initialize_member(member_agent)
 
             # 2. Determine team context to send
