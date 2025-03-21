@@ -4084,7 +4084,7 @@ class Team:
 
         return transfer_func
 
-    def _find_member_by_name(self, agent_name: str) -> Optional[Tuple[int, Union[Agent, "Team"], Optional[str]]]:
+    def _find_member_by_name(self, agent_name: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
         """
         Recursively search through team members and subteams to find an agent by name.
 
@@ -4094,20 +4094,19 @@ class Team:
         Returns:
             Optional[Tuple[int, Union[Agent, "Team"], Optional[str]]]: Tuple containing:
                 - Index of the member in its immediate parent team
-                - The found agent/team
-                - The name of the top-level team member (if found in a subteam), or None if direct member
+                - The top-level leader agent
         """
         # First check direct members
         for i, member in enumerate(self.members):
             if member.name == agent_name:
-                return (i, member, None)
+                return (i, member)
 
             # If this member is a team, search its members recursively
             if isinstance(member, Team):
                 result = member._find_member_by_name(agent_name)
                 if result is not None:
                     # Found in subteam, return with the top-level team member's name
-                    return (i, result[1], member.name)
+                    return (i, member)
 
         return None
 
@@ -4147,7 +4146,7 @@ class Team:
             if result is None:
                 raise ValueError(f"Agent with name {agent_name} not found in the team or any subteams.")
 
-            member_agent_index, member_agent, top_level_member_name = result
+            member_agent_index, member_agent = result
             self._initialize_member(member_agent)
 
             # If the member will produce structured output, we need to parse the response
@@ -4159,8 +4158,6 @@ class Team:
 
             # If found in subteam, include the path in the task description
             member_agent_task = message.get_content_string()
-            if top_level_member_name:
-                member_agent_task += f"\n\n[Via team member: {top_level_member_name}]"
 
             if expected_output:
                 member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
@@ -4231,7 +4228,7 @@ class Team:
             if result is None:
                 raise ValueError(f"Agent with name {agent_name} not found in the team or any subteams.")
 
-            member_agent_index, member_agent, top_level_member_name = result
+            member_agent_index, member_agent = result
             self._initialize_member(member_agent)
 
             # If the member will produce structured output, we need to parse the response
@@ -4243,8 +4240,6 @@ class Team:
 
             # If found in subteam, include the path in the task description
             member_agent_task = message.get_content_string()
-            if top_level_member_name:
-                member_agent_task += f"\n\n[Via team member: {top_level_member_name}]"
 
             if expected_output:
                 member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
