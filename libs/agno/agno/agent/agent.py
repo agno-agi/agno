@@ -648,8 +648,6 @@ class Agent:
                     # Add tool calls to the run_response
                     tool_calls_list = model_response_chunk.tool_calls
                     if tool_calls_list is not None:
-                        self._add_tool_calls_to_model_response_stream(model_response, tool_calls_list)
-
                         # Add tool calls to the agent.run_response
                         if self.run_response.tools is None:
                             self.run_response.tools = tool_calls_list
@@ -1171,8 +1169,6 @@ class Agent:
                     # Add tool calls to the run_response
                     tool_calls_list = model_response_chunk.tool_calls
                     if tool_calls_list is not None:
-                        self._add_tool_calls_to_model_response_stream(model_response, tool_calls_list)
-
                         # Add tool calls to the agent.run_response
                         if self.run_response.tools is None:
                             self.run_response.tools = tool_calls_list
