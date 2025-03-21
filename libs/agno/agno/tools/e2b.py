@@ -2,7 +2,8 @@ import base64
 import json
 import tempfile
 import time
-from os import fdopen, getenv, path
+from os import fdopen, getenv
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 from uuid import uuid4
 
@@ -159,7 +160,7 @@ class E2BTools(Toolkit):
         try:
             # Determine the sandbox path if not provided
             if not sandbox_path:
-                sandbox_path = path.basename(file_path)
+                sandbox_path = Path(file_path).name
 
             # Upload the file
             with open(file_path, "rb") as f:
@@ -327,7 +328,7 @@ class E2BTools(Toolkit):
         try:
             # Determine local path if not provided
             if not local_path:
-                local_path = path.basename(sandbox_path)
+                local_path = Path(sandbox_path).name
 
             # Download the file
             content = self.sandbox.files.read(sandbox_path)
@@ -600,10 +601,10 @@ class E2BTools(Toolkit):
         """
         try:
             # Start the server in the background
-            # process = self.sandbox.commands.run(command, background=True)
+            self.sandbox.commands.run(command, background=True)
 
             # # Wait a moment for the server to start
-            # time.sleep(2)
+            time.sleep(2)
 
             # Get the public URL
             host = self.sandbox.get_host(port)
