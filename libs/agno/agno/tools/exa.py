@@ -36,7 +36,7 @@ class ExaTools(Toolkit):
         exclude_domains (Optional[List[str]]): Exclude results from these domains.
         show_results (bool): Log search results for debugging. Default is False.
         model (Optional[str]): The search model to use. Options are 'exa' or 'exa-pro'.
-        enable_cache (bool): Enable caching of search results. Default is False.
+        cache_results (bool): Enable caching of search results. Default is False.
         cache_ttl (int): Time-to-live for cached results in seconds. Default is 3600.
         cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
     """
@@ -65,7 +65,7 @@ class ExaTools(Toolkit):
         exclude_domains: Optional[List[str]] = None,
         show_results: bool = False,
         model: Optional[str] = None,
-        enable_cache: bool = False,
+        cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
     ):
@@ -104,7 +104,7 @@ class ExaTools(Toolkit):
         if answer:
             self.register(self.exa_answer)
 
-        self.enable_cache = enable_cache
+        self.cache_results = cache_results
         self.cache_ttl = cache_ttl
         self.cache_dir = cache_dir
 

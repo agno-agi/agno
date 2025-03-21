@@ -27,7 +27,7 @@ class GoogleSearchTools(Toolkit):
         headers (Optional[Any]): Custom headers for the request.
         proxy (Optional[str]): Proxy settings for the request.
         timeout (Optional[int]): Timeout for the request, default is 10 seconds.
-        enable_cache (bool): Enable caching of search results.
+        cache_results (bool): Enable caching of search results.
         cache_ttl (int): Time-to-live for cached results in seconds.
         cache_dir (Optional[str]): Directory to store cache files.
     """
@@ -39,7 +39,7 @@ class GoogleSearchTools(Toolkit):
         headers: Optional[Any] = None,
         proxy: Optional[str] = None,
         timeout: Optional[int] = 10,
-        enable_cache: bool = False,
+        cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
     ):
@@ -53,7 +53,7 @@ class GoogleSearchTools(Toolkit):
 
         self.register(self.google_search)
 
-        self.enable_cache = enable_cache
+        self.cache_results = cache_results
         self.cache_ttl = cache_ttl
         self.cache_dir = cache_dir
 

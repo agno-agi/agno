@@ -22,10 +22,11 @@ class FirecrawlTools(Toolkit):
         scrape (bool): Whether to scrape the website.
         crawl (bool): Whether to crawl the website.
         api_url (Optional[str]): The API URL to use for the Firecrawl app.
-        enable_cache (bool): Whether to enable caching of search results.
+        cache_results (bool): Whether to enable caching of search results.
         cache_ttl (int): Time-to-live for cached results in seconds.
         cache_dir (Optional[str]): Directory to store cache files.
     """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -34,7 +35,7 @@ class FirecrawlTools(Toolkit):
         scrape: bool = True,
         crawl: bool = False,
         api_url: Optional[str] = "https://api.firecrawl.dev",
-        enable_cache: bool = False,
+        cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
     ):
@@ -59,7 +60,7 @@ class FirecrawlTools(Toolkit):
         if crawl:
             self.register(self.crawl_website)
 
-        self.enable_cache = enable_cache
+        self.cache_results = cache_results
         self.cache_ttl = cache_ttl
         self.cache_dir = cache_dir
 

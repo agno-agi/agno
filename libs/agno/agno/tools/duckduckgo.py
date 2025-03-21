@@ -23,7 +23,7 @@ class DuckDuckGoTools(Toolkit):
         proxy (Optional[str]): Proxy to be used in the search request.
         proxies (Optional[Any]): A list of proxies to be used in the search request.
         timeout (Optional[int]): The maximum number of seconds to wait for a response.
-        enable_cache (bool): Enable in-memory caching of search results.
+        cache_results (bool): Enable in-memory caching of search results.
         cache_ttl (int): Time-to-live for cached results in seconds.
         cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
 
@@ -40,7 +40,7 @@ class DuckDuckGoTools(Toolkit):
         proxies: Optional[Any] = None,
         timeout: Optional[int] = 10,
         verify_ssl: bool = True,
-        enable_cache: bool = False,
+        cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
     ):
@@ -53,7 +53,7 @@ class DuckDuckGoTools(Toolkit):
         self.fixed_max_results: Optional[int] = fixed_max_results
         self.modifier: Optional[str] = modifier
         self.verify_ssl: bool = verify_ssl
-        self.enable_cache: bool = enable_cache
+        self.cache_results: bool = cache_results
         self.cache_ttl: int = cache_ttl
         self.cache_dir: Optional[str] = cache_dir
 

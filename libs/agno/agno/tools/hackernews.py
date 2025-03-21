@@ -14,15 +14,16 @@ class HackerNewsTools(Toolkit):
     Args:
         get_top_stories (bool): Whether to get top stories from Hacker News.
         get_user_details (bool): Whether to get user details from Hacker News.
-        enable_cache (bool): Whether to enable caching of search results.
+        cache_results (bool): Whether to enable caching of search results.
         cache_ttl (int): Time-to-live for cached results in seconds.
         cache_dir (Optional[str]): Directory to store cache files.
     """
+
     def __init__(
         self,
         get_top_stories: bool = True,
         get_user_details: bool = True,
-        enable_cache: bool = False,
+        cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
     ):
@@ -34,7 +35,7 @@ class HackerNewsTools(Toolkit):
         if get_user_details:
             self.register(self.get_user_details)
 
-        self.enable_cache = enable_cache
+        self.cache_results = cache_results
         self.cache_ttl = cache_ttl
         self.cache_dir = cache_dir
 

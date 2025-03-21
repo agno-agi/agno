@@ -1,11 +1,11 @@
 import json
-from typing import Any, Callable, Dict, Optional, Tuple, TypeVar
+from typing import Any, Callable, Dict, Optional, TypeVar
 
 from agno.tools.function import Function, FunctionCall
 from agno.utils.log import log_debug, log_error
 
+T = TypeVar("T")
 
-T = TypeVar('T')
 
 def get_function_call(
     name: str,
@@ -74,7 +74,6 @@ def get_function_call(
     return function_call
 
 
-
 def cache_result(cache_dir: Optional[str] = None, cache_ttl: int = 3600):
     """
     Decorator factory that creates a file-based caching decorator for function results.
@@ -88,11 +87,10 @@ def cache_result(cache_dir: Optional[str] = None, cache_ttl: int = 3600):
     """
     import functools
     import hashlib
-    import time
-    import os
     import json
+    import os
     import tempfile
-    from pathlib import Path
+    import time
 
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @functools.wraps(func)
@@ -100,12 +98,14 @@ def cache_result(cache_dir: Optional[str] = None, cache_ttl: int = 3600):
             # First argument might be 'self' but we don't need to handle it specially
             instance = args[0] if args else None
 
-            # Skip caching if enable_cache is False (only for class methods)
-            if hasattr(instance, 'enable_cache') and not instance.enable_cache:
+            # Skip caching if cache_results is False (only for class methods)
+            if hasattr(instance, "cache_results") and not instance.cache_results:
                 return func(*args, **kwargs)
 
             # Get cache directory
-            instance_cache_dir = getattr(instance, 'cache_dir', cache_dir) if hasattr(instance, 'cache_dir') else cache_dir
+            instance_cache_dir = (
+                getattr(instance, "cache_dir", cache_dir) if hasattr(instance, "cache_dir") else cache_dir
+            )
             base_cache_dir = instance_cache_dir or os.path.join(tempfile.gettempdir(), "agno_cache")
 
             # Create cache directory if it doesn't exist
@@ -127,14 +127,16 @@ def cache_result(cache_dir: Optional[str] = None, cache_ttl: int = 3600):
             # Check for cached result
             if os.path.exists(cache_file):
                 try:
-                    with open(cache_file, 'r') as f:
+                    with open(cache_file, "r") as f:
                         cache_data = json.load(f)
 
-                    timestamp = cache_data.get('timestamp', 0)
-                    result = cache_data.get('result')
+                    timestamp = cache_data.get("timestamp", 0)
+                    result = cache_data.get("result")
 
                     # Use instance ttl if available, otherwise use decorator ttl
-                    effective_ttl = getattr(instance, 'cache_ttl', cache_ttl) if hasattr(instance, 'cache_ttl') else cache_ttl
+                    effective_ttl = (
+                        getattr(instance, "cache_ttl", cache_ttl) if hasattr(instance, "cache_ttl") else cache_ttl
+                    )
 
                     if time.time() - timestamp <= effective_ttl:
                         log_debug(f"Cache hit for: {func.__name__}")
@@ -150,11 +152,8 @@ def cache_result(cache_dir: Optional[str] = None, cache_ttl: int = 3600):
             result = func(*args, **kwargs)
 
             try:
-                with open(cache_file, 'w') as f:
-                    json.dump({
-                        'timestamp': time.time(),
-                        'result': result
-                    }, f)
+                with open(cache_file, "w") as f:
+                    json.dump({"timestamp": time.time(), "result": result}, f)
             except Exception as e:
                 log_error(f"Error writing cache: {e}")
                 # Continue even if cache write fails

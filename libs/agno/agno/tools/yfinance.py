@@ -1,5 +1,6 @@
 import json
 from typing import Optional
+
 from agno.tools import Toolkit
 from agno.utils.functions import cache_result
 from agno.utils.log import log_debug
@@ -25,6 +26,7 @@ class YFinanceTools(Toolkit):
         historical_prices (bool): Whether to get historical prices.
         enable_all (bool): Whether to enable all tools.
     """
+
     def __init__(
         self,
         stock_price: bool = True,
@@ -37,7 +39,7 @@ class YFinanceTools(Toolkit):
         technical_indicators: bool = False,
         historical_prices: bool = False,
         enable_all: bool = False,
-        enable_cache: bool = False,
+        cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
     ):
@@ -61,8 +63,8 @@ class YFinanceTools(Toolkit):
             self.register(self.get_technical_indicators)
         if historical_prices or enable_all:
             self.register(self.get_historical_stock_prices)
-        
-        self.enable_cache = enable_cache
+
+        self.cache_results = cache_results
         self.cache_ttl = cache_ttl
         self.cache_dir = cache_dir
 

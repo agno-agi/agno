@@ -103,9 +103,7 @@ def session_selector_widget(agent: Agent) -> None:
                 model = Gemini(id="gemini-2.0-flash", api_key=api_key)
 
             # Reload the agent with the selected session
-            st.session_state["image_agent"] = image_processing_agent(
-                model=model
-            )
+            st.session_state["image_agent"] = image_processing_agent(model=model)
             st.session_state["image_agent"].load_session(selected_session_id)
             st.session_state["image_agent_session_id"] = selected_session_id
             st.rerun()

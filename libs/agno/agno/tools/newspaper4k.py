@@ -2,8 +2,9 @@ import json
 from typing import Any, Dict, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
 from agno.utils.functions import cache_result
+from agno.utils.log import log_debug, logger
+
 try:
     import newspaper
 except ImportError:
@@ -17,16 +18,17 @@ class Newspaper4kTools(Toolkit):
         read_article (bool): Whether to read an article from a URL.
         include_summary (bool): Whether to include the summary of an article.
         article_length (Optional[int]): The length of the article to read.
-        enable_cache (bool): Whether to enable caching of search results.
+        cache_results (bool): Whether to enable caching of search results.
         cache_ttl (int): Time-to-live for cached results in seconds.
         cache_dir (Optional[str]): Directory to store cache files.
     """
+
     def __init__(
         self,
         read_article: bool = True,
         include_summary: bool = False,
         article_length: Optional[int] = None,
-        enable_cache: bool = False,
+        cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
     ):
@@ -37,7 +39,7 @@ class Newspaper4kTools(Toolkit):
         if read_article:
             self.register(self.read_article)
 
-        self.enable_cache = enable_cache
+        self.cache_results = cache_results
         self.cache_ttl = cache_ttl
         self.cache_dir = cache_dir
 
