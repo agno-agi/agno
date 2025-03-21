@@ -237,8 +237,7 @@ class Qdrant(VectorDb):
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
-            log_debug(
-                f"Inserted document asynchronously: {document.name} ({document.meta_data})")
+            log_debug(f"Inserted document asynchronously: {document.name} ({document.meta_data})")
             return models.PointStruct(
                 id=doc_id,
                 vector=document.embedding,
@@ -251,6 +250,7 @@ class Qdrant(VectorDb):
             )
 
         import asyncio
+
         # Process all documents in parallel
         points = await asyncio.gather(*[process_document(doc) for doc in documents])
 
