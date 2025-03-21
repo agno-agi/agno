@@ -570,7 +570,6 @@ class E2BTools(Toolkit):
             return json.dumps({"status": "error", "message": f"Error watching directory: {str(e)}"})
 
     # Internet Access Functions
-
     def get_public_url(self, port: int) -> str:
         """
         Get a public URL for a service running in the sandbox on the specified port.
