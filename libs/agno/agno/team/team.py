@@ -3024,6 +3024,7 @@ class Team:
         if from_run_response:
             content = from_run_response.content
             content_type = from_run_response.content_type
+            tools = from_run_response.tools
             audio = from_run_response.audio
             images = from_run_response.images
             videos = from_run_response.videos
@@ -4342,6 +4343,23 @@ class Team:
             self.team_session = cast(TeamSession, self.storage.upsert(session=self._get_team_session()))
         return self.team_session
 
+    def rename_session(self, session_name: str) -> None:
+        """Rename the current session and save to storage"""
+
+        # -*- Read from storage
+        self.read_from_storage()
+        # -*- Rename session
+        self.session_name = session_name
+        # -*- Save to storage
+        self.write_to_storage()
+        # -*- Log Agent session
+        self._log_team_session()
+
+    def delete_session(self, session_id: str) -> None:
+        """Delete the current session and save to storage"""
+        if self.storage is not None:
+            self.storage.delete_session(session_id=session_id)
+
     def load_team_session(self, session: TeamSession):
         """Load the existing TeamSession from an TeamSession (from the database)"""
         from agno.utils.merge_dict import merge_dictionaries
@@ -4565,3 +4583,87 @@ class Team:
             )
         except Exception as e:
             log_debug(f"Could not create team event: {e}")
+
+    def _log_team_session(self):
+        if not (self.telemetry or self.monitoring):
+            return
+
+        from agno.api.team import TeamSessionCreate, upsert_team_session
+
+        try:
+            team_session: TeamSession = self.team_session or self._get_team_session()
+            upsert_team_session(
+                session=TeamSessionCreate(
+                    session_id=team_session.session_id,
+                    team_data=team_session.to_dict() if self.monitoring else team_session.telemetry_data(),
+                ),
+                monitor=self.monitoring,
+            )
+        except Exception as e:
+            log_debug(f"Could not create team monitor: {e}")
+
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Team":
+        """Create a deep copy of the Team with optional updates.
+
+        Args:
+            update: Optional dictionary of attributes to update in the copy
+
+        Returns:
+            A new Team instance with copied attributes
+        """
+        # Get all instance attributes
+        attributes = self.__dict__.copy()
+
+        excluded_fields = ["team_session", "session_name", "_functions_for_model", "memory"]
+        # Deep copy each field
+        copied_attributes = {}
+        for field_name, field_value in attributes.items():
+            print("COPYING FIELD", field_name)
+            if field_name in excluded_fields:
+                continue
+            copied_attributes[field_name] = self._deep_copy_field(field_name, field_value)
+
+        # Create new instance
+        team_copy = Team.__new__(Team)
+        team_copy.__dict__ = copied_attributes
+
+        # Apply any updates
+        if update:
+            for key, value in update.items():
+                setattr(team_copy, key, value)
+
+        return team_copy
+
+    def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
+        """Deep copy a single field value.
+
+        Args:
+            field_name: Name of the field being copied
+            field_value: Value to copy
+
+        Returns:
+            Deep copied value
+        """
+        from copy import deepcopy
+
+        # Handle special cases
+        if field_name == "members":
+            # Deep copy each member
+            if field_value is not None:
+                return [member.deep_copy() for member in field_value]
+            return None
+
+        if field_name == "model":
+            # Models should be copied directly without deep copy
+            return field_value
+
+        if field_name == "memory":
+            # Memory objects should be copied directly
+            return field_value
+
+        if field_name == "storage":
+            # Storage objects should be copied directly
+            return field_value
+
+        # Default to standard deep copy for other fields
+        return deepcopy(field_value)

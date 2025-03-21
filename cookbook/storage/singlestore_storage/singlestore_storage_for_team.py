@@ -9,6 +9,7 @@ from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.team import TeamRunResponse  # type: ignore
 from agno.storage.singlestore import SingleStoreStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
