@@ -1,6 +1,10 @@
 import json
 from os import getenv
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union, BinaryIO
+import os
+import tempfile
+import time
+import datetime
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -16,6 +20,7 @@ class CartesiaTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         text_to_speech_enabled: bool = True,
+        text_to_speech_streaming_enabled: bool = True,
         list_voices_enabled: bool = True,
         voice_get_enabled: bool = True,
         voice_clone_enabled: bool = False,
@@ -25,6 +30,8 @@ class CartesiaTools(Toolkit):
         voice_mix_enabled: bool = False,
         voice_create_enabled: bool = False,
         voice_changer_enabled: bool = False,
+        save_audio_enabled: bool = True,
+        batch_processing_enabled: bool = True,
         infill_enabled: bool = False,
         api_status_enabled: bool = False,
         datasets_enabled: bool = False,
@@ -37,6 +44,11 @@ class CartesiaTools(Toolkit):
             raise ValueError("`api_key` is required")
 
         self.client = Cartesia(api_key=self.api_key)
+
+        # Set default output directory for audio files
+        self.output_dir = os.path.join(os.getcwd(), "cartesia_output")
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
 
         if voice_clone_enabled:
             self.register(self.clone_voice)
@@ -56,6 +68,8 @@ class CartesiaTools(Toolkit):
             self.register(self.change_voice)
         if text_to_speech_enabled:
             self.register(self.text_to_speech)
+        if text_to_speech_streaming_enabled:
+            self.register(self.text_to_speech_stream)
         if infill_enabled:
             self.register(self.infill_audio)
         if api_status_enabled:
@@ -66,6 +80,10 @@ class CartesiaTools(Toolkit):
             self.register(self.list_dataset_files)
         if list_voices_enabled:
             self.register(self.list_voices)
+        if save_audio_enabled:
+            self.register(self.save_audio_to_file)
+        if batch_processing_enabled:
+            self.register(self.batch_text_to_speech)
 
     def clone_voice(
         self,
@@ -313,8 +331,8 @@ class CartesiaTools(Toolkit):
             voice_id (str): The ID of the target voice.
             output_format_container (str): The format container for the output audio.
             output_format_sample_rate (int): The sample rate for the output audio.
-            output_format_encoding (Optional[str], optional): The encoding for raw/wav containers. Defaults to None.
-            output_format_bit_rate (Optional[int], optional): The bit rate for mp3 containers. Defaults to None.
+            output_format_encoding (Optional[str], optional): The encoding for raw/wav containers.
+            output_format_bit_rate (Optional[int], optional): The bit rate for mp3 containers.
 
         Returns:
             str: JSON string containing the result information.
@@ -351,7 +369,8 @@ class CartesiaTools(Toolkit):
         output_format_sample_rate: int = 44100,
         output_format_encoding: Optional[str] = None,
         output_format_bit_rate: Optional[int] = None,
-        duration: Optional[float] = None
+        save_to_file: bool = True,
+        output_filename: Optional[str] = None
     ) -> str:
         """Generate speech from text.
 
@@ -359,43 +378,89 @@ class CartesiaTools(Toolkit):
             model_id (str): The ID of the model to use.
             transcript (str): The text to convert to speech.
             voice_id (str): The ID of the voice to use.
-            language (str): The language code.
-            output_format_container (str): The format container for the output audio.
+            language (str): The language code (e.g., 'en', 'fr').
+            output_format_container (str): The format container for the output audio. One of ["mp3", "wav", "raw"]
             output_format_sample_rate (int): The sample rate for the output audio.
-            output_format_encoding (Optional[str], optional): The encoding for raw/wav containers. Defaults to None.
-            output_format_bit_rate (Optional[int], optional): The bit rate for mp3 containers. Defaults to None.
-            duration (Optional[float], optional): The maximum duration in seconds. Defaults to None.
+            output_format_encoding (Optional[str], optional): The encoding for raw/wav containers.
+            output_format_bit_rate (Optional[int], optional): The bit rate for mp3 containers.
+            save_to_file (bool, optional): Whether to save the output to a file. Defaults to True.
+            output_filename (Optional[str], optional): The filename to save to. Defaults to auto-generated.
 
         Returns:
-            str: JSON string containing the result information.
+            str: JSON string containing the result information and file path if saved.
         """
-        logger.info(f"Generating speech for text: {transcript[:50]}...")
+        logger.info(f"Generating speech for: {transcript[:50]}...")
         try:
-            voice = {"mode": "id", "id": voice_id}
-            output_format = {
-                "container": output_format_container,
-                "sample_rate": output_format_sample_rate
-            }
+            # Normalize language code - API expects "en" not "en-US"
+            normalized_language = language.split('-')[0] if '-' in language else language
+            logger.info(f"Normalized language from {language} to {normalized_language}")
 
-            if output_format_encoding:
-                output_format["encoding"] = output_format_encoding
+            # Create proper output_format based on container type
+            if output_format_container == "mp3":
+                output_format = {
+                    "container": "mp3",
+                    "sample_rate": output_format_sample_rate,
+                    "bit_rate": output_format_bit_rate or 128000,  # Default to 128kbps if not provided
+                    "encoding": output_format_encoding or "mp3"    # API requires encoding field even for mp3
+                }
+            elif output_format_container in ["wav", "raw"]:
+                encoding = output_format_encoding or "pcm_s16le"  # Default encoding if not provided
+                output_format = {
+                    "container": output_format_container,
+                    "sample_rate": output_format_sample_rate,
+                    "encoding": encoding
+                }
+            else:
+                # Fallback for any other container
+                output_format = {
+                    "container": output_format_container,
+                    "sample_rate": output_format_sample_rate,
+                    "encoding": output_format_encoding or "pcm_s16le"  # Always provide an encoding
+                }
+                # Add bit_rate for formats that need it
+                if output_format_bit_rate:
+                    output_format["bit_rate"] = output_format_bit_rate
 
-            if output_format_bit_rate:
-                output_format["bit_rate"] = output_format_bit_rate
-
+            # Create the parameters object exactly as required by the SDK
             params = {
                 "model_id": model_id,
                 "transcript": transcript,
-                "voice": voice,
-                "language": language,
+                "voice_id": voice_id,
+                "language": normalized_language,
                 "output_format": output_format
             }
 
-            if duration:
-                params["duration"] = duration
+            # Log the API call for debugging
+            logger.info(f"Calling TTS API with params: {json.dumps(params)}")
 
-            result = self.client.tts.bytes(**params)
-            return json.dumps({"success": True, "result": str(result)[:100] + "..."}, indent=4)
+            # Make the API call
+            audio_data = self.client.tts.bytes(**params)
+
+            total_bytes = len(audio_data)
+            logger.info(f"TTS API returned {total_bytes} bytes")
+
+            # Save to file if requested
+            if save_to_file:
+                if not output_filename:
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+                    output_filename = f"tts_{timestamp}.{output_format_container}"
+
+                file_path = os.path.join(self.output_dir, output_filename)
+                with open(file_path, "wb") as f:
+                    f.write(audio_data)
+
+                return json.dumps({
+                    "success": True,
+                    "total_bytes": total_bytes,
+                    "saved_to": file_path
+                }, indent=4)
+            else:
+                return json.dumps({
+                    "success": True,
+                    "total_bytes": total_bytes,
+                    "audio_data": "Binary data (not displayed)"
+                }, indent=4)
+
         except Exception as e:
             logger.error(f"Error generating speech with Cartesia: {e}")
             return json.dumps({"error": str(e)})
@@ -531,4 +596,284 @@ class CartesiaTools(Toolkit):
             return json.dumps(result, indent=4)
         except Exception as e:
             logger.error(f"Error listing files in Cartesia dataset: {e}")
+            return json.dumps({"error": str(e)})
+
+    def save_audio_to_file(
+        self,
+        audio_data: bytes,
+        filename: str,
+        directory: Optional[str] = None
+    ) -> str:
+        """Save audio data to a file.
+
+        Args:
+            audio_data (bytes): The audio data bytes to save.
+            filename (str): The filename to save to (without path).
+            directory (Optional[str], optional): The directory to save to. Defaults to self.output_dir.
+
+        Returns:
+            str: JSON string containing the result information.
+        """
+        logger.info(f"Saving audio data to file: {filename}")
+        try:
+            save_dir = directory or self.output_dir
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+
+            file_path = os.path.join(save_dir, filename)
+
+            with open(file_path, "wb") as f:
+                f.write(audio_data)
+
+            return json.dumps({
+                "success": True,
+                "file_path": file_path,
+                "size_bytes": len(audio_data)
+            }, indent=4)
+        except Exception as e:
+            logger.error(f"Error saving audio data: {e}")
+            return json.dumps({"error": str(e)})
+
+    def text_to_speech_stream(
+        self,
+        model_id: str,
+        transcript: str,
+        voice_id: str,
+        language: str,
+        output_format_container: str = "mp3",
+        output_format_sample_rate: int = 44100,
+        output_format_encoding: Optional[str] = None,
+        output_format_bit_rate: Optional[int] = None,
+        duration: Optional[float] = None,
+        save_to_file: bool = True,
+        output_filename: Optional[str] = None
+    ) -> str:
+        """Generate speech from text with streaming response.
+
+        Args:
+            model_id (str): The ID of the model to use.
+            transcript (str): The text to convert to speech.
+            voice_id (str): The ID of the voice to use.
+            language (str): The language code.
+            output_format_container (str): The format container for the output audio.
+            output_format_sample_rate (int): The sample rate for the output audio.
+            output_format_encoding (Optional[str], optional): The encoding for raw/wav containers.
+            output_format_bit_rate (Optional[int], optional): The bit rate for mp3 containers.
+            duration (Optional[float], optional): The maximum duration in seconds.
+            save_to_file (bool, optional): Whether to save the output to a file. Defaults to True.
+            output_filename (Optional[str], optional): The filename to save to. Defaults to auto-generated.
+
+        Returns:
+            str: JSON string containing the result information.
+        """
+        logger.info(f"Streaming speech for text: {transcript[:50]}...")
+        try:
+            # Normalize language code - API expects "en" not "en-US"
+            normalized_language = language.split('-')[0] if '-' in language else language
+            logger.info(f"Normalized language from {language} to {normalized_language}")
+
+            # Create proper output_format based on container type
+            if output_format_container == "mp3":
+                output_format = {
+                    "container": "mp3",
+                    "sample_rate": output_format_sample_rate,
+                    "bit_rate": output_format_bit_rate or 128000,  # Default to 128kbps if not provided
+                    "encoding": output_format_encoding or "mp3"    # API requires encoding field even for mp3
+                }
+            elif output_format_container in ["wav", "raw"]:
+                encoding = output_format_encoding or "pcm_s16le"  # Default encoding if not provided
+                output_format = {
+                    "container": output_format_container,
+                    "sample_rate": output_format_sample_rate,
+                    "encoding": encoding
+                }
+            else:
+                # Fallback for any other container
+                output_format = {
+                    "container": output_format_container,
+                    "sample_rate": output_format_sample_rate,
+                    "encoding": output_format_encoding or "pcm_s16le"  # Always provide an encoding
+                }
+                # Add bit_rate for formats that need it
+                if output_format_bit_rate:
+                    output_format["bit_rate"] = output_format_bit_rate
+
+            # Create the parameters object exactly as required by the SDK
+            params = {
+                "model_id": model_id,
+                "transcript": transcript,
+                "voice_id": voice_id,
+                "language": normalized_language,
+                "output_format": output_format
+            }
+
+            # Add duration if provided
+            if duration:
+                params["duration"] = duration
+
+            # Log the API call for debugging
+            logger.info(f"Calling TTS API with params: {json.dumps(params)}")
+
+            # Use the bytes method since we're not actually streaming
+            audio_data = self.client.tts.bytes(**params)
+
+            total_bytes = len(audio_data)
+            logger.info(f"TTS API returned {total_bytes} bytes")
+
+            # Save to file if requested
+            if save_to_file:
+                if not output_filename:
+                    # Create a filename based on first few words of transcript
+                    words = transcript.split()[:3]
+                    filename_base = "_".join(words).lower().replace(" ", "_")
+                    filename_base = "".join(c for c in filename_base if c.isalnum() or c == "_")
+                    output_filename = f"{filename_base}.{output_format_container}"
+
+                file_path = os.path.join(self.output_dir, output_filename)
+                with open(file_path, "wb") as f:
+                    f.write(audio_data)
+
+                return json.dumps({
+                    "success": True,
+                    "streaming": False,  # We're using bytes method, not streaming
+                    "total_bytes": total_bytes,
+                    "saved_to": file_path
+                }, indent=4)
+            else:
+                return json.dumps({
+                    "success": True,
+                    "streaming": False,
+                    "total_bytes": total_bytes,
+                    "audio_data": "Binary data (not displayed)"
+                }, indent=4)
+
+        except Exception as e:
+            logger.error(f"Error streaming speech with Cartesia: {e}")
+            return json.dumps({"error": str(e)})
+
+    def batch_text_to_speech(
+        self,
+        model_id: str,
+        texts: List[str],
+        voice_id: str,
+        language: str,
+        output_format_container: str = "mp3",
+        output_format_sample_rate: int = 44100,
+        output_format_encoding: Optional[str] = None,
+        output_format_bit_rate: Optional[int] = None,
+        output_directory: Optional[str] = None,
+        filename_prefix: str = "batch_tts"
+    ) -> str:
+        """Process multiple text-to-speech conversions in a batch.
+
+        Args:
+            model_id (str): The ID of the model to use.
+            texts (List[str]): List of texts to convert to speech.
+            voice_id (str): The ID of the voice to use.
+            language (str): The language code.
+            output_format_container (str): The format container for the output audio.
+            output_format_sample_rate (int): The sample rate for the output audio.
+            output_format_encoding (Optional[str], optional): The encoding for raw/wav containers.
+            output_format_bit_rate (Optional[int], optional): The bit rate for mp3 containers.
+            output_directory (Optional[str], optional): Directory to save files. Defaults to self.output_dir.
+            filename_prefix (str, optional): Prefix for generated filenames.
+
+        Returns:
+            str: JSON string containing the result information.
+        """
+        logger.info(f"Batch processing {len(texts)} texts to speech")
+        try:
+            # Normalize language code - API expects "en" not "en-US"
+            normalized_language = language.split('-')[0] if '-' in language else language
+            logger.info(f"Normalized language from {language} to {normalized_language}")
+
+            save_dir = output_directory or self.output_dir
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+
+            results = []
+
+            for i, text in enumerate(texts):
+                try:
+                    # Create proper output_format based on container type
+                    if output_format_container == "mp3":
+                        output_format = {
+                            "container": "mp3",
+                            "sample_rate": output_format_sample_rate,
+                            "bit_rate": output_format_bit_rate or 128000,  # Default to 128kbps if not provided
+                            "encoding": output_format_encoding or "mp3"    # API requires encoding field even for mp3
+                        }
+                    elif output_format_container in ["wav", "raw"]:
+                        encoding = output_format_encoding or "pcm_s16le"  # Default encoding if not provided
+                        output_format = {
+                            "container": output_format_container,
+                            "sample_rate": output_format_sample_rate,
+                            "encoding": encoding
+                        }
+                    else:
+                        # Fallback for any other container
+                        output_format = {
+                            "container": output_format_container,
+                            "sample_rate": output_format_sample_rate,
+                            "encoding": output_format_encoding or "pcm_s16le"  # Always provide an encoding
+                        }
+                        # Add bit_rate for formats that need it
+                        if output_format_bit_rate:
+                            output_format["bit_rate"] = output_format_bit_rate
+
+                    # Create the parameters object exactly as required by the SDK
+                    params = {
+                        "model_id": model_id,
+                        "transcript": text,
+                        "voice_id": voice_id,
+                        "language": normalized_language,
+                        "output_format": output_format
+                    }
+
+                    # Log the API call for debugging
+                    logger.info(f"Calling TTS API with params for text {i+1}: {json.dumps(params)}")
+
+                    # Make the API call
+                    audio_data = self.client.tts.bytes(**params)
+
+                    # Create filename
+                    filename = f"{filename_prefix}_{i+1}.{output_format_container}"
+                    file_path = os.path.join(save_dir, filename)
+
+                    # Save the file
+                    with open(file_path, "wb") as f:
+                        f.write(audio_data)
+
+                    results.append({
+                        "index": i,
+                        "text": text[:50] + "..." if len(text) > 50 else text,
+                        "file_path": file_path,
+                        "size_bytes": len(audio_data),
+                        "status": "success"
+                    })
+
+                except Exception as e:
+                    logger.error(f"Error processing text {i+1}: {e}")
+                    results.append({
+                        "index": i,
+                        "text": text[:50] + "..." if len(text) > 50 else text,
+                        "status": "error",
+                        "error": str(e)
+                    })
+
+            # Summarize results
+            success_count = sum(1 for r in results if r["status"] == "success")
+            error_count = len(results) - success_count
+
+            return json.dumps({
+                "success": True,
+                "total": len(texts),
+                "success_count": success_count,
+                "error_count": error_count,
+                "output_directory": save_dir,
+                "details": results
+            }, indent=4)
+
+        except Exception as e:
+            logger.error(f"Error in batch text-to-speech processing: {e}")
             return json.dumps({"error": str(e)})

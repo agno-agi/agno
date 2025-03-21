@@ -1,28 +1,26 @@
+"""
+Example script for using the Cartesia toolkit with an Agno agent for text-to-speech generation.
+"""
+
+from dotenv import load_dotenv
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
 from agno.tools.cartesia import CartesiaTools
+import os
+import sys
 
-"""
-Requirements:
-- Cartesia API key (Get from https://play.cartesia.ai/keys)
-- pip install cartesia
-
-Usage:
-- Set the following environment variable:
-    export CARTESIA_API_KEY="your_api_key"
-
-- Or provide it when creating the CartesiaTools instance
-"""
+# Get Cartesia API key from environment or use a default for demo
+cartesia_api_key = os.environ.get("CARTESIA_API_KEY", "sk_car_4y7Jz9aKsF6VeLpBKzKwJ")
+load_dotenv()
 
 agent = Agent(
-    name="Cartesia Voice Assistant",
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[CartesiaTools()],
+    tools=[CartesiaTools(api_key=cartesia_api_key)],
     show_tool_calls=True,
-    markdown=True,
+    instructions="Use Cartesia for text-to-speech generation"
 )
 
-# agent.print_response("List all available voices in Cartesia.")
-agent.print_response("Generate speech for the text 'Welcome to Cartesia voice technology' using an english female voice")
-# agent.print_response("How can I clone a voice from an audio file?")
-
+# Example TTS request
+agent.print_response(
+    "Generate speech for 'Welcome to Agno with Cartesia integration' using the sonic-2 model and save it as a high-quality MP3 file.",
+    markdown=True,
+    stream=False
+)
