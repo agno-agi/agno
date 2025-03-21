@@ -41,7 +41,7 @@ class DockerTools(Toolkit):
             self.register(self.inspect_container)
             self.register(self.run_container)
             self.register(self.exec_in_container)
-        
+
         if enable_image_management:
             self.register(self.list_images)
             self.register(self.pull_image)
@@ -49,13 +49,13 @@ class DockerTools(Toolkit):
             self.register(self.build_image)
             self.register(self.tag_image)
             self.register(self.inspect_image)
-        
+
         if enable_volume_management:
             self.register(self.list_volumes)
             self.register(self.create_volume)
             self.register(self.remove_volume)
             self.register(self.inspect_volume)
-        
+
         if enable_network_management:
             self.register(self.list_networks)
             self.register(self.create_network)
@@ -64,20 +64,20 @@ class DockerTools(Toolkit):
             self.register(self.connect_container_to_network)
             self.register(self.disconnect_container_from_network)
 
-    def list_containers(self, all: bool = False) -> str:
+    def list_containers(self, list_all: bool = False) -> str:
         """
         List Docker containers.
 
         Args:
-            all (bool): If True, show all containers (default shows just running).
+            list_all (bool): If True, show all containers (if False shows just running).
 
         Returns:
             str: A JSON string containing the list of containers.
         """
         try:
-            containers = self.client.containers.list(all=all)
+            containers = self.client.containers.list(all=list_all)
             container_list = []
-            
+
             for container in containers:
                 container_list.append({
                     "id": container.id,
@@ -88,7 +88,7 @@ class DockerTools(Toolkit):
                     "ports": container.ports,
                     "labels": container.labels
                 })
-            
+
             return json.dumps(container_list, indent=2)
         except DockerException as e:
             logger.error(f"Error listing containers: {e}")
@@ -189,9 +189,9 @@ class DockerTools(Toolkit):
             return f"Error inspecting container: {str(e)}"
 
     def run_container(
-        self, 
-        image: str, 
-        command: Optional[str] = None, 
+        self,
+        image: str,
+        command: Optional[str] = None,
         name: Optional[str] = None,
         detach: bool = True,
         ports: Optional[Dict[str, str]] = None,
@@ -263,7 +263,7 @@ class DockerTools(Toolkit):
         try:
             images = self.client.images.list()
             image_list = []
-            
+
             for image in images:
                 image_list.append({
                     "id": image.id,
@@ -272,7 +272,7 @@ class DockerTools(Toolkit):
                     "size": image.attrs.get("Size"),
                     "labels": image.labels
                 })
-            
+
             return json.dumps(image_list, indent=2)
         except DockerException as e:
             logger.error(f"Error listing images: {e}")
@@ -388,7 +388,7 @@ class DockerTools(Toolkit):
         try:
             volumes = self.client.volumes.list()
             volume_list = []
-            
+
             for volume in volumes:
                 volume_list.append({
                     "name": volume.name,
@@ -397,7 +397,7 @@ class DockerTools(Toolkit):
                     "created": volume.attrs.get("CreatedAt"),
                     "labels": volume.attrs.get("Labels", {})
                 })
-            
+
             return json.dumps(volume_list, indent=2)
         except DockerException as e:
             logger.error(f"Error listing volumes: {e}")
@@ -472,7 +472,7 @@ class DockerTools(Toolkit):
         try:
             networks = self.client.networks.list()
             network_list = []
-            
+
             for network in networks:
                 network_list.append({
                     "id": network.id,
@@ -483,16 +483,16 @@ class DockerTools(Toolkit):
                     "internal": network.attrs.get("Internal", False),
                     "containers": list(network.attrs.get("Containers", {}).keys())
                 })
-            
+
             return json.dumps(network_list, indent=2)
         except DockerException as e:
             logger.error(f"Error listing networks: {e}")
             return f"Error listing networks: {str(e)}"
 
     def create_network(
-        self, 
-        network_name: str, 
-        driver: str = "bridge", 
+        self,
+        network_name: str,
+        driver: str = "bridge",
         internal: bool = False,
         labels: Optional[Dict[str, str]] = None
     ) -> str:

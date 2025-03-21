@@ -1,5 +1,3 @@
-import os
-
 from agno.agent import Agent
 from agno.tools.docker import DockerTools
 
