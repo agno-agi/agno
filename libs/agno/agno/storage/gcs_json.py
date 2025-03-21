@@ -1,12 +1,11 @@
-import os
 import json
 import time
-from typing import List, Literal, Optional, Any
-from pathlib import Path
+from typing import Any, List, Literal, Optional
 
 from agno.storage.json import JsonStorage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
+from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import logger
 
@@ -19,23 +18,23 @@ except ImportError:
 class GCSJsonStorage(JsonStorage):
     """
     A Cloud-based JSON storage for agent sessions that stores session (memory) data
-    in a GCS bucket. This class derives from Agno's JsonStorage and replaces local
+    in a GCS bucket. This class derives from JsonStorage and replaces local
     file system operations with Cloud Storage operations. The GCS client and bucket
     are initialized once in the constructor and then reused for all subsequent operations.
 
     Parameters:
-      - mode: Either "agent" or "workflow".
       - bucket_name: The GCS bucket name (must be provided).
       - project: The GCP project ID (must be provided).
       - credentials: Optional credentials object; if not provided, defaults will be used.
+      - mode: One of "agent", "team", or "workflow". Defaults to "agent".
     """
 
     def __init__(
         self,
-        mode: Optional[Literal["agent", "workflow"]] = "agent",
-        bucket_name: str = None,
-        project: str = None,
+        bucket_name: str,
+        project: str,
         credentials: Optional[Any] = None,
+        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
     ):
         # Pass a dummy directory to the parent's constructor, as it's not used.
         super().__init__(dir_path="dummy", mode=mode)
@@ -56,16 +55,15 @@ class GCSJsonStorage(JsonStorage):
 
     def create(self) -> None:
         """
-        Creates the bucket if it doesn't exist, using a default location of "US".
+        Creates the bucket if it doesn't exist
         The client and bucket are already stored in self.
         """
         try:
-            # Attempt to create the bucket. If it exists, a Conflict error should be raised.
-            self.bucket = self.client.create_bucket(self.bucket_name, location="US")
+            self.bucket = self.client.create_bucket(self.bucket_name)
             logger.info(f"Bucket {self.bucket_name} created successfully.")
         except Exception as e:
-            # If the bucket already exists, check for conflict (HTTP 409)
-            if hasattr(e, 'code') and e.code == 409:
+            # If the bucket already exists, check for conflict (HTTP 409) and continue.
+            if hasattr(e, "code") and e.code == 409:
                 logger.info(f"Bucket {self.bucket_name} already exists.")
             else:
                 logger.error(f"Failed to create bucket {self.bucket_name}: {e}")
@@ -80,12 +78,16 @@ class GCSJsonStorage(JsonStorage):
     def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Session]:
         """
         Reads a session JSON blob from the GCS bucket and returns a Session object.
+        If the blob is not found, returns None.
         """
         blob = self.bucket.blob(self._get_blob_path(session_id))
         try:
             data_str = blob.download_as_bytes().decode("utf-8")
             data = self.deserialize(data_str)
         except Exception as e:
+            # If the error indicates that the blob was not found (404), return None.
+            if "404" in str(e):
+                return None
             logger.error(f"Error reading session {session_id} from GCS: {e}")
             return None
 
@@ -94,6 +96,8 @@ class GCSJsonStorage(JsonStorage):
 
         if self.mode == "agent":
             return AgentSession.from_dict(data)
+        elif self.mode == "team":
+            return TeamSession.from_dict(data)
         elif self.mode == "workflow":
             return WorkflowSession.from_dict(data)
         return None
@@ -120,15 +124,17 @@ class GCSJsonStorage(JsonStorage):
                 try:
                     data_str = blob.download_as_bytes().decode("utf-8")
                     data = self.deserialize(data_str)
+
                     if user_id and data.get("user_id") != user_id:
                         continue
+                    session: Optional[Session] = None
                     if self.mode == "agent":
                         session = AgentSession.from_dict(data)
+                    elif self.mode == "team":
+                        session = TeamSession.from_dict(data)
                     elif self.mode == "workflow":
                         session = WorkflowSession.from_dict(data)
-                    else:
-                        session = None
-                    if session:
+                    if session is not None:
                         sessions.append(session)
                 except Exception as e:
                     logger.error(f"Error reading session from blob {blob.name}: {e}")
