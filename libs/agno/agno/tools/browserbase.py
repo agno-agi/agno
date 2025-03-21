@@ -3,7 +3,7 @@ from os import getenv
 from typing import Dict, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from browserbase import Browserbase
@@ -51,7 +51,7 @@ class BrowserbaseTools(Toolkit):
         # Initialize the Browserbase client with optional base_url
         if self.base_url:
             self.app = Browserbase(api_key=self.api_key, base_url=self.base_url)
-            logger.debug(f"Using custom Browserbase API endpoint: {self.base_url}")
+            log_debug(f"Using custom Browserbase API endpoint: {self.base_url}")
         else:
             self.app = Browserbase(api_key=self.api_key)
 
@@ -73,7 +73,7 @@ class BrowserbaseTools(Toolkit):
                 self._session = self.app.sessions.create(project_id=self.project_id)  # type: ignore
                 self._connect_url = self._session.connect_url if self._session else ""  # type: ignore
                 if self._session:
-                    logger.debug(f"Created new session with ID: {self._session.id}")
+                    log_debug(f"Created new session with ID: {self._session.id}")
             except Exception as e:
                 logger.error(f"Failed to create session: {str(e)}")
                 raise

@@ -38,6 +38,13 @@ class StopAgentRun(AgentRunException):
         )
 
 
+class RunCancelledException(Exception):
+    """Exception raised when a run is cancelled."""
+
+    def __init__(self, message: str = "Operation cancelled by user"):
+        super().__init__(message)
+
+
 class AgnoError(Exception):
     """Exception raised when an internal error occurs."""
 

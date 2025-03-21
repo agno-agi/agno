@@ -3,7 +3,7 @@ from typing import IO, Any, List, Union
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 
 class TextReader(Reader):
@@ -14,11 +14,11 @@ class TextReader(Reader):
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
-                logger.info(f"Reading: {file}")
+                log_info(f"Reading: {file}")
                 file_name = file.stem
                 file_contents = file.read_text("utf-8")
             else:
-                logger.info(f"Reading uploaded file: {file.name}")
+                log_info(f"Reading uploaded file: {file.name}")
                 file_name = file.name.split(".")[0]
                 file.seek(0)
                 file_contents = file.read().decode("utf-8")

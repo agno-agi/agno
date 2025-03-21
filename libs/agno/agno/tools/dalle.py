@@ -5,7 +5,7 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.media import ImageArtifact
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from openai import OpenAI
@@ -70,7 +70,7 @@ class DalleTools(Toolkit):
 
         try:
             client = OpenAI(api_key=self.api_key)
-            logger.debug(f"Generating image using prompt: {prompt}")
+            log_debug(f"Generating image using prompt: {prompt}")
             response: ImagesResponse = client.images.generate(
                 prompt=prompt,
                 model=self.model,
@@ -79,7 +79,7 @@ class DalleTools(Toolkit):
                 size=self.size,
                 style=self.style,
             )
-            logger.debug("Image generated successfully")
+            log_debug("Image generated successfully")
 
             # Update the run response with the image URLs
             response_str = ""

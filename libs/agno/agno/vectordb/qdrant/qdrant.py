@@ -12,7 +12,7 @@ except ImportError:
 from agno.document import Document
 from agno.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -45,7 +45,7 @@ class Qdrant(VectorDb):
             from agno.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -77,7 +77,7 @@ class Qdrant(VectorDb):
     @property
     def client(self) -> QdrantClient:
         if self._client is None:
-            logger.debug("Creating Qdrant Client")
+            log_debug("Creating Qdrant Client")
             self._client = QdrantClient(
                 location=self.location,
                 url=self.url,
@@ -103,7 +103,7 @@ class Qdrant(VectorDb):
             _distance = models.Distance.DOT
 
         if not self.exists():
-            logger.debug(f"Creating collection: {self.collection}")
+            log_debug(f"Creating collection: {self.collection}")
             self.client.create_collection(
                 collection_name=self.collection,
                 vectors_config=models.VectorParams(size=self.dimensions, distance=_distance),
@@ -156,7 +156,7 @@ class Qdrant(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
             batch_size (int): Batch size for inserting documents
         """
-        logger.debug(f"Inserting {len(documents)} documents")
+        log_debug(f"Inserting {len(documents)} documents")
         points = []
         for document in documents:
             document.embed(embedder=self.embedder)
@@ -174,10 +174,10 @@ class Qdrant(VectorDb):
                     },
                 )
             )
-            logger.debug(f"Inserted document: {document.name} ({document.meta_data})")
+            log_debug(f"Inserted document: {document.name} ({document.meta_data})")
         if len(points) > 0:
             self.client.upsert(collection_name=self.collection, wait=False, points=points)
-        logger.debug(f"Upsert {len(points)} documents")
+        log_debug(f"Upsert {len(points)} documents")
 
     def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -187,7 +187,7 @@ class Qdrant(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        logger.debug("Redirecting the request to insert")
+        log_debug("Redirecting the request to insert")
         self.insert(documents)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
@@ -235,7 +235,7 @@ class Qdrant(VectorDb):
 
     def drop(self) -> None:
         if self.exists():
-            logger.debug(f"Deleting collection: {self.collection}")
+            log_debug(f"Deleting collection: {self.collection}")
             self.client.delete_collection(self.collection)
 
     def exists(self) -> bool:

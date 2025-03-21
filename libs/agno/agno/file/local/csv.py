@@ -3,7 +3,7 @@ from typing import Any
 
 from agno.file import File
 from agno.utils.common import dataclass_to_dict
-from agno.utils.log import logger
+from agno.utils.log import log_debug
 
 
 @dataclass
@@ -27,6 +27,6 @@ class CsvFile(File):
                     if dict_reader.fieldnames is not None:
                         self.columns = list(dict_reader.fieldnames)
             except Exception as e:
-                logger.debug(f"Error getting columns from file: {e}")
+                log_debug(f"Error getting columns from file: {e}")
 
         return dataclass_to_dict(self, exclude_none=True)

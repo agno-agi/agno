@@ -7,6 +7,7 @@ agent = Agent(
     tools=[YFinanceTools(enable_all=True)],
     show_tool_calls=True,
     markdown=True,
+    debug_mode=True,
 )
 
 # Print the response in the terminal
