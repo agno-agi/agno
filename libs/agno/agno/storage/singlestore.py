@@ -105,6 +105,7 @@ class SingleStoreStorage(Storage):
         elif self.mode == "team":
             specific_columns = [
                 Column("team_id", mysql.TEXT),
+                Column("team_session_id", mysql.TEXT, nullable=True),
                 Column("team_data", mysql.JSON),
             ]
         else:
@@ -300,11 +301,12 @@ class SingleStoreStorage(Storage):
                 upsert_sql = text(
                     f"""
                     INSERT INTO {self.schema}.{self.table_name}
-                    (session_id, team_id, user_id, memory, team_data, session_data, extra_data, created_at, updated_at)
+                    (session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at)
                     VALUES
-                    (:session_id, :team_id, :user_id, :memory, :team_data, :session_data, :extra_data, UNIX_TIMESTAMP(), NULL)
+                    (:session_id, :team_id, :user_id, :team_session_id, :memory, :team_data, :session_data, :extra_data, UNIX_TIMESTAMP(), NULL)
                     ON DUPLICATE KEY UPDATE
                         team_id = VALUES(team_id),
+                        team_session_id = VALUES(team_session_id),
                         user_id = VALUES(user_id),
                         memory = VALUES(memory),
                         team_data = VALUES(team_data),
@@ -361,6 +363,7 @@ class SingleStoreStorage(Storage):
                             "session_id": session.session_id,
                             "team_id": session.team_id,  # type: ignore
                             "user_id": session.user_id,
+                            "team_session_id": session.team_session_id,  # type: ignore
                             "memory": json.dumps(session.memory, ensure_ascii=False)
                             if session.memory is not None
                             else None,
@@ -428,6 +431,7 @@ class SingleStoreStorage(Storage):
                             "session_id": session.session_id,
                             "team_id": session.team_id,  # type: ignore
                             "user_id": session.user_id,
+                            "team_session_id": session.team_session_id,  # type: ignore
                             "memory": json.dumps(session.memory, ensure_ascii=False)
                             if session.memory is not None
                             else None,

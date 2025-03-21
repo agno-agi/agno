@@ -122,6 +122,7 @@ class SqliteStorage(Storage):
             specific_columns = [
                 Column("team_id", String, index=True),
                 Column("team_data", sqlite.JSON),
+                Column("team_session_id", String, index=True, nullable=True),
             ]
         else:
             specific_columns = [
@@ -406,6 +407,7 @@ class SqliteStorage(Storage):
                         session_id=session.session_id,
                         team_id=session.team_id,  # type: ignore
                         user_id=session.user_id,
+                        team_session_id=session.team_session_id,  # type: ignore
                         memory=session.memory,
                         team_data=session.team_data,  # type: ignore
                         session_data=session.session_data,
@@ -419,6 +421,7 @@ class SqliteStorage(Storage):
                         set_=dict(
                             team_id=session.team_id,  # type: ignore
                             user_id=session.user_id,
+                            team_session_id=session.team_session_id,  # type: ignore
                             memory=session.memory,
                             team_data=session.team_data,  # type: ignore
                             session_data=session.session_data,

@@ -117,6 +117,7 @@ class PostgresStorage(Storage):
         elif self.mode == "team":
             specific_columns = [
                 Column("team_id", String, index=True),
+                Column("team_session_id", String, index=True, nullable=True),
                 Column("team_data", postgresql.JSONB),
             ]
         else:
@@ -434,6 +435,7 @@ class PostgresStorage(Storage):
                         session_id=session.session_id,
                         team_id=session.team_id,  # type: ignore
                         user_id=session.user_id,
+                        team_session_id=session.team_session_id,  # type: ignore
                         memory=session.memory,
                         team_data=session.team_data,  # type: ignore
                         session_data=session.session_data,
@@ -446,6 +448,7 @@ class PostgresStorage(Storage):
                         set_=dict(
                             team_id=session.team_id,  # type: ignore
                             user_id=session.user_id,
+                            team_session_id=session.team_session_id,  # type: ignore
                             memory=session.memory,
                             team_data=session.team_data,  # type: ignore
                             session_data=session.session_data,

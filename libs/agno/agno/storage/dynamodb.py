@@ -96,12 +96,14 @@ class DynamoDbStorage(Storage):
                         {"AttributeName": "session_id", "AttributeType": "S"},
                         {"AttributeName": "user_id", "AttributeType": "S"},
                         {"AttributeName": "agent_id", "AttributeType": "S"},
+                        {"AttributeName": "team_session_id", "AttributeType": "S"},
                         {"AttributeName": "created_at", "AttributeType": "N"},
                     ]
                 elif self.mode == "team":
                     attribute_definitions = [
                         {"AttributeName": "session_id", "AttributeType": "S"},
                         {"AttributeName": "user_id", "AttributeType": "S"},
+                        {"AttributeName": "team_id", "AttributeType": "S"},
                         {"AttributeName": "team_session_id", "AttributeType": "S"},
                         {"AttributeName": "created_at", "AttributeType": "N"},
                     ]
@@ -145,9 +147,9 @@ class DynamoDbStorage(Storage):
                 elif self.mode == "team":
                     secondary_indexes.append(
                         {
-                            "IndexName": "team_session_id-index",
+                            "IndexName": "team_id-index",
                             "KeySchema": [
-                                {"AttributeName": "team_session_id", "KeyType": "HASH"},
+                                {"AttributeName": "team_id", "KeyType": "HASH"},
                                 {"AttributeName": "created_at", "KeyType": "RANGE"},
                             ],
                             "Projection": {"ProjectionType": "ALL"},
@@ -301,7 +303,7 @@ class DynamoDbStorage(Storage):
                     response = self.table.query(
                         IndexName="user_id-index",
                         KeyConditionExpression=Key("user_id").eq(user_id),
-                        ProjectionExpression="session_id, team_id, user_id, memory, team_data, session_data, extra_data, created_at, updated_at",
+                        ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
                     )
                 else:
                     # Query using user_id index
@@ -333,7 +335,7 @@ class DynamoDbStorage(Storage):
                     response = self.table.query(
                         IndexName="team_id-index",
                         KeyConditionExpression=Key("team_id").eq(entity_id),
-                        ProjectionExpression="session_id, team_id, user_id, memory, team_data, session_data, extra_data, created_at, updated_at",
+                        ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
                     )
                 else:
                     # Query using workflow_id index
@@ -359,7 +361,7 @@ class DynamoDbStorage(Storage):
                     )
                 elif self.mode == "team":
                     response = self.table.scan(
-                        ProjectionExpression="session_id, team_id, user_id, memory, team_data, session_data, extra_data, created_at, updated_at"
+                        ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at"
                     )
                 else:
                     response = self.table.scan(

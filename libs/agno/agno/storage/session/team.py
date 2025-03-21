@@ -12,6 +12,8 @@ class TeamSession:
 
     # Session UUID
     session_id: str
+    # ID of the team session this team session is associated with (so for sub-teams)
+    team_session_id: Optional[str] = None
     # ID of the team that this session is associated with
     team_id: Optional[str] = None
     # ID of the user interacting with this team
