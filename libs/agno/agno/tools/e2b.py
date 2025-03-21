@@ -451,7 +451,7 @@ class E2BTools(Toolkit):
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error killing background command: {str(e)}"})
 
-    # --- Filesystem Operations ---
+    # Filesystem Operations
 
     def list_files(self, directory_path: str = "/") -> str:
         """
