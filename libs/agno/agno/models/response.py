@@ -41,20 +41,6 @@ class ModelResponse:
 
     extra: Optional[Dict[str, Any]] = None
 
-    def format_tool_calls(self) -> List[str]:
-        """Format tool calls for display in a readable format.
-
-        Returns:
-            List[str]: List of formatted tool call strings
-        """
-        formatted_tool_calls = []
-        for tool_call in self.tool_calls:
-            if "tool_name" in tool_call and "tool_args" in tool_call:
-                tool_name = tool_call["tool_name"]
-                args_str = ", ".join(f"{k}={v}" for k, v in tool_call["tool_args"].items())
-                formatted_tool_calls.append(f"{tool_name}({args_str})")
-        return formatted_tool_calls
-
 
 class FileType(str, Enum):
     MP4 = "mp4"

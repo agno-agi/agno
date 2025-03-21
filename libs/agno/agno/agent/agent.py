@@ -50,7 +50,7 @@ from agno.utils.log import (
     set_log_level_to_info,
 )
 from agno.utils.message import get_text_from_message
-from agno.utils.response import create_panel, escape_markdown_tags
+from agno.utils.response import create_panel, escape_markdown_tags, format_tool_calls
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model
 from agno.utils.timer import Timer
@@ -117,7 +117,7 @@ class Agent:
     # Tools are functions the model may generate JSON inputs for.
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
     # Show tool calls in Agent response.
-    show_tool_calls: bool = False
+    show_tool_calls: bool = True
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
     # Controls which (if any) tool is called by the model.
@@ -678,7 +678,7 @@ class Agent:
                             self.run_response.tools.extend(tool_calls_list)
 
                         # Format tool calls whenever new ones are added during streaming
-                        self.run_response.formatted_tool_calls = model_response.format_tool_calls()
+                        self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
 
                     # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                     if self.stream_intermediate_steps:
@@ -718,7 +718,7 @@ class Agent:
             model_response = self.model.response(messages=run_messages.messages)
             # Format tool calls if they exist
             if model_response.tool_calls:
-                self.run_response.formatted_tool_calls = model_response.format_tool_calls()
+                self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
 
             # Handle structured outputs
             if self.response_model is not None and model_response.parsed is not None:
@@ -1201,7 +1201,7 @@ class Agent:
                             self.run_response.tools.extend(tool_calls_list)
 
                         # Format tool calls whenever new ones are added during streaming
-                        self.run_response.formatted_tool_calls = model_response.format_tool_calls()
+                        self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
 
                     # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                     if self.stream_intermediate_steps:
@@ -1243,7 +1243,7 @@ class Agent:
             model_response = await self.model.aresponse(messages=run_messages.messages)
             # Format tool calls if they exist
             if model_response.tool_calls:
-                self.run_response.formatted_tool_calls = model_response.format_tool_calls()
+                self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
 
             # Handle structured outputs
             if self.response_model is not None and model_response.parsed is not None:
