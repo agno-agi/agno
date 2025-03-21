@@ -5,7 +5,7 @@ from agno.models.anthropic import Claude
 from agno.tools.thinking import ThinkingTools
 from agno.tools.yfinance import YFinanceTools
 
-reasoning_agent = Agent(
+thinking_agent = Agent(
     model=Claude(id="claude-3-5-sonnet-20240620"),
     tools=[
         ThinkingTools(),
@@ -33,6 +33,6 @@ reasoning_agent = Agent(
     """),
     show_tool_calls=True,
 )
-reasoning_agent.print_response(
+thinking_agent.print_response(
     "Write a report comparing NVDA to TSLA", stream=True, markdown=True
 )
