@@ -569,7 +569,7 @@ class E2BTools(Toolkit):
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error watching directory: {str(e)}"})
 
-    # --- Internet Access Functions ---
+    # Internet Access Functions
 
     def get_public_url(self, port: int) -> str:
         """
