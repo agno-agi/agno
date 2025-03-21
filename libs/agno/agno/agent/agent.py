@@ -50,7 +50,7 @@ from agno.utils.log import (
     set_log_level_to_info,
 )
 from agno.utils.message import get_text_from_message
-from agno.utils.response import create_panel, escape_markdown_tags
+from agno.utils.response import create_panel, escape_markdown_tags, format_tool_calls
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model
 from agno.utils.timer import Timer
@@ -117,7 +117,7 @@ class Agent:
     # Tools are functions the model may generate JSON inputs for.
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
     # Show tool calls in Agent response.
-    show_tool_calls: bool = False
+    show_tool_calls: bool = True
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
     # Controls which (if any) tool is called by the model.
@@ -268,7 +268,7 @@ class Agent:
         storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
-        show_tool_calls: bool = False,
+        show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         reasoning: bool = False,
@@ -654,6 +654,9 @@ class Agent:
                         else:
                             self.run_response.tools.extend(tool_calls_list)
 
+                        # Format tool calls whenever new ones are added during streaming
+                        self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
+
                     # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                     if self.stream_intermediate_steps:
                         yield self.create_run_response(
@@ -690,6 +693,10 @@ class Agent:
         else:
             # Get the model response
             model_response = self.model.response(messages=run_messages.messages)
+            # Format tool calls if they exist
+            if model_response.tool_calls:
+                self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
+
             # Handle structured outputs
             if self.response_model is not None and model_response.parsed is not None:
                 # We get native structured outputs from the model
@@ -904,10 +911,6 @@ class Agent:
             try:
                 # If a response_model is set, return the response as a structured output
                 if self.response_model is not None and self.parse_response:
-                    # Set show_tool_calls=False if we have response_model
-                    self.show_tool_calls = False
-                    log_debug("Setting show_tool_calls=False as response_model is set")
-
                     # Set stream=False and run the agent
                     log_debug("Setting stream=False as response_model is set")
                     self.stream = False
@@ -1172,6 +1175,9 @@ class Agent:
                         else:
                             self.run_response.tools.extend(tool_calls_list)
 
+                        # Format tool calls whenever new ones are added during streaming
+                        self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
+
                     # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                     if self.stream_intermediate_steps:
                         yield self.create_run_response(
@@ -1210,6 +1216,10 @@ class Agent:
         else:
             # Get the model response
             model_response = await self.model.aresponse(messages=run_messages.messages)
+            # Format tool calls if they exist
+            if model_response.tool_calls:
+                self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
+
             # Handle structured outputs
             if self.response_model is not None and model_response.parsed is not None:
                 # We get native structured outputs from the model
@@ -1390,10 +1400,6 @@ class Agent:
             try:
                 # If a response_model is set, return the response as a structured output
                 if self.response_model is not None and self.parse_response:
-                    # Set show_tool_calls=False if we have response_model
-                    self.show_tool_calls = False
-                    log_debug("Setting show_tool_calls=False as response_model is set")
-
                     # Set stream=False and run the agent
                     log_debug("Setting stream=False as response_model is set")
                     run_response = await self._arun(
@@ -2110,7 +2116,8 @@ class Agent:
             ):
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
-            return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
+            # type: ignore
+            return Message(role=self.system_message_role, content=sys_message_content)
 
         # 2. If create_default_system_message is False, return None.
         if not self.create_default_system_message:
@@ -3704,11 +3711,11 @@ class Agent:
                             reasoning_steps = resp.extra_data.reasoning_steps
 
                     response_content_stream: Union[str, Markdown] = _response_content
+
                     # Escape special tags before markdown conversion
                     if self.markdown:
                         escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
                         response_content_stream = Markdown(escaped_content)
-
                     panels = [status]
 
                     if message and show_message:
@@ -3765,6 +3772,25 @@ class Agent:
                         panels.append(thinking_panel)
                     if render:
                         live_log.update(Group(*panels))
+
+                    # Add tool calls panel if available
+                    if (
+                        self.show_tool_calls
+                        and self.run_response is not None
+                        and self.run_response.formatted_tool_calls
+                    ):
+                        render = True
+                        # Create bullet points for each tool call
+                        tool_calls_content = Text()
+                        for tool_call in self.run_response.formatted_tool_calls:
+                            tool_calls_content.append(f"• {tool_call}\n")
+
+                        tool_calls_panel = create_panel(
+                            content=tool_calls_content.plain.rstrip(),
+                            title="Tool Calls",
+                            border_style="yellow",
+                        )
+                        panels.append(tool_calls_panel)
 
                     if len(_response_content) > 0:
                         render = True
@@ -3874,6 +3900,21 @@ class Agent:
                         border_style="green",
                     )
                     panels.append(thinking_panel)
+                    live_log.update(Group(*panels))
+
+                # Add tool calls panel if available
+                if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
+                    # Create bullet points for each tool call
+                    tool_calls_content = Text()
+                    for tool_call in run_response.formatted_tool_calls:
+                        tool_calls_content.append(f"• {tool_call}\n")
+
+                    tool_calls_panel = create_panel(
+                        content=tool_calls_content.plain.rstrip(),
+                        title="Tool Calls",
+                        border_style="yellow",
+                    )
+                    panels.append(tool_calls_panel)
                     live_log.update(Group(*panels))
 
                 response_content_batch: Union[str, JSON, Markdown] = ""
@@ -3991,7 +4032,7 @@ class Agent:
                 if render:
                     live_log.update(Group(*panels))
 
-                _arun_generator = await self.arun(
+                async for resp in await self.arun(
                     message=message,
                     messages=messages,
                     audio=audio,
@@ -4000,8 +4041,7 @@ class Agent:
                     files=files,
                     stream=True,
                     **kwargs,
-                )
-                async for resp in _arun_generator:
+                ):
                     if isinstance(resp, RunResponse):
                         if resp.event == RunEvent.run_response:
                             if isinstance(resp.content, str):
@@ -4022,7 +4062,7 @@ class Agent:
                     if message and show_message:
                         render = True
                         # Convert message to a panel
-                        message_content = get_text_from_message(self.format_message_with_state_variables(message))
+                        message_content = get_text_from_message(message)
                         message_panel = create_panel(
                             content=Text(message_content, style="green"),
                             title="Message",
@@ -4073,6 +4113,25 @@ class Agent:
                         panels.append(thinking_panel)
                     if render:
                         live_log.update(Group(*panels))
+
+                    # Add tool calls panel if available
+                    if (
+                        self.show_tool_calls
+                        and self.run_response is not None
+                        and self.run_response.formatted_tool_calls
+                    ):
+                        render = True
+                        # Create bullet points for each tool call
+                        tool_calls_content = Text()
+                        for tool_call in self.run_response.formatted_tool_calls:
+                            tool_calls_content.append(f"• {tool_call}\n")
+
+                        tool_calls_panel = create_panel(
+                            content=tool_calls_content.plain.rstrip(),
+                            title="Tool Calls",
+                            border_style="yellow",
+                        )
+                        panels.append(tool_calls_panel)
 
                     if len(_response_content) > 0:
                         render = True
@@ -4132,6 +4191,7 @@ class Agent:
                     audio=audio,
                     images=images,
                     videos=videos,
+                    files=files,
                     stream=False,
                     **kwargs,
                 )
@@ -4181,6 +4241,19 @@ class Agent:
                         border_style="green",
                     )
                     panels.append(thinking_panel)
+                    live_log.update(Group(*panels))
+
+                if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
+                    tool_calls_content = Text()
+                    for tool_call in run_response.formatted_tool_calls:
+                        tool_calls_content.append(f"• {tool_call}\n")
+
+                    tool_calls_panel = create_panel(
+                        content=tool_calls_content.plain.rstrip(),
+                        title="Tool Calls",
+                        border_style="yellow",
+                    )
+                    panels.append(tool_calls_panel)
                     live_log.update(Group(*panels))
 
                 response_content_batch: Union[str, JSON, Markdown] = ""

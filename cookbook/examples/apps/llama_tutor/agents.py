@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -73,7 +74,7 @@ def tutor_agent(
 
     Args:
         user_id: Optional identifier for the user.
-        model_id: Model identifier in the format 'groq:model_name' (e.g., "groq:llama-3.3-70b-versatile"). 
+        model_id: Model identifier in the format 'groq:model_name' (e.g., "groq:llama-3.3-70b-versatile").
                  Will always use Groq with a Llama model regardless of provider specified.
         session_id: Optional session identifier for tracking conversation history.
         num_history_responses: Number of previous responses to include for context.
@@ -89,16 +90,16 @@ def tutor_agent(
 
     # Always use Groq with Llama model
     groq_api_key = os.environ.get("GROQ_API_KEY")
-    
+
     # Default to llama-3.3-70b-versatile if the model name doesn't contain "llama"
     if "llama" not in model_name.lower():
         model_name = "llama-3.3-70b-versatile"
-        
+
     model = Groq(id=model_name, api_key=groq_api_key)
 
     # Get Exa API key from environment variable
     exa_api_key = os.environ.get("EXA_API_KEY")
-    
+
     # Tools for Llama Tutor
     tools = [
         ExaTools(
@@ -113,7 +114,7 @@ def tutor_agent(
         ),
         FileTools(base_dir=output_dir),
     ]
-    
+
     # Modify the description to include the education level
     tutor_description = f"""You are Llama Tutor, an educational AI assistant designed to teach concepts at a {education_level} level.
     You have the following tools at your disposal:
@@ -132,7 +133,7 @@ def tutor_agent(
     - If you don't have the relevant information, you must search both DuckDuckGo and ExaTools to generate your answer.
     - Always adapt your explanations to a {education_level} level of understanding.
     </critical>"""
-    
+
     # Modify the instructions to include the education level
     tutor_instructions = f"""Here's how you should answer the user's question:
 
