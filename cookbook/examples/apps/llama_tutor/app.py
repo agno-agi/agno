@@ -40,7 +40,7 @@ def main() -> None:
     # Model configuration - always use Llama 3.3 70B
     ####################################################################
     model_id = "groq:llama-3.3-70b-versatile"
-    
+
     ####################################################################
     # Education level selector
     ####################################################################
@@ -50,16 +50,16 @@ def main() -> None:
         "High School",
         "College",
         "Undergrad",
-        "Graduate"
+        "Graduate",
     ]
-    
+
     selected_education_level = st.sidebar.selectbox(
         "Education Level",
         options=education_levels,
         index=2,  # Default to High School
         key="education_level_selector",
     )
-    
+
     # Store the education level in session state
     if "education_level" not in st.session_state:
         st.session_state["education_level"] = selected_education_level
@@ -79,7 +79,9 @@ def main() -> None:
         or st.session_state.get("current_model") != model_id
     ):
         logger.info("---*--- Creating new Llama Tutor agent ---*---")
-        llama_tutor = tutor_agent(model_id=model_id, education_level=st.session_state["education_level"])
+        llama_tutor = tutor_agent(
+            model_id=model_id, education_level=st.session_state["education_level"]
+        )
         st.session_state["llama_tutor"] = llama_tutor
         st.session_state["current_model"] = model_id
     else:
