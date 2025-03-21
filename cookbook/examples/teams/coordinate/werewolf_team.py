@@ -1,7 +1,9 @@
+import asyncio
 from textwrap import dedent
-import random
 
 from agno.agent import Agent
+from agno.models.anthropic.claude import Claude
+from agno.models.deepseek.deepseek import DeepSeek
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 
@@ -12,7 +14,7 @@ for i in range(1, 7):
         Agent(
             name=f"Player{i}",
             role="Werewolf Game Player",
-            model=OpenAIChat(id="gpt-4o"),
+            model=OpenAIChat(id="gpt-4o-mini"),
             add_name_to_instructions=True,
             instructions=dedent(f"""
             You are Player{i} in a simplified Werewolf game.
@@ -28,6 +30,8 @@ for i in range(1, 7):
             - During night phase, coordinate with other imposters to eliminate a villager
             
             Be strategic, observant, and adapt your gameplay based on others' behaviors.
+
+            Add emojis to express your emotions and thoughts.
             """),
         )
     )
@@ -36,8 +40,9 @@ for i in range(1, 7):
 werewolf_team = Team(
     name="Werewolf Game",
     mode="coordinate",
-    model=OpenAIChat(id="gpt-4o"),
-    success_criteria="The game ends with either villagers or imposters winning.",
+    model=Claude(id="claude-3-5-sonnet-20241022"),
+    reasoning_model=DeepSeek(id="deepseek-reasoner"),
+    success_criteria="The game ends with either villagers or imposters winning. Don't stop the game until the end!",
     members=player_agents,
     instructions=[
         "You are the moderator of a simplified Werewolf game with 6 players.",
@@ -83,6 +88,7 @@ werewolf_team = Team(
         "- Eliminated players cannot participate further",
         "- Track game state in the team context after each phase",
         "- Check win conditions after each elimination",
+        "- Don't stop the game until the end! Continue corresponding with the players until the game is over.",
     ],
     enable_agentic_context=True,
     show_tool_calls=True,
@@ -91,8 +97,7 @@ werewolf_team = Team(
 )
 
 # Run the game
-werewolf_team.print_response(
+asyncio.run(werewolf_team.aprint_response(
     message="Start a new Werewolf game. First, assign roles and initialize the game state. Then proceed with the first day phase and continue until the game is over.",
     stream=True,
-    stream_intermediate_steps=True,
-) 
+)) 

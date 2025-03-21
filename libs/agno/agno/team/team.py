@@ -202,6 +202,10 @@ class Team:
         num_of_interactions_from_history: int = 3,
         storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
+        reasoning: bool = False,
+        reasoning_model: Optional[Model] = None,
+        reasoning_min_steps: int = 1,
+        reasoning_max_steps: int = 10,
         debug_mode: bool = False,
         show_members_responses: bool = False,
         monitoring: bool = False,
@@ -249,10 +253,10 @@ class Team:
         self.storage = storage
         self.extra_data = extra_data
 
-        # self.reasoning = reasoning
-        # self.reasoning_model = reasoning_model
-        # self.reasoning_min_steps = reasoning_min_steps
-        # self.reasoning_max_steps = reasoning_max_steps
+        self.reasoning = reasoning
+        self.reasoning_model = reasoning_model
+        self.reasoning_min_steps = reasoning_min_steps
+        self.reasoning_max_steps = reasoning_max_steps
 
         self.debug_mode = debug_mode
         self.show_members_responses = show_members_responses
@@ -3622,14 +3626,17 @@ class Team:
                 break
         return json.dumps(history)
 
-    def set_team_context(self, state: str) -> str:
+    def set_team_context(self, state: Union[str, Dict[str, Any]]) -> str:
         """
         Set the team's shared context with the given state.
 
         Args:
-            state (str): The state to set as the team context.
+            state (str or dict): The state to set as the team context.
         """
-        self.memory.set_team_context_text(state)  # type: ignore
+        if isinstance(state, str):
+            self.memory.set_team_context_text(state)
+        elif isinstance(state, dict):
+            self.memory.set_team_context_text(json.dumps(state))
         log_debug(f"Current team context: {self.memory.get_team_context_str()}")
         return "Team context updated."
 
