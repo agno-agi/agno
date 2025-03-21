@@ -232,24 +232,28 @@ class Qdrant(VectorDb):
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents asynchronously."""
         log_debug(f"Inserting {len(documents)} documents asynchronously")
-        points = []
-        for document in documents:
+
+        async def process_document(document):
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
-            points.append(
-                models.PointStruct(
-                    id=doc_id,
-                    vector=document.embedding,
-                    payload={
-                        "name": document.name,
-                        "meta_data": document.meta_data,
-                        "content": cleaned_content,
-                        "usage": document.usage,
-                    },
-                )
+            log_debug(
+                f"Inserted document asynchronously: {document.name} ({document.meta_data})")
+            return models.PointStruct(
+                id=doc_id,
+                vector=document.embedding,
+                payload={
+                    "name": document.name,
+                    "meta_data": document.meta_data,
+                    "content": cleaned_content,
+                    "usage": document.usage,
+                },
             )
-            log_debug(f"Inserted document asynchronously: {document.name} ({document.meta_data})")
+
+        import asyncio
+        # Process all documents in parallel
+        points = await asyncio.gather(*[process_document(doc) for doc in documents])
+
         if len(points) > 0:
             await self.async_client.upsert(collection_name=self.collection, wait=False, points=points)
         log_debug(f"Upserted {len(points)} documents asynchronously")
