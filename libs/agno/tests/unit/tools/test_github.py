@@ -387,3 +387,68 @@ def test_search_repositories_pagination(mock_github):
 
     # Should be limited to 100
     mock_client.search_repositories.assert_called_with(query="python", sort="stars", order="desc")
+
+
+def test_get_pull_request_count(mock_github):
+    """Test getting pull request count."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+
+    # Mock PR data
+    mock_pr1 = MagicMock(spec=PullRequest)
+    mock_pr1.number = 1
+    mock_pr1.user.login = "test-user"
+    mock_pr1.state = "open"
+
+    mock_pr2 = MagicMock(spec=PullRequest)
+    mock_pr2.number = 2
+    mock_pr2.user.login = "test-user"
+    mock_pr2.state = "closed"
+
+    mock_pr3 = MagicMock(spec=PullRequest)
+    mock_pr3.number = 3
+    mock_pr3.user.login = "another-user"
+    mock_pr3.state = "open"
+
+    # Create a mock paginated list for pull requests with a totalCount property
+    mock_pulls = MagicMock()
+    mock_pulls.totalCount = 3
+    mock_pulls.__iter__.return_value = [mock_pr1, mock_pr2, mock_pr3]
+    mock_repo.get_pulls.return_value = mock_pulls
+
+    # Test getting count of all pull requests
+    result = github_tools.get_pull_request_count("test-org/test-repo")
+    result_data = json.loads(result)
+    assert result_data["count"] == 3
+    mock_repo.get_pulls.assert_called_with(state="all", base=None, head=None)
+
+    # Test getting count of open pull requests
+    result = github_tools.get_pull_request_count("test-org/test-repo", state="open")
+    result_data = json.loads(result)
+    assert result_data["count"] == 2  # mock_pr1 and mock_pr3 are open
+    mock_repo.get_pulls.assert_called_with(state="open", base=None, head=None)
+
+    # Test getting count of pull requests by author
+    result = github_tools.get_pull_request_count("test-org/test-repo", author="test-user")
+    result_data = json.loads(result)
+    assert result_data["count"] == 2  # mock_pr1 and mock_pr2 are by test-user
+    mock_repo.get_pulls.assert_called_with(state="all", base=None, head=None)
+
+    # Test getting count of pull requests by author and state
+    result = github_tools.get_pull_request_count("test-org/test-repo", state="open", author="test-user")
+    result_data = json.loads(result)
+    assert result_data["count"] == 1  # Only mock_pr1 is open and by test-user
+    mock_repo.get_pulls.assert_called_with(state="open", base=None, head=None)
+
+    # Test with base and head filters
+    result = github_tools.get_pull_request_count("test-org/test-repo", base="main", head="feature")
+    result_data = json.loads(result)
+    assert result_data["count"] == 3
+    mock_repo.get_pulls.assert_called_with(state="all", base="main", head="feature")
+
+    # Test error handling
+    mock_repo.get_pulls.side_effect = GithubException(status=404, data={"message": "Repository not found"})
+    result = github_tools.get_pull_request_count("invalid/repo")
+    result_data = json.loads(result)
+    assert "error" in result_data
+    assert "Repository not found" in result_data["error"]

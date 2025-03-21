@@ -51,6 +51,12 @@ agent.print_response("List open pull requests", markdown=True)
 # # Example usage: Get pull request changes
 # agent.print_response("Show changes for #1239", markdown=True)
 
+# # Example usage: Get pull request count
+# agent.print_response("How many pull requests are there in the agno-agi/agno repository?", markdown=True)
+
+# # Example usage: Get pull request count by author
+# agent.print_response("How many pull requests has user 'username' created in the agno-agi/agno repository?", markdown=True)
+
 # # Example usage: List open issues
 # agent.print_response("What is the latest opened issue?", markdown=True)
 

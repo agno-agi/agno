@@ -27,6 +27,7 @@ class GithubTools(Toolkit):
         delete_repository: bool = False,
         get_repository_languages: bool = True,
         list_branches: bool = True,
+        get_pull_request_count: bool = True,
     ):
         super().__init__(name="github")
 
@@ -57,6 +58,8 @@ class GithubTools(Toolkit):
             self.register(self.list_branches)
         if get_repository_languages:
             self.register(self.get_repository_languages)
+        if get_pull_request_count:
+            self.register(self.get_pull_request_count)
 
     def authenticate(self):
         """Authenticate with GitHub using the provided access token."""
@@ -257,6 +260,35 @@ class GithubTools(Toolkit):
             return json.dumps(pr_list, indent=2)
         except GithubException as e:
             logger.error(f"Error listing pull requests: {e}")
+            return json.dumps({"error": str(e)})
+
+    def get_pull_request_count(self, repo_name: str, state: str = "all", author: Optional[str] = None, base: Optional[str] = None, head: Optional[str] = None) -> str:
+        """Get the count of pull requests for a repository based on query parameters.
+
+        Args:
+            repo_name (str): The full name of the repository (e.g., 'owner/repo').
+            state (str, optional): The state of the PRs to count ('open', 'closed', 'all'). Defaults to 'all'.
+            author (str, optional): Filter PRs by author username.
+            base (str, optional): Filter PRs by base branch name.
+            head (str, optional): Filter PRs by head branch name.
+
+        Returns:
+            A JSON-formatted string containing the count of pull requests.
+        """
+        log_debug(f"Counting pull requests for repository: {repo_name} with state: {state}")
+        try:
+            repo = self.g.get_repo(repo_name)
+            pulls = repo.get_pulls(state=state, base=base, head=head)
+            
+            # If author is specified, filter the results
+            if author:
+                count = sum(1 for pr in pulls if pr.user.login == author)
+            else:
+                count = pulls.totalCount
+                
+            return json.dumps({"count": count}, indent=2)
+        except GithubException as e:
+            logger.error(f"Error counting pull requests: {e}")
             return json.dumps({"error": str(e)})
 
     def get_pull_request(self, repo_name: str, pr_number: int) -> str:
