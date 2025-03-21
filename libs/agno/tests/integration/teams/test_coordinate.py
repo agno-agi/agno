@@ -12,7 +12,10 @@ from agno.tools.hackernews import HackerNewsTools
 def test_coordinator_team_basic():
     """Test basic functionality of a coordinator team."""
     researcher = Agent(
-        name="Researcher", model=OpenAIChat("gpt-4o"), role="Research information", tools=[DuckDuckGoTools(cache_results=True)]
+        name="Researcher",
+        model=OpenAIChat("gpt-4o"),
+        role="Research information",
+        tools=[DuckDuckGoTools(cache_results=True)],
     )
 
     writer = Agent(name="Writer", model=OpenAIChat("gpt-4o"), role="Write content based on research")
@@ -121,7 +124,10 @@ def test_coordinator_team_with_structured_output():
 def test_coordinator_team_sequential_tasks():
     """Test coordinator team with sequential task execution."""
     data_collector = Agent(
-        name="Data Collector", model=OpenAIChat("gpt-4o"), role="Collect data", tools=[DuckDuckGoTools(cache_results=True)]
+        name="Data Collector",
+        model=OpenAIChat("gpt-4o"),
+        role="Collect data",
+        tools=[DuckDuckGoTools(cache_results=True)],
     )
 
     data_analyzer = Agent(name="Data Analyzer", model=OpenAIChat("gpt-4o"), role="Analyze data")

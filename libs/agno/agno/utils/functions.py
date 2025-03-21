@@ -99,7 +99,7 @@ def cache_result(cache_dir: Optional[str] = None, cache_ttl: int = 3600):
             instance = args[0] if args else None
 
             # Skip caching if cache_results is False (only for class methods)
-            if hasattr(instance, "cache_results") and not instance.cache_results:
+            if instance and hasattr(instance, "cache_results") and not instance.cache_results:
                 return func(*args, **kwargs)
 
             # Get cache directory

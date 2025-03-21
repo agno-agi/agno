@@ -55,7 +55,11 @@ def test_tool_use():
 async def test_async_tool_use():
     """Test async tool use functionality with LiteLLM"""
     agent = Agent(
-        model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, tools=[DuckDuckGoTools(cache_results=True)], telemetry=False, monitoring=False
+        model=LiteLLMOpenAI(id="gpt-4o"),
+        markdown=True,
+        tools=[DuckDuckGoTools(cache_results=True)],
+        telemetry=False,
+        monitoring=False,
     )
 
     # Get the response with a query that should trigger tool use
