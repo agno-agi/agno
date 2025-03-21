@@ -452,7 +452,6 @@ class E2BTools(Toolkit):
             return json.dumps({"status": "error", "message": f"Error killing background command: {str(e)}"})
 
     # Filesystem Operations
-
     def list_files(self, directory_path: str = "/") -> str:
         """
         List files and directories in the specified path in the sandbox.
