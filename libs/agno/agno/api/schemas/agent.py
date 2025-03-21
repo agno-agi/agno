@@ -17,4 +17,4 @@ class AgentRunCreate(BaseModel):
     run_id: Optional[str] = None
     run_data: Optional[Dict[str, Any]] = None
     agent_data: Optional[Dict[str, Any]] = None
-    team_id: Optional[str] = None
+    team_session_id: Optional[str] = None

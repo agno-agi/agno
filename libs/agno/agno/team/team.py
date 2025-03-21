@@ -3630,6 +3630,7 @@ class Team:
             state (str): The state to set as the team context.
         """
         self.memory.set_team_context_text(state)  # type: ignore
+        log_debug(f"Current team context: {self.memory.get_team_context_str()}")
         return "Team context updated."
 
     def get_run_member_agents_function(
