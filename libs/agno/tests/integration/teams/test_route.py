@@ -10,7 +10,7 @@ from agno.tools.yfinance import YFinanceTools
 def test_route_team_basic():
     """Test basic functionality of a route team."""
     web_agent = Agent(
-        name="Web Agent", model=OpenAIChat("gpt-4o"), role="Search the web for information", tools=[DuckDuckGoTools()]
+        name="Web Agent", model=OpenAIChat("gpt-4o"), role="Search the web for information", tools=[DuckDuckGoTools(cache_results=True)]
     )
 
     finance_agent = Agent(
@@ -40,7 +40,7 @@ def test_route_team_structured_output():
         price: str
 
     web_agent = Agent(
-        name="Web Agent", model=OpenAIChat("gpt-4o"), role="Search the web for information", tools=[DuckDuckGoTools()]
+        name="Web Agent", model=OpenAIChat("gpt-4o"), role="Search the web for information", tools=[DuckDuckGoTools(cache_results=True)]
     )
 
     finance_agent = Agent(
@@ -68,7 +68,7 @@ def test_route_team_structured_output():
 def test_route_team_with_multiple_agents():
     """Test route team routing to multiple agents."""
     web_agent = Agent(
-        name="Web Agent", model=OpenAIChat("gpt-4o"), role="Search the web for information", tools=[DuckDuckGoTools()]
+        name="Web Agent", model=OpenAIChat("gpt-4o"), role="Search the web for information", tools=[DuckDuckGoTools(cache_results=True)]
     )
 
     finance_agent = Agent(
