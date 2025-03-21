@@ -6,4 +6,4 @@ except ImportError:
 
     class Claude:  # type: ignore
         def __init__(self, *args, **kwargs):
-            raise ImportError("Claude requires the 'anthropic' library. Please install it via `pip install anthropic`")
+            raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")

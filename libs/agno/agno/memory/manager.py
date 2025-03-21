@@ -8,7 +8,7 @@ from agno.memory.row import MemoryRow
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.tools.function import Function
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 
 class MemoryManager(BaseModel):
@@ -61,7 +61,7 @@ class MemoryManager(BaseModel):
                     func = Function.from_callable(tool)  # type: ignore
                     self._functions_for_model[func.name] = func
                     self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                    logger.debug(f"Included function {func.name}")
+                    log_debug(f"Included function {func.name}")
             except Exception as e:
                 logger.warning(f"Could not add function {tool}: {e}")
         # Set tools on the model
@@ -171,7 +171,7 @@ class MemoryManager(BaseModel):
         message: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[str]:
-        logger.debug("*********** MemoryManager Start ***********")
+        log_debug("*********** MemoryManager Start ***********")
 
         # Update the Model (set defaults, add logit etc.)
         self.update_model()
@@ -190,7 +190,7 @@ class MemoryManager(BaseModel):
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
         response = self.model.response(messages=messages_for_model)
-        logger.debug("*********** MemoryManager End ***********")
+        log_debug("*********** MemoryManager End ***********")
         return response.content
 
     async def arun(
@@ -198,7 +198,7 @@ class MemoryManager(BaseModel):
         message: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[str]:
-        logger.debug("*********** Async MemoryManager Start ***********")
+        log_debug("*********** Async MemoryManager Start ***********")
 
         # Update the Model (set defaults, add logit etc.)
         self.update_model()
@@ -216,5 +216,5 @@ class MemoryManager(BaseModel):
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
         response = await self.model.aresponse(messages=messages_for_model)
-        logger.debug("*********** Async MemoryManager End ***********")
+        log_debug("*********** Async MemoryManager End ***********")
         return response.content

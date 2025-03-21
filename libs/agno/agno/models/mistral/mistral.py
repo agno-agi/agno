@@ -7,7 +7,7 @@ from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.log import log_error
 
 try:
     from mistralai import CompletionEvent
@@ -44,7 +44,7 @@ def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
 
         path = Path(image.filepath) if isinstance(image.filepath, str) else image.filepath
         if not path.exists() or not path.is_file():
-            logger.error(f"Image file not found: {image}")
+            log_error(f"Image file not found: {image}")
             raise FileNotFoundError(f"Image file not found: {image}")
 
         with open(image.filepath, "rb") as image_file:
@@ -170,7 +170,7 @@ class MistralChat(Model):
 
         self.api_key = self.api_key or getenv("MISTRAL_API_KEY")
         if not self.api_key:
-            logger.error("MISTRAL_API_KEY not set. Please set the MISTRAL_API_KEY environment variable.")
+            log_error("MISTRAL_API_KEY not set. Please set the MISTRAL_API_KEY environment variable.")
 
         client_params.update(
             {
@@ -268,10 +268,10 @@ class MistralChat(Model):
             return response
 
         except HTTPValidationError as e:
-            logger.error(f"HTTPValidationError from Mistral: {e}")
+            log_error(f"HTTPValidationError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            logger.error(f"SDKError from Mistral: {e}")
+            log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
@@ -293,10 +293,10 @@ class MistralChat(Model):
             )
             return stream
         except HTTPValidationError as e:
-            logger.error(f"HTTPValidationError from Mistral: {e}")
+            log_error(f"HTTPValidationError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            logger.error(f"SDKError from Mistral: {e}")
+            log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
@@ -327,10 +327,10 @@ class MistralChat(Model):
                 )
             return response
         except HTTPValidationError as e:
-            logger.error(f"HTTPValidationError from Mistral: {e}")
+            log_error(f"HTTPValidationError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            logger.error(f"SDKError from Mistral: {e}")
+            log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> Any:
@@ -355,10 +355,10 @@ class MistralChat(Model):
             async for chunk in stream:
                 yield chunk
         except HTTPValidationError as e:
-            logger.error(f"HTTPValidationError from Mistral: {e}")
+            log_error(f"HTTPValidationError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            logger.error(f"SDKError from Mistral: {e}")
+            log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def parse_provider_response(self, response: ChatCompletionResponse) -> ModelResponse:
