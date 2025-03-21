@@ -614,7 +614,6 @@ class E2BTools(Toolkit):
             return json.dumps({"status": "error", "message": f"Error starting server: {str(e)}"})
 
     # --- Sandbox Management Functions ---
-
     def set_sandbox_timeout(self, timeout: int) -> str:
         """
         Update the timeout for the sandbox.
