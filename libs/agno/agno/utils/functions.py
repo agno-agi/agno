@@ -1,8 +1,10 @@
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional, TypeVar
 
 from agno.tools.function import Function, FunctionCall
 from agno.utils.log import log_debug, log_error
+
+T = TypeVar("T")
 
 
 def get_function_call(
@@ -70,3 +72,94 @@ def get_function_call(
             function_call.error = f"Error while parsing function arguments: {e}\n\n Please fix and retry."
             return function_call
     return function_call
+
+
+def cache_result(cache_dir: Optional[str] = None, cache_ttl: int = 3600):
+    """
+    Decorator factory that creates a file-based caching decorator for function results.
+
+    Args:
+        cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
+        cache_ttl (int): Time-to-live for cached results in seconds.
+
+    Returns:
+        A decorator function that caches results on the filesystem.
+    """
+    import functools
+    import hashlib
+    import json
+    import os
+    import tempfile
+    import time
+
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # First argument might be 'self' but we don't need to handle it specially
+            instance = args[0] if args else None
+
+            # Skip caching if cache_results is False (only for class methods)
+            if hasattr(instance, "cache_results") and not instance.cache_results:
+                return func(*args, **kwargs)
+
+            # Get cache directory
+            instance_cache_dir = (
+                getattr(instance, "cache_dir", cache_dir) if hasattr(instance, "cache_dir") else cache_dir
+            )
+            base_cache_dir = instance_cache_dir or os.path.join(tempfile.gettempdir(), "agno_cache")
+
+            # Create cache directory if it doesn't exist
+            func_cache_dir = os.path.join(base_cache_dir, func.__module__, func.__qualname__)
+            os.makedirs(func_cache_dir, exist_ok=True)
+
+            # Create a cache key using all arguments
+            # Convert args and kwargs to strings and join them
+            args_str = str(args)
+            kwargs_str = str(sorted(kwargs.items()))
+
+            # Create a hash for potentially large input
+            key_str = f"{func.__module__}.{func.__qualname__}:{args_str}:{kwargs_str}"
+            cache_key = hashlib.md5(key_str.encode()).hexdigest()
+
+            # Define cache file path
+            cache_file = os.path.join(func_cache_dir, f"{cache_key}.json")
+
+            # Check for cached result
+            if os.path.exists(cache_file):
+                try:
+                    with open(cache_file, "r") as f:
+                        cache_data = json.load(f)
+
+                    timestamp = cache_data.get("timestamp", 0)
+                    result = cache_data.get("result")
+
+                    # Use instance ttl if available, otherwise use decorator ttl
+                    effective_ttl = (
+                        getattr(instance, "cache_ttl", cache_ttl) if hasattr(instance, "cache_ttl") else cache_ttl
+                    )
+
+                    if time.time() - timestamp <= effective_ttl:
+                        log_debug(f"Cache hit for: {func.__name__}")
+                        return result
+
+                    # Remove expired entry
+                    os.remove(cache_file)
+                except Exception as e:
+                    log_error(f"Error reading cache: {e}")
+                    # Continue with function execution if cache read fails
+
+            # Execute the function and cache the result
+            result = func(*args, **kwargs)
+
+            try:
+                with open(cache_file, "w") as f:
+                    json.dump({"timestamp": time.time(), "result": result}, f)
+            except Exception as e:
+                log_error(f"Error writing cache: {e}")
+                # Continue even if cache write fails
+
+            return result
+
+        return wrapper
+
+    return decorator
