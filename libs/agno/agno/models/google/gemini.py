@@ -442,6 +442,7 @@ class Gemini(Model):
                 continue
 
             role = "model" if role == "assistant" else role
+            role = "user" if role == "tool" else role
 
             # Add content to the message for the model
             content = message.content
@@ -458,7 +459,7 @@ class Gemini(Model):
                         )
                     )
             # Function results
-            elif role == "tool" and message.tool_calls:
+            elif message.role == "tool" and message.tool_calls:
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_response(
@@ -704,7 +705,7 @@ class Gemini(Model):
         if combined_content:
             messages.append(
                 Message(
-                    role="tool", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
+                    role="user", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
                 )
             )
 
