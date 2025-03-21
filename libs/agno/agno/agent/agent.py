@@ -489,27 +489,6 @@ class Agent:
     def has_team(self) -> bool:
         return self.team is not None and len(self.team) > 0
 
-    def _add_tool_calls_to_model_response_stream(
-        self, model_response: ModelResponse, tool_calls_list: List[Dict[str, Any]]
-    ) -> None:
-        """Add tool calls to model_response.tool_calls while avoiding duplicates.
-
-        Args:
-            model_response: The ModelResponse object to update
-            tool_calls_list: List of tool calls to add
-        """
-        if not hasattr(model_response, "tool_calls") or model_response.tool_calls is None:
-            model_response.tool_calls = []
-
-        # Track the IDs of tool calls already in model_response.tool_calls to avoid duplication
-        existing_ids = {tc.get("tool_call_id") for tc in model_response.tool_calls if "tool_call_id" in tc}
-
-        # Add new tool calls to model_response.tool_calls (avoiding duplicates)
-        for tc in tool_calls_list:
-            if "tool_call_id" in tc and tc["tool_call_id"] not in existing_ids:
-                model_response.tool_calls.append(tc)
-                existing_ids.add(tc["tool_call_id"])
-
     def _run(
         self,
         message: Optional[Union[str, List, Dict, Message]] = None,
