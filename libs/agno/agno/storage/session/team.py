@@ -49,6 +49,7 @@ class TeamSession:
         return cls(
             session_id=data.get("session_id"),  # type: ignore
             team_id=data.get("team_id"),
+            team_session_id=data.get("team_session_id"),
             user_id=data.get("user_id"),
             memory=data.get("memory"),
             team_data=data.get("team_data"),

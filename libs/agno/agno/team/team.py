@@ -4528,6 +4528,7 @@ class Team:
                 run=TeamRunCreate(
                     run_id=self.run_id,
                     run_data=run_data,
+                    team_session_id=team_session.team_session_id,
                     session_id=team_session.session_id,
                     team_data=team_session.to_dict() if self.monitoring else team_session.telemetry_data(),
                 ),
