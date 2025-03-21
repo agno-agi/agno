@@ -8,7 +8,7 @@ def test_image_input():
     """Test image input with the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools()],
+        tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -28,7 +28,7 @@ def test_multimodal_with_tools():
     """Test multimodal input with tool use in the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools()],
+        tools=[DuckDuckGoTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,

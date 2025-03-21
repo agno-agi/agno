@@ -137,7 +137,7 @@ def test_persistent_memory():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
         exponential_backoff=True,
-        tools=[DuckDuckGoTools()],
+        tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         show_tool_calls=True,
         telemetry=False,

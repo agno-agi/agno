@@ -13,7 +13,7 @@ from agno.tools.yfinance import YFinanceTools
 def test_tool_use():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -32,7 +32,7 @@ def test_tool_use():
 def test_tool_use_stream():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -61,7 +61,7 @@ def test_tool_use_stream():
 async def test_async_tool_use():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -81,7 +81,7 @@ async def test_async_tool_use():
 async def test_async_tool_use_stream():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -109,7 +109,7 @@ async def test_async_tool_use_stream():
 def test_parallel_tool_calls():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -132,7 +132,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
-        tools=[YFinanceTools(), DuckDuckGoTools()],
+        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
