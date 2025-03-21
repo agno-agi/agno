@@ -340,7 +340,6 @@ class E2BTools(Toolkit):
             return json.dumps({"status": "error", "message": f"Error downloading file: {str(e)}"})
 
     # --- Command Execution Functions ---
-
     def run_command(
         self,
         command: str,
