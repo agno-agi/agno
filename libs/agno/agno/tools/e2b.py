@@ -145,7 +145,6 @@ class E2BTools(Toolkit):
             return json.dumps({"status": "error", "message": f"Error executing code: {str(e)}"})
 
     #  File Upload/Download Functions
-
     def upload_file(self, file_path: str, sandbox_path: Optional[str] = None) -> str:
         """
         Upload a file to the E2B sandbox.
