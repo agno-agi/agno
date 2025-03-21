@@ -99,7 +99,6 @@ class E2BTools(Toolkit):
             self.register(self.kill_background_command)
 
     # Code Execution Functions
-
     def run_python_code(self, code: str) -> str:
         """
         Run Python code in an isolated E2B sandbox environment.
