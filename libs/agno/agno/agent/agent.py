@@ -268,7 +268,7 @@ class Agent:
         storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
-        show_tool_calls: bool = False,
+        show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         reasoning: bool = False,
