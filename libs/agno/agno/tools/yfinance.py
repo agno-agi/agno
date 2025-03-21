@@ -1,6 +1,7 @@
 import json
-
+from typing import Optional
 from agno.tools import Toolkit
+from agno.utils.functions import cache_result
 from agno.utils.log import log_debug
 
 try:
@@ -10,6 +11,20 @@ except ImportError:
 
 
 class YFinanceTools(Toolkit):
+    """
+    YFinanceTools is a toolkit for getting financial data from Yahoo Finance.
+    Args:
+        stock_price (bool): Whether to get the current stock price.
+        company_info (bool): Whether to get company information.
+        stock_fundamentals (bool): Whether to get stock fundamentals.
+        income_statements (bool): Whether to get income statements.
+        key_financial_ratios (bool): Whether to get key financial ratios.
+        analyst_recommendations (bool): Whether to get analyst recommendations.
+        company_news (bool): Whether to get company news.
+        technical_indicators (bool): Whether to get technical indicators.
+        historical_prices (bool): Whether to get historical prices.
+        enable_all (bool): Whether to enable all tools.
+    """
     def __init__(
         self,
         stock_price: bool = True,
@@ -22,6 +37,9 @@ class YFinanceTools(Toolkit):
         technical_indicators: bool = False,
         historical_prices: bool = False,
         enable_all: bool = False,
+        enable_cache: bool = False,
+        cache_ttl: int = 3600,
+        cache_dir: Optional[str] = None,
     ):
         super().__init__(name="yfinance_tools")
 
@@ -43,7 +61,12 @@ class YFinanceTools(Toolkit):
             self.register(self.get_technical_indicators)
         if historical_prices or enable_all:
             self.register(self.get_historical_stock_prices)
+        
+        self.enable_cache = enable_cache
+        self.cache_ttl = cache_ttl
+        self.cache_dir = cache_dir
 
+    @cache_result()
     def get_current_stock_price(self, symbol: str) -> str:
         """
         Use this function to get the current stock price for a given symbol.
@@ -63,6 +86,7 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching current price for {symbol}: {e}"
 
+    @cache_result()
     def get_company_info(self, symbol: str) -> str:
         """Use this function to get company information and overview for a given stock symbol.
 
@@ -114,6 +138,7 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching company profile for {symbol}: {e}"
 
+    @cache_result()
     def get_historical_stock_prices(self, symbol: str, period: str = "1mo", interval: str = "1d") -> str:
         """
         Use this function to get the historical stock price for a given symbol.
@@ -136,6 +161,7 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching historical prices for {symbol}: {e}"
 
+    @cache_result()
     def get_stock_fundamentals(self, symbol: str) -> str:
         """Use this function to get fundamental data for a given stock symbol yfinance API.
 
@@ -180,6 +206,7 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error getting fundamentals for {symbol}: {e}"
 
+    @cache_result()
     def get_income_statements(self, symbol: str) -> str:
         """Use this function to get income statements for a given stock symbol.
 
@@ -197,6 +224,7 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching income statements for {symbol}: {e}"
 
+    @cache_result()
     def get_key_financial_ratios(self, symbol: str) -> str:
         """Use this function to get key financial ratios for a given stock symbol.
 
@@ -214,6 +242,7 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching key financial ratios for {symbol}: {e}"
 
+    @cache_result()
     def get_analyst_recommendations(self, symbol: str) -> str:
         """Use this function to get analyst recommendations for a given stock symbol.
 
@@ -231,6 +260,7 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching analyst recommendations for {symbol}: {e}"
 
+    @cache_result()
     def get_company_news(self, symbol: str, num_stories: int = 3) -> str:
         """Use this function to get company news and press releases for a given stock symbol.
 
@@ -248,6 +278,7 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching company news for {symbol}: {e}"
 
+    @cache_result()
     def get_technical_indicators(self, symbol: str, period: str = "3mo") -> str:
         """Use this function to get technical indicators for a given stock symbol.
 
