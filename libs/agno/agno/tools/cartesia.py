@@ -361,33 +361,34 @@ class CartesiaTools(Toolkit):
 
     def text_to_speech(
         self,
-        model_id: str,
         transcript: str,
-        voice_id: str,
-        language: str,
+        model_id: str = None,  # Allow any model ID (sonic-2, sonic-turbo, etc.)
+        voice_id: str = None,
+        language: str = "en",
         output_format_container: str = "mp3",
         output_format_sample_rate: int = 44100,
-        output_format_encoding: Optional[str] = None,
-        output_format_bit_rate: Optional[int] = None,
-        save_to_file: bool = True,
-        output_filename: Optional[str] = None
-    ) -> str:
-        """Generate speech from text.
+        output_format_bit_rate: int = 128000,
+        output_format_encoding: str = None,
+        output_path: str = None,
+        **kwargs,
+    ) -> str:  # Always return a string for agent framework
+        """
+        Convert text to speech using the Cartesia API.
 
         Args:
-            model_id (str): The ID of the model to use.
-            transcript (str): The text to convert to speech.
-            voice_id (str): The ID of the voice to use.
-            language (str): The language code (e.g., 'en', 'fr').
-            output_format_container (str): The format container for the output audio. One of ["mp3", "wav", "raw"]
-            output_format_sample_rate (int): The sample rate for the output audio.
-            output_format_encoding (Optional[str], optional): The encoding for raw/wav containers.
-            output_format_bit_rate (Optional[int], optional): The bit rate for mp3 containers.
-            save_to_file (bool, optional): Whether to save the output to a file. Defaults to True.
-            output_filename (Optional[str], optional): The filename to save to. Defaults to auto-generated.
+            transcript: The text to convert to speech
+            model_id: The ID of the TTS model to use (e.g., "sonic-2", "sonic-turbo")
+            voice_id: The ID of the voice to use
+            language: The language code (e.g., "en" for English)
+            output_format_container: The format container ("mp3", "wav", "raw")
+            output_format_sample_rate: The sample rate (e.g., 44100)
+            output_format_bit_rate: The bit rate for MP3 formats (e.g., 128000)
+            output_format_encoding: The encoding format (e.g., "mp3" for MP3, "pcm_s16le" for WAV)
+            output_path: The path to save the audio file (default: None - saves to default location)
+            **kwargs: Additional parameters to pass to the API
 
         Returns:
-            str: JSON string containing the result information and file path if saved.
+            str: JSON string containing the result information
         """
         logger.info(f"Generating speech for: {transcript[:50]}...")
         try:
@@ -440,25 +441,36 @@ class CartesiaTools(Toolkit):
             logger.info(f"TTS API returned {total_bytes} bytes")
 
             # Save to file if requested
-            if save_to_file:
-                if not output_filename:
-                    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-                    output_filename = f"tts_{timestamp}.{output_format_container}"
+            if output_path or kwargs.get("save_to_file", True):  # Default to saving the file
+                file_path = None
 
-                file_path = os.path.join(self.output_dir, output_filename)
+                if output_path:
+                    file_path = os.path.join(self.output_dir, output_path)
+                else:
+                    # For backward compatibility
+                    output_filename = kwargs.get("output_filename")
+                    if not output_filename:
+                        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+                        output_filename = f"tts_{timestamp}.{output_format_container}"
+
+                    file_path = os.path.join(self.output_dir, output_filename)
+
                 with open(file_path, "wb") as f:
                     f.write(audio_data)
 
+                logger.info(f"Generated {total_bytes} bytes of audio, saved to {file_path}")
+
                 return json.dumps({
                     "success": True,
-                    "total_bytes": total_bytes,
-                    "saved_to": file_path
+                    "file_path": file_path,
+                    "total_bytes": total_bytes
                 }, indent=4)
             else:
+                # Even when not saving to file, return a JSON string not binary data
                 return json.dumps({
                     "success": True,
                     "total_bytes": total_bytes,
-                    "audio_data": "Binary data (not displayed)"
+                    "data": "Binary audio data (not displayed)"
                 }, indent=4)
 
         except Exception as e:
@@ -636,35 +648,32 @@ class CartesiaTools(Toolkit):
 
     def text_to_speech_stream(
         self,
-        model_id: str,
         transcript: str,
-        voice_id: str,
-        language: str,
+        model_id: str = None,  # Allow any model ID
+        voice_id: str = None,
+        language: str = "en",
         output_format_container: str = "mp3",
         output_format_sample_rate: int = 44100,
-        output_format_encoding: Optional[str] = None,
-        output_format_bit_rate: Optional[int] = None,
-        duration: Optional[float] = None,
-        save_to_file: bool = True,
-        output_filename: Optional[str] = None
-    ) -> str:
-        """Generate speech from text with streaming response.
+        output_format_bit_rate: int = 128000,
+        output_format_encoding: str = None,
+        **kwargs,
+    ) -> str:  # Always return a string for agent framework
+        """
+        Stream text to speech using the Cartesia API.
 
         Args:
-            model_id (str): The ID of the model to use.
-            transcript (str): The text to convert to speech.
-            voice_id (str): The ID of the voice to use.
-            language (str): The language code.
-            output_format_container (str): The format container for the output audio.
-            output_format_sample_rate (int): The sample rate for the output audio.
-            output_format_encoding (Optional[str], optional): The encoding for raw/wav containers.
-            output_format_bit_rate (Optional[int], optional): The bit rate for mp3 containers.
-            duration (Optional[float], optional): The maximum duration in seconds.
-            save_to_file (bool, optional): Whether to save the output to a file. Defaults to True.
-            output_filename (Optional[str], optional): The filename to save to. Defaults to auto-generated.
+            transcript: The text to convert to speech
+            model_id: The ID of the TTS model to use (e.g., "sonic-2", "sonic-turbo")
+            voice_id: The ID of the voice to use
+            language: The language code (e.g., "en" for English)
+            output_format_container: The format container ("mp3", "wav", "raw")
+            output_format_sample_rate: The sample rate (e.g., 44100)
+            output_format_bit_rate: The bit rate for MP3 formats (e.g., 128000)
+            output_format_encoding: The encoding format
+            **kwargs: Additional parameters to pass to the API
 
         Returns:
-            str: JSON string containing the result information.
+            str: JSON string containing the result information
         """
         logger.info(f"Streaming speech for text: {transcript[:50]}...")
         try:
@@ -707,10 +716,6 @@ class CartesiaTools(Toolkit):
                 "output_format": output_format
             }
 
-            # Add duration if provided
-            if duration:
-                params["duration"] = duration
-
             # Log the API call for debugging
             logger.info(f"Calling TTS API with params: {json.dumps(params)}")
 
@@ -720,8 +725,10 @@ class CartesiaTools(Toolkit):
             total_bytes = len(audio_data)
             logger.info(f"TTS API returned {total_bytes} bytes")
 
-            # Save to file if requested
+            # Save to file (default behavior for agent framework)
+            save_to_file = kwargs.get("save_to_file", True)
             if save_to_file:
+                output_filename = kwargs.get("output_filename")
                 if not output_filename:
                     # Create a filename based on first few words of transcript
                     words = transcript.split()[:3]
@@ -737,14 +744,15 @@ class CartesiaTools(Toolkit):
                     "success": True,
                     "streaming": False,  # We're using bytes method, not streaming
                     "total_bytes": total_bytes,
-                    "saved_to": file_path
+                    "file_path": file_path
                 }, indent=4)
             else:
+                # Even when not saving to file, return JSON string not binary data
                 return json.dumps({
                     "success": True,
                     "streaming": False,
                     "total_bytes": total_bytes,
-                    "audio_data": "Binary data (not displayed)"
+                    "data": "Binary audio data (not displayed)"
                 }, indent=4)
 
         except Exception as e:
@@ -753,47 +761,48 @@ class CartesiaTools(Toolkit):
 
     def batch_text_to_speech(
         self,
-        model_id: str,
-        texts: List[str],
-        voice_id: str,
-        language: str,
+        transcripts: List[str],
+        model_id: str = None,  # Allow any model ID
+        voice_id: str = None,
+        language: str = "en",
         output_format_container: str = "mp3",
         output_format_sample_rate: int = 44100,
-        output_format_encoding: Optional[str] = None,
-        output_format_bit_rate: Optional[int] = None,
-        output_directory: Optional[str] = None,
-        filename_prefix: str = "batch_tts"
-    ) -> str:
-        """Process multiple text-to-speech conversions in a batch.
+        output_format_bit_rate: int = 128000,
+        output_format_encoding: str = None,
+        output_dir: str = None,
+        **kwargs,
+    ) -> List[str]:
+        """
+        Convert multiple texts to speech using the Cartesia API.
 
         Args:
-            model_id (str): The ID of the model to use.
-            texts (List[str]): List of texts to convert to speech.
-            voice_id (str): The ID of the voice to use.
-            language (str): The language code.
-            output_format_container (str): The format container for the output audio.
-            output_format_sample_rate (int): The sample rate for the output audio.
-            output_format_encoding (Optional[str], optional): The encoding for raw/wav containers.
-            output_format_bit_rate (Optional[int], optional): The bit rate for mp3 containers.
-            output_directory (Optional[str], optional): Directory to save files. Defaults to self.output_dir.
-            filename_prefix (str, optional): Prefix for generated filenames.
+            transcripts: List of texts to convert to speech
+            model_id: The ID of the TTS model to use (e.g., "sonic-2", "sonic-turbo")
+            voice_id: The ID of the voice to use
+            language: The language code (e.g., "en" for English)
+            output_format_container: The format container ("mp3", "wav", "raw")
+            output_format_sample_rate: The sample rate (e.g., 44100)
+            output_format_bit_rate: The bit rate for MP3 formats (e.g., 128000)
+            output_format_encoding: The encoding format
+            output_dir: Directory to save the audio files (default: self.output_dir)
+            **kwargs: Additional parameters to pass to the API
 
         Returns:
-            str: JSON string containing the result information.
+            List[str]: List of paths to the saved audio files
         """
-        logger.info(f"Batch processing {len(texts)} texts to speech")
+        logger.info(f"Batch processing {len(transcripts)} texts to speech")
         try:
             # Normalize language code - API expects "en" not "en-US"
             normalized_language = language.split('-')[0] if '-' in language else language
             logger.info(f"Normalized language from {language} to {normalized_language}")
 
-            save_dir = output_directory or self.output_dir
+            save_dir = output_dir or self.output_dir
             if not os.path.exists(save_dir):
                 os.makedirs(save_dir)
 
             results = []
 
-            for i, text in enumerate(texts):
+            for i, text in enumerate(transcripts):
                 try:
                     # Create proper output_format based on container type
                     if output_format_container == "mp3":
@@ -837,37 +846,29 @@ class CartesiaTools(Toolkit):
                     audio_data = self.client.tts.bytes(**params)
 
                     # Create filename
-                    filename = f"{filename_prefix}_{i+1}.{output_format_container}"
+                    filename = f"batch_tts_{i+1}.{output_format_container}"
                     file_path = os.path.join(save_dir, filename)
 
                     # Save the file
                     with open(file_path, "wb") as f:
                         f.write(audio_data)
 
-                    results.append({
-                        "index": i,
-                        "text": text[:50] + "..." if len(text) > 50 else text,
-                        "file_path": file_path,
-                        "size_bytes": len(audio_data),
-                        "status": "success"
-                    })
+                    results.append(file_path)
 
                 except Exception as e:
                     logger.error(f"Error processing text {i+1}: {e}")
-                    results.append({
-                        "index": i,
-                        "text": text[:50] + "..." if len(text) > 50 else text,
-                        "status": "error",
-                        "error": str(e)
-                    })
+                    results.append(None)
+
+            # Filter out None values
+            results = [r for r in results if r]
 
             # Summarize results
-            success_count = sum(1 for r in results if r["status"] == "success")
-            error_count = len(results) - success_count
+            success_count = len(results)
+            error_count = 0
 
             return json.dumps({
                 "success": True,
-                "total": len(texts),
+                "total": len(transcripts),
                 "success_count": success_count,
                 "error_count": error_count,
                 "output_directory": save_dir,
