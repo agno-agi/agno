@@ -196,7 +196,7 @@ def test_persistent_memory():
     """Test persistent memory with the Responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools()],
+        tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         show_tool_calls=True,
         telemetry=False,

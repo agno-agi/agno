@@ -12,7 +12,7 @@ def test_tool_use():
     """Test basic tool usage with the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -31,7 +31,7 @@ def test_tool_use_stream():
     """Test streaming with tool use in the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -60,7 +60,7 @@ async def test_async_tool_use():
     """Test async tool use with the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -80,7 +80,7 @@ async def test_async_tool_use_stream():
     """Test async streaming with tool use in the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -113,7 +113,7 @@ def test_tool_use_with_native_structured_outputs():
 
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         response_model=StockPrice,
@@ -132,7 +132,7 @@ def test_parallel_tool_calls():
     """Test parallel tool calls with the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -153,7 +153,7 @@ def test_multiple_tool_calls():
     """Test multiple different tool types with the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools(), DuckDuckGoTools()],
+        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -274,7 +274,7 @@ def test_web_search_built_in_tool_with_other_tools():
     """Test the built-in web search tool in the Responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools(), {"type": "web_search_preview"}],
+        tools=[YFinanceTools(cache_results=True), {"type": "web_search_preview"}],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
