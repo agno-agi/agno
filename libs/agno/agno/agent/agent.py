@@ -232,8 +232,10 @@ class Agent:
     # Separator between responses from the team
     team_response_separator: str = "\n"
 
-    # Optional team session ID, set by the team leader agent. Indicates this agent is part of a team.
+    # Optional team session ID, set by the team leader agent.
     team_session_id: Optional[str] = None
+    # Optional team ID. Indicates this agent is part of a team.
+    team_id: Optional[str] = None
 
     # --- Debug & Monitoring ---
     # Enable debug logs

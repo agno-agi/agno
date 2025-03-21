@@ -356,6 +356,7 @@ class Team:
                 member.markdown = True
 
             member.team_session_id = self.session_id
+            member.team_id = self.team_id
 
     @overload
     def run(
