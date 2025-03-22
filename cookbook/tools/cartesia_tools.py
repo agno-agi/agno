@@ -2,11 +2,12 @@
 Example script for using the Cartesia toolkit with an Agno agent for text-to-speech generation.
 """
 
-from dotenv import load_dotenv
-from agno.agent import Agent
-from agno.tools.cartesia import CartesiaTools
 import os
 import sys
+
+from agno.agent import Agent
+from agno.tools.cartesia import CartesiaTools
+from dotenv import load_dotenv
 
 # Get Cartesia API key from environment or use a default for demo
 cartesia_api_key = os.environ.get("CARTESIA_API_KEY", "sk_car_4y7Jz9aKsF6VeLpBKzKwJ")
@@ -42,7 +43,7 @@ EXAMPLES:
 - To get voice details: get_voice(voice_id="[VOICE_ID]")
 
 Always check if operations succeeded by examining the "success" field in responses.
-"""
+""",
 )
 
 # Choose which example to run (uncomment the one you want to try)
@@ -83,7 +84,7 @@ Always check if operations succeeded by examining the "success" field in respons
 agent.print_response(
     "Generate streaming speech for 'This is a demonstration of streaming text-to-speech capabilities' using the sonic-turbo model.",
     markdown=True,
-    stream=False
+    stream=False,
 )
 
 # Example 6: TTS with different audio formats (WAV)

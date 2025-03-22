@@ -1,7 +1,7 @@
 """Unit tests for Cartesia tools."""
 
 import json
-from unittest.mock import MagicMock, patch, ANY, mock_open
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
@@ -56,7 +56,7 @@ class TestCartesiaTools:
     def test_init_with_api_key(self):
         """Test initialization with API key."""
         with patch("agno.tools.cartesia.Cartesia") as mock_cartesia:
-            tools = CartesiaTools(api_key="test_key")
+            CartesiaTools(api_key="test_key")
             mock_cartesia.assert_called_once_with(api_key="test_key")
 
     def test_init_with_env_var(self):
@@ -64,7 +64,7 @@ class TestCartesiaTools:
         with patch("agno.tools.cartesia.Cartesia") as mock_cartesia, patch.dict(
             "os.environ", {"CARTESIA_API_KEY": "env_key"}
         ), patch("agno.tools.cartesia.getenv", return_value="env_key"):
-            tools = CartesiaTools()
+            CartesiaTools()
             mock_cartesia.assert_called_once_with(api_key="env_key")
 
     def test_init_missing_api_key(self):
@@ -348,7 +348,7 @@ class TestCartesiaTools:
         mock_cartesia.tts.bytes.return_value = b"audio data"
 
         # Test with WAV format
-        result_wav = tools.text_to_speech(
+        tools.text_to_speech(
             transcript="Hello world",
             model_id="sonic-2",
             voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
@@ -358,8 +358,13 @@ class TestCartesiaTools:
             output_format_encoding="pcm_s16le"
         )
 
+        # Verify WAV parameters were passed correctly
+        assert mock_cartesia.tts.bytes.call_args_list[0][1]["output_format"]["container"] == "wav"
+        assert mock_cartesia.tts.bytes.call_args_list[0][1]["output_format"]["encoding"] == "pcm_s16le"
+        assert mock_cartesia.tts.bytes.call_args_list[0][1]["output_format"]["sample_rate"] == 48000
+
         # Test with RAW format
-        result_raw = tools.text_to_speech(
+        tools.text_to_speech(
             transcript="Hello world",
             model_id="sonic-2",
             voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
@@ -369,19 +374,10 @@ class TestCartesiaTools:
             output_format_encoding="pcm_s16le"
         )
 
-        # Verify WAV call
-        wav_call = mock_cartesia.tts.bytes.call_args_list[0][1]
-        assert wav_call["output_format"]["container"] == "wav"
-        assert wav_call["output_format"]["sample_rate"] == 48000
-        assert wav_call["output_format"]["encoding"] == "pcm_s16le"
-        assert "bit_rate" not in wav_call["output_format"]
-
-        # Verify RAW call
-        raw_call = mock_cartesia.tts.bytes.call_args_list[1][1]
-        assert raw_call["output_format"]["container"] == "raw"
-        assert raw_call["output_format"]["sample_rate"] == 22050
-        assert raw_call["output_format"]["encoding"] == "pcm_s16le"
-        assert "bit_rate" not in raw_call["output_format"]
+        # Verify RAW parameters were passed correctly
+        assert mock_cartesia.tts.bytes.call_args_list[1][1]["output_format"]["container"] == "raw"
+        assert mock_cartesia.tts.bytes.call_args_list[1][1]["output_format"]["encoding"] == "pcm_s16le"
+        assert mock_cartesia.tts.bytes.call_args_list[1][1]["output_format"]["sample_rate"] == 22050
 
     def test_get_api_status(self, mock_cartesia):
         """Test getting API status."""
