@@ -76,3 +76,8 @@ agent.print_response("Give me the list of todays events", markdown=True)
 
 # agent.print_response(
 #     "create an event today from 5pm to 6pm, make the title as test event v1 and description as this is a test event", markdown=True)
+
+# agent.print_response(
+#     "update test event v1 event today from 5pm to 7pm, make the title as test event v2 and description as this is a test event", markdown=True)
+
+# agent.print_response("delete all todays events", markdown=True)
