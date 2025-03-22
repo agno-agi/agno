@@ -544,11 +544,11 @@ class Claude(Model):
         """
         if len(function_call_results) > 0:
             fc_responses: List = []
-            for _fc_message_index, _fc_message in enumerate(function_call_results):
+            for _fc_message in function_call_results:
                 fc_responses.append(
                     {
                         "type": "tool_result",
-                        "tool_use_id": tool_ids[_fc_message_index],
+                        "tool_use_id": _fc_message.tool_call_id,
                         "content": _fc_message.content,
                     }
                 )
