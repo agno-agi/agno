@@ -531,7 +531,6 @@ class Agent:
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
         log_debug(f"Agent Run Start: {self.run_response.run_id}", center=True)
-        log_debug("")
 
         # 2. Update the Model and resolve context
         self.update_model()
@@ -838,7 +837,7 @@ class Agent:
         # Log Agent Run
         self._log_agent_run()
 
-        log_debug(f" Agent Run End: {self.run_response.run_id} ", center=True, symbol="*")
+        log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,
@@ -1052,8 +1051,7 @@ class Agent:
         self.run_id = str(uuid4())
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
-        log_debug(f" Async Agent Run Start: {self.run_response.run_id} ", center=True, symbol="*")
-        log_debug("")
+        log_debug(f"Async Agent Run Start: {self.run_response.run_id}", center=True, symbol="*")
 
         # 2. Update the Model and resolve context
         self.update_model()
@@ -1358,7 +1356,7 @@ class Agent:
         # Log Agent Run
         await self._alog_agent_run()
 
-        log_debug(f" Agent Run End: {self.run_response.run_id} ", center=True, symbol="*")
+        log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,

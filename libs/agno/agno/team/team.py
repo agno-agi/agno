@@ -443,9 +443,8 @@ class Team:
             run_id = str(uuid4())
             self.run_id = run_id
 
-            log_debug(f" Team Run Start: {self.run_id} ", center=True)
-            log_debug(f" Mode: '{self.mode}' ", center=True)
-            log_debug("")
+            log_debug(f"Team Run Start: {self.run_id}", center=True)
+            log_debug(f"Mode: '{self.mode}'", center=True)
 
             # Set run_input
             if message is not None:
@@ -728,8 +727,7 @@ class Team:
         # 8. Log Team Run
         self._log_team_run()
 
-        log_debug(f" Team Run End: {self.run_id} ", center=True, symbol="*")
-        log_debug("")
+        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
     def _run_stream(
         self,
@@ -938,8 +936,7 @@ class Team:
                 event=RunEvent.run_completed,
             )
 
-        log_debug(f" Team Run End: {self.run_id} ", center=True, symbol="*")
-        log_debug("")
+        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
     @overload
     async def arun(
@@ -1023,9 +1020,8 @@ class Team:
             run_id = str(uuid4())
             self.run_id = run_id
 
-            log_debug(f" Team Run Start: {self.run_id} ", center=True)
-            log_debug(f" Mode: '{self.mode}' ", center=True)
-            log_debug("")
+            log_debug(f"Team Run Start: {self.run_id}", center=True)
+            log_debug(f"Mode: '{self.mode}'", center=True)
 
             # Set run_input
             if message is not None:
@@ -1306,8 +1302,7 @@ class Team:
         # 8. Log Team Run
         await self._alog_team_run()
 
-        log_debug(f" Team Run End: {self.run_id} ", center=True, symbol="*")
-        log_debug("")
+        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
     async def _arun_stream(
         self,
@@ -1524,8 +1519,7 @@ class Team:
                 event=RunEvent.run_completed,
             )
 
-        log_debug(f" Team Run End: {self.run_id} ", center=True, symbol="*")
-        log_debug("")
+        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
     ###########################################################################
     # Print Response

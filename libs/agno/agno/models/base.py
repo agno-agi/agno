@@ -164,9 +164,8 @@ class Model(ABC):
             ModelResponse: The model's response
         """
 
-        log_debug(f" {self.get_provider()} Response Start ", center=True, symbol="-")
-        log_debug(f" Model: {self.id} ", center=True, symbol="-")
-        log_debug("")
+        log_debug(f"{self.get_provider()} Response Start", center=True, symbol="-")
+        log_debug(f"Model: {self.id}", center=True, symbol="-")
 
         self._log_messages(messages)
         model_response = ModelResponse()
@@ -221,8 +220,7 @@ class Model(ABC):
             # No tool calls or finished processing them
             break
 
-        log_debug(f" {self.get_provider()} Response End ", center=True, symbol="-")
-        log_debug("")
+        log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
         return model_response
 
     async def aresponse(self, messages: List[Message]) -> ModelResponse:
@@ -236,9 +234,8 @@ class Model(ABC):
             ModelResponse: The model's response
         """
 
-        log_debug(f" {self.get_provider()} Async Response Start ", center=True, symbol="-")
-        log_debug(f" Model: {self.id} ", center=True, symbol="-")
-        log_debug("")
+        log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
+        log_debug(f"Model: {self.id}", center=True, symbol="-")
         self._log_messages(messages)
         model_response = ModelResponse()
 
@@ -292,8 +289,7 @@ class Model(ABC):
             # No tool calls or finished processing them
             break
 
-        log_debug(f" {self.get_provider()} Async Response End ", center=True, symbol="-")
-        log_debug("")
+        log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
         return model_response
 
     def _process_model_response(
@@ -490,9 +486,8 @@ class Model(ABC):
             Iterator[ModelResponse]: Iterator of model responses
         """
 
-        log_debug(f" {self.get_provider()} Response Stream Start ", center=True, symbol="-")
-        log_debug(f" Model: {self.id} ", center=True, symbol="-")
-        log_debug("")
+        log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
+        log_debug(f"Model: {self.id}", center=True, symbol="-")
         self._log_messages(messages)
 
         while True:
@@ -560,8 +555,7 @@ class Model(ABC):
             # No tool calls or finished processing them
             break
 
-        log_debug(f" {self.get_provider()} Response Stream End ", center=True, symbol="-")
-        log_debug("")
+        log_debug(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
 
     async def aprocess_response_stream(
         self, messages: List[Message], assistant_message: Message, stream_data: MessageData
@@ -587,9 +581,8 @@ class Model(ABC):
             AsyncIterator[ModelResponse]: Async iterator of model responses
         """
 
-        log_debug(f" {self.get_provider()} Async Response Stream Start ", center=True, symbol="-")
-        log_debug(f" Model: {self.id} ", center=True, symbol="-")
-        log_debug("")
+        log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
+        log_debug(f"Model: {self.id}", center=True, symbol="-")
         self._log_messages(messages)
 
         while True:
@@ -656,8 +649,7 @@ class Model(ABC):
             # No tool calls or finished processing them
             break
 
-        log_debug(f" {self.get_provider()} Async Response Stream End ", center=True, symbol="-")
-        log_debug("")
+        log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")
 
     def _populate_stream_data_and_assistant_message(
         self, stream_data: MessageData, assistant_message: Message, model_response: ModelResponse
