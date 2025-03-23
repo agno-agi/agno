@@ -3096,15 +3096,12 @@ class Agent:
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
-                use_json_mode: bool = self.use_json_mode
-                if self.structured_outputs is not None:
-                    use_json_mode = not self.structured_outputs  # type: ignore
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    use_json_mode=use_json_mode,
+                    use_json_mode=self.use_json_mode,
                     monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
@@ -3285,16 +3282,15 @@ class Agent:
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
-                use_json_mode: bool = self.use_json_mode
-                if self.structured_outputs is not None:
-                    use_json_mode = not self.structured_outputs  # type: ignore
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    use_json_mode=use_json_mode,
+                    use_json_mode=self.use_json_mode,
                     monitoring=self.monitoring,
+                    telemetry=self.telemetry,
+                    debug_mode=self.debug_mode,
                 )
 
             # Validate reasoning agent
