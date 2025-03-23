@@ -2,6 +2,7 @@ import json
 from typing import Any, Dict, Optional
 
 from agno.tools import Toolkit
+from agno.utils.functions import cache_result
 from agno.utils.log import log_debug, logger
 
 try:
@@ -11,11 +12,25 @@ except ImportError:
 
 
 class Newspaper4kTools(Toolkit):
+    """
+    Newspaper4kTools is a toolkit for getting the text of an article from a URL.
+    Args:
+        read_article (bool): Whether to read an article from a URL.
+        include_summary (bool): Whether to include the summary of an article.
+        article_length (Optional[int]): The length of the article to read.
+        cache_results (bool): Whether to enable caching of search results.
+        cache_ttl (int): Time-to-live for cached results in seconds.
+        cache_dir (Optional[str]): Directory to store cache files.
+    """
+
     def __init__(
         self,
         read_article: bool = True,
         include_summary: bool = False,
         article_length: Optional[int] = None,
+        cache_results: bool = False,
+        cache_ttl: int = 3600,
+        cache_dir: Optional[str] = None,
     ):
         super().__init__(name="newspaper_tools")
 
@@ -24,6 +39,11 @@ class Newspaper4kTools(Toolkit):
         if read_article:
             self.register(self.read_article)
 
+        self.cache_results = cache_results
+        self.cache_ttl = cache_ttl
+        self.cache_dir = cache_dir
+
+    @cache_result()
     def get_article_data(self, url: str) -> Optional[Dict[str, Any]]:
         """Read and get article data from a URL.
 
@@ -57,6 +77,7 @@ class Newspaper4kTools(Toolkit):
             logger.warning(f"Error reading article from {url}: {e}")
             return None
 
+    @cache_result()
     def read_article(self, url: str) -> str:
         """Use this function to read an article from a URL.
 

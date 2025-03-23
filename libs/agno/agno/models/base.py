@@ -533,10 +533,6 @@ class Model(ABC):
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(assistant_message, messages)
                 function_call_results: List[Message] = []
 
-                # Show tool calls if enabled
-                if self.show_tool_calls:
-                    yield from self._show_stream_tool_calls(function_calls_to_run=function_calls_to_run)
-
                 # Execute function calls
                 for function_call_response in self.run_function_calls(
                     function_calls=function_calls_to_run, function_call_results=function_call_results
@@ -632,11 +628,6 @@ class Model(ABC):
                 # Prepare function calls
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(assistant_message, messages)
                 function_call_results: List[Message] = []
-
-                # Show tool calls if enabled
-                if self.show_tool_calls:
-                    for model_response in self._show_stream_tool_calls(function_calls_to_run):
-                        yield model_response
 
                 # Execute function calls
                 async for function_call_response in self.arun_function_calls(
@@ -1018,35 +1009,6 @@ class Model(ABC):
         if additional_messages:
             function_call_results.extend(additional_messages)
 
-    def _show_tool_calls(self, function_calls_to_run: List[FunctionCall], model_response: ModelResponse):
-        """
-        Show tool calls in the model response.
-        """
-        if len(function_calls_to_run) == 1:
-            if model_response.content and len(model_response.content) > 0 and model_response.content[-1] != "\n":
-                model_response.content += "\n\n"
-            else:
-                model_response.content = ""
-            model_response.content += f" - Running: {function_calls_to_run[0].get_call_str()}\n\n"
-        elif len(function_calls_to_run) > 1:
-            if model_response.content and len(model_response.content) > 0 and model_response.content[-1] != "\n":
-                model_response.content += "\n\n"
-            else:
-                model_response.content = ""
-            model_response.content += "Running:"
-            for _f in function_calls_to_run:
-                model_response.content += f"\n - {_f.get_call_str()}"
-            model_response.content += "\n\n"
-
-    def _show_stream_tool_calls(self, function_calls_to_run: List[FunctionCall]) -> Iterator[ModelResponse]:
-        if len(function_calls_to_run) == 1:
-            yield ModelResponse(content=f" - Running: {function_calls_to_run[0].get_call_str()}\n\n")
-        else:
-            yield ModelResponse(content="\nRunning:")
-            for _f in function_calls_to_run:
-                yield ModelResponse(content=f"\n - {_f.get_call_str()}")
-            yield ModelResponse(content="\n\n")
-
     def _prepare_function_calls(
         self,
         assistant_message: Message,
@@ -1069,8 +1031,6 @@ class Model(ABC):
             model_response.tool_calls = []
 
         function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(assistant_message, messages)
-        if self.show_tool_calls and function_calls_to_run:
-            self._show_tool_calls(function_calls_to_run, model_response)
         return function_calls_to_run
 
     def format_function_call_results(
