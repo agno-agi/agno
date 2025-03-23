@@ -18,7 +18,7 @@ class GeminiEmbedder(Embedder):
     id: str = "text-embedding-004"
     task_type: str = "RETRIEVAL_QUERY"
     title: Optional[str] = None
-    dimensions: Optional[int] = 768
+    dimensions: Optional[int] = 1536
     api_key: Optional[str] = None
     request_params: Optional[Dict[str, Any]] = None
     client_params: Optional[Dict[str, Any]] = None
