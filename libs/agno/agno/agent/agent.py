@@ -52,7 +52,7 @@ from agno.utils.log import (
 from agno.utils.message import get_text_from_message
 from agno.utils.response import create_panel, escape_markdown_tags, format_tool_calls
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model
+from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
 
 
@@ -935,7 +935,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            structured_output = parse_response_model(run_response.content, self.response_model)
+                            structured_output = parse_response_model_str(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -1421,7 +1421,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            structured_output = parse_response_model(run_response.content, self.response_model)
+                            structured_output = parse_response_model_str(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:

@@ -60,7 +60,7 @@ from agno.utils.response import (
     update_run_response_with_reasoning,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model
+from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
 
 
@@ -352,6 +352,8 @@ class Team:
             # Set debug mode for all members
             if self.debug_mode:
                 member.debug_mode = True
+            if self.show_tool_calls:
+                member.show_tool_calls = True
             if self.markdown:
                 member.markdown = True
 
@@ -698,7 +700,7 @@ class Team:
         if self.response_model is not None:
             if isinstance(run_response.content, str) and self.parse_response:
                 try:
-                    parsed_response_content = parse_response_model(run_response.content, self.response_model)
+                    parsed_response_content = parse_response_model_str(run_response.content, self.response_model)
 
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
@@ -709,11 +711,12 @@ class Team:
                 except Exception as e:
                     log_warning(f"Failed to convert response to output model: {e}")
             else:
+                print("HERE", run_response.content)
                 log_warning("Something went wrong. Run response content is not a string")
         elif self._member_response_model is not None:
             if isinstance(run_response.content, str):
                 try:
-                    parsed_response_content = parse_response_model(run_response.content, self._member_response_model)
+                    parsed_response_content = parse_response_model_str(run_response.content, self._member_response_model)
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
                         run_response.content = parsed_response_content
@@ -1276,7 +1279,7 @@ class Team:
         if self.response_model is not None:
             if isinstance(run_response.content, str) and self.parse_response:
                 try:
-                    parsed_response_content = parse_response_model(run_response.content, self.response_model)
+                    parsed_response_content = parse_response_model_str(run_response.content, self.response_model)
 
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
@@ -1291,7 +1294,7 @@ class Team:
         elif self._member_response_model is not None:
             if isinstance(run_response.content, str):
                 try:
-                    parsed_response_content = parse_response_model(run_response.content, self._member_response_model)
+                    parsed_response_content = parse_response_model_str(run_response.content, self._member_response_model)
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
                         run_response.content = parsed_response_content
