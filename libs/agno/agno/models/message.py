@@ -319,7 +319,7 @@ class Message(BaseModel):
                 if tool_call_arguments:
                     for k, v in json.loads(tool_call_arguments).items():
                         arguments.append(f"{k}: {v}")
-                    tool_calls_str += f"    Arguments: '{', '.join(arguments)}'\n"
+                    tool_calls_str += f"    Arguments: '{', '.join(arguments)}'"
 
             _logger(tool_calls_str)
         if self.images:
@@ -358,8 +358,6 @@ class Message(BaseModel):
             if self.metrics.additional_metrics:
                 _logger(f"* Additional metrics:          {self.metrics.additional_metrics}")
             _logger(metrics_header, center=True, symbol="*")
-
-        _logger("")
 
     def content_is_valid(self) -> bool:
         """Check if the message content is valid."""
