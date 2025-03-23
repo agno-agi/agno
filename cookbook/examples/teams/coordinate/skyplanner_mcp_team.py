@@ -124,15 +124,16 @@ async def run_team():
         class FlightDeal(BaseModel):
             description: str
             location: str
-            price: Optional[float] = None
+            price: Optional[str] = None
             url: Optional[str] = None
 
         class AirbnbListing(BaseModel):
             name: str
             description: str
             address: Optional[str] = None
-            price: Optional[float] = None
+            price: Optional[str] = None
             dates_available: Optional[List[str]] = None
+            url: Optional[str] = None
 
         class Attraction(BaseModel):
             name: str
@@ -158,8 +159,9 @@ async def run_team():
         team = Team(
             name="SkyPlanner",
             mode="coordinate",
-            model=OpenAIChat("gpt-4o"),
+            model=OpenAIChat("o3-mini"),
             members=[airbnb_agent, flight_deal_agent, web_search_agent, maps_agent, weather_search_agent],
+            success_criteria="You have flight deals, Airbnb listings, attractions, weather information, and a suggested itinerary.",
             instructions=[
                 "First, find the best flight deals for a given location and date.",
                 "Then, find the best Airbnb listings for the given location.",
@@ -167,7 +169,7 @@ async def run_team():
                 "Use the Attractions agent to find highly-rated places to visit and restaurants.",
                 "Get weather information to help with packing and planning outdoor activities.",
                 "Finally, plan an itinerary for the trip.",
-                "Continue asking individual team members until you have all the information you need."
+                "Continue asking individual team members until you have ALL the information you need."
             ],
             response_model=TravelPlan,
             show_tool_calls=True,
