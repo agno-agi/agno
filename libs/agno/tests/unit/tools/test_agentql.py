@@ -65,3 +65,31 @@ def test_custom_scrape_no_query(agentql_tools):
     """Test custom scraping without a query."""
     result = agentql_tools.custom_scrape_website("https://example.com")
     assert "Custom AgentQL query not provided" in result
+
+@pytest.mark.skip(reason="This test doesn't mock playwright module correctly.")
+def test_scrape_website_success(mock_playwright, mock_agentql, agentql_tools):
+    """Test successful website scraping."""
+    # Unpack the mock_agentql fixture
+    mock_agentql_module, wrapped_page = mock_agentql
+    
+    # Set up the mock response for query_data
+    wrapped_page.query_data.return_value = {
+        "text_content": ["Example Domain", "This domain is for use in illustrative examples"]
+    }
+    
+    result = agentql_tools.scrape_website("https://example.com")
+    
+    # Verify the page navigation occurred
+    wrapped_page.goto.assert_called_once_with("https://example.com")
+    
+    # Verify query_data was called with correct query
+    wrapped_page.query_data.assert_called_once_with("""
+        {
+            text_content[]
+        }
+        """)
+    
+    # Check the result contains expected content
+    assert "Example Domain" in result
+    assert "This domain is for use in illustrative examples" in result
+    assert isinstance(result, str)
