@@ -80,6 +80,26 @@ class TeamRunResponse:
 
         return json.dumps(_dict, indent=2)
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TeamRunResponse":
+        messages = data.pop("messages", None)
+        messages = [Message.model_validate(message) for message in messages] if messages else None
+
+        member_responses = data.pop("member_responses", None)
+        parsed_member_responses = []
+        if member_responses:
+            for response in member_responses:
+                if "agent_id" in response:
+                    parsed_member_responses.append(RunResponse.from_dict(response))
+                else:
+                    parsed_member_responses.append(TeamRunResponse.from_dict(response))
+
+        return cls(
+            messages=messages,
+            member_responses=parsed_member_responses,
+            **data
+        )
+
     def get_content_as_string(self, **kwargs) -> str:
         import json
 

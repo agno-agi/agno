@@ -112,6 +112,16 @@ class RunResponse:
 
         return json.dumps(_dict, indent=2)
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
+        messages = data.pop("messages", None)
+        messages = [Message.model_validate(message) for message in messages] if messages else None
+
+        return cls(
+            messages=messages,
+            **data
+        )
+
     def get_content_as_string(self, **kwargs) -> str:
         import json
 

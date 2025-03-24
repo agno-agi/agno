@@ -312,9 +312,6 @@ class Team:
 
     def _set_storage_mode(self):
         if self.storage is not None:
-            if self.storage.mode in ["workflow", "agent"]:
-                log_warning(f"You shouldn't use storage in multiple modes. Current mode is {self.storage.mode}.")
-
             self.storage.mode = "team"
 
     def _set_monitoring(self) -> None:
@@ -716,7 +713,6 @@ class Team:
                 except Exception as e:
                     log_warning(f"Failed to convert response to output model: {e}")
             else:
-                print("HERE", run_response.content)
                 log_warning("Something went wrong. Run response content is not a string")
         elif self._member_response_model is not None:
             if isinstance(run_response.content, str):
@@ -4351,7 +4347,7 @@ class Team:
         if not isinstance(self.memory, TeamMemory):
             if isinstance(self.memory, dict):
                 # Convert dict to TeamMemory
-                self.memory = TeamMemory(**self.memory)
+                self.memory = TeamMemory.from_dict(self.memory)
             else:
                 raise TypeError(f"Expected memory to be a dict or TeamMemory, but got {type(self.memory)}")
 
@@ -4359,7 +4355,7 @@ class Team:
             try:
                 if "runs" in session.memory:
                     try:
-                        self.memory.runs = [TeamRun(**m) for m in session.memory["runs"]]
+                        self.memory.runs = [TeamRun.from_dict(m) for m in session.memory["runs"]]
                     except Exception as e:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "messages" in session.memory:
