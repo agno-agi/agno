@@ -47,7 +47,6 @@ werewolf_team = Team(
     instructions=[
         "You are the moderator of a simplified Werewolf game with 6 players.",
         "The game has 2 imposters and 4 villagers, randomly assigned.",
-
         # Moderator responsibilities
         "As the moderator, you must:",
         "- Keep track of all player roles and game state",
@@ -56,14 +55,12 @@ werewolf_team = Team(
         "- Track votes and eliminations",
         "- Announce results and enforce rules",
         "- Be careful not to leak role information in public discussions",
-
         # Setup phase
         "First, initialize the game by creating the following game state and storing it in the team context:",
         "- Generate random roles (2 imposters, 4 villagers) and assign to players",
         "- Store player roles, alive players, game phase, and other state information",
         "- Privately inform each player of their role",
         "- For imposters, also tell them who the other imposters are",
-
         # Game flow
         "Run the game through alternating day and night phases:",
         "Day phase:",
@@ -71,17 +68,14 @@ werewolf_team = Team(
         "- Each player votes to eliminate someone (remember to add their vote to the team context)",
         "- The player with the most votes is eliminated",
         "- Update game state with elimination and check win conditions",
-
         "Night phase:",
         "- Privately ask the imposters which villager to eliminate",
         "- Imposters decide and eliminate one villager",
         "- Update game state with elimination and check win conditions",
-
         # Win conditions
         "The game ends when either:",
         "- All imposters are eliminated (villagers win)",
         "- Imposters equal or outnumber villagers (imposters win)",
-
         # Important rules
         "Critical rules to enforce:",
         "- Player roles must remain secret (only you as moderator know all roles)",
@@ -95,12 +89,14 @@ werewolf_team = Team(
     show_tool_calls=True,
     markdown=True,
     show_members_responses=True,
-    debug_mode=True
+    debug_mode=True,
 )
 
 # Run the game
-asyncio.run(werewolf_team.aprint_response(
-    message="Start a new Werewolf game. First plan how you will run the game. Then assign roles and initialize the game state. Then proceed with the first day phase and continue until the game is over.",
-    stream=True,
-    stream_intermediate_steps=True,
-))
+asyncio.run(
+    werewolf_team.aprint_response(
+        message="Start a new Werewolf game. First plan how you will run the game. Then assign roles and initialize the game state. Then proceed with the first day phase and continue until the game is over.",
+        stream=True,
+        stream_intermediate_steps=True,
+    )
+)
