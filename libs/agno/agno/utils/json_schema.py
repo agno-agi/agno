@@ -65,7 +65,11 @@ def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
                     continue
             return {"anyOf": types} if types else None
 
-    return {"type": get_json_type_for_py_type(t.__name__)}
+    json_schema: Dict[str, Any] = {"type": get_json_type_for_py_type(t.__name__)}
+    if json_schema["type"] == "object":
+        json_schema["properties"] = {}
+        json_schema["additionalProperties"] = False
+    return json_schema
 
 
 def get_json_schema(

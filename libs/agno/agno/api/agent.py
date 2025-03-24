@@ -9,7 +9,7 @@ def create_agent_session(session: AgentSessionCreate, monitor: bool = False) -> 
     if not agno_cli_settings.api_enabled:
         return
 
-    log_debug("--**-- Logging Agent Session")
+    log_debug("Logging Agent Session")
     with api.AuthenticatedClient() as api_client:
         try:
             api_client.post(
@@ -25,7 +25,7 @@ def create_agent_run(run: AgentRunCreate, monitor: bool = False) -> None:
     if not agno_cli_settings.api_enabled:
         return
 
-    log_debug("--**-- Logging Agent Run")
+    log_debug("Logging Agent Run")
     with api.AuthenticatedClient() as api_client:
         try:
             api_client.post(
@@ -41,7 +41,7 @@ async def acreate_agent_run(run: AgentRunCreate, monitor: bool = False) -> None:
     if not agno_cli_settings.api_enabled:
         return
 
-    log_debug("--**-- Logging Agent Run (Async)")
+    log_debug("Logging Agent Run (Async)")
     async with api.AuthenticatedAsyncClient() as api_client:
         try:
             await api_client.post(

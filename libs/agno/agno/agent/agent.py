@@ -52,7 +52,7 @@ from agno.utils.log import (
 from agno.utils.message import get_text_from_message
 from agno.utils.response import create_panel, escape_markdown_tags, format_tool_calls
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model
+from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
 
 
@@ -232,7 +232,9 @@ class Agent:
     # Separator between responses from the team
     team_response_separator: str = "\n"
 
-    # Optional team session ID, set by the team leader agent
+    # Optional team session ID, set by the team leader agent.
+    team_session_id: Optional[str] = None
+    # Optional team ID. Indicates this agent is part of a team.
     team_id: Optional[str] = None
 
     # --- Debug & Monitoring ---
@@ -531,7 +533,6 @@ class Agent:
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
         log_debug(f"Agent Run Start: {self.run_response.run_id}", center=True)
-        log_debug("")
 
         # 2. Update the Model and resolve context
         self.update_model()
@@ -838,7 +839,7 @@ class Agent:
         # Log Agent Run
         self._log_agent_run()
 
-        log_debug(f" Agent Run End: {self.run_response.run_id} ", center=True, symbol="*")
+        log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,
@@ -935,7 +936,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            structured_output = parse_response_model(run_response.content, self.response_model)
+                            structured_output = parse_response_model_str(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -1052,8 +1053,7 @@ class Agent:
         self.run_id = str(uuid4())
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
-        log_debug(f" Async Agent Run Start: {self.run_response.run_id} ", center=True, symbol="*")
-        log_debug("")
+        log_debug(f"Async Agent Run Start: {self.run_response.run_id}", center=True, symbol="*")
 
         # 2. Update the Model and resolve context
         self.update_model()
@@ -1358,7 +1358,7 @@ class Agent:
         # Log Agent Run
         await self._alog_agent_run()
 
-        log_debug(f" Agent Run End: {self.run_response.run_id} ", center=True, symbol="*")
+        log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,
@@ -1421,7 +1421,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            structured_output = parse_response_model(run_response.content, self.response_model)
+                            structured_output = parse_response_model_str(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -1763,12 +1763,13 @@ class Agent:
         """Get an AgentSession object, which can be saved to the database"""
         self.memory = cast(AgentMemory, self.memory)
         self.session_id = cast(str, self.session_id)
+        self.team_session_id = cast(str, self.team_session_id)
         self.agent_id = cast(str, self.agent_id)
         return AgentSession(
             session_id=self.session_id,
             agent_id=self.agent_id,
             user_id=self.user_id,
-            team_id=self.team_id,
+            team_session_id=self.team_session_id,
             memory=self.memory.to_dict() if self.memory is not None else None,
             agent_data=self.get_agent_data(),
             session_data=self.get_session_data(),
@@ -1866,22 +1867,22 @@ class Agent:
             try:
                 if "runs" in session.memory:
                     try:
-                        self.memory.runs = [AgentRun(**m) for m in session.memory["runs"]]
+                        self.memory.runs = [AgentRun.model_validate(m) for m in session.memory["runs"]]
                     except Exception as e:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "messages" in session.memory:
                     try:
-                        self.memory.messages = [Message(**m) for m in session.memory["messages"]]
+                        self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]]
                     except Exception as e:
                         log_warning(f"Failed to load messages from memory: {e}")
                 if "summary" in session.memory:
                     try:
-                        self.memory.summary = SessionSummary(**session.memory["summary"])
+                        self.memory.summary = SessionSummary.model_validate(session.memory["summary"])
                     except Exception as e:
                         log_warning(f"Failed to load session summary from memory: {e}")
                 if "memories" in session.memory:
                     try:
-                        self.memory.memories = [Memory(**m) for m in session.memory["memories"]]
+                        self.memory.memories = [Memory.model_validate(m) for m in session.memory["memories"]]
                     except Exception as e:
                         log_warning(f"Failed to load user memories: {e}")
             except Exception as e:
@@ -3098,15 +3099,12 @@ class Agent:
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
-                use_json_mode: bool = self.use_json_mode
-                if self.structured_outputs is not None:
-                    use_json_mode = not self.structured_outputs  # type: ignore
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    use_json_mode=use_json_mode,
+                    use_json_mode=self.use_json_mode,
                     monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
@@ -3287,16 +3285,15 @@ class Agent:
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
-                use_json_mode: bool = self.use_json_mode
-                if self.structured_outputs is not None:
-                    use_json_mode = not self.structured_outputs  # type: ignore
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    use_json_mode=use_json_mode,
+                    use_json_mode=self.use_json_mode,
                     monitoring=self.monitoring,
+                    telemetry=self.telemetry,
+                    debug_mode=self.debug_mode,
                 )
 
             # Validate reasoning agent
@@ -3592,7 +3589,7 @@ class Agent:
                     run_data=run_data,
                     session_id=agent_session.session_id,
                     agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
-                    team_id=self.team_id,
+                    team_session_id=agent_session.team_session_id,
                 ),
                 monitor=self.monitoring,
             )
@@ -3617,7 +3614,7 @@ class Agent:
                     run_data=run_data,
                     session_id=agent_session.session_id,
                     agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
-                    team_id=self.team_id,
+                    team_session_id=agent_session.team_session_id,
                 ),
                 monitor=self.monitoring,
             )
