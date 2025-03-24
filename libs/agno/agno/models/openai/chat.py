@@ -93,6 +93,7 @@ class OpenAIChat(Model):
         "user": "user",
         "assistant": "assistant",
         "tool": "tool",
+        "model":"assistant",
     }
 
     def _get_client_params(self) -> Dict[str, Any]:
