@@ -113,7 +113,7 @@ async def run_team():
             instructions=dedent("""\
                 You are an agent that helps find attractions, points of interest,
                 and provides directions in travel destinations. Help plan travel
-                routes and find interesting places to visit in Tokyo, Japan.
+                routes and find interesting places to visit for a given location and date.
             """),
             add_datetime_to_instructions=True,
         )
@@ -126,6 +126,7 @@ async def run_team():
             instructions=dedent("""\
                 You are an agent that can find flight deals for a given location and date.
                 Visit `https://www.google.com/flights` and find the best flight deals for a given location and date.
+                Make sure to include the best flight deals in your response.
             """),
             add_datetime_to_instructions=True,
         )

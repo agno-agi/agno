@@ -9,10 +9,10 @@ from agno.agent import Agent
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.team import TeamMemory
 from agno.models.openai import OpenAIChat
-from agno.models.perplexity.perplexity import Perplexity
 from agno.storage.agent.sqlite import SqliteAgentStorage
-from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.team.team import Team
 
 stock_searcher = Agent(
     name="Stock Searcher",
@@ -26,8 +26,9 @@ stock_searcher = Agent(
 
 web_searcher = Agent(
     name="Web Searcher",
-    model=Perplexity(id="sonar-pro"),
+    model=OpenAIChat(id="gpt-4o"),
     role="Searches the web for information on a company.",
+    tools=[DuckDuckGoTools()],
     storage=SqliteAgentStorage(
         table_name="agent_sessions", db_file="tmp/persistent_memory.db"
     ),
@@ -60,7 +61,10 @@ team = Team(
 
 
 # -*- Share personal information
-team.print_response("First find the stock price of apple.Then find any information about the company.", stream=True)
+team.print_response(
+    "First find the stock price of apple.Then find any information about the company.",
+    stream=True,
+)
 
 team.print_response("What is the price of google stock?", stream=True)
 

@@ -98,7 +98,7 @@ class TeamRunResponse:
         extra_data = data.pop("extra_data", None)
         if extra_data is not None:
             extra_data = RunResponseExtraData.from_dict(extra_data)
-        
+
         images = data.pop("images", None)
         images = [ImageArtifact.model_validate(image) for image in images] if images else None
 
@@ -111,9 +111,16 @@ class TeamRunResponse:
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
-        return cls(messages=messages, 
-                   member_responses=parsed_member_responses, 
-                   extra_data=extra_data, images=images, videos=videos, audio=audio, response_audio=response_audio, **data)
+        return cls(
+            messages=messages,
+            member_responses=parsed_member_responses,
+            extra_data=extra_data,
+            images=images,
+            videos=videos,
+            audio=audio,
+            response_audio=response_audio,
+            **data,
+        )
 
     def get_content_as_string(self, **kwargs) -> str:
         import json

@@ -57,8 +57,8 @@ from agno.utils.response import (
     check_if_run_cancelled,
     create_panel,
     escape_markdown_tags,
-    update_run_response_with_reasoning,
     format_tool_calls,
+    update_run_response_with_reasoning,
 )
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
@@ -1767,10 +1767,7 @@ class Team:
                     live_console.update(Group(*panels))
 
                 # Add tool calls panel if available
-                if (
-                    self.show_tool_calls
-                    and run_response.formatted_tool_calls
-                ):
+                if self.show_tool_calls and run_response.formatted_tool_calls:
                     # Create bullet points for each tool call
                     tool_calls_content = Text()
                     for tool_call in run_response.formatted_tool_calls:
@@ -1938,11 +1935,7 @@ class Team:
                     live_console.update(Group(*panels))
 
                 # Add tool calls panel if available
-                if (
-                    self.show_tool_calls
-                    and resp is not None
-                    and resp.formatted_tool_calls
-                ):
+                if self.show_tool_calls and resp is not None and resp.formatted_tool_calls:
                     render = True
                     # Create bullet points for each tool call
                     tool_calls_content = Text()
@@ -2279,10 +2272,7 @@ class Team:
                     live_console.update(Group(*panels))
 
                 # Add tool calls panel if available
-                if (
-                    self.show_tool_calls
-                    and run_response.formatted_tool_calls
-                ):
+                if self.show_tool_calls and run_response.formatted_tool_calls:
                     # Create bullet points for each tool call
                     tool_calls_content = Text()
                     for tool_call in run_response.formatted_tool_calls:
@@ -2451,11 +2441,7 @@ class Team:
                     live_console.update(Group(*panels))
 
                 # Add tool calls panel if available
-                if (
-                    self.show_tool_calls
-                    and resp is not None
-                    and resp.formatted_tool_calls
-                ):
+                if self.show_tool_calls and resp is not None and resp.formatted_tool_calls:
                     render = True
                     # Create bullet points for each tool call
                     tool_calls_content = Text()

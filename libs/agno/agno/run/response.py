@@ -62,12 +62,20 @@ class RunResponseExtraData:
         reasoning_steps = [ReasoningStep.model_validate(step) for step in reasoning_steps] if reasoning_steps else None
 
         reasoning_messages = data.pop("reasoning_messages", None)
-        reasoning_messages = [Message.model_validate(message) for message in reasoning_messages] if reasoning_messages else None
-        
+        reasoning_messages = (
+            [Message.model_validate(message) for message in reasoning_messages] if reasoning_messages else None
+        )
+
         references = data.pop("references", None)
         references = [MessageReferences.model_validate(reference) for reference in references] if references else None
 
-        return cls(add_messages=add_messages, history=history, reasoning_steps=reasoning_steps, reasoning_messages=reasoning_messages, references=references)
+        return cls(
+            add_messages=add_messages,
+            history=history,
+            reasoning_steps=reasoning_steps,
+            reasoning_messages=reasoning_messages,
+            references=references,
+        )
 
 
 @dataclass
