@@ -71,6 +71,7 @@ fal = ["fal_client"]
 webex = ["webexpythonsdk"]
 mcp = ["mcp"]
 browserbase = ["browserbase", "playwright"]
+agentql = ["agentql"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -133,6 +134,7 @@ tools = [
   "agno[webex]",
   "agno[mcp]",
   "agno[browserbase]",
+  "agno[agentql]",
 #  "agno[yfinance]",  # Broken right now
 ]
 
