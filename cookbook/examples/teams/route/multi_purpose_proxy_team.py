@@ -10,6 +10,7 @@ from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.dalle import DalleTools
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.e2b import E2BTools
 from agno.tools.yfinance import YFinanceTools
 
 web_agent = Agent(
@@ -112,7 +113,23 @@ reasoning_agent = Agent(
     markdown=True,
     debug_mode=True,
 )
-
+code_execution_agent = Agent(
+    name="Code Execution Sandbox",
+    agent_id="e2b-sandbox",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[E2BTools()],
+    markdown=True,
+    show_tool_calls=True,
+    instructions=[
+        "You are an expert at writing and validating Python code using a secure E2B sandbox environment.",
+        "Your primary purpose is to:",
+        "1. Write clear, efficient Python code based on user requests",
+        "2. Execute and verify the code in the E2B sandbox",
+        "3. Share the complete code with the user, as this is the main use case",
+        "4. Provide thorough explanations of how the code works",
+        "",
+    ],
+)
 agent_team = Team(
     name="Agent Team",
     mode="route",
@@ -124,6 +141,7 @@ agent_team = Team(
         audio_agent,
         calculator_writer_team,
         reasoning_agent,
+        code_execution_agent,
     ],
     show_tool_calls=True,
     markdown=True,
@@ -165,6 +183,10 @@ agent_team = Team(
 # agent_team.print_response(
 #     "What is the square root of 6421123 times the square root of 9485271", stream=True
 # )
+agent_team.print_response(
+    "write a python code to calculate the square root of 6421123 times the square root of 9485271",
+    stream=True,
+)
 
 # Use the reasoning agent to reason about the result
-agent_team.print_response("9.11 and 9.9 -- which is bigger?", stream=True)
+# agent_team.print_response("9.11 and 9.9 -- which is bigger?", stream=True)
