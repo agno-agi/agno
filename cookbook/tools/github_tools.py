@@ -42,58 +42,58 @@ agent = Agent(
 agent.print_response("List open pull requests", markdown=True)
 
 # Example: Get comprehensive repository stats
-agent.print_response(
-    "Get comprehensive stats for the agno-agi/agno repository", markdown=True
-)
+# agent.print_response(
+#     "Get comprehensive stats for the agno-agi/agno repository", markdown=True
+# )
 
 # Example: Get detailed pull request information
-agent.print_response(
-    "Get comprehensive details for pull request #100 in the agno-agi/agno repository",
-    markdown=True,
-)
+# agent.print_response(
+#     "Get comprehensive details for pull request #100 in the agno-agi/agno repository",
+#     markdown=True,
+# )
 
 # Example: Working with issues
-agent.print_response(
-    "List all open issues in the agno-agi/agno repository", markdown=True
-)
+# agent.print_response(
+#     "List all open issues in the agno-agi/agno repository", markdown=True
+# )
 
 # Example: Get specific issue details
-agent.print_response(
-    "Get details for issue #50 in the agno-agi/agno repository", markdown=True
-)
+# agent.print_response(
+#     "Get details for issue #50 in the agno-agi/agno repository", markdown=True
+# )
 
 # Example: File operations - checking file content
-agent.print_response(
-    "Show me the content of the README.md file in the agno-agi/agno repository",
-    markdown=True,
-)
+# agent.print_response(
+#     "Show me the content of the README.md file in the agno-agi/agno repository",
+#     markdown=True,
+# )
 
 # Example: Directory listing
-agent.print_response(
-    "List all files in the docs directory of the agno-agi/agno repository",
-    markdown=True,
-)
+# agent.print_response(
+#     "List all files in the docs directory of the agno-agi/agno repository",
+#     markdown=True,
+# )
 
 # Example: List branch content
-agent.print_response(
-    "Show me the files in the main branch of the agno-agi/agno repository",
-    markdown=True,
-)
+# agent.print_response(
+#     "Show me the files in the main branch of the agno-agi/agno repository",
+#     markdown=True,
+# )
 
 # Example: Branch operations
-agent.print_response("List all branches in the agno-agi/agno repository", markdown=True)
+# agent.print_response("List all branches in the agno-agi/agno repository", markdown=True)
 
 # Example: Search code in repository
-agent.print_response(
-    "Search for 'Agent' class definitions in the agno-agi/agno repository",
-    markdown=True,
-)
+# agent.print_response(
+#     "Search for 'Agent' class definitions in the agno-agi/agno repository",
+#     markdown=True,
+# )
 
 # Example: Search issues and pull requests
-agent.print_response(
-    "Find all issues and PRs mentioning 'bug' in the agno-agi/agno repository",
-    markdown=True,
-)
+# agent.print_response(
+#     "Find all issues and PRs mentioning 'bug' in the agno-agi/agno repository",
+#     markdown=True,
+# )
 
 # Example: Creating a pull request (commented out by default)
 # agent.print_response("Create a pull request from 'feature-branch' to 'main' in agno-agi/agno titled 'New Feature' with description 'Implements the new feature'", markdown=True)
