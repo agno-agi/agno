@@ -3572,7 +3572,7 @@ class Team:
         elif isinstance(state, dict):
             self.memory.set_team_context_text(json.dumps(state))  # type: ignore
         log_debug(f"Current team context: {self.memory.get_team_context_str()}")  # type: ignore
-        return "Team context updated."
+        return f"Team context updated: {self.memory.get_team_context_str()}"
 
     def get_run_member_agents_function(
         self,
