@@ -43,6 +43,7 @@ def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
     type_args = get_args(t)
     # log_info(f"Type args: {type_args}")
     type_origin = get_origin(t)
+    print(t, type_origin)
     # log_info(f"Type origin: {type_origin}")
 
     if type_origin is not None:

@@ -3554,14 +3554,17 @@ class Team:
                 break
         return json.dumps(history)
 
-    def set_team_context(self, state: str) -> str:
+    def set_team_context(self, state: Union[str, dict]) -> str:
         """
         Set the team's shared context with the given state.
 
         Args:
             state (str or dict): The state to set as the team context.
         """
-        self.memory.set_team_context_text(state)  # type: ignore
+        if isinstance(state, str):
+            self.memory.set_team_context_text(state)  # type: ignore
+        elif isinstance(state, dict):
+            self.memory.set_team_context_text(json.dumps(state))  # type: ignore
         log_debug(f"Current team context: {self.memory.get_team_context_str()}")  # type: ignore
         return "Team context updated."
 
