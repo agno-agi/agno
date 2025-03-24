@@ -27,7 +27,6 @@ english_agent = Agent(
     role="You only answer in English",
     model=OpenAIChat(id="gpt-4o"),
 )
-
 japanese_agent = Agent(
     name="Japanese Agent",
     role="You only answer in Japanese",
@@ -43,13 +42,11 @@ spanish_agent = Agent(
     role="You can only answer in Spanish",
     model=OpenAIChat(id="gpt-4o"),
 )
-
 french_agent = Agent(
     name="French Agent",
     role="You can only answer in French",
     model=MistralChat(id="mistral-large-latest"),
 )
-
 german_agent = Agent(
     name="German Agent",
     role="You can only answer in German",
