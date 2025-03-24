@@ -60,7 +60,7 @@ from agno.utils.response import (
     update_run_response_with_reasoning,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model
+from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
 
 
@@ -329,6 +329,8 @@ class Team:
         # Set debug mode for all members
         if self.debug_mode:
             member.debug_mode = True
+        if self.show_tool_calls:
+            member.show_tool_calls = True
         if self.markdown:
             member.markdown = True
 
@@ -446,9 +448,8 @@ class Team:
             run_id = str(uuid4())
             self.run_id = run_id
 
-            log_debug(f" Team Run Start: {self.run_id} ", center=True)
-            log_debug(f" Mode: '{self.mode}' ", center=True)
-            log_debug("")
+            log_debug(f"Team Run Start: {self.run_id}", center=True)
+            log_debug(f"Mode: '{self.mode}'", center=True)
 
             # Set run_input
             if message is not None:
@@ -701,7 +702,7 @@ class Team:
         if self.response_model is not None:
             if isinstance(run_response.content, str) and self.parse_response:
                 try:
-                    parsed_response_content = parse_response_model(run_response.content, self.response_model)
+                    parsed_response_content = parse_response_model_str(run_response.content, self.response_model)
 
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
@@ -712,11 +713,14 @@ class Team:
                 except Exception as e:
                     log_warning(f"Failed to convert response to output model: {e}")
             else:
+                print("HERE", run_response.content)
                 log_warning("Something went wrong. Run response content is not a string")
         elif self._member_response_model is not None:
             if isinstance(run_response.content, str):
                 try:
-                    parsed_response_content = parse_response_model(run_response.content, self._member_response_model)
+                    parsed_response_content = parse_response_model_str(
+                        run_response.content, self._member_response_model
+                    )
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
                         run_response.content = parsed_response_content
@@ -731,8 +735,7 @@ class Team:
         # 8. Log Team Run
         self._log_team_run()
 
-        log_debug(f" Team Run End: {self.run_id} ", center=True, symbol="*")
-        log_debug("")
+        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
     def _run_stream(
         self,
@@ -941,8 +944,7 @@ class Team:
                 event=RunEvent.run_completed,
             )
 
-        log_debug(f" Team Run End: {self.run_id} ", center=True, symbol="*")
-        log_debug("")
+        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
     @overload
     async def arun(
@@ -1026,9 +1028,8 @@ class Team:
             run_id = str(uuid4())
             self.run_id = run_id
 
-            log_debug(f" Team Run Start: {self.run_id} ", center=True)
-            log_debug(f" Mode: '{self.mode}' ", center=True)
-            log_debug("")
+            log_debug(f"Team Run Start: {self.run_id}", center=True)
+            log_debug(f"Mode: '{self.mode}'", center=True)
 
             # Set run_input
             if message is not None:
@@ -1279,7 +1280,7 @@ class Team:
         if self.response_model is not None:
             if isinstance(run_response.content, str) and self.parse_response:
                 try:
-                    parsed_response_content = parse_response_model(run_response.content, self.response_model)
+                    parsed_response_content = parse_response_model_str(run_response.content, self.response_model)
 
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
@@ -1294,7 +1295,9 @@ class Team:
         elif self._member_response_model is not None:
             if isinstance(run_response.content, str):
                 try:
-                    parsed_response_content = parse_response_model(run_response.content, self._member_response_model)
+                    parsed_response_content = parse_response_model_str(
+                        run_response.content, self._member_response_model
+                    )
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
                         run_response.content = parsed_response_content
@@ -1309,8 +1312,7 @@ class Team:
         # 8. Log Team Run
         await self._alog_team_run()
 
-        log_debug(f" Team Run End: {self.run_id} ", center=True, symbol="*")
-        log_debug("")
+        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
     async def _arun_stream(
         self,
@@ -1527,8 +1529,7 @@ class Team:
                 event=RunEvent.run_completed,
             )
 
-        log_debug(f" Team Run End: {self.run_id} ", center=True, symbol="*")
-        log_debug("")
+        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
     ###########################################################################
     # Print Response

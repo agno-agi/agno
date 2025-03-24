@@ -6,7 +6,10 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 def test_team_basic():
     """Test basic functionality of a team."""
     researcher = Agent(
-        name="Researcher", model=OpenAIChat("gpt-4o"), role="Research information", tools=[DuckDuckGoTools()]
+        name="Researcher",
+        model=OpenAIChat("gpt-4o"),
+        role="Research information",
+        tools=[DuckDuckGoTools(cache_results=True)],
     )
 
     writer = Agent(name="Writer", model=OpenAIChat("gpt-4o"), role="Write content based on research")
