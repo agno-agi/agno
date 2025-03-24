@@ -10,8 +10,9 @@ from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.team import TeamMemory
 from agno.models.openai import OpenAIChat
 from agno.storage.agent.sqlite import SqliteAgentStorage
-from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.team.team import Team
 
 stock_searcher = Agent(
     name="Stock Searcher",
@@ -27,6 +28,7 @@ web_searcher = Agent(
     name="Web Searcher",
     model=OpenAIChat(id="gpt-4o"),
     role="Searches the web for information on a company.",
+    tools=[DuckDuckGoTools()],
     storage=SqliteAgentStorage(
         table_name="agent_sessions", db_file="tmp/persistent_memory.db"
     ),
