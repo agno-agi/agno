@@ -2775,7 +2775,7 @@ class Team:
         # Yield the final reasoning completed event
         if stream_intermediate_steps:
             yield self._create_run_response(
-                content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]), # type: ignore
+                content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),  # type: ignore
                 content_type=ReasoningSteps.__class__.__name__,
                 event=RunEvent.reasoning_completed,
             )
@@ -2933,7 +2933,7 @@ class Team:
         # Yield the final reasoning completed event
         if stream_intermediate_steps:
             yield self._create_run_response(
-                content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]), # type: ignore
+                content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),  # type: ignore
                 content_type=ReasoningSteps.__class__.__name__,
                 event=RunEvent.reasoning_completed,
             )
@@ -3566,10 +3566,10 @@ class Team:
             state (str or dict): The state to set as the team context.
         """
         if isinstance(state, str):
-            self.memory.set_team_context_text(state) # type: ignore
+            self.memory.set_team_context_text(state)  # type: ignore
         elif isinstance(state, dict):
-            self.memory.set_team_context_text(json.dumps(state)) # type: ignore
-        log_debug(f"Current team context: {self.memory.get_team_context_str()}") # type: ignore
+            self.memory.set_team_context_text(json.dumps(state))  # type: ignore
+        log_debug(f"Current team context: {self.memory.get_team_context_str()}")  # type: ignore
         return "Team context updated."
 
     def get_run_member_agents_function(
