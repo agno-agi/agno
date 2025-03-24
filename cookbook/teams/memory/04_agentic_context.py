@@ -49,6 +49,7 @@ team = Team(
     members=[stock_searcher, web_searcher],
     instructions=[
         "You can search the stock market for information about a particular company's stock.",
+        "Always add any stock information you find to the team context."
         "You can also search the web for wider company information.",
     ],
     enable_agentic_context=True,
@@ -59,7 +60,7 @@ team = Team(
 
 
 # -*- Share personal information
-team.print_response("First find the stock price of apple. Set that in the team context. Then find any information about the company.", stream=True)
+team.print_response("First find the stock price of apple.Then find any information about the company.", stream=True)
 
 team.print_response("What is the price of google stock?", stream=True)
 
