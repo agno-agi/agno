@@ -174,7 +174,8 @@ async def run_team():
         )
 
         # Execute the team's task
-        await team.aprint_response(dedent("""\
+        await team.aprint_response(
+            dedent("""\
             I want to travel to Tokyo, Japan sometime in May.
             I am travelling from Cape Town, South Africa.
             I am one person going for 2 weeks. 
@@ -183,7 +184,8 @@ async def run_team():
             Make sure to include the best flight deals.
             Make sure to include the best Airbnb listings.
             Make sure to include the weather information.
-        """))
+        """)
+        )
 
 
 if __name__ == "__main__":

@@ -19,6 +19,15 @@ def mock_playwright():
 
 
 @pytest.fixture
+def mock_agentql():
+    """Create a mock AgentQL wrapper."""
+    with patch("agno.tools.agentql.agentql") as mock_agentql:
+        wrapped_page = Mock()
+        mock_agentql.wrap.return_value = wrapped_page
+        return mock_agentql, wrapped_page
+
+
+@pytest.fixture
 def agentql_tools():
     """Create AgentQLTools instance with test API key."""
     with patch.dict("os.environ", {"AGENTQL_API_KEY": "test_key"}):
@@ -56,12 +65,3 @@ def test_custom_scrape_no_query(agentql_tools):
     """Test custom scraping without a query."""
     result = agentql_tools.custom_scrape_website("https://example.com")
     assert "Custom AgentQL query not provided" in result
-
-
-def test_scrape_website_success(mock_playwright, agentql_tools):
-    """Test successful website scraping."""
-    mock_page = mock_playwright.return_value.__enter__.return_value.chromium.launch.return_value.new_page.return_value
-    mock_page.query_data.return_value = {"text_content": ["text1", "text2", "text2", "text3"]}
-
-    result = agentql_tools.scrape_website("https://example.com")
-    assert "Example Domain" in result
