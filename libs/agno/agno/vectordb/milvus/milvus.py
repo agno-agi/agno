@@ -8,7 +8,7 @@ except ImportError:
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -53,7 +53,7 @@ class Milvus(VectorDb):
             from agno.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -66,7 +66,7 @@ class Milvus(VectorDb):
     @property
     def client(self) -> MilvusClient:
         if self._client is None:
-            logger.debug("Creating Milvus Client")
+            log_debug("Creating Milvus Client")
             self._client = MilvusClient(
                 uri=self.uri,
                 token=self.token,
@@ -82,7 +82,7 @@ class Milvus(VectorDb):
             _distance = "IP"
 
         if not self.exists():
-            logger.debug(f"Creating collection: {self.collection}")
+            log_debug(f"Creating collection: {self.collection}")
             self.client.create_collection(
                 collection_name=self.collection,
                 dimension=self.dimensions,
@@ -146,7 +146,7 @@ class Milvus(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
             batch_size (int): Batch size for inserting documents
         """
-        logger.debug(f"Inserting {len(documents)} documents")
+        log_debug(f"Inserting {len(documents)} documents")
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -163,7 +163,7 @@ class Milvus(VectorDb):
                 collection_name=self.collection,
                 data=data,
             )
-            logger.debug(f"Inserted document: {document.name} ({document.meta_data})")
+            log_debug(f"Inserted document: {document.name} ({document.meta_data})")
 
     def upsert_available(self) -> bool:
         """
@@ -182,7 +182,7 @@ class Milvus(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        logger.debug(f"Upserting {len(documents)} documents")
+        log_debug(f"Upserting {len(documents)} documents")
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -199,7 +199,7 @@ class Milvus(VectorDb):
                 collection_name=self.collection,
                 data=data,
             )
-            logger.debug(f"Upserted document: {document.name} ({document.meta_data})")
+            log_debug(f"Upserted document: {document.name} ({document.meta_data})")
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
@@ -242,7 +242,7 @@ class Milvus(VectorDb):
 
     def drop(self) -> None:
         if self.exists():
-            logger.debug(f"Deleting collection: {self.collection}")
+            log_debug(f"Deleting collection: {self.collection}")
             self.client.drop_collection(self.collection)
 
     def exists(self) -> bool:

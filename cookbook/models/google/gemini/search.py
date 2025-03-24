@@ -6,4 +6,4 @@ agent = Agent(
     show_tool_calls=True,
     markdown=True,
 )
-agent.print_response("News from USA?")
+agent.print_response("Show me top 2 news stories from USA?")

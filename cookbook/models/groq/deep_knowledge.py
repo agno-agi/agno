@@ -22,7 +22,7 @@ from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.url import UrlKnowledge
 from agno.models.groq import Groq
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.storage.sqlite import SqliteStorage
 from agno.vectordb.lancedb import LanceDb, SearchType
 from rich import print
 
@@ -47,9 +47,7 @@ def initialize_knowledge_base():
 
 def get_agent_storage():
     """Return agent storage"""
-    return SqliteAgentStorage(
-        table_name="deep_knowledge_sessions", db_file="tmp/agents.db"
-    )
+    return SqliteStorage(table_name="deep_knowledge_sessions", db_file="tmp/agents.db")
 
 
 def create_agent(session_id: Optional[str] = None) -> Agent:

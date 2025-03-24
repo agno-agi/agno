@@ -3,7 +3,7 @@ from typing import Dict, List, Literal, Optional
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from firecrawl import FirecrawlApp
@@ -28,7 +28,7 @@ class FirecrawlReader(Reader):
             A list of documents
         """
 
-        logger.debug(f"Scraping: {url}")
+        log_debug(f"Scraping: {url}")
 
         app = FirecrawlApp(api_key=self.api_key)
         scraped_data = app.scrape_url(url, params=self.params)
@@ -36,8 +36,8 @@ class FirecrawlReader(Reader):
         content = scraped_data.get("markdown", "")
 
         # Debug logging
-        logger.debug(f"Received content type: {type(content)}")
-        logger.debug(f"Content empty: {not bool(content)}")
+        log_debug(f"Received content type: {type(content)}")
+        log_debug(f"Content empty: {not bool(content)}")
 
         # Ensure content is a string
         if content is None:
@@ -61,7 +61,7 @@ class FirecrawlReader(Reader):
         Returns:
             A list of documents
         """
-        logger.debug(f"Crawling: {url}")
+        log_debug(f"Crawling: {url}")
 
         app = FirecrawlApp(api_key=self.api_key)
         crawl_result = app.crawl_url(url, params=self.params)

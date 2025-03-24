@@ -3,7 +3,8 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.functions import cache_result
+from agno.utils.log import log_debug, log_info, logger
 
 try:
     from exa_py import Exa
@@ -35,6 +36,9 @@ class ExaTools(Toolkit):
         exclude_domains (Optional[List[str]]): Exclude results from these domains.
         show_results (bool): Log search results for debugging. Default is False.
         model (Optional[str]): The search model to use. Options are 'exa' or 'exa-pro'.
+        cache_results (bool): Enable caching of search results. Default is False.
+        cache_ttl (int): Time-to-live for cached results in seconds. Default is 3600.
+        cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
     """
 
     def __init__(
@@ -61,6 +65,9 @@ class ExaTools(Toolkit):
         exclude_domains: Optional[List[str]] = None,
         show_results: bool = False,
         model: Optional[str] = None,
+        cache_results: bool = False,
+        cache_ttl: int = 3600,
+        cache_dir: Optional[str] = None,
     ):
         super().__init__(name="exa")
 
@@ -97,6 +104,10 @@ class ExaTools(Toolkit):
         if answer:
             self.register(self.exa_answer)
 
+        self.cache_results = cache_results
+        self.cache_ttl = cache_ttl
+        self.cache_dir = cache_dir
+
     def _parse_results(self, exa_results: SearchResponse) -> str:
         exa_results_parsed = []
         for result in exa_results.results:
@@ -117,11 +128,12 @@ class ExaTools(Toolkit):
                     if result.highlights:  # type: ignore
                         result_dict["highlights"] = result.highlights  # type: ignore
                 except Exception as e:
-                    logger.debug(f"Failed to get highlights {e}")
+                    log_debug(f"Failed to get highlights {e}")
                     result_dict["highlights"] = f"Failed to get highlights {e}"
             exa_results_parsed.append(result_dict)
         return json.dumps(exa_results_parsed, indent=4)
 
+    @cache_result()
     def search_exa(self, query: str, num_results: int = 5, category: Optional[str] = None) -> str:
         """Use this function to search Exa (a web search engine) for a query.
 
@@ -137,7 +149,7 @@ class ExaTools(Toolkit):
         """
         try:
             if self.show_results:
-                logger.info(f"Searching exa for: {query}")
+                log_info(f"Searching exa for: {query}")
             search_kwargs: Dict[str, Any] = {
                 "text": self.text,
                 "highlights": self.highlights,
@@ -160,12 +172,13 @@ class ExaTools(Toolkit):
             parsed_results = self._parse_results(exa_results)
             # Extract search results
             if self.show_results:
-                logger.info(parsed_results)
+                log_info(parsed_results)
             return parsed_results
         except Exception as e:
             logger.error(f"Failed to search exa {e}")
             return f"Error: {e}"
 
+    @cache_result()
     def get_contents(self, urls: list[str]) -> str:
         """
         Retrieve detailed content from specific URLs using the Exa API.
@@ -185,19 +198,20 @@ class ExaTools(Toolkit):
 
         try:
             if self.show_results:
-                logger.info(f"Fetching contents for URLs: {urls}")
+                log_info(f"Fetching contents for URLs: {urls}")
 
             exa_results = self.exa.get_contents(urls=urls, **query_kwargs)
 
             parsed_results = self._parse_results(exa_results)
             if self.show_results:
-                logger.info(parsed_results)
+                log_info(parsed_results)
 
             return parsed_results
         except Exception as e:
             logger.error(f"Failed to get contents from Exa: {e}")
             return f"Error: {e}"
 
+    @cache_result()
     def find_similar(self, url: str, num_results: int = 5) -> str:
         """
         Find similar links to a given URL using the Exa API.
@@ -225,19 +239,20 @@ class ExaTools(Toolkit):
 
         try:
             if self.show_results:
-                logger.info(f"Finding similar links to: {url}")
+                log_info(f"Finding similar links to: {url}")
 
             exa_results = self.exa.find_similar_and_contents(url=url, **query_kwargs)
 
             parsed_results = self._parse_results(exa_results)
             if self.show_results:
-                logger.info(parsed_results)
+                log_info(parsed_results)
 
             return parsed_results
         except Exception as e:
             logger.error(f"Failed to get similar links from Exa: {e}")
             return f"Error: {e}"
 
+    @cache_result()
     def exa_answer(self, query: str, text: bool = False) -> str:
         """
         Get an LLM answer to a question informed by Exa search results.
@@ -253,7 +268,7 @@ class ExaTools(Toolkit):
             raise ValueError("Model must be either 'exa' or 'exa-pro'")
         try:
             if self.show_results:
-                logger.info(f"Generating answer for query: {query}")
+                log_info(f"Generating answer for query: {query}")
             answer_kwargs: Dict[str, Any] = {
                 "model": self.model,
                 "text": text,
@@ -275,7 +290,7 @@ class ExaTools(Toolkit):
                 ],
             }
             if self.show_results:
-                logger.info(json.dumps(result))
+                log_info(json.dumps(result))
 
             return json.dumps(result, indent=4)
 

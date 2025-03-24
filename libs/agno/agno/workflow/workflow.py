@@ -14,10 +14,10 @@ from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.memory.workflow import WorkflowMemory, WorkflowRun
 from agno.run.response import RunEvent, RunResponse  # noqa: F401
-from agno.storage.workflow.base import WorkflowStorage
-from agno.storage.workflow.session import WorkflowSession
+from agno.storage.base import Storage
+from agno.storage.session.workflow import WorkflowSession
 from agno.utils.common import nested_model_dump
-from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
+from agno.utils.log import log_debug, logger, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.merge_dict import merge_dictionaries
 
 
@@ -47,7 +47,7 @@ class Workflow:
     memory: Optional[WorkflowMemory] = None
 
     # --- Workflow Storage ---
-    storage: Optional[WorkflowStorage] = None
+    storage: Optional[Storage] = None
     # Extra data stored with this workflow
     extra_data: Optional[Dict[str, Any]] = None
 
@@ -82,7 +82,7 @@ class Workflow:
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         memory: Optional[WorkflowMemory] = None,
-        storage: Optional[WorkflowStorage] = None,
+        storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         debug_mode: bool = False,
         monitoring: bool = False,
@@ -139,7 +139,8 @@ class Workflow:
     def run_workflow(self, **kwargs: Any):
         """Run the Workflow"""
 
-        # Set debug, workflow_id, session_id, initialize memory
+        # Set mode, debug, workflow_id, session_id, initialize memory
+        self.set_storage_mode()
         self.set_debug()
         self.set_workflow_id()
         self.set_session_id()
@@ -159,7 +160,7 @@ class Workflow:
         # Update the session_id for all Agent instances
         self.update_agent_session_ids()
 
-        logger.debug(f"*********** Workflow Run Start: {self.run_id} ***********")
+        log_debug(f"*********** Workflow Run Start: {self.run_id} ***********")
         try:
             self._subclass_run = cast(Callable, self._subclass_run)
             result = self._subclass_run(**kwargs)
@@ -194,7 +195,7 @@ class Workflow:
                 self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
                 # Write this run to the database
                 self.write_to_storage()
-                logger.debug(f"*********** Workflow Run End: {self.run_id} ***********")
+                log_debug(f"*********** Workflow Run End: {self.run_id} ***********")
 
             return result_generator()
         # Case 2: The run method returns a RunResponse
@@ -212,29 +213,36 @@ class Workflow:
             self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
             # Write this run to the database
             self.write_to_storage()
-            logger.debug(f"*********** Workflow Run End: {self.run_id} ***********")
+            log_debug(f"*********** Workflow Run End: {self.run_id} ***********")
             return result
         else:
             logger.warning(f"Workflow.run() should only return RunResponse objects, got: {type(result)}")
             return None
 
+    def set_storage_mode(self):
+        if self.storage is not None:
+            if self.storage.mode in ["agent", "team"]:
+                logger.warning(f"You shouldn't use storage in multiple modes. Current mode is {self.storage.mode}.")
+
+            self.storage.mode = "workflow"
+
     def set_workflow_id(self) -> str:
         if self.workflow_id is None:
             self.workflow_id = str(uuid4())
-        logger.debug(f"*********** Workflow ID: {self.workflow_id} ***********")
+        log_debug(f"*********** Workflow ID: {self.workflow_id} ***********")
         return self.workflow_id
 
     def set_session_id(self) -> str:
         if self.session_id is None:
             self.session_id = str(uuid4())
-        logger.debug(f"*********** Session ID: {self.session_id} ***********")
+        log_debug(f"*********** Session ID: {self.session_id} ***********")
         return self.session_id
 
     def set_debug(self) -> None:
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             self.debug_mode = True
             set_log_level_to_debug()
-            logger.debug("Debug logs enabled")
+            log_debug("Debug logs enabled")
         else:
             set_log_level_to_info()
 
@@ -432,7 +440,7 @@ class Workflow:
                         logger.warning(f"Failed to load runs from memory: {e}")
             except Exception as e:
                 logger.warning(f"Failed to load WorkflowMemory: {e}")
-        logger.debug(f"-*- WorkflowSession loaded: {session.session_id}")
+        log_debug(f"-*- WorkflowSession loaded: {session.session_id}")
 
     def read_from_storage(self) -> Optional[WorkflowSession]:
         """Load the WorkflowSession from storage.
@@ -441,7 +449,7 @@ class Workflow:
             Optional[WorkflowSession]: The loaded WorkflowSession or None if not found.
         """
         if self.storage is not None and self.session_id is not None:
-            self.workflow_session = self.storage.read(session_id=self.session_id)
+            self.workflow_session = cast(WorkflowSession, self.storage.read(session_id=self.session_id))
             if self.workflow_session is not None:
                 self.load_workflow_session(session=self.workflow_session)
         return self.workflow_session
@@ -453,7 +461,7 @@ class Workflow:
             Optional[WorkflowSession]: The saved WorkflowSession or None if not saved.
         """
         if self.storage is not None:
-            self.workflow_session = self.storage.upsert(session=self.get_workflow_session())
+            self.workflow_session = cast(WorkflowSession, self.storage.upsert(session=self.get_workflow_session()))
         return self.workflow_session
 
     def load_session(self, force: bool = False) -> Optional[str]:
@@ -472,18 +480,18 @@ class Workflow:
         # Load an existing session or create a new session
         if self.storage is not None:
             # Load existing session if session_id is provided
-            logger.debug(f"Reading WorkflowSession: {self.session_id}")
+            log_debug(f"Reading WorkflowSession: {self.session_id}")
             self.read_from_storage()
 
             # Create a new session if it does not exist
             if self.workflow_session is None:
-                logger.debug("-*- Creating new WorkflowSession")
+                log_debug("-*- Creating new WorkflowSession")
                 # write_to_storage() will create a new WorkflowSession
                 # and populate self.workflow_session with the new session
                 self.write_to_storage()
                 if self.workflow_session is None:
                     raise Exception("Failed to create new WorkflowSession in storage")
-                logger.debug(f"-*- Created WorkflowSession: {self.workflow_session.session_id}")
+                log_debug(f"-*- Created WorkflowSession: {self.workflow_session.session_id}")
                 self.log_workflow_session()
         return self.session_id
 
@@ -499,7 +507,7 @@ class Workflow:
         self.load_session(force=True)
 
     def log_workflow_session(self):
-        logger.debug(f"*********** Logging WorkflowSession: {self.session_id} ***********")
+        log_debug(f"*********** Logging WorkflowSession: {self.session_id} ***********")
 
     def rename(self, name: str) -> None:
         """Rename the Workflow and save to storage"""
@@ -558,7 +566,7 @@ class Workflow:
 
         # Create a new Workflow
         new_workflow = self.__class__(**fields_for_new_workflow)
-        logger.debug(f"Created new {self.__class__.__name__}")
+        log_debug(f"Created new {self.__class__.__name__}")
         return new_workflow
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
@@ -570,7 +578,7 @@ class Workflow:
             return field_value.deep_copy()
 
         # For compound types, attempt a deep copy
-        if isinstance(field_value, (list, dict, set, WorkflowStorage)):
+        if isinstance(field_value, (list, dict, set, Storage)):
             try:
                 return deepcopy(field_value)
             except Exception as e:

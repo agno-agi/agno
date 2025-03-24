@@ -9,7 +9,7 @@ from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.manager import MemoryManager
 from agno.memory.summarizer import MemorySummarizer
 from agno.models.huggingface import HuggingFace
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 
@@ -142,10 +142,56 @@ def test_structured_output():
     assert response.content.plot is not None
 
 
+def test_json_response_mode():
+    class MovieScript(BaseModel):
+        title: str = Field(..., description="Movie title")
+        genre: str = Field(..., description="Movie genre")
+        plot: str = Field(..., description="Brief plot summary")
+
+    agent = Agent(
+        model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
+        use_json_mode=True,
+        telemetry=False,
+        monitoring=False,
+        response_model=MovieScript,
+    )
+
+    response = agent.run("Create a movie about time travel")
+
+    # Verify structured output
+    assert isinstance(response.content, MovieScript)
+    assert response.content.title is not None
+    assert response.content.genre is not None
+    assert response.content.plot is not None
+
+
+def test_structured_outputs_deprecated():
+    class MovieScript(BaseModel):
+        title: str = Field(..., description="Movie title")
+        genre: str = Field(..., description="Movie genre")
+        plot: str = Field(..., description="Brief plot summary")
+
+    agent = Agent(
+        model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
+        structured_outputs=False,  # They don't support native structured outputs
+        telemetry=False,
+        monitoring=False,
+        response_model=MovieScript,
+    )
+
+    response = agent.run("Create a movie about time travel")
+
+    # Verify structured output
+    assert isinstance(response.content, MovieScript)
+    assert response.content.title is not None
+    assert response.content.genre is not None
+    assert response.content.plot is not None
+
+
 def test_history():
     agent = Agent(
         model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
-        storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,
@@ -163,7 +209,7 @@ def test_history():
 def test_persistent_memory():
     agent = Agent(
         model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
-        tools=[DuckDuckGoTools()],
+        tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         show_tool_calls=True,
         telemetry=False,
@@ -171,7 +217,7 @@ def test_persistent_memory():
         instructions=[
             "You can search the internet with DuckDuckGo.",
         ],
-        storage=SqliteAgentStorage(table_name="chat_agent", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(table_name="chat_agent", db_file="tmp/agent_storage.db"),
         add_datetime_to_instructions=True,
         add_history_to_messages=True,
         num_history_responses=15,

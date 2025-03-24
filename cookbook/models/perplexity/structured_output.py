@@ -31,8 +31,7 @@ json_mode_agent = Agent(
     response_model=MovieScript,
     markdown=True,
     debug_mode=True,
-    # Only native structured outputs are supported
-    structured_outputs=True,
+    use_json_mode=True,
 )
 
 # Get the response in a variable

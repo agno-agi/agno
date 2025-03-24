@@ -13,7 +13,7 @@ from agno.tools.yfinance import YFinanceTools
 def test_tool_use():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
@@ -32,7 +32,7 @@ def test_tool_use():
 def test_tool_use_stream():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
@@ -61,7 +61,7 @@ def test_tool_use_stream():
 async def test_async_tool_use():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
@@ -81,7 +81,7 @@ async def test_async_tool_use():
 async def test_async_tool_use_stream():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
@@ -114,33 +114,12 @@ def test_tool_use_with_native_structured_outputs():
 
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
-        exponential_backoff=True,
         response_model=StockPrice,
-        structured_outputs=True,
-    )
-    # Gemini does not support structured outputs for tool calls at this time
-    response = agent.run("What is the current price of TSLA?")
-    assert isinstance(response.content, StockPrice)
-    assert response.content is not None
-    assert response.content.price is not None
-    assert response.content.currency is not None
-
-
-def test_tool_use_with_response_model():
-    class StockPrice(BaseModel):
-        price: float = Field(..., description="The price of the stock")
-        currency: str = Field(..., description="The currency of the stock")
-
-    agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
-        tools=[YFinanceTools()],
-        show_tool_calls=True,
-        markdown=True,
-        exponential_backoff=True,
-        response_model=StockPrice,
+        telemetry=False,
+        monitoring=False,
     )
     # Gemini does not support structured outputs for tool calls at this time
     response = agent.run("What is the current price of TSLA?")
@@ -153,7 +132,7 @@ def test_tool_use_with_response_model():
 def test_parallel_tool_calls():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
@@ -176,7 +155,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools(), DuckDuckGoTools()],
+        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
@@ -193,7 +172,7 @@ def test_multiple_tool_calls():
             tool_calls.extend(msg.tool_calls)
     assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
     assert response.content is not None
-    assert "TSLA" in response.content and "latest news" in response.content.lower()
+    assert "TSLA" in response.content and "duckduckgo_news" in response.content.lower()
 
 
 def test_tool_call_custom_tool_no_parameters():
@@ -283,22 +262,58 @@ def test_tool_call_list_parameters():
 def test_grounding():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp", grounding=True),
-        exponential_backoff=True,
+        telemetry=False,
+        monitoring=False,
     )
 
     response = agent.run("What is the weather in Tokyo?")
 
     assert response.content is not None
     assert response.tools == []
+    assert response.citations is not None
+    assert len(response.citations.urls) > 0
+    assert response.citations.raw is not None
 
 
-def test_search():
+def test_grounding_stream():
+    agent = Agent(
+        model=Gemini(id="gemini-2.0-flash-exp", grounding=True),
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_stream = agent.run("What is the weather in Tokyo?", stream=True)
+
+    responses = []
+    citations_found = False
+
+    for chunk in response_stream:
+        assert isinstance(chunk, RunResponse)
+        responses.append(chunk)
+        if chunk.citations is not None and chunk.citations.urls:
+            citations_found = True
+
+    assert len(responses) > 0
+    assert citations_found
+
+
+def test_search_stream():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp", search=True),
-        exponential_backoff=True,
+        telemetry=False,
+        monitoring=False,
     )
 
-    response = agent.run("What is the weather in Tokyo?")
+    response_stream = agent.run("What are the latest scientific studies about climate change from 2024?", stream=True)
 
-    assert response.content is not None
-    assert response.tools == []
+    responses = []
+    citations_found = False
+
+    for chunk in response_stream:
+        assert isinstance(chunk, RunResponse)
+        responses.append(chunk)
+        if chunk.citations is not None and chunk.citations.urls:
+            citations_found = True
+
+    assert len(responses) > 0
+    assert citations_found

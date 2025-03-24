@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
 from agno.models.ollama import OllamaTools
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.storage.sqlite import SqliteStorage
 
 
 def _assert_metrics(response: RunResponse):
@@ -90,15 +90,63 @@ def test_with_memory():
     _assert_metrics(response2)
 
 
-def test_structured_output():
+def test_response_model():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=OllamaTools(id="mistral"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=OllamaTools(id="mistral"), markdown=True, telemetry=False, monitoring=False, response_model=MovieScript
+    )
 
-    response = agent.run("Create a movie about time travel", output_schema=MovieScript)
+    response = agent.run("Create a movie about time travel")
+
+    # Verify structured output
+    assert isinstance(response.content, MovieScript)
+    assert response.content.title is not None
+    assert response.content.genre is not None
+    assert response.content.plot is not None
+
+
+def test_json_response_mode():
+    class MovieScript(BaseModel):
+        title: str = Field(..., description="Movie title")
+        genre: str = Field(..., description="Movie genre")
+        plot: str = Field(..., description="Brief plot summary")
+
+    agent = Agent(
+        model=OllamaTools(id="mistral"),
+        use_json_mode=True,
+        telemetry=False,
+        monitoring=False,
+        response_model=MovieScript,
+    )
+
+    response = agent.run("Create a movie about time travel")
+
+    # Verify structured output
+    assert isinstance(response.content, MovieScript)
+    assert response.content.title is not None
+    assert response.content.genre is not None
+    assert response.content.plot is not None
+
+
+def test_structured_outputs_deprecated():
+    class MovieScript(BaseModel):
+        title: str = Field(..., description="Movie title")
+        genre: str = Field(..., description="Movie genre")
+        plot: str = Field(..., description="Brief plot summary")
+
+    agent = Agent(
+        model=OllamaTools(id="mistral"),
+        structured_outputs=True,
+        telemetry=False,
+        monitoring=False,
+        response_model=MovieScript,
+    )
+
+    response = agent.run("Create a movie about time travel")
 
     # Verify structured output
     assert isinstance(response.content, MovieScript)
@@ -110,7 +158,7 @@ def test_structured_output():
 def test_history():
     agent = Agent(
         model=OllamaTools(id="mistral"),
-        storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,

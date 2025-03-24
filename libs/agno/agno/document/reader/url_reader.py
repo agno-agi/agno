@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 
 class URLReader(Reader):
@@ -19,7 +19,7 @@ class URLReader(Reader):
         except ImportError:
             raise ImportError("`httpx` not installed. Please install it via `pip install httpx`.")
 
-        logger.info(f"Reading: {url}")
+        log_info(f"Reading: {url}")
         # Retry the request up to 3 times with exponential backoff
         for attempt in range(3):
             try:
@@ -34,8 +34,8 @@ class URLReader(Reader):
                 sleep(wait_time)
 
         try:
-            logger.debug(f"Status: {response.status_code}")
-            logger.debug(f"Content size: {len(response.content)} bytes")
+            log_debug(f"Status: {response.status_code}")
+            log_debug(f"Content size: {len(response.content)} bytes")
         except Exception:
             pass
 
