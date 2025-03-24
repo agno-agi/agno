@@ -29,6 +29,7 @@ class TeamRunResponse:
     session_id: Optional[str] = None
 
     tools: Optional[List[Dict[str, Any]]] = None
+    formatted_tool_calls: Optional[List[str]] = None
 
     images: Optional[List[ImageArtifact]] = None  # Images from member runs
     videos: Optional[List[VideoArtifact]] = None  # Videos from member runs
