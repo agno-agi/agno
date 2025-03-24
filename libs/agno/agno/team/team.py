@@ -3572,7 +3572,7 @@ class Team:
             self.memory.set_team_context_text(state)
             return "Team context updated."
         else:
-            "No state provided to set the team context."
+            return "No state provided to set the team context."
 
     def get_run_member_agents_function(
         self,
