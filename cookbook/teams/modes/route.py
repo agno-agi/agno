@@ -96,6 +96,7 @@ if __name__ == "__main__":
         multi_language_team.aprint_response(
             "Comment allez-vous?",
             stream=True,  # French
+            stream_intermediate_steps=True,
         )
     )
 
