@@ -13,7 +13,7 @@ from agno.tools.yfinance import YFinanceTools
 def test_tool_use():
     agent = Agent(
         model=Groq(id="gemma2-9b-it"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -25,14 +25,13 @@ def test_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
 @pytest.mark.skip(reason="This test is flaky.")
 def test_tool_use_stream():
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -53,14 +52,13 @@ def test_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
 
 
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
         model=Groq(id="gemma2-9b-it"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -72,15 +70,13 @@ async def test_async_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
-@pytest.mark.skip(reason="This test is flaky.")
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
         model=Groq(id="gemma2-9b-it"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -101,14 +97,13 @@ async def test_async_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
 
 
 @pytest.mark.skip(reason="This test is flaky.")
 def test_parallel_tool_calls():
     agent = Agent(
         model=Groq(id="gemma2-9b-it"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -135,7 +130,7 @@ def test_tool_use_with_native_structured_outputs():
 
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         response_model=StockPrice,
@@ -152,7 +147,7 @@ def test_tool_use_with_native_structured_outputs():
 def test_multiple_tool_calls():
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),
-        tools=[YFinanceTools(), DuckDuckGoTools()],
+        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,

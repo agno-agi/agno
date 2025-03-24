@@ -32,7 +32,7 @@ def test_tool_use():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
         markdown=True,
-        tools=[DuckDuckGoTools()],
+        tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
         monitoring=False,
     )
@@ -55,7 +55,11 @@ def test_tool_use():
 async def test_async_tool_use():
     """Test async tool use functionality with LiteLLM"""
     agent = Agent(
-        model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, tools=[DuckDuckGoTools()], telemetry=False, monitoring=False
+        model=LiteLLMOpenAI(id="gpt-4o"),
+        markdown=True,
+        tools=[DuckDuckGoTools(cache_results=True)],
+        telemetry=False,
+        monitoring=False,
     )
 
     # Get the response with a query that should trigger tool use
@@ -77,7 +81,7 @@ def test_parallel_tool_calls():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
         markdown=True,
-        tools=[DuckDuckGoTools()],
+        tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
         monitoring=False,
     )
@@ -102,7 +106,7 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
         markdown=True,
-        tools=[DuckDuckGoTools(), get_weather],
+        tools=[DuckDuckGoTools(cache_results=True), get_weather],
         telemetry=False,
         monitoring=False,
     )
