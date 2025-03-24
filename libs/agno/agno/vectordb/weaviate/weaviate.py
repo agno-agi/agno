@@ -10,6 +10,8 @@ try:
     from weaviate.classes.config import Configure, DataType, Property, Tokenization, VectorDistances
     from weaviate.classes.init import Auth
     from weaviate.classes.query import Filter
+    import warnings
+    warnings.filterwarnings("ignore", category=ResourceWarning)
 except ImportError:
     raise ImportError("Weaviate is not installed. Install using 'pip install weaviate-client'.")
 
@@ -403,7 +405,7 @@ class Weaviate(VectorDb):
         if self.reranker:
             search_results = self.reranker.rerank(query=query, documents=search_results)
 
-        self.get_client().close()
+        self.get_async_client().close()
         return search_results
 
     async def async_vector_search(self, query: str, limit: int = 5) -> List[Document]:
