@@ -1654,6 +1654,7 @@ class Team:
             )
             response_timer.stop()
 
+            team_markdown = False
             if markdown:
                 member_markdown = {}
                 for member in self.members:
@@ -2133,6 +2134,7 @@ class Team:
             )
             response_timer.stop()
 
+            team_markdown = False
             if markdown:
                 member_markdown = {}
                 for member in self.members:
