@@ -531,7 +531,6 @@ class Agent:
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
         log_debug(f"Agent Run Start: {self.run_response.run_id}", center=True)
-        log_debug("")
 
         # 2. Update the Model and resolve context
         self.update_model()
@@ -838,7 +837,7 @@ class Agent:
         # Log Agent Run
         self._log_agent_run()
 
-        log_debug(f" Agent Run End: {self.run_response.run_id} ", center=True, symbol="*")
+        log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,
@@ -1052,8 +1051,7 @@ class Agent:
         self.run_id = str(uuid4())
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
-        log_debug(f" Async Agent Run Start: {self.run_response.run_id} ", center=True, symbol="*")
-        log_debug("")
+        log_debug(f"Async Agent Run Start: {self.run_response.run_id}", center=True, symbol="*")
 
         # 2. Update the Model and resolve context
         self.update_model()
@@ -1358,7 +1356,7 @@ class Agent:
         # Log Agent Run
         await self._alog_agent_run()
 
-        log_debug(f" Agent Run End: {self.run_response.run_id} ", center=True, symbol="*")
+        log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,
@@ -3098,15 +3096,12 @@ class Agent:
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
-                use_json_mode: bool = self.use_json_mode
-                if self.structured_outputs is not None:
-                    use_json_mode = not self.structured_outputs  # type: ignore
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    use_json_mode=use_json_mode,
+                    use_json_mode=self.use_json_mode,
                     monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
@@ -3287,16 +3282,15 @@ class Agent:
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
-                use_json_mode: bool = self.use_json_mode
-                if self.structured_outputs is not None:
-                    use_json_mode = not self.structured_outputs  # type: ignore
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    use_json_mode=use_json_mode,
+                    use_json_mode=self.use_json_mode,
                     monitoring=self.monitoring,
+                    telemetry=self.telemetry,
+                    debug_mode=self.debug_mode,
                 )
 
             # Validate reasoning agent
