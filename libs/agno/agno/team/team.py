@@ -716,7 +716,9 @@ class Team:
         elif self._member_response_model is not None:
             if isinstance(run_response.content, str):
                 try:
-                    parsed_response_content = parse_response_model_str(run_response.content, self._member_response_model)
+                    parsed_response_content = parse_response_model_str(
+                        run_response.content, self._member_response_model
+                    )
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
                         run_response.content = parsed_response_content
@@ -1294,7 +1296,9 @@ class Team:
         elif self._member_response_model is not None:
             if isinstance(run_response.content, str):
                 try:
-                    parsed_response_content = parse_response_model_str(run_response.content, self._member_response_model)
+                    parsed_response_content = parse_response_model_str(
+                        run_response.content, self._member_response_model
+                    )
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
                         run_response.content = parsed_response_content

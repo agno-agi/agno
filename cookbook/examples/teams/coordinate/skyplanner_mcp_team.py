@@ -21,16 +21,15 @@ import asyncio
 import os
 from textwrap import dedent
 from typing import List, Optional
-from contextlib import AsyncExitStack
-
-from mcp import StdioServerParameters
 
 from agno.agent import Agent
-from agno.models.google.gemini import Gemini
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
+from agno.tools.browserbase import BrowserbaseTools
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.exa import ExaTools
 from agno.tools.mcp import MCPTools
+from mcp import StdioServerParameters
 from pydantic import BaseModel
 
 
@@ -38,32 +37,23 @@ async def run_team():
     env = {
         **os.environ,
         "GOOGLE_MAPS_API_KEY": os.getenv("GOOGLE_MAPS_API_KEY"),
-        "APIFY_TOKEN": os.getenv("APIFY_TOKEN")
     }
     # Define server parameters
     airbnb_server_params = StdioServerParameters(
         command="npx",
         args=["-y", "@openbnb/mcp-server-airbnb", "--ignore-robots-txt"],
-        env=env
+        env=env,
     )
-    
+
     maps_server_params = StdioServerParameters(
-        command="npx",
-        args=["-y", "@modelcontextprotocol/server-google-maps"],
-        env=env
+        command="npx", args=["-y", "@modelcontextprotocol/server-google-maps"], env=env
     )
-    
-    flight_deal_server_params = StdioServerParameters(
-        command="npx",
-        args=["-y", "@apify/actors-mcp-server", "--actors", "canadesk/google-flights"],
-        env=env
-    )
-    
+
     # Use AsyncExitStack to manage multiple context managers
-    async with (MCPTools(server_params=airbnb_server_params) as airbnb_tools, 
-                MCPTools(server_params=maps_server_params) as maps_tools,
-                MCPTools(server_params=flight_deal_server_params) as flight_deal_tools):
-        
+    async with (
+        MCPTools(server_params=airbnb_server_params) as airbnb_tools,
+        MCPTools(server_params=maps_server_params) as maps_tools,
+    ):
         # Create all agents
         airbnb_agent = Agent(
             name="Airbnb",
@@ -74,7 +64,7 @@ async def run_team():
                 You are an agent that can find Airbnb listings for a given location.
             """),
         )
-        
+
         maps_agent = Agent(
             name="Google Maps",
             role="Location Services Agent",
@@ -86,18 +76,18 @@ async def run_team():
                 routes and find interesting places to visit in Tokyo, Japan.
             """),
         )
-        
+
         flight_deal_agent = Agent(
             name="Flight Deal",
             role="Flight Deal Agent",
             model=OpenAIChat("gpt-4o"),
-            tools=[flight_deal_tools],
+            tools=[ExaTools()],
             instructions=dedent("""\
                 You are an agent that can find flight deals for a given location and date.
+                Visit `https://www.google.com/flights` and find the best flight deals for a given location and date.
             """),
         )
-        
-        # Agents that don't use MCP don't need context managers
+
         web_search_agent = Agent(
             name="Web Search",
             role="Web Search Agent",
@@ -108,7 +98,7 @@ async def run_team():
                 Search for information about a given location.
             """),
         )
-        
+
         weather_search_agent = Agent(
             name="Weather Search",
             role="Weather Search Agent",
@@ -119,7 +109,7 @@ async def run_team():
                 Search for the weather forecast for a given location and date.
             """),
         )
-        
+
         # Define your models
         class FlightDeal(BaseModel):
             description: str
@@ -154,14 +144,19 @@ async def run_team():
             attractions: List[Attraction]
             weather_info: Optional[WeatherInfo] = None
             suggested_itinerary: Optional[List[str]] = None
-        
+
         # Create and run the team
         team = Team(
             name="SkyPlanner",
             mode="coordinate",
-            model=OpenAIChat("o3-mini"),
-            members=[airbnb_agent, flight_deal_agent, web_search_agent, maps_agent, weather_search_agent],
-            success_criteria="You have flight deals, Airbnb listings, attractions, weather information, and a suggested itinerary.",
+            model=OpenAIChat("gpt-4o"),
+            members=[
+                airbnb_agent,
+                flight_deal_agent,
+                web_search_agent,
+                maps_agent,
+                weather_search_agent,
+            ],
             instructions=[
                 "First, find the best flight deals for a given location and date.",
                 "Then, find the best Airbnb listings for the given location.",
@@ -169,7 +164,7 @@ async def run_team():
                 "Use the Attractions agent to find highly-rated places to visit and restaurants.",
                 "Get weather information to help with packing and planning outdoor activities.",
                 "Finally, plan an itinerary for the trip.",
-                "Continue asking individual team members until you have ALL the information you need."
+                "Continue asking individual team members until you have ALL the information you need.",
             ],
             response_model=TravelPlan,
             show_tool_calls=True,
@@ -177,15 +172,19 @@ async def run_team():
             debug_mode=True,
             show_members_responses=True,
         )
-        
+
         # Execute the team's task
-        await team.aprint_response("""I want to travel to Tokyo, Japan sometime in May. I am one person going for 2 weeks. Plan my travel itinerary.
-        Make sure to include the best attractions, restaurants, and activities.
-        Make sure to include the best flight deals.
-        Make sure to include the best Airbnb listings.
-        Make sure to include the weather information.
-        """)
+        await team.aprint_response(dedent("""\
+            I want to travel to Tokyo, Japan sometime in May.
+            I am travelling from Cape Town, South Africa.
+            I am one person going for 2 weeks. 
+            Plan my travel itinerary.
+            Make sure to include the best attractions, restaurants, and activities.
+            Make sure to include the best flight deals.
+            Make sure to include the best Airbnb listings.
+            Make sure to include the weather information.
+        """))
+
 
 if __name__ == "__main__":
     asyncio.run(run_team())
-
