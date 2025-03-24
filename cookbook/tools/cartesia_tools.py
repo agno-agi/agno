@@ -1,5 +1,6 @@
 """
-Example script for using the Cartesia toolkit with an Agno agent for text-to-speech generation.
+pip install cartesia
+Get an API key from https://play.cartesia.ai/keys
 """
 
 import os
@@ -10,7 +11,7 @@ from agno.tools.cartesia import CartesiaTools
 from dotenv import load_dotenv
 
 # Get Cartesia API key from environment or use a default for demo
-cartesia_api_key = os.environ.get("CARTESIA_API_KEY", "sk_car_4y7Jz9aKsF6VeLpBKzKwJ")
+cartesia_api_key = os.environ.get("CARTESIA_API_KEY")
 load_dotenv()
 
 # Create the agent with CartesiaTools

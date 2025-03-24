@@ -44,7 +44,7 @@ class CartesiaTools(Toolkit):
         self.client = Cartesia(api_key=self.api_key)
 
         # Set default output directory for audio files
-        self.output_dir = os.path.join(os.getcwd(), "cartesia_output")
+        self.output_dir = os.path.join(os.getcwd(), "tmp/cartesia")
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
 
