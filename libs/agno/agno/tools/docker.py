@@ -60,8 +60,8 @@ class DockerTools(Toolkit):
         self,
         enable_container_management: bool = True,
         enable_image_management: bool = True,
-        enable_volume_management: bool = True,
-        enable_network_management: bool = True,
+        enable_volume_management: bool = False,
+        enable_network_management: bool = False,
     ):
         """Initialize Docker tools."""
         super().__init__(name="docker_tools")
