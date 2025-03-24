@@ -165,6 +165,6 @@ agent_team = Team(
 agent_team.print_response(
     "What is the square root of 6421123 times the square root of 9485271", stream=True
 )
-#
+
 # # Use the reasoning agent to reason about the result
 # agent_team.print_response("9.11 and 9.9 -- which is bigger?", stream=True)
