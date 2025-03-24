@@ -378,7 +378,9 @@ class PostgresStorage(Storage):
 
                     if not column_exists:
                         log_info(f"Adding 'team_session_id' column to {self.schema}.{self.table_name}")
-                        alter_table_query = text(f"ALTER TABLE {self.schema}.{self.table_name} ADD COLUMN team_session_id TEXT")
+                        alter_table_query = text(
+                            f"ALTER TABLE {self.schema}.{self.table_name} ADD COLUMN team_session_id TEXT"
+                        )
                         sess.execute(alter_table_query)
                         sess.commit()
                         log_info("Schema upgrade completed successfully")
