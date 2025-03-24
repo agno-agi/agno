@@ -3567,9 +3567,9 @@ class Team:
         Args:
             state (str): The state to set as the team context.
         """
+        log_debug(f"Current team context: {self.memory.get_team_context_str()}")  # type: ignore
         if state is not None:
             self.memory.set_team_context_text(state)
-            log_debug(f"Current team context: {self.memory.get_team_context_str()}")  # type: ignore
             return "Team context updated."
         else:
             "No state provided to set the team context."
