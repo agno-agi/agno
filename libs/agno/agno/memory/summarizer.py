@@ -7,7 +7,7 @@ from pydantic import BaseModel, ValidationError
 from agno.memory.summary import SessionSummary
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 
 class MemorySummarizer(BaseModel):
@@ -86,10 +86,10 @@ class MemorySummarizer(BaseModel):
         message_pairs: List[Tuple[Message, Message]],
         **kwargs: Any,
     ) -> Optional[SessionSummary]:
-        logger.debug("*********** MemorySummarizer Start ***********")
+        log_debug("*********** MemorySummarizer Start ***********")
 
         if message_pairs is None or len(message_pairs) == 0:
-            logger.info("No message pairs provided for summarization.")
+            log_info("No message pairs provided for summarization.")
             return None
 
         # Update the Model (set defaults, add logit etc.)
@@ -116,7 +116,7 @@ class MemorySummarizer(BaseModel):
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
         response = self.model.response(messages=messages_for_model)
-        logger.debug("*********** MemorySummarizer End ***********")
+        log_debug("*********** MemorySummarizer End ***********")
 
         # If the model natively supports structured outputs, the parsed value is already in the structured format
         if self.use_structured_outputs and response.parsed is not None and isinstance(response.parsed, SessionSummary):
@@ -146,10 +146,10 @@ class MemorySummarizer(BaseModel):
         message_pairs: List[Tuple[Message, Message]],
         **kwargs: Any,
     ) -> Optional[SessionSummary]:
-        logger.debug("*********** Async MemorySummarizer Start ***********")
+        log_debug("*********** Async MemorySummarizer Start ***********")
 
         if message_pairs is None or len(message_pairs) == 0:
-            logger.info("No message pairs provided for summarization.")
+            log_info("No message pairs provided for summarization.")
             return None
 
         # Update the Model (set defaults, add logit etc.)
@@ -176,7 +176,7 @@ class MemorySummarizer(BaseModel):
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
         response = await self.model.aresponse(messages=messages_for_model)
-        logger.debug("*********** Async MemorySummarizer End ***********")
+        log_debug("*********** Async MemorySummarizer End ***********")
 
         # If the model natively supports structured outputs, the parsed value is already in the structured format
         if self.use_structured_outputs and response.parsed is not None and isinstance(response.parsed, SessionSummary):

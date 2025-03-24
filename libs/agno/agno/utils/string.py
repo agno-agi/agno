@@ -24,7 +24,7 @@ def hash_string_sha256(input_string):
     return hex_digest
 
 
-def parse_structured_output(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
+def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
     structured_output = None
     try:
         # First attempt: direct JSON validation

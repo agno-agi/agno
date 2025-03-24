@@ -144,7 +144,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_format="json",
+        use_json_mode=True,
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,
@@ -203,7 +203,7 @@ def test_history():
 def test_persistent_memory():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools()],
+        tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         show_tool_calls=True,
         telemetry=False,

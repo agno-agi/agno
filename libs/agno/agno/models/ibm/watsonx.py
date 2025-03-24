@@ -9,7 +9,7 @@ from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.log import log_error, log_warning
 
 try:
     from ibm_watsonx_ai import Credentials
@@ -34,7 +34,7 @@ def _format_images_for_message(message: Message, images: Sequence[Image]) -> Mes
             elif image.url is not None:
                 image_content = image.image_url_content
             else:
-                logger.warning(f"Unsupported image format: {image}")
+                log_warning(f"Unsupported image format: {image}")
                 continue
 
             if image_content is not None:
@@ -46,7 +46,7 @@ def _format_images_for_message(message: Message, images: Sequence[Image]) -> Mes
                 message_content_with_image.append(image_payload)
 
         except Exception as e:
-            logger.error(f"Failed to process image: {str(e)}")
+            log_error(f"Failed to process image: {str(e)}")
 
     # Update the message content with the images
     if len(message_content_with_image) > 1:
@@ -94,11 +94,11 @@ class WatsonX(Model):
         # Fetch API key and project ID from env if not already set
         self.api_key = self.api_key or getenv("IBM_WATSONX_API_KEY")
         if not self.api_key:
-            logger.error("IBM_WATSONX_API_KEY not set. Please set the IBM_WATSONX_API_KEY environment variable.")
+            log_error("IBM_WATSONX_API_KEY not set. Please set the IBM_WATSONX_API_KEY environment variable.")
 
         self.project_id = self.project_id or getenv("IBM_WATSONX_PROJECT_ID")
         if not self.project_id:
-            logger.error("IBM_WATSONX_PROJECT_ID not set. Please set the IBM_WATSONX_PROJECT_ID environment variable.")
+            log_error("IBM_WATSONX_PROJECT_ID not set. Please set the IBM_WATSONX_PROJECT_ID environment variable.")
 
         self.url = getenv("IBM_WATSONX_URL") or self.url
 
@@ -191,7 +191,7 @@ class WatsonX(Model):
             return response
 
         except Exception as e:
-            logger.error(f"Error calling WatsonX API: {str(e)}")
+            log_error(f"Error calling WatsonX API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> Any:
@@ -213,7 +213,7 @@ class WatsonX(Model):
             return await client.achat(messages=formatted_messages, **request_params)
 
         except Exception as e:
-            logger.error(f"Error calling WatsonX API: {str(e)}")
+            log_error(f"Error calling WatsonX API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
@@ -235,7 +235,7 @@ class WatsonX(Model):
             yield from client.chat_stream(messages=formatted_messages, **request_params)
 
         except Exception as e:
-            logger.error(f"Error calling WatsonX API: {str(e)}")
+            log_error(f"Error calling WatsonX API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncGenerator[Any, None]:
@@ -260,7 +260,7 @@ class WatsonX(Model):
                 yield chunk
 
         except Exception as e:
-            logger.error(f"Error in async streaming from WatsonX API: {str(e)}")
+            log_error(f"Error in async streaming from WatsonX API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
@@ -329,7 +329,7 @@ class WatsonX(Model):
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
         except Exception as e:
-            logger.warning(f"Error retrieving structured outputs: {e}")
+            log_warning(f"Error retrieving structured outputs: {e}")
 
         # Add role
         if response_message.get("role") is not None:
@@ -344,7 +344,7 @@ class WatsonX(Model):
             try:
                 model_response.tool_calls = response_message["tool_calls"]
             except Exception as e:
-                logger.warning(f"Error processing tool calls: {e}")
+                log_warning(f"Error processing tool calls: {e}")
 
         if response.get("usage") is not None:
             model_response.response_usage = response["usage"]

@@ -5,7 +5,7 @@ from typing import List, Optional
 import httpx
 
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info
 
 
 class Searxng(Toolkit):
@@ -150,7 +150,7 @@ class Searxng(Toolkit):
         if category:
             url += f"&categories={category}"
 
-        logger.info(f"Fetching results from searxng: {url}")
+        log_info(f"Fetching results from searxng: {url}")
         try:
             resp = httpx.get(url).json()
             results = self.fixed_max_results or max_results

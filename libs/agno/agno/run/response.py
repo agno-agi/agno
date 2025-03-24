@@ -17,6 +17,7 @@ class RunEvent(str, Enum):
     run_response = "RunResponse"
     run_completed = "RunCompleted"
     run_error = "RunError"
+    run_cancelled = "RunCancelled"
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     reasoning_started = "ReasoningStarted"
@@ -66,6 +67,7 @@ class RunResponse:
     session_id: Optional[str] = None
     workflow_id: Optional[str] = None
     tools: Optional[List[Dict[str, Any]]] = None
+    formatted_tool_calls: Optional[List[str]] = None
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response

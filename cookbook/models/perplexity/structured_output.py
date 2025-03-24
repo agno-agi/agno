@@ -31,6 +31,7 @@ json_mode_agent = Agent(
     response_model=MovieScript,
     markdown=True,
     debug_mode=True,
+    use_json_mode=True,
 )
 
 # Get the response in a variable

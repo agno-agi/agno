@@ -3,7 +3,7 @@ from os import getenv
 from typing import Dict, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 try:
     import requests
@@ -85,7 +85,7 @@ class OpenWeatherTools(Toolkit):
             str: JSON string containing location data with coordinates.
         """
         try:
-            logger.info(f"Geocoding location: {location}")
+            log_info(f"Geocoding location: {location}")
             url = f"{self.geo_url}/direct"
             params = {"q": location, "limit": limit}
 
@@ -112,7 +112,7 @@ class OpenWeatherTools(Toolkit):
             str: JSON string containing current weather data.
         """
         try:
-            logger.info(f"Getting current weather for: {location}")
+            log_info(f"Getting current weather for: {location}")
 
             # First geocode the location to get coordinates
             geocode_result = json.loads(self.geocode_location(location))
@@ -153,7 +153,7 @@ class OpenWeatherTools(Toolkit):
             str: JSON string containing forecast data.
         """
         try:
-            logger.info(f"Getting {days}-day forecast for: {location}")
+            log_info(f"Getting {days}-day forecast for: {location}")
 
             # First geocode the location to get coordinates
             geocode_result = json.loads(self.geocode_location(location))
@@ -199,7 +199,7 @@ class OpenWeatherTools(Toolkit):
             str: JSON string containing air pollution data.
         """
         try:
-            logger.info(f"Getting air pollution data for: {location}")
+            log_info(f"Getting air pollution data for: {location}")
 
             # First geocode the location to get coordinates
             geocode_result = json.loads(self.geocode_location(location))
