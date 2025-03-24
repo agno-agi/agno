@@ -1,5 +1,3 @@
-from typing import List
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.models.perplexity.perplexity import Perplexity

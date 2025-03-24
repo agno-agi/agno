@@ -1650,6 +1650,7 @@ class Team:
             )
             response_timer.stop()
 
+            team_markdown = False
             if markdown:
                 member_markdown = {}
                 for member in self.members:
@@ -2129,6 +2130,7 @@ class Team:
             )
             response_timer.stop()
 
+            team_markdown = False
             if markdown:
                 member_markdown = {}
                 for member in self.members:
@@ -3554,16 +3556,20 @@ class Team:
                 break
         return json.dumps(history)
 
-    def set_team_context(self, state: str) -> str:
+    def set_team_context(self, state: Union[str, dict]) -> str:
         """
         Set the team's shared context with the given state.
 
         Args:
-            state (str or dict): The state to set as the team context.
+            state (str): The state to set as the team context.
         """
-        self.memory.set_team_context_text(state)  # type: ignore
-        log_debug(f"Current team context: {self.memory.get_team_context_str()}")  # type: ignore
-        return "Team context updated."
+        if isinstance(state, str):
+            self.memory.set_team_context_text(state)  # type: ignore
+        elif isinstance(state, dict):
+            self.memory.set_team_context_text(json.dumps(state))  # type: ignore
+        msg = f"Current team context: {self.memory.get_team_context_str()}"  # type: ignore
+        log_debug(msg)  # type: ignore
+        return msg
 
     def get_run_member_agents_function(
         self,

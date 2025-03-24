@@ -87,14 +87,32 @@ class TeamRunResponse:
 
         member_responses = data.pop("member_responses", None)
         parsed_member_responses: List[Union["TeamRunResponse", RunResponse]] = []
-        if member_responses:
+        if member_responses is not None:
             for response in member_responses:
                 if "agent_id" in response:
                     parsed_member_responses.append(RunResponse.from_dict(response))
                 else:
                     parsed_member_responses.append(cls.from_dict(response))
 
-        return cls(messages=messages, member_responses=parsed_member_responses, **data)
+        extra_data = data.pop("extra_data", None)
+        if extra_data is not None:
+            extra_data = RunResponseExtraData.from_dict(extra_data)
+        
+        images = data.pop("images", None)
+        images = [ImageArtifact.model_validate(image) for image in images] if images else None
+
+        videos = data.pop("videos", None)
+        videos = [VideoArtifact.model_validate(video) for video in videos] if videos else None
+
+        audio = data.pop("audio", None)
+        audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
+
+        response_audio = data.pop("response_audio", None)
+        response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
+
+        return cls(messages=messages, 
+                   member_responses=parsed_member_responses, 
+                   extra_data=extra_data, images=images, videos=videos, audio=audio, response_audio=response_audio, **data)
 
     def get_content_as_string(self, **kwargs) -> str:
         import json
