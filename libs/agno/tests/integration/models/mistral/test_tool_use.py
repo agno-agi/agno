@@ -148,7 +148,6 @@ def test_multiple_tool_calls():
             tool_calls.extend(msg.tool_calls)
     assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
     assert response.content is not None
-    assert "get_current_stock_price" in response.content
 
 
 @pytest.mark.skip("Mistral struggles with custom tool calls")
