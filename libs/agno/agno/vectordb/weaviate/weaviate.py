@@ -5,12 +5,14 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 try:
+    import warnings
+
     import weaviate
     from weaviate import WeaviateAsyncClient
     from weaviate.classes.config import Configure, DataType, Property, Tokenization, VectorDistances
     from weaviate.classes.init import Auth
     from weaviate.classes.query import Filter
-    import warnings
+
     warnings.filterwarnings("ignore", category=ResourceWarning)
 except ImportError:
     raise ImportError("Weaviate is not installed. Install using 'pip install weaviate-client'.")
@@ -103,13 +105,12 @@ class Weaviate(VectorDb):
             if self.wcd_url and self.wcd_api_key and not self.local:
                 log_info("Initializing Weaviate Cloud async client")
                 self.async_client = weaviate.use_async_with_weaviate_cloud(
-                    cluster_url=self.wcd_url,
-                    auth_credentials=Auth.api_key(self.wcd_api_key)
+                    cluster_url=self.wcd_url, auth_credentials=Auth.api_key(self.wcd_api_key)
                 )
             else:
                 log_info("Initializing local Weaviate async client")
                 self.async_client = weaviate.use_async_with_local()
-        
+
         return self.async_client
 
     def create(self) -> None:
@@ -131,8 +132,7 @@ class Weaviate(VectorDb):
     async def async_create(self) -> None:
         """Create the collection in Weaviate asynchronously if it doesn't exist."""
         if not await self.async_exists():
-            log_debug(
-                f"Creating collection '{self.collection}' in Weaviate asynchronously.")
+            log_debug(f"Creating collection '{self.collection}' in Weaviate asynchronously.")
             print(".. inside async create")
             client = self.get_async_client()
             await client.connect()
@@ -141,19 +141,16 @@ class Weaviate(VectorDb):
                     name=self.collection,
                     properties=[
                         Property(name="name", data_type=DataType.TEXT),
-                        Property(name="content", data_type=DataType.TEXT,
-                                tokenization=Tokenization.LOWERCASE),
+                        Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
                         Property(name="meta_data", data_type=DataType.TEXT),
                     ],
                     vectorizer_config=Configure.Vectorizer.none(),
-                    vector_index_config=self.get_vector_index_config(
-                        self.vector_index, self.distance),
+                    vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
                 )
-                log_debug(
-                    f"Collection '{self.collection}' created in Weaviate asynchronously.")
+                log_debug(f"Collection '{self.collection}' created in Weaviate asynchronously.")
             finally:
                 await client.close()
-            
+
     def doc_exists(self, document: Document) -> bool:
         """
         Validate if the document exists using consistent UUID generation.
@@ -261,8 +258,7 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
         """
-        log_debug(
-            f"Inserting {len(documents)} documents into Weaviate asynchronously.")
+        log_debug(f"Inserting {len(documents)} documents into Weaviate asynchronously.")
         if not documents:
             return
 
@@ -277,8 +273,7 @@ class Weaviate(VectorDb):
                     # Embed document
                     document.embed(embedder=self.embedder)
                     if document.embedding is None:
-                        logger.error(
-                            f"Document embedding is None: {document.name}")
+                        logger.error(f"Document embedding is None: {document.name}")
                         continue
 
                     # Clean content and generate UUID
@@ -287,8 +282,7 @@ class Weaviate(VectorDb):
                     doc_uuid = uuid.UUID(hex=content_hash[:32])
 
                     # Serialize meta_data to JSON string
-                    meta_data_str = json.dumps(
-                        document.meta_data) if document.meta_data else None
+                    meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
 
                     # Insert properties and vector separately
                     properties = {
@@ -303,8 +297,7 @@ class Weaviate(VectorDb):
                     log_debug(f"Inserted document asynchronously: {document.name}")
 
                 except Exception as e:
-                    logger.error(
-                        f"Error inserting document {document.name}: {str(e)}")
+                    logger.error(f"Error inserting document {document.name}: {str(e)}")
         finally:
             await client.close()
 
@@ -326,8 +319,7 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        log_debug(
-            f"Upserting {len(documents)} documents into Weaviate asynchronously.")
+        log_debug(f"Upserting {len(documents)} documents into Weaviate asynchronously.")
         await self.async_insert(documents)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
@@ -439,8 +431,7 @@ class Weaviate(VectorDb):
             search_results = self.get_search_results(response)
 
             if self.reranker:
-                search_results = self.reranker.rerank(
-                    query=query, documents=search_results)
+                search_results = self.reranker.rerank(query=query, documents=search_results)
         finally:
             await client.close()
 
@@ -501,8 +492,7 @@ class Weaviate(VectorDb):
             search_results = self.get_search_results(response)
 
             if self.reranker:
-                search_results = self.reranker.rerank(
-                    query=query, documents=search_results)
+                search_results = self.reranker.rerank(query=query, documents=search_results)
         finally:
             await client.close()
 
@@ -577,8 +567,7 @@ class Weaviate(VectorDb):
             search_results = self.get_search_results(response)
 
             if self.reranker:
-                search_results = self.reranker.rerank(
-                    query=query, documents=search_results)
+                search_results = self.reranker.rerank(query=query, documents=search_results)
         finally:
             await client.close()
 
@@ -607,8 +596,7 @@ class Weaviate(VectorDb):
     async def async_drop(self) -> None:
         """Delete the Weaviate collection asynchronously."""
         if await self.async_exists():
-            log_debug(
-                f"Deleting collection '{self.collection}' from Weaviate asynchronously.")
+            log_debug(f"Deleting collection '{self.collection}' from Weaviate asynchronously.")
             client = self.get_async_client()
             await client.connect()
             try:
