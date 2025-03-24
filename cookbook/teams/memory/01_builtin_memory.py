@@ -1,6 +1,5 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.models.perplexity.perplexity import Perplexity
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 from pydantic import BaseModel
@@ -22,7 +21,7 @@ stock_searcher = Agent(
 
 web_searcher = Agent(
     name="Web Searcher",
-    model=Perplexity(id="sonar-pro"),
+    model=OpenAIChat(id="gpt-4o"),
     role="Searches the web for information on a company.",
 )
 
