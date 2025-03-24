@@ -8,6 +8,7 @@ class NextAction(str, Enum):
     CONTINUE = "continue"
     VALIDATE = "validate"
     FINAL_ANSWER = "final_answer"
+    RESET = "reset"
 
 
 class ReasoningStep(BaseModel):

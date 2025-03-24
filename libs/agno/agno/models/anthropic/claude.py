@@ -40,10 +40,29 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     """
     Add an image to a message by converting it to base64 encoded format.
     """
-    import base64
-    import imghdr
+    using_filetype = False
 
-    type_mapping = {"jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp"}
+    import base64
+
+    # 'imghdr' was deprecated in Python 3.11: https://docs.python.org/3/library/imghdr.html
+    # 'filetype' used as a fallback
+    try:
+        import imghdr
+    except (ModuleNotFoundError, ImportError):
+        try:
+            import filetype
+
+            using_filetype = True
+        except (ModuleNotFoundError, ImportError):
+            raise ImportError("`filetype` not installed. Please install using `pip install filetype`")
+
+    type_mapping = {
+        "jpeg": "image/jpeg",
+        "jpg": "image/jpeg",
+        "png": "image/png",
+        "gif": "image/gif",
+        "webp": "image/webp",
+    }
 
     try:
         # Case 1: Image is a URL
@@ -70,7 +89,16 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             log_error(f"Unsupported image type: {type(image)}")
             return None
 
-        img_type = imghdr.what(None, h=content_bytes)  # type: ignore
+        if using_filetype:
+            kind = filetype.guess(content_bytes)
+            if not kind:
+                log_error("Unable to determine image type")
+                return None
+
+            img_type = kind.extension
+        else:
+            img_type = imghdr.what(None, h=content_bytes)  # type: ignore
+
         if not img_type:
             log_error("Unable to determine image type")
             return None
@@ -544,11 +572,11 @@ class Claude(Model):
         """
         if len(function_call_results) > 0:
             fc_responses: List = []
-            for _fc_message_index, _fc_message in enumerate(function_call_results):
+            for _fc_message in function_call_results:
                 fc_responses.append(
                     {
                         "type": "tool_result",
-                        "tool_use_id": tool_ids[_fc_message_index],
+                        "tool_use_id": _fc_message.tool_call_id,
                         "content": _fc_message.content,
                     }
                 )
