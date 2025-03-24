@@ -98,7 +98,6 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         else:
             img_type = imghdr.what(None, h=content_bytes)  # type: ignore
 
-        img_type = kind.extension
         if not img_type:
             log_error("Unable to determine image type")
             return None
