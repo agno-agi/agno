@@ -86,19 +86,15 @@ class TeamRunResponse:
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
         member_responses = data.pop("member_responses", None)
-        parsed_member_responses = []
+        parsed_member_responses: List[Union["TeamRunResponse", RunResponse]] = []
         if member_responses:
             for response in member_responses:
                 if "agent_id" in response:
                     parsed_member_responses.append(RunResponse.from_dict(response))
                 else:
-                    parsed_member_responses.append(TeamRunResponse.from_dict(response))
+                    parsed_member_responses.append(cls.from_dict(response))
 
-        return cls(
-            messages=messages,
-            member_responses=parsed_member_responses,
-            **data
-        )
+        return cls(messages=messages, member_responses=parsed_member_responses, **data)
 
     def get_content_as_string(self, **kwargs) -> str:
         import json

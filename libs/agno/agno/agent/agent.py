@@ -1867,22 +1867,22 @@ class Agent:
             try:
                 if "runs" in session.memory:
                     try:
-                        self.memory.runs = [AgentRun(**m) for m in session.memory["runs"]]
+                        self.memory.runs = [AgentRun.model_validate(m) for m in session.memory["runs"]]
                     except Exception as e:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "messages" in session.memory:
                     try:
-                        self.memory.messages = [Message(**m) for m in session.memory["messages"]]
+                        self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]]
                     except Exception as e:
                         log_warning(f"Failed to load messages from memory: {e}")
                 if "summary" in session.memory:
                     try:
-                        self.memory.summary = SessionSummary(**session.memory["summary"])
+                        self.memory.summary = SessionSummary.model_validate(session.memory["summary"])
                     except Exception as e:
                         log_warning(f"Failed to load session summary from memory: {e}")
                 if "memories" in session.memory:
                     try:
-                        self.memory.memories = [Memory(**m) for m in session.memory["memories"]]
+                        self.memory.memories = [Memory.model_validate(m) for m in session.memory["memories"]]
                     except Exception as e:
                         log_warning(f"Failed to load user memories: {e}")
             except Exception as e:

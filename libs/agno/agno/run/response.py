@@ -117,10 +117,7 @@ class RunResponse:
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
-        return cls(
-            messages=messages,
-            **data
-        )
+        return cls(messages=messages, **data)
 
     def get_content_as_string(self, **kwargs) -> str:
         import json
