@@ -186,9 +186,6 @@ class OllamaTools(Ollama):
         model_response.content += "\n\n"
         function_calls_to_run = self.get_function_calls_to_run(assistant_message, messages)
 
-        if self.show_tool_calls:
-            self._show_tool_calls(function_calls_to_run, model_response)
-
         return function_calls_to_run
 
     def process_response_stream(

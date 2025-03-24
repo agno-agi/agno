@@ -13,7 +13,7 @@ from agno.tools.yfinance import YFinanceTools
 def test_tool_use():
     agent = Agent(
         model=Groq(id="gemma2-9b-it"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -32,7 +32,7 @@ def test_tool_use():
 def test_tool_use_stream():
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -60,7 +60,7 @@ def test_tool_use_stream():
 async def test_async_tool_use():
     agent = Agent(
         model=Groq(id="gemma2-9b-it"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -80,7 +80,7 @@ async def test_async_tool_use():
 async def test_async_tool_use_stream():
     agent = Agent(
         model=Groq(id="gemma2-9b-it"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -108,7 +108,7 @@ async def test_async_tool_use_stream():
 def test_parallel_tool_calls():
     agent = Agent(
         model=Groq(id="gemma2-9b-it"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -135,7 +135,7 @@ def test_tool_use_with_native_structured_outputs():
 
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         response_model=StockPrice,
@@ -152,7 +152,7 @@ def test_tool_use_with_native_structured_outputs():
 def test_multiple_tool_calls():
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),
-        tools=[YFinanceTools(), DuckDuckGoTools()],
+        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
