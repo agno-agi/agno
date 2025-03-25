@@ -24,12 +24,14 @@ class TeamRun:
     response: Optional[TeamRunResponse] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        response = {
-            "message": self.message.to_dict() if self.message else None,
-            "member_responses": [run.to_dict() for run in self.member_runs] if self.member_runs else None,
-            "response": self.response.to_dict() if self.response else None,
+        message = self.message.to_dict() if self.message else None
+        member_responses = [run.to_dict() for run in self.member_runs] if self.member_runs else None
+        response = self.response.to_dict() if self.response else None
+        return {
+            "message": message,
+            "member_responses": member_responses,
+            "response": response,
         }
-        return {k: v for k, v in response.items() if v is not None}
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRun":
@@ -109,6 +111,15 @@ class TeamMemory:
         if self.runs is not None:
             _memory_dict["runs"] = [run.to_dict() for run in self.runs]
         return _memory_dict
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TeamRun":
+        messages = [Message.model_validate(data.get("messages")) for data in data.get("messages", [])] if data.get("messages") else None
+        member_runs = (
+            [AgentRun.model_validate(run) for run in data.get("member_runs", [])] if data.get("member_runs") else None
+        )
+        response = TeamRunResponse.from_dict(data.get("response", {})) if data.get("response") else None
+        return cls(messages=messages, member_runs=member_runs, response=response)
 
     def add_interaction_to_team_context(self, member_name: str, task: str, run_response: RunResponse) -> None:
         if self.team_context is None:
