@@ -10,6 +10,11 @@ Prerequisites:
     - You also need to activate the Address Validation API for your .
     https://console.developers.google.com/apis/api/addressvalidation.googleapis.com
 
+- Apify:
+    - Set the environment variable `APIFY_TOKEN` with your Apify API token.
+    You can obtain the API key from the Apify Console:
+    https://console.apify.com/settings/integrations
+
 """
 
 import asyncio
@@ -21,6 +26,7 @@ from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.exa import ExaTools
 from agno.tools.mcp import MCPTools
 from mcp import StdioServerParameters
 from pydantic import BaseModel
@@ -86,7 +92,7 @@ async def run_team():
             model=OpenAIChat("gpt-4o"),
             tools=[airbnb_tools],
             instructions=dedent("""\
-                You are an agent that can find Airbnb listings for a given location.
+                You are an agent that can find Airbnb listings for a given location.\
             """),
             add_datetime_to_instructions=True,
         )
@@ -99,7 +105,7 @@ async def run_team():
             instructions=dedent("""\
                 You are an agent that helps find attractions, points of interest,
                 and provides directions in travel destinations. Help plan travel
-                routes and find interesting places to visit for a given location and date.
+                routes and find interesting places to visit for a given location and date.\
             """),
             add_datetime_to_instructions=True,
         )
@@ -111,7 +117,7 @@ async def run_team():
             tools=[DuckDuckGoTools(cache_results=True)],
             instructions=dedent("""\
                 You are an agent that can search the web for information.
-                Search for information about a given location.
+                Search for information about a given location.\
             """),
             add_datetime_to_instructions=True,
         )
@@ -123,7 +129,7 @@ async def run_team():
             tools=[DuckDuckGoTools()],
             instructions=dedent("""\
                 You are an agent that can search the web for information.
-                Search for the weather forecast for a given location and date.
+                Search for the weather forecast for a given location and date.\
             """),
             add_datetime_to_instructions=True,
         )
@@ -141,6 +147,7 @@ async def run_team():
             ],
             instructions=[
                 "First, find the best Airbnb listings for the given location.",
+                "Then, find the best attractions for the given location.",
                 "Use the Google Maps agent to identify key neighborhoods and attractions.",
                 "Use the Attractions agent to find highly-rated places to visit and restaurants.",
                 "Get weather information to help with packing and planning outdoor activities.",
@@ -150,6 +157,7 @@ async def run_team():
             response_model=TravelPlan,
             show_tool_calls=True,
             markdown=True,
+            debug_mode=True,
             show_members_responses=True,
             add_datetime_to_instructions=True,
         )
@@ -161,7 +169,6 @@ async def run_team():
             I am one person going for 2 weeks.
             Plan my travel itinerary.
             Make sure to include the best attractions, restaurants, and activities.
-            Make sure to include the best flight deals.
             Make sure to include the best Airbnb listings.
             Make sure to include the weather information.\
         """)
