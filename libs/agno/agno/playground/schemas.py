@@ -97,7 +97,6 @@ class TeamGetResponse(BaseModel):
     context: Optional[str] = None
     enable_agentic_context: Optional[bool] = None
     response_model: Optional[str] = None
-    storage: Optional[Dict[str, Any]] = None
     memory: Optional[Dict[str, Any]] = None
     # workflows: Optional[List[WorkflowGetResponse]] = None
 

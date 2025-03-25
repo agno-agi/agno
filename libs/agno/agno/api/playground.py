@@ -11,6 +11,8 @@ from agno.api.schemas.playground import PlaygroundEndpointCreate
 from agno.cli.settings import agno_cli_settings
 from agno.constants import AGNO_API_KEY_ENV_VAR
 from agno.utils.log import logger
+from agno.cli.credentials import read_auth_token
+
 
 
 def create_playground_endpoint(playground: PlaygroundEndpointCreate) -> bool:

@@ -4453,7 +4453,7 @@ class Team:
             try:
                 if "runs" in session.memory:
                     try:
-                        self.memory.runs = [TeamRun.from_dict(m) for m in session.memory["runs"]]
+                        self.memory.runs = [TeamRun.model_validate(m) for m in session.memory["runs"]]
                     except Exception as e:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "messages" in session.memory:
