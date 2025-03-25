@@ -134,6 +134,13 @@ class Team:
 
     # Show tool calls in Team response. This sets the default for the team.
     show_tool_calls: bool = True
+    # Controls which (if any) tool is called by the team model.
+    # "none" means the model will not call a tool and instead generates a message.
+    # "auto" means the model can pick between generating a message or calling a tool.
+    # Specifying a particular function via {"type: "function", "function": {"name": "my_function"}}
+    #   forces the model to call that tool.
+    # "none" is the default when no tools are present. "auto" is the default if tools are present.
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
     # --- Structured output ---
     # Response model for the team response
@@ -197,6 +204,7 @@ class Team:
         share_member_interactions: bool = False,
         read_team_history: bool = False,
         show_tool_calls: bool = True,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         response_model: Optional[Type[BaseModel]] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
@@ -243,7 +251,9 @@ class Team:
         self.share_member_interactions = share_member_interactions
 
         self.read_team_history = read_team_history
+
         self.show_tool_calls = show_tool_calls
+        self.tool_choice = tool_choice
 
         self.response_model = response_model
         self.use_json_mode = use_json_mode
@@ -477,7 +487,7 @@ class Team:
                     files=files,  # type: ignore
                 )
                 _built_in_tools.append(forward_task_func)
-                self.model.tool_choice = "auto"  # type: ignore
+                
             elif self.mode == "coordinate":
                 _built_in_tools.append(
                     self.get_transfer_task_function(
@@ -489,7 +499,6 @@ class Team:
                         files=files,  # type: ignore
                     )
                 )
-                self.model.tool_choice = "auto"  # type: ignore
 
                 if self.enable_agentic_context:
                     _built_in_tools.append(self.set_team_context)
@@ -503,7 +512,6 @@ class Team:
                     files=files,  # type: ignore
                 )
                 _built_in_tools.append(run_member_agents_func)
-                self.model.tool_choice = "auto"  # type: ignore
 
                 if self.enable_agentic_context:
                     _built_in_tools.append(self.set_team_context)
@@ -3140,6 +3148,10 @@ class Team:
 
         # Set show_tool_calls on the Model
         self.model.show_tool_calls = show_tool_calls
+
+        # Set tool_choice on the Model
+        if self.tool_choice is not None:
+            self.model.tool_choice = self.tool_choice
 
     def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable]]) -> None:
         # We have to reset for every run, because we will have new images/audio/video to attach
