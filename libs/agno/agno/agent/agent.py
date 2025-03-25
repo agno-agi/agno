@@ -52,7 +52,7 @@ from agno.utils.log import (
 from agno.utils.message import get_text_from_message
 from agno.utils.response import create_panel, escape_markdown_tags, format_tool_calls
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model
+from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
 
 
@@ -232,7 +232,9 @@ class Agent:
     # Separator between responses from the team
     team_response_separator: str = "\n"
 
-    # Optional team session ID, set by the team leader agent
+    # Optional team session ID, set by the team leader agent.
+    team_session_id: Optional[str] = None
+    # Optional team ID. Indicates this agent is part of a team.
     team_id: Optional[str] = None
 
     # --- Debug & Monitoring ---
@@ -934,7 +936,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            structured_output = parse_response_model(run_response.content, self.response_model)
+                            structured_output = parse_response_model_str(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -1419,7 +1421,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            structured_output = parse_response_model(run_response.content, self.response_model)
+                            structured_output = parse_response_model_str(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -1700,20 +1702,23 @@ class Agent:
 
         log_debug("Resolving context")
         if self.context is not None:
-            for ctx_key, ctx_value in self.context.items():
-                if callable(ctx_value):
-                    try:
-                        sig = signature(ctx_value)
-                        if "agent" in sig.parameters:
-                            resolved_ctx_value = ctx_value(agent=self)
-                        else:
-                            resolved_ctx_value = ctx_value()
-                        if resolved_ctx_value is not None:
-                            self.context[ctx_key] = resolved_ctx_value
-                    except Exception as e:
-                        log_warning(f"Failed to resolve context for {ctx_key}: {e}")
-                else:
-                    self.context[ctx_key] = ctx_value
+            if isinstance(self.context, dict):
+                for ctx_key, ctx_value in self.context.items():
+                    if callable(ctx_value):
+                        try:
+                            sig = signature(ctx_value)
+                            if "agent" in sig.parameters:
+                                resolved_ctx_value = ctx_value(agent=self)
+                            else:
+                                resolved_ctx_value = ctx_value()
+                            if resolved_ctx_value is not None:
+                                self.context[ctx_key] = resolved_ctx_value
+                        except Exception as e:
+                            log_warning(f"Failed to resolve context for {ctx_key}: {e}")
+                    else:
+                        self.context[ctx_key] = ctx_value
+            else:
+                log_warning("Context is not a dict")
 
     def load_user_memories(self) -> None:
         self.memory = cast(AgentMemory, self.memory)
@@ -1761,12 +1766,13 @@ class Agent:
         """Get an AgentSession object, which can be saved to the database"""
         self.memory = cast(AgentMemory, self.memory)
         self.session_id = cast(str, self.session_id)
+        self.team_session_id = cast(str, self.team_session_id)
         self.agent_id = cast(str, self.agent_id)
         return AgentSession(
             session_id=self.session_id,
             agent_id=self.agent_id,
             user_id=self.user_id,
-            team_id=self.team_id,
+            team_session_id=self.team_session_id,
             memory=self.memory.to_dict() if self.memory is not None else None,
             agent_data=self.get_agent_data(),
             session_data=self.get_session_data(),
@@ -1864,22 +1870,22 @@ class Agent:
             try:
                 if "runs" in session.memory:
                     try:
-                        self.memory.runs = [AgentRun(**m) for m in session.memory["runs"]]
+                        self.memory.runs = [AgentRun.model_validate(m) for m in session.memory["runs"]]
                     except Exception as e:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "messages" in session.memory:
                     try:
-                        self.memory.messages = [Message(**m) for m in session.memory["messages"]]
+                        self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]]
                     except Exception as e:
                         log_warning(f"Failed to load messages from memory: {e}")
                 if "summary" in session.memory:
                     try:
-                        self.memory.summary = SessionSummary(**session.memory["summary"])
+                        self.memory.summary = SessionSummary.model_validate(session.memory["summary"])
                     except Exception as e:
                         log_warning(f"Failed to load session summary from memory: {e}")
                 if "memories" in session.memory:
                     try:
-                        self.memory.memories = [Memory(**m) for m in session.memory["memories"]]
+                        self.memory.memories = [Memory.model_validate(m) for m in session.memory["memories"]]
                     except Exception as e:
                         log_warning(f"Failed to load user memories: {e}")
             except Exception as e:
@@ -3586,7 +3592,7 @@ class Agent:
                     run_data=run_data,
                     session_id=agent_session.session_id,
                     agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
-                    team_id=self.team_id,
+                    team_session_id=agent_session.team_session_id,
                 ),
                 monitor=self.monitoring,
             )
@@ -3611,7 +3617,7 @@ class Agent:
                     run_data=run_data,
                     session_id=agent_session.session_id,
                     agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
-                    team_id=self.team_id,
+                    team_session_id=agent_session.team_session_id,
                 ),
                 monitor=self.monitoring,
             )
