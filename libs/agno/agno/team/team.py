@@ -3026,6 +3026,7 @@ class Team:
         if from_run_response:
             content = from_run_response.content
             content_type = from_run_response.content_type
+            tools = from_run_response.tools
             audio = from_run_response.audio
             images = from_run_response.images
             videos = from_run_response.videos
@@ -3070,20 +3071,23 @@ class Team:
 
         log_debug("Resolving context")
         if self.context is not None:
-            for ctx_key, ctx_value in self.context.items():
-                if callable(ctx_value):
-                    try:
-                        sig = signature(ctx_value)
-                        if "agent" in sig.parameters:
-                            resolved_ctx_value = ctx_value(agent=self)
-                        else:
-                            resolved_ctx_value = ctx_value()
-                        if resolved_ctx_value is not None:
-                            self.context[ctx_key] = resolved_ctx_value
-                    except Exception as e:
-                        log_warning(f"Failed to resolve context for {ctx_key}: {e}")
-                else:
-                    self.context[ctx_key] = ctx_value
+            if isinstance(self.context, dict):
+                for ctx_key, ctx_value in self.context.items():
+                    if callable(ctx_value):
+                        try:
+                            sig = signature(ctx_value)
+                            if "agent" in sig.parameters:
+                                resolved_ctx_value = ctx_value(agent=self)
+                            else:
+                                resolved_ctx_value = ctx_value()
+                            if resolved_ctx_value is not None:
+                                self.context[ctx_key] = resolved_ctx_value
+                        except Exception as e:
+                            log_warning(f"Failed to resolve context for {ctx_key}: {e}")
+                    else:
+                        self.context[ctx_key] = ctx_value
+            else:
+                log_warning("Context is not a dict")
 
     def _configure_model(self, show_tool_calls: bool = False) -> None:
         # Set the default model
@@ -4343,6 +4347,23 @@ class Team:
             self.team_session = cast(TeamSession, self.storage.upsert(session=self._get_team_session()))
         return self.team_session
 
+    def rename_session(self, session_name: str) -> None:
+        """Rename the current session and save to storage"""
+
+        # -*- Read from storage
+        self.read_from_storage()
+        # -*- Rename session
+        self.session_name = session_name
+        # -*- Save to storage
+        self.write_to_storage()
+        # -*- Log Agent session
+        self._log_team_session()
+
+    def delete_session(self, session_id: str) -> None:
+        """Delete the current session and save to storage"""
+        if self.storage is not None:
+            self.storage.delete_session(session_id=session_id)
+
     def load_team_session(self, session: TeamSession):
         """Load the existing TeamSession from an TeamSession (from the database)"""
         from agno.utils.merge_dict import merge_dictionaries
@@ -4424,7 +4445,7 @@ class Team:
             if isinstance(self.memory, dict):
                 # Convert dict to TeamMemory
                 self.memory = TeamMemory.from_dict(self.memory)
-            else:
+            elif self.memory is not None:
                 raise TypeError(f"Expected memory to be a dict or TeamMemory, but got {type(self.memory)}")
 
         if session.memory is not None:
@@ -4489,7 +4510,10 @@ class Team:
         if self.team_id is not None:
             team_data["team_id"] = self.team_id
         if self.model is not None:
-            team_data["model"] = self.model.to_dict()
+            if isinstance(self.model, dict):
+                team_data["model"] = self.model
+            else:
+                team_data["model"] = self.model.to_dict()
         return team_data
 
     def _get_session_data(self) -> Dict[str, Any]:
@@ -4512,12 +4536,17 @@ class Team:
         from time import time
 
         """Get an TeamSession object, which can be saved to the database"""
+
+        if isinstance(self.memory, dict):
+            memory = self.memory
+        else:
+            memory = self.memory.to_dict() if self.memory is not None else None
         return TeamSession(
             session_id=self.session_id,  # type: ignore
             team_id=self.team_id,
             user_id=self.user_id,
             team_session_id=self.team_session_id,
-            memory=self.memory.to_dict() if self.memory is not None else None,
+            memory=memory,
             team_data=self._get_team_data(),
             session_data=self._get_session_data(),
             extra_data=self.extra_data,
@@ -4568,3 +4597,82 @@ class Team:
             )
         except Exception as e:
             log_debug(f"Could not create team event: {e}")
+
+    def _log_team_session(self):
+        if not (self.telemetry or self.monitoring):
+            return
+
+        from agno.api.team import TeamSessionCreate, upsert_team_session
+
+        try:
+            team_session: TeamSession = self.team_session or self._get_team_session()
+            upsert_team_session(
+                session=TeamSessionCreate(
+                    session_id=team_session.session_id,
+                    team_data=team_session.to_dict() if self.monitoring else team_session.telemetry_data(),
+                ),
+                monitor=self.monitoring,
+            )
+        except Exception as e:
+            log_debug(f"Could not create team monitor: {e}")
+
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Team":
+        """Create a deep copy of the Team with optional updates.
+        Args:
+            update: Optional dictionary of attributes to update in the copy
+        Returns:
+            A new Team instance with copied attributes
+        """
+        # Get all instance attributes
+        attributes = self.__dict__.copy()
+
+        excluded_fields = ["team_session", "session_name", "_functions_for_model", "memory"]
+        # Deep copy each field
+        copied_attributes = {}
+        for field_name, field_value in attributes.items():
+            if field_name in excluded_fields:
+                continue
+            copied_attributes[field_name] = self._deep_copy_field(field_name, field_value)
+
+        # Create new instance
+        team_copy = Team.__new__(Team)
+        team_copy.__dict__ = copied_attributes
+
+        # Apply any updates
+        if update:
+            for key, value in update.items():
+                setattr(team_copy, key, value)
+
+        return team_copy
+
+    def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
+        """Deep copy a single field value.
+        Args:
+            field_name: Name of the field being copied
+            field_value: Value to copy
+        Returns:
+            Deep copied value
+        """
+        from copy import deepcopy
+
+        # Handle special cases
+        if field_name == "members":
+            # Deep copy each member
+            if field_value is not None:
+                return [member.deep_copy() for member in field_value]
+            return None
+
+        if field_name == "model":
+            # Models should be copied directly without deep copy
+            return field_value
+
+        if field_name == "memory":
+            # Memory objects should be copied directly
+            return field_value
+
+        if field_name == "storage":
+            # Storage objects should be copied directly
+            return field_value
+
+        # Default to standard deep copy for other fields
+        return deepcopy(field_value)

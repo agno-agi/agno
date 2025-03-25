@@ -24,12 +24,14 @@ class TeamRun:
     response: Optional[TeamRunResponse] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        response = {
-            "message": self.message.to_dict() if self.message else None,
-            "member_responses": [run.to_dict() for run in self.member_runs] if self.member_runs else None,
-            "response": self.response.to_dict() if self.response else None,
+        message = self.message.to_dict() if self.message else None
+        member_responses = [run.to_dict() for run in self.member_runs] if self.member_runs else None
+        response = self.response.to_dict() if self.response else None
+        return {
+            "message": message,
+            "member_responses": member_responses,
+            "response": response,
         }
-        return {k: v for k, v in response.items() if v is not None}
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRun":

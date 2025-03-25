@@ -74,3 +74,46 @@ class WorkflowsGetResponse(BaseModel):
     workflow_id: str
     name: str
     description: Optional[str] = None
+
+
+class TeamModel(BaseModel):
+    name: Optional[str] = None
+    model: Optional[str] = None
+    provider: Optional[str] = None
+
+
+class TeamGetResponse(BaseModel):
+    team_id: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    mode: Optional[str] = None
+    storage: Optional[str] = None
+    # Add TeamModel type on model field
+    model: Optional[Any] = None
+    success_criteria: Optional[str] = None
+    instructions: Optional[Union[List[str], str, Callable]] = None
+    members: Optional[List[AgentGetResponse]] = None
+    expected_output: Optional[str] = None
+    context: Optional[str] = None
+    enable_agentic_context: Optional[bool] = None
+    response_model: Optional[str] = None
+    storage: Optional[Dict[str, Any]] = None
+    # workflows: Optional[List[WorkflowGetResponse]] = None
+
+
+class TeamRunRequest(BaseModel):
+    input: Dict[str, Any]
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+class TeamSessionResponse(BaseModel):
+    title: Optional[str] = None
+    session_id: Optional[str] = None
+    session_name: Optional[str] = None
+    created_at: Optional[int] = None
+
+
+class TeamRenameRequest(BaseModel):
+    name: str
+    user_id: str
