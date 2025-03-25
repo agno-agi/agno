@@ -1,5 +1,6 @@
 """
 This recipe shows how to store personalized memories and summaries in a sqlite database.
+
 Steps:
 1. Run: `pip install openai sqlalchemy agno` to install dependencies
 2. Run: `python cookbook/teams/memory/03_user_memories.py` to run the agent

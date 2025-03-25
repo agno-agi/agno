@@ -4445,7 +4445,6 @@ class Team:
             if isinstance(self.memory, dict):
                 # Convert dict to TeamMemory
                 self.memory = TeamMemory(**self.memory)
-
             elif self.memory is not None:
                 raise TypeError(f"Expected memory to be a dict or TeamMemory, but got {type(self.memory)}")
 
@@ -4687,8 +4686,7 @@ class Team:
         elif isinstance(field_value, BaseModel):
             try:
                 return field_value.model_copy(deep=True)
-            except Exception as e:
-                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+            except Exception:
                 try:
                     return field_value.model_copy(deep=False)
                 except Exception as e:

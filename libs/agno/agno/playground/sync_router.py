@@ -12,8 +12,8 @@ from agno.playground.operator import (
     format_tools,
     get_agent_by_id,
     get_session_title,
-    get_session_title_from_workflow_session,
     get_session_title_from_team_session,
+    get_session_title_from_workflow_session,
     get_team_by_id,
     get_workflow_by_id,
 )
@@ -511,7 +511,7 @@ def get_sync_playground_router(
             return []
 
         return [TeamGetResponse.from_team(team) for team in teams]
-                    
+
     @playground_router.get("/teams/{team_id}")
     def get_team(team_id: str):
         team = get_team_by_id(team_id, teams)
@@ -539,12 +539,12 @@ def get_sync_playground_router(
 
         if team.storage is None:
             raise HTTPException(status_code=404, detail="Team does not have storage enabled")
-        
+
         try:
-            all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=user_id, entity_id=team_id) # type: ignore
+            all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=user_id, entity_id=team_id)  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
-        
+
         team_sessions: List[TeamSessionResponse] = []
         for session in all_team_sessions:
             title = get_session_title_from_team_session(session)
@@ -568,7 +568,7 @@ def get_sync_playground_router(
             raise HTTPException(status_code=404, detail="Team does not have storage enabled")
 
         try:
-            team_session: Optional[TeamSession] = team.storage.read(session_id, user_id) # type: ignore
+            team_session: Optional[TeamSession] = team.storage.read(session_id, user_id)  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving session: {str(e)}")
 
