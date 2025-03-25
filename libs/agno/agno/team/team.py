@@ -4444,7 +4444,7 @@ class Team:
         if not isinstance(self.memory, TeamMemory):
             if isinstance(self.memory, dict):
                 # Convert dict to TeamMemory
-                self.memory = TeamMemory.from_dict(self.memory)
+                self.memory = TeamMemory(**self.memory)
 
             elif self.memory is not None:
                 raise TypeError(f"Expected memory to be a dict or TeamMemory, but got {type(self.memory)}")
@@ -4458,12 +4458,12 @@ class Team:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "messages" in session.memory:
                     try:
-                        self.memory.messages = [Message(**m) for m in session.memory["messages"]]
+                        self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]]
                     except Exception as e:
                         log_warning(f"Failed to load messages from memory: {e}")
                 if "memories" in session.memory:
                     try:
-                        self.memory.memories = [Memory(**m) for m in session.memory["memories"]]
+                        self.memory.memories = [Memory.model_validate(m) for m in session.memory["memories"]]
                     except Exception as e:
                         log_warning(f"Failed to load user memories: {e}")
             except Exception as e:
