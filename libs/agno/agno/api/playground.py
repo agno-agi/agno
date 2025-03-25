@@ -10,7 +10,6 @@ from agno.api.routes import ApiRoutes
 from agno.api.schemas.playground import PlaygroundEndpointCreate
 from agno.cli.settings import agno_cli_settings
 from agno.constants import AGNO_API_KEY_ENV_VAR
-from agno.team.team import Team
 from agno.utils.log import logger
 
 
