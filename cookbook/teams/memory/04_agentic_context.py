@@ -10,9 +10,9 @@ from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.team import TeamMemory
 from agno.models.openai import OpenAIChat
 from agno.storage.agent.sqlite import SqliteAgentStorage
-from agno.tools.yfinance import YFinanceTools
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.team.team import Team
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.yfinance import YFinanceTools
 
 stock_searcher = Agent(
     name="Stock Searcher",

@@ -3300,7 +3300,7 @@ class Team:
             system_message_content += f"<success_criteria>\nThe team will be considered successful if the following criteria are met: {self.success_criteria}\nStop the team run when the criteria are met.\n</success_criteria>\n\n"
 
         if self.description is not None:
-            system_message_content += f"<description>{self.description}</description>\n\n"
+            system_message_content += f"<description>\n{self.description}\n</description>\n\n"
 
         # 3.3.5 Then add instructions for the Agent
         if len(instructions) > 0:
@@ -4142,7 +4142,8 @@ class Team:
             # Find the member agent using the helper function
             result = self._find_member_by_name(agent_name)
             if result is None:
-                raise ValueError(f"Agent with name {agent_name} not found in the team or any subteams.")
+                yield f"Agent with name {agent_name} not found. Please choose the correct agent from the list of agents."
+                return
 
             member_agent_index, member_agent = result
             self._initialize_member(member_agent)

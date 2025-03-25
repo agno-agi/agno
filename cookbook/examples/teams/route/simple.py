@@ -30,6 +30,7 @@ multi_language_team = Team(
     description="You are a language router that directs questions to the appropriate language agent.",
     instructions=[
         "Identify the language of the user's question and direct it to the appropriate language agent.",
+        "Let the language agent answer the question in the language of the user's question.",
         "If the user asks in a language whose agent is not a team member, respond in English with:",
         "'I can only answer in the following languages: English, Chinese, French. Please ask your question in one of these languages.'",
         "Always check the language of the user's input before routing to an agent.",
