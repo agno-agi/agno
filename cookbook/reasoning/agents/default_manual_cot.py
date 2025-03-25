@@ -1,6 +1,6 @@
 """
 This example demonstrates how it works when you pass a non-reasoning model to the reasoning model.
-We recommend using the appropriate reasoning model or passing reasoning=True for the default reasoning model.
+We recommend using the appropriate reasoning model or passing reasoning=True for the default COT.
 """
 
 from agno.agent import Agent
