@@ -4682,7 +4682,6 @@ class Team:
             try:
                 return deepcopy(field_value)
             except Exception as e:
-                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
                 try:
                     return copy(field_value)
                 except Exception as e:
@@ -4694,7 +4693,6 @@ class Team:
             try:
                 return field_value.model_copy(deep=True)
             except Exception as e:
-                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
                 try:
                     return field_value.model_copy(deep=False)
                 except Exception as e:
