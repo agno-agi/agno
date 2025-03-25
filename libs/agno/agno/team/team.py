@@ -487,7 +487,7 @@ class Team:
                     files=files,  # type: ignore
                 )
                 _built_in_tools.append(forward_task_func)
-                
+
             elif self.mode == "coordinate":
                 _built_in_tools.append(
                     self.get_transfer_task_function(
