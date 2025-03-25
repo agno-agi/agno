@@ -76,6 +76,7 @@ class SqliteStorage(Storage):
         self.schema_version: int = schema_version
         # Automatically upgrade schema if True
         self.auto_upgrade_schema: bool = auto_upgrade_schema
+        self._schema_up_to_date: bool = False
 
         # Database session
         self.SqlSession: sessionmaker[SqlSession] = sessionmaker(bind=self.db_engine)
@@ -351,6 +352,7 @@ class SqliteStorage(Storage):
                         alter_table_query = text(f"ALTER TABLE {self.table_name} ADD COLUMN team_session_id TEXT")
                         sess.execute(alter_table_query)
                         sess.commit()
+                        self._schema_up_to_date = True
                         log_info("Schema upgrade completed successfully")
         except Exception as e:
             logger.error(f"Error during schema upgrade: {e}")
@@ -368,7 +370,7 @@ class SqliteStorage(Storage):
             Optional[Session]: The upserted Session, or None if operation failed.
         """
         # Perform schema upgrade if auto_upgrade_schema is enabled
-        if self.auto_upgrade_schema:
+        if self.auto_upgrade_schema and not self._schema_up_to_date:
             self.upgrade_schema()
 
         try:
@@ -528,7 +530,7 @@ class SqliteStorage(Storage):
             if k in {"metadata", "table", "inspector"}:
                 continue
             # Reuse db_engine and Session without copying
-            elif k in {"db_engine", "Session"}:
+            elif k in {"db_engine", "SqlSession"}:
                 setattr(copied_obj, k, v)
             else:
                 setattr(copied_obj, k, deepcopy(v, memo))
