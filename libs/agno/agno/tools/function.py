@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Any, Callable, Dict, Optional, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
@@ -11,6 +12,9 @@ T = TypeVar("T")
 
 def get_entrypoint_docstring(entrypoint: Callable) -> str:
     from inspect import getdoc
+
+    if isinstance(entrypoint, partial):
+        return str(entrypoint)
 
     doc = getdoc(entrypoint)
     if not doc:

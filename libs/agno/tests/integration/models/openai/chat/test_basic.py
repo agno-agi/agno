@@ -203,7 +203,7 @@ def test_history():
 def test_persistent_memory():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools()],
+        tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         show_tool_calls=True,
         telemetry=False,
