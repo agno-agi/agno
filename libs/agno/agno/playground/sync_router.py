@@ -619,7 +619,7 @@ def get_sync_playground_router(
             raise HTTPException(status_code=404, detail="Team not found")
 
         try:
-            all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=user_id, team_id=team_id)
+            all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=user_id, entity_id=team_id)  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
 
@@ -641,7 +641,7 @@ def get_sync_playground_router(
             raise HTTPException(status_code=404, detail="Team not found")
 
         try:
-            team_session: Optional[TeamSession] = team.storage.read(session_id, user_id)
+            team_session: Optional[TeamSession] = team.storage.read(session_id, user_id)  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving session: {str(e)}")
 

@@ -87,7 +87,6 @@ class TeamGetResponse(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     mode: Optional[str] = None
-    storage: Optional[str] = None
     # Add TeamModel type on model field
     model: Optional[Any] = None
     success_criteria: Optional[str] = None
@@ -98,7 +97,6 @@ class TeamGetResponse(BaseModel):
     enable_agentic_context: Optional[bool] = None
     response_model: Optional[str] = None
     storage: Optional[Dict[str, Any]] = None
-    # workflows: Optional[List[WorkflowGetResponse]] = None
 
 
 class TeamRunRequest(BaseModel):

@@ -1,8 +1,9 @@
 """
-This recipe shows how to store personalized memories and summaries in a sqlite database.
+This recipe shows how to use team history to improve the performance of the team.
+
 Steps:
 1. Run: `pip install openai sqlalchemy agno` to install dependencies
-2. Run: `python cookbook/teams/memory/04_agentic_context.py` to run the agent
+2. Run: `python cookbook/teams/memory/05_team_history.py` to run the agent
 """
 
 from agno.agent import Agent
@@ -68,11 +69,15 @@ team = Team(
 team.print_response(
     "First find the stock price of apple. Then find any information about the company.",
     stream=True,
-    stream_intermediate_steps=True
+    stream_intermediate_steps=True,
 )
 
-team.print_response("What is the current price of NVDA?", stream=True,
-    stream_intermediate_steps=True)
+team.print_response(
+    "What is the current price of NVDA?", stream=True, stream_intermediate_steps=True
+)
 
-team.print_response("What was that apple stock price again?", stream=True,
-    stream_intermediate_steps=True)
+team.print_response(
+    "What was that apple stock price again?",
+    stream=True,
+    stream_intermediate_steps=True,
+)

@@ -164,7 +164,7 @@ class TodoistTools(Toolkit):
         """
         try:
             # Build updates dictionary with only provided parameters
-            updates = {}
+            updates: Dict[str, Any] = {}
             if content is not None:
                 updates["content"] = content
             if description is not None:

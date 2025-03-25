@@ -675,7 +675,7 @@ def get_async_playground_router(
             raise HTTPException(status_code=404, detail="Team does not have storage enabled")
 
         try:
-            all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=user_id, entity_id=team_id)
+            all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=user_id, entity_id=team_id)  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
 
@@ -702,7 +702,7 @@ def get_async_playground_router(
             raise HTTPException(status_code=404, detail="Team does not have storage enabled")
 
         try:
-            team_session: Optional[TeamSession] = team.storage.read(session_id, user_id)
+            team_session: Optional[TeamSession] = team.storage.read(session_id, user_id)  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving session: {str(e)}")
 
@@ -720,7 +720,7 @@ def get_async_playground_router(
         if team.storage is None:
             raise HTTPException(status_code=404, detail="Team does not have storage enabled")
 
-        all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=body.user_id, entity_id=team_id)
+        all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=body.user_id, entity_id=team_id)  # type: ignore
         for session in all_team_sessions:
             if session.session_id == session_id:
                 team.session_id = session_id
@@ -738,7 +738,7 @@ def get_async_playground_router(
         if team.storage is None:
             raise HTTPException(status_code=404, detail="Team does not have storage enabled")
 
-        all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=user_id, entity_id=team_id)
+        all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=user_id, entity_id=team_id)  # type: ignore
         for session in all_team_sessions:
             if session.session_id == session_id:
                 team.delete_session(session_id)
