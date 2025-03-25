@@ -14,7 +14,9 @@ audio_and_text_agent = Agent(
     debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
-    storage=SqliteStorage(table_name="audio_agent", db_file="tmp/audio_agent.db", auto_upgrade_schema=True),
+    storage=SqliteStorage(
+        table_name="audio_agent", db_file="tmp/audio_agent.db", auto_upgrade_schema=True
+    ),
 )
 
 app = Playground(agents=[audio_and_text_agent]).get_app()
