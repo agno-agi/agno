@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from agno.agent.agent import Agent, AgentRun, Function, Toolkit
 from agno.storage.session.agent import AgentSession
@@ -38,7 +38,7 @@ def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Opti
     return None
 
 
-def get_session_title(session: AgentSession) -> str:
+def get_session_title(session: Union[AgentSession, TeamSession]) -> str:
     if session is None:
         return "Unnamed session"
     session_name = session.session_data.get("session_name") if session.session_data is not None else None

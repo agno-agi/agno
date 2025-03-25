@@ -1053,7 +1053,7 @@ class Agent:
         self.run_id = str(uuid4())
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
-        log_debug(f"*********** Async Agent Run Start: {self.run_response.run_id} ***********")
+        log_debug(f"Async Agent Run Start: {self.run_response.run_id}", center=True, symbol="*")
 
         # 2. Update the Model and resolve context
         self.update_model()
@@ -2575,8 +2575,7 @@ class Agent:
         elif field_name in ("storage", "model", "reasoning_model"):
             try:
                 return deepcopy(field_value)
-            except Exception as e:
-                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+            except Exception:
                 try:
                     return copy(field_value)
                 except Exception as e:
@@ -2587,8 +2586,7 @@ class Agent:
         elif isinstance(field_value, (list, dict, set)):
             try:
                 return deepcopy(field_value)
-            except Exception as e:
-                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+            except Exception:
                 try:
                     return copy(field_value)
                 except Exception as e:

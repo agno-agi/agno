@@ -4456,11 +4456,11 @@ class Team:
         if not isinstance(self.memory, TeamMemory):
             if isinstance(self.memory, dict):
                 # Convert dict to TeamMemory
-                self.memory = TeamMemory.from_dict(self.memory)
+                self.memory = TeamMemory(**self.memory)
             elif self.memory is not None:
                 raise TypeError(f"Expected memory to be a dict or TeamMemory, but got {type(self.memory)}")
 
-        if session.memory is not None:
+        if session.memory is not None and self.memory is not None:
             try:
                 if "runs" in session.memory:
                     try:
@@ -4469,12 +4469,12 @@ class Team:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "messages" in session.memory:
                     try:
-                        self.memory.messages = [Message(**m) for m in session.memory["messages"]]
+                        self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]]
                     except Exception as e:
                         log_warning(f"Failed to load messages from memory: {e}")
                 if "memories" in session.memory:
                     try:
-                        self.memory.memories = [Memory(**m) for m in session.memory["memories"]]
+                        self.memory.memories = [Memory.model_validate(m) for m in session.memory["memories"]]
                     except Exception as e:
                         log_warning(f"Failed to load user memories: {e}")
             except Exception as e:
@@ -4522,10 +4522,7 @@ class Team:
         if self.team_id is not None:
             team_data["team_id"] = self.team_id
         if self.model is not None:
-            if isinstance(self.model, dict):
-                team_data["model"] = self.model
-            else:
-                team_data["model"] = self.model.to_dict()
+            team_data["model"] = self.model.to_dict()
         return team_data
 
     def _get_session_data(self) -> Dict[str, Any]:
@@ -4549,16 +4546,12 @@ class Team:
 
         """Get an TeamSession object, which can be saved to the database"""
 
-        if isinstance(self.memory, dict):
-            memory = self.memory
-        else:
-            memory = self.memory.to_dict() if self.memory is not None else None
         return TeamSession(
             session_id=self.session_id,  # type: ignore
             team_id=self.team_id,
             user_id=self.user_id,
             team_session_id=self.team_session_id,
-            memory=memory,
+            memory=self.memory.to_dict() if self.memory is not None else None,
             team_data=self._get_team_data(),
             session_data=self._get_session_data(),
             extra_data=self.extra_data,
@@ -4638,7 +4631,7 @@ class Team:
         # Get all instance attributes
         attributes = self.__dict__.copy()
 
-        excluded_fields = ["team_session", "session_name", "_functions_for_model", "memory"]
+        excluded_fields = ["team_session", "session_name", "_functions_for_model"]
         # Deep copy each field
         copied_attributes = {}
         for field_name, field_value in attributes.items():
@@ -4665,7 +4658,7 @@ class Team:
         Returns:
             Deep copied value
         """
-        from copy import deepcopy
+        from copy import copy, deepcopy
 
         # Handle special cases
         if field_name == "members":
@@ -4674,17 +4667,49 @@ class Team:
                 return [member.deep_copy() for member in field_value]
             return None
 
-        if field_name == "model":
-            # Models should be copied directly without deep copy
-            return field_value
+        # For memory use the deep_copy methods
+        if field_name == "memory" and field_value is not None:
+            return field_value.deep_copy()
 
-        if field_name == "memory":
-            # Memory objects should be copied directly
-            return field_value
+        # For storage, model and reasoning_model, use a deep copy
+        elif field_name in ("storage", "model", "reasoning_model") and field_value is not None:
+            try:
+                return deepcopy(field_value)
+            except Exception:
+                try:
+                    return copy(field_value)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
 
-        if field_name == "storage":
-            # Storage objects should be copied directly
-            return field_value
+        # For compound types, attempt a deep copy
+        elif isinstance(field_value, (list, dict, set)):
+            try:
+                return deepcopy(field_value)
+            except Exception as e:
+                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+                try:
+                    return copy(field_value)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
 
-        # Default to standard deep copy for other fields
-        return deepcopy(field_value)
+        # For pydantic models, attempt a model_copy
+        elif isinstance(field_value, BaseModel):
+            try:
+                return field_value.model_copy(deep=True)
+            except Exception:
+                try:
+                    return field_value.model_copy(deep=False)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For other types, attempt a shallow copy first
+        try:
+            from copy import copy
+
+            return copy(field_value)
+        except Exception:
+            # If copy fails, return as is
+            return field_value

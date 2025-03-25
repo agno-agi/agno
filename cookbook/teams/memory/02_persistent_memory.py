@@ -1,5 +1,6 @@
 """
 This recipe shows how to store agent sessions in a sqlite database.
+
 Steps:
 1. Run: `pip install openai sqlalchemy agno` to install dependencies
 2. Run: `python cookbook/teams/memory/02_persistent_memory.py` to run the agent
@@ -11,6 +12,7 @@ from agno.models.perplexity.perplexity import Perplexity
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
+
 from utils import print_chat_history
 
 stock_searcher = Agent(
