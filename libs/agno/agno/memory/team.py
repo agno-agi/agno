@@ -392,3 +392,24 @@ class TeamMemory:
         self.load_user_memories()
         self.updating_memory = False
         return response
+
+    def deep_copy(self) -> "TeamMemory":
+        from copy import deepcopy
+
+        # Create a shallow copy of the object
+        copied_obj = self.__class__(**self.to_dict())
+
+        # Manually deepcopy fields that are known to be safe
+        for field_name, field_value in self.__dict__.items():
+            if field_name not in ["db", "classifier", "manager"]:
+                try:
+                    setattr(copied_obj, field_name, deepcopy(field_value))
+                except Exception as e:
+                    log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+                    setattr(copied_obj, field_name, field_value)
+
+        copied_obj.db = self.db
+        copied_obj.classifier = self.classifier
+        copied_obj.manager = self.manager
+
+        return copied_obj

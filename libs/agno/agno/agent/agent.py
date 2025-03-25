@@ -2576,7 +2576,6 @@ class Agent:
             try:
                 return deepcopy(field_value)
             except Exception as e:
-                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
                 try:
                     return copy(field_value)
                 except Exception as e:
