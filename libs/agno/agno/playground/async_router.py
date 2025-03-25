@@ -552,7 +552,6 @@ def get_async_playground_router(
                 mode=team.mode,
                 storage={"name": team.storage.__class__.__name__} if team.storage else None,
                 memory={"name": team.memory.__class__.__name__} if team.memory else None,
-                enable_agentic_context=team.enable_agentic_context,
                 members=[
                     AgentGetResponse(
                         agent_id=member.agent_id,

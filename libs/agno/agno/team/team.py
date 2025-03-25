@@ -4511,10 +4511,7 @@ class Team:
         if self.team_id is not None:
             team_data["team_id"] = self.team_id
         if self.model is not None:
-            if isinstance(self.model, dict):
-                team_data["model"] = self.model
-            else:
-                team_data["model"] = self.model.to_dict()
+            team_data["model"] = self.model.to_dict()
         return team_data
 
     def _get_session_data(self) -> Dict[str, Any]:
@@ -4538,16 +4535,12 @@ class Team:
 
         """Get an TeamSession object, which can be saved to the database"""
 
-        if isinstance(self.memory, dict):
-            memory = self.memory
-        else:
-            memory = self.memory.to_dict() if self.memory is not None else None
         return TeamSession(
             session_id=self.session_id,  # type: ignore
             team_id=self.team_id,
             user_id=self.user_id,
             team_session_id=self.team_session_id,
-            memory=memory,
+            memory=self.memory.to_dict() if self.memory is not None else None,
             team_data=self._get_team_data(),
             session_data=self._get_session_data(),
             extra_data=self.extra_data,
