@@ -7,7 +7,7 @@ from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, logger, log_warning
 
 try:
     from sqlalchemy.dialects import sqlite
@@ -464,7 +464,7 @@ class SqliteStorage(Storage):
                 self.create()
                 return self.upsert(session, create_and_retry=False)
             else:
-                log_debug(f"Exception upserting into table: {e}")
+                log_warning(f"Exception upserting into table: {e}")
                 return None
         return self.read(session_id=session.session_id)
 

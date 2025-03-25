@@ -6,7 +6,7 @@ from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, logger, log_warning
 
 try:
     from sqlalchemy.dialects import postgresql
@@ -485,7 +485,7 @@ class PostgresStorage(Storage):
 
                 sess.execute(stmt)
         except Exception as e:
-            log_debug(f"Exception upserting into table: {e}")
+            log_warning(f"Exception upserting into table: {e}")
             if create_and_retry and not self.table_exists():
                 log_debug(f"Table does not exist: {self.table.name}")
                 log_debug("Creating table and retrying upsert")
