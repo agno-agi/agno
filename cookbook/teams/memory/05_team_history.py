@@ -52,8 +52,12 @@ team = Team(
         "You can search the stock market for information about a particular company's stock.",
         "Always add any stock information you find to the team context."
         "You can also search the web for wider company information.",
+        "Use get_team_history to find values of stocks you looked up before.",
     ],
     enable_agentic_context=True,
+    enable_team_history=True,
+    num_of_interactions_from_history=1,
+    read_team_history=True,
     show_tool_calls=True,
     markdown=True,
     show_members_responses=True,
@@ -62,12 +66,13 @@ team = Team(
 
 # -*- Share personal information
 team.print_response(
-    "First find the stock price of apple.Then find any information about the company.",
+    "First find the stock price of apple. Then find any information about the company.",
     stream=True,
     stream_intermediate_steps=True
 )
 
-team.print_response("What is the price of google stock?", stream=True,
+team.print_response("What is the current price of NVDA?", stream=True,
     stream_intermediate_steps=True)
 
-print("TEAM CONTEXT: ", team.memory.team_context.text)
+team.print_response("What was that apple stock price again?", stream=True,
+    stream_intermediate_steps=True)
