@@ -10,11 +10,6 @@ Prerequisites:
     - You also need to activate the Address Validation API for your .
     https://console.developers.google.com/apis/api/addressvalidation.googleapis.com
 
-- Apify:
-    - Set the environment variable `APIFY_TOKEN` with your Apify API token.
-    You can obtain the API key from the Apify Console:
-    https://console.apify.com/settings/integrations
-
 """
 
 import asyncio
@@ -26,20 +21,12 @@ from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.exa import ExaTools
 from agno.tools.mcp import MCPTools
 from mcp import StdioServerParameters
 from pydantic import BaseModel
 
 
 # Define response models
-class FlightDeal(BaseModel):
-    description: str
-    location: str
-    price: Optional[str] = None
-    url: Optional[str] = None
-
-
 class AirbnbListing(BaseModel):
     name: str
     description: str
@@ -65,7 +52,6 @@ class WeatherInfo(BaseModel):
 
 
 class TravelPlan(BaseModel):
-    flight_deals: List[FlightDeal]
     airbnb_listings: List[AirbnbListing]
     attractions: List[Attraction]
     weather_info: Optional[WeatherInfo] = None
@@ -118,19 +104,6 @@ async def run_team():
             add_datetime_to_instructions=True,
         )
 
-        flight_deal_agent = Agent(
-            name="Flight Deal",
-            role="Flight Deal Agent",
-            model=OpenAIChat("gpt-4o"),
-            tools=[ExaTools()],
-            instructions=dedent("""\
-                You are an agent that can find flight deals for a given location and date.
-                Visit `https://www.google.com/flights` and find the best flight deals for a given location and date.
-                Make sure to include the best flight deals in your response.
-            """),
-            add_datetime_to_instructions=True,
-        )
-
         web_search_agent = Agent(
             name="Web Search",
             role="Web Search Agent",
@@ -162,14 +135,12 @@ async def run_team():
             model=OpenAIChat("gpt-4o"),
             members=[
                 airbnb_agent,
-                flight_deal_agent,
                 web_search_agent,
                 maps_agent,
                 weather_search_agent,
             ],
             instructions=[
-                "First, find the best flight deals for a given location and date.",
-                "Then, find the best Airbnb listings for the given location.",
+                "First, find the best Airbnb listings for the given location.",
                 "Use the Google Maps agent to identify key neighborhoods and attractions.",
                 "Use the Attractions agent to find highly-rated places to visit and restaurants.",
                 "Get weather information to help with packing and planning outdoor activities.",
@@ -179,7 +150,6 @@ async def run_team():
             response_model=TravelPlan,
             show_tool_calls=True,
             markdown=True,
-            debug_mode=True,
             show_members_responses=True,
             add_datetime_to_instructions=True,
         )
