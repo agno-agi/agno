@@ -4681,7 +4681,7 @@ class Team:
         elif isinstance(field_value, (list, dict, set)):
             try:
                 return deepcopy(field_value)
-            except Exception as e:
+            except Exception:
                 try:
                     return copy(field_value)
                 except Exception as e:
@@ -4692,7 +4692,7 @@ class Team:
         elif isinstance(field_value, BaseModel):
             try:
                 return field_value.model_copy(deep=True)
-            except Exception as e:
+            except Exception:
                 try:
                     return field_value.model_copy(deep=False)
                 except Exception as e:

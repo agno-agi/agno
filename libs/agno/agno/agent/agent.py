@@ -2586,7 +2586,7 @@ class Agent:
         elif isinstance(field_value, (list, dict, set)):
             try:
                 return deepcopy(field_value)
-            except Exception as e:
+            except Exception:
                 try:
                     return copy(field_value)
                 except Exception as e:
