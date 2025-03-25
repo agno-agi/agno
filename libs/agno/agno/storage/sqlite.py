@@ -7,7 +7,7 @@ from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, logger, log_warning
 
 try:
     from sqlalchemy.dialects import sqlite
@@ -113,6 +113,7 @@ class SqliteStorage(Storage):
         ]
 
         # Mode-specific columns
+        specific_columns = []
         if self.mode == "agent":
             specific_columns = [
                 Column("agent_id", String, index=True),
@@ -125,7 +126,7 @@ class SqliteStorage(Storage):
                 Column("team_data", sqlite.JSON),
                 Column("team_session_id", String, index=True, nullable=True),
             ]
-        else:
+        elif self.mode == "workflow":
             specific_columns = [
                 Column("workflow_id", String, index=True),
                 Column("workflow_data", sqlite.JSON),
@@ -238,7 +239,7 @@ class SqliteStorage(Storage):
                     return AgentSession.from_dict(result._mapping) if result is not None else None  # type: ignore
                 elif self.mode == "team":
                     return TeamSession.from_dict(result._mapping) if result is not None else None  # type: ignore
-                else:
+                elif self.mode == "workflow":
                     return WorkflowSession.from_dict(result._mapping) if result is not None else None  # type: ignore
         except Exception as e:
             if "no such table" in str(e):
@@ -270,7 +271,7 @@ class SqliteStorage(Storage):
                         stmt = stmt.where(self.table.c.agent_id == entity_id)
                     elif self.mode == "team":
                         stmt = stmt.where(self.table.c.team_id == entity_id)
-                    else:
+                    elif self.mode == "workflow":
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
                 # order by created_at desc
                 stmt = stmt.order_by(self.table.c.created_at.desc())
@@ -307,7 +308,7 @@ class SqliteStorage(Storage):
                         stmt = stmt.where(self.table.c.agent_id == entity_id)
                     elif self.mode == "team":
                         stmt = stmt.where(self.table.c.team_id == entity_id)
-                    else:
+                    elif self.mode == "workflow":
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
                 # order by created_at desc
                 stmt = stmt.order_by(self.table.c.created_at.desc())
@@ -318,7 +319,7 @@ class SqliteStorage(Storage):
                         return [AgentSession.from_dict(row._mapping) for row in rows]  # type: ignore
                     elif self.mode == "team":
                         return [TeamSession.from_dict(row._mapping) for row in rows]  # type: ignore
-                    else:
+                    elif self.mode == "workflow":
                         return [WorkflowSession.from_dict(row._mapping) for row in rows]  # type: ignore
                 else:
                     return []
@@ -431,7 +432,7 @@ class SqliteStorage(Storage):
                             updated_at=int(time.time()),
                         ),  # The updated value for each column
                     )
-                else:
+                elif self.mode == "workflow":
                     # Create an insert statement
                     stmt = sqlite.insert(self.table).values(
                         session_id=session.session_id,
@@ -466,7 +467,10 @@ class SqliteStorage(Storage):
                 self.create()
                 return self.upsert(session, create_and_retry=False)
             else:
-                log_debug(f"Exception upserting into table: {e}")
+                log_warning(f"Exception upserting into table: {e}")
+                log_warning(
+                    "A table upgrade might be required, please review these docs for more information: https://agno.link/upgrade-schema"
+                )
                 return None
         return self.read(session_id=session.session_id)
 
