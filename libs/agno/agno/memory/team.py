@@ -31,6 +31,15 @@ class TeamRun:
         }
         return {k: v for k, v in response.items() if v is not None}
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TeamRun":
+        message = Message.model_validate(data.get("message")) if data.get("message") else None
+        member_runs = (
+            [AgentRun.model_validate(run) for run in data.get("member_runs", [])] if data.get("member_runs") else None
+        )
+        response = TeamRunResponse.from_dict(data.get("response", {})) if data.get("response") else None
+        return cls(message=message, member_runs=member_runs, response=response)
+
 
 @dataclass
 class TeamMemberInteraction:

@@ -10,7 +10,6 @@ The team consists of six specialized agents:
 6. German Agent - Can only answer in German
 
 The team leader routes the user's question to the appropriate language agent. It can only forward the question and cannot answer itself.
-
 """
 
 import asyncio
@@ -96,6 +95,7 @@ if __name__ == "__main__":
         multi_language_team.aprint_response(
             "Comment allez-vous?",
             stream=True,  # French
+            stream_intermediate_steps=True,
         )
     )
 

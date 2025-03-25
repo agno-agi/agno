@@ -57,6 +57,7 @@ from agno.utils.response import (
     check_if_run_cancelled,
     create_panel,
     escape_markdown_tags,
+    format_tool_calls,
     update_run_response_with_reasoning,
 )
 from agno.utils.safe_formatter import SafeFormatter
@@ -132,7 +133,7 @@ class Team:
     read_team_history: bool = False
 
     # Show tool calls in Team response. This sets the default for the team.
-    show_tool_calls: bool = False
+    show_tool_calls: bool = True
 
     # --- Structured output ---
     # Response model for the team response
@@ -195,7 +196,7 @@ class Team:
         enable_agentic_context: bool = False,
         share_member_interactions: bool = False,
         read_team_history: bool = False,
-        show_tool_calls: bool = False,
+        show_tool_calls: bool = True,
         response_model: Optional[Type[BaseModel]] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
@@ -312,9 +313,6 @@ class Team:
 
     def _set_storage_mode(self):
         if self.storage is not None:
-            if self.storage.mode in ["workflow", "agent"]:
-                log_warning(f"You shouldn't use storage in multiple modes. Current mode is {self.storage.mode}.")
-
             self.storage.mode = "team"
 
     def _set_monitoring(self) -> None:
@@ -436,8 +434,6 @@ class Team:
             # Disable stream if response_model is set
             stream = False
             log_warning("Disabling stream as response_model is set")
-
-            show_tool_calls = False
 
         # Configure the model for runs
         self._configure_model(show_tool_calls=show_tool_calls)
@@ -649,6 +645,8 @@ class Team:
             else:
                 run_response.tools.extend(model_response.tool_calls)
 
+        run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
+
         # Update the run_response audio with the model response audio
         if model_response.audio is not None:
             run_response.response_audio = model_response.audio
@@ -716,7 +714,6 @@ class Team:
                 except Exception as e:
                     log_warning(f"Failed to convert response to output model: {e}")
             else:
-                print("HERE", run_response.content)
                 log_warning("Something went wrong. Run response content is not a string")
         elif self._member_response_model is not None:
             if isinstance(run_response.content, str):
@@ -846,6 +843,9 @@ class Team:
                         run_response.tools = tool_calls_list
                     else:
                         run_response.tools.extend(tool_calls_list)
+
+                # Format tool calls whenever new ones are added during streaming
+                run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
 
                 # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                 if stream_intermediate_steps:
@@ -1016,8 +1016,6 @@ class Team:
             # Disable stream if response_model is set
             stream = False
             log_warning("Disabling stream as response_model is set")
-
-            show_tool_calls = False
 
         # Configure the model for runs
         self._configure_model(show_tool_calls=show_tool_calls)
@@ -1227,6 +1225,8 @@ class Team:
             else:
                 run_response.tools.extend(model_response.tool_calls)
 
+        run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
+
         # Update the run_response audio with the model response audio
         if model_response.audio is not None:
             run_response.response_audio = model_response.audio
@@ -1424,6 +1424,9 @@ class Team:
                         run_response.tools = tool_calls_list
                     else:
                         run_response.tools.extend(tool_calls_list)
+
+                # Format tool calls whenever new ones are added during streaming
+                run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
 
                 # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                 if stream_intermediate_steps:
@@ -1763,6 +1766,21 @@ class Team:
 
                     live_console.update(Group(*panels))
 
+                # Add tool calls panel if available
+                if self.show_tool_calls and run_response.formatted_tool_calls:
+                    # Create bullet points for each tool call
+                    tool_calls_content = Text()
+                    for tool_call in run_response.formatted_tool_calls:
+                        tool_calls_content.append(f"• {tool_call}\n")
+
+                    tool_calls_panel = create_panel(
+                        content=tool_calls_content.plain.rstrip(),
+                        title="Tool Calls",
+                        border_style="yellow",
+                    )
+                    panels.append(tool_calls_panel)
+                    live_console.update(Group(*panels))
+
                 response_content_batch: Union[str, JSON, Markdown] = self._parse_response_content(
                     run_response, tags_to_include_in_markdown, show_markdown=team_markdown
                 )
@@ -1915,6 +1933,21 @@ class Team:
                     panels.append(thinking_panel)
                 if render:
                     live_console.update(Group(*panels))
+
+                # Add tool calls panel if available
+                if self.show_tool_calls and resp is not None and resp.formatted_tool_calls:
+                    render = True
+                    # Create bullet points for each tool call
+                    tool_calls_content = Text()
+                    for tool_call in resp.formatted_tool_calls:
+                        tool_calls_content.append(f"• {tool_call}\n")
+
+                    tool_calls_panel = create_panel(
+                        content=tool_calls_content.plain.rstrip(),
+                        title="Tool Calls",
+                        border_style="yellow",
+                    )
+                    panels.append(tool_calls_panel)
 
                 if len(_response_content) > 0:
                     render = True
@@ -2238,6 +2271,21 @@ class Team:
 
                     live_console.update(Group(*panels))
 
+                # Add tool calls panel if available
+                if self.show_tool_calls and run_response.formatted_tool_calls:
+                    # Create bullet points for each tool call
+                    tool_calls_content = Text()
+                    for tool_call in run_response.formatted_tool_calls:
+                        tool_calls_content.append(f"• {tool_call}\n")
+
+                    tool_calls_panel = create_panel(
+                        content=tool_calls_content.plain.rstrip(),
+                        title="Tool Calls",
+                        border_style="yellow",
+                    )
+                    panels.append(tool_calls_panel)
+                    live_console.update(Group(*panels))
+
                 response_content_batch: Union[str, JSON, Markdown] = self._parse_response_content(
                     run_response, tags_to_include_in_markdown, show_markdown=team_markdown
                 )
@@ -2391,6 +2439,21 @@ class Team:
                     panels.append(thinking_panel)
                 if render:
                     live_console.update(Group(*panels))
+
+                # Add tool calls panel if available
+                if self.show_tool_calls and resp is not None and resp.formatted_tool_calls:
+                    render = True
+                    # Create bullet points for each tool call
+                    tool_calls_content = Text()
+                    for tool_call in resp.formatted_tool_calls:
+                        tool_calls_content.append(f"• {tool_call}\n")
+
+                    tool_calls_panel = create_panel(
+                        content=tool_calls_content.plain.rstrip(),
+                        title="Tool Calls",
+                        border_style="yellow",
+                    )
+                    panels.append(tool_calls_panel)
 
                 if len(_response_content) > 0:
                     render = True
@@ -2959,6 +3022,7 @@ class Team:
     ) -> TeamRunResponse:
         extra_data = None
         member_responses = None
+        formatted_tool_calls = None
         if from_run_response:
             content = from_run_response.content
             content_type = from_run_response.content_type
@@ -2971,6 +3035,8 @@ class Team:
             extra_data = from_run_response.extra_data
             member_responses = from_run_response.member_responses
             citations = from_run_response.citations
+            tools = from_run_response.tools
+            formatted_tool_calls = from_run_response.formatted_tool_calls
 
         rr = TeamRunResponse(
             run_id=self.run_id,
@@ -2989,6 +3055,8 @@ class Team:
             extra_data=extra_data,
             event=event.value,
         )
+        if formatted_tool_calls:
+            rr.formatted_tool_calls = formatted_tool_calls
         if member_responses:
             rr.member_responses = member_responses
         if content_type is not None:
@@ -3232,7 +3300,7 @@ class Team:
             system_message_content += f"<success_criteria>\nThe team will be considered successful if the following criteria are met: {self.success_criteria}\nStop the team run when the criteria are met.\n</success_criteria>\n\n"
 
         if self.description is not None:
-            system_message_content += f"<description>{self.description}</description>\n\n"
+            system_message_content += f"<description>\n{self.description}\n</description>\n\n"
 
         # 3.3.5 Then add instructions for the Agent
         if len(instructions) > 0:
@@ -3560,19 +3628,20 @@ class Team:
                 break
         return json.dumps(history)
 
-    def set_team_context(self, state: Union[str, Dict[str, Any]]) -> str:
+    def set_team_context(self, state: Union[str, dict]) -> str:
         """
         Set the team's shared context with the given state.
 
         Args:
-            state (str or dict): The state to set as the team context.
+            state (str): The state to set as the team context.
         """
         if isinstance(state, str):
             self.memory.set_team_context_text(state)  # type: ignore
         elif isinstance(state, dict):
             self.memory.set_team_context_text(json.dumps(state))  # type: ignore
-        log_debug(f"Current team context: {self.memory.get_team_context_str()}")  # type: ignore
-        return "Team context updated."
+        msg = f"Current team context: {self.memory.get_team_context_str()}"  # type: ignore
+        log_debug(msg)  # type: ignore
+        return msg
 
     def get_run_member_agents_function(
         self,
@@ -4073,7 +4142,8 @@ class Team:
             # Find the member agent using the helper function
             result = self._find_member_by_name(agent_name)
             if result is None:
-                raise ValueError(f"Agent with name {agent_name} not found in the team or any subteams.")
+                yield f"Agent with name {agent_name} not found. Please choose the correct agent from the list of agents."
+                return
 
             member_agent_index, member_agent = result
             self._initialize_member(member_agent)
@@ -4353,7 +4423,7 @@ class Team:
         if not isinstance(self.memory, TeamMemory):
             if isinstance(self.memory, dict):
                 # Convert dict to TeamMemory
-                self.memory = TeamMemory(**self.memory)
+                self.memory = TeamMemory.from_dict(self.memory)
             else:
                 raise TypeError(f"Expected memory to be a dict or TeamMemory, but got {type(self.memory)}")
 
@@ -4361,7 +4431,7 @@ class Team:
             try:
                 if "runs" in session.memory:
                     try:
-                        self.memory.runs = [TeamRun(**m) for m in session.memory["runs"]]
+                        self.memory.runs = [TeamRun.from_dict(m) for m in session.memory["runs"]]
                     except Exception as e:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "messages" in session.memory:

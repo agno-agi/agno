@@ -25,12 +25,51 @@ from typing import List, Optional
 from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
-from agno.tools.browserbase import BrowserbaseTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.mcp import MCPTools
 from mcp import StdioServerParameters
 from pydantic import BaseModel
+
+
+# Define response models
+class FlightDeal(BaseModel):
+    description: str
+    location: str
+    price: Optional[str] = None
+    url: Optional[str] = None
+
+
+class AirbnbListing(BaseModel):
+    name: str
+    description: str
+    address: Optional[str] = None
+    price: Optional[str] = None
+    dates_available: Optional[List[str]] = None
+    url: Optional[str] = None
+
+
+class Attraction(BaseModel):
+    name: str
+    description: str
+    location: str
+    rating: Optional[float] = None
+    visit_duration: Optional[str] = None
+    best_time_to_visit: Optional[str] = None
+
+
+class WeatherInfo(BaseModel):
+    average_temperature: str
+    precipitation: str
+    recommendations: str
+
+
+class TravelPlan(BaseModel):
+    flight_deals: List[FlightDeal]
+    airbnb_listings: List[AirbnbListing]
+    attractions: List[Attraction]
+    weather_info: Optional[WeatherInfo] = None
+    suggested_itinerary: Optional[List[str]] = None
 
 
 async def run_team():
@@ -63,6 +102,7 @@ async def run_team():
             instructions=dedent("""\
                 You are an agent that can find Airbnb listings for a given location.
             """),
+            add_datetime_to_instructions=True,
         )
 
         maps_agent = Agent(
@@ -71,10 +111,11 @@ async def run_team():
             model=OpenAIChat("gpt-4o"),
             tools=[maps_tools],
             instructions=dedent("""\
-                You are an agent that helps find attractions, points of interest, 
-                and provides directions in travel destinations. Help plan travel 
-                routes and find interesting places to visit in Tokyo, Japan.
+                You are an agent that helps find attractions, points of interest,
+                and provides directions in travel destinations. Help plan travel
+                routes and find interesting places to visit for a given location and date.
             """),
+            add_datetime_to_instructions=True,
         )
 
         flight_deal_agent = Agent(
@@ -85,7 +126,9 @@ async def run_team():
             instructions=dedent("""\
                 You are an agent that can find flight deals for a given location and date.
                 Visit `https://www.google.com/flights` and find the best flight deals for a given location and date.
+                Make sure to include the best flight deals in your response.
             """),
+            add_datetime_to_instructions=True,
         )
 
         web_search_agent = Agent(
@@ -97,6 +140,7 @@ async def run_team():
                 You are an agent that can search the web for information.
                 Search for information about a given location.
             """),
+            add_datetime_to_instructions=True,
         )
 
         weather_search_agent = Agent(
@@ -108,42 +152,8 @@ async def run_team():
                 You are an agent that can search the web for information.
                 Search for the weather forecast for a given location and date.
             """),
+            add_datetime_to_instructions=True,
         )
-
-        # Define your models
-        class FlightDeal(BaseModel):
-            description: str
-            location: str
-            price: Optional[str] = None
-            url: Optional[str] = None
-
-        class AirbnbListing(BaseModel):
-            name: str
-            description: str
-            address: Optional[str] = None
-            price: Optional[str] = None
-            dates_available: Optional[List[str]] = None
-            url: Optional[str] = None
-
-        class Attraction(BaseModel):
-            name: str
-            description: str
-            location: str
-            rating: Optional[float] = None
-            visit_duration: Optional[str] = None
-            best_time_to_visit: Optional[str] = None
-
-        class WeatherInfo(BaseModel):
-            average_temperature: str
-            precipitation: str
-            recommendations: str
-
-        class TravelPlan(BaseModel):
-            flight_deals: List[FlightDeal]
-            airbnb_listings: List[AirbnbListing]
-            attractions: List[Attraction]
-            weather_info: Optional[WeatherInfo] = None
-            suggested_itinerary: Optional[List[str]] = None
 
         # Create and run the team
         team = Team(
@@ -171,19 +181,19 @@ async def run_team():
             markdown=True,
             debug_mode=True,
             show_members_responses=True,
+            add_datetime_to_instructions=True,
         )
 
         # Execute the team's task
         await team.aprint_response(
             dedent("""\
-            I want to travel to Tokyo, Japan sometime in May.
-            I am travelling from Cape Town, South Africa.
-            I am one person going for 2 weeks. 
+            I want to travel to San Francisco from New York sometime in May.
+            I am one person going for 2 weeks.
             Plan my travel itinerary.
             Make sure to include the best attractions, restaurants, and activities.
             Make sure to include the best flight deals.
             Make sure to include the best Airbnb listings.
-            Make sure to include the weather information.
+            Make sure to include the weather information.\
         """)
         )
 
