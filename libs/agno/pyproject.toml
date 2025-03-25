@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.1.12"
+version = "1.2.3"
 description = "Agno: a lightweight framework for building multi-modal Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -42,6 +42,7 @@ dependencies = [
 dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
 
 # Dependencies for Models
+azure = ["azure-ai-inference", "aiohttp"]
 anthropic = ["anthropic"]
 cohere = ["cohere"]
 google = ["google-genai"]
@@ -51,6 +52,8 @@ openai = ["openai"]
 ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
 lmstudio = ["lmstudio"]
+litellm = ["litellm"]
+
 # Dependencies for Tools
 exa = ["exa_py"]
 yfinance = ["yfinance"]
@@ -61,13 +64,14 @@ youtube = ["youtube_transcript_api"]
 firecrawl = ["firecrawl-py"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
-googlemaps = ["googlemaps"]
+googlemaps = ["googlemaps", "google-maps-places"]
 todoist = ["todoist-api-python"]
 elevenlabs = ["elevenlabs"]
 fal = ["fal_client"]
 webex = ["webexpythonsdk"]
 mcp = ["mcp"]
 browserbase = ["browserbase", "playwright"]
+agentql = ["agentql"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -102,14 +106,15 @@ aws = ["agno-aws", "agno-docker"]
 # All models
 models = [
   "agno[anthropic]",
+  "agno[azure]",
   "agno[cohere]",
   "agno[google]",
   "agno[groq]",
   "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
-  "agno[lmstudio]",
-  "agno[ibm]"
+  "agno[ibm]",
+  "agno[litellm]"
 ]
 
 # All tools
@@ -129,7 +134,8 @@ tools = [
   "agno[webex]",
   "agno[mcp]",
   "agno[browserbase]",
-  "agno[yfinance]",
+  "agno[agentql]",
+#  "agno[yfinance]",  # Broken right now
 ]
 
 # All storage
@@ -191,7 +197,8 @@ include = ["LICENSE"]
 
 [tool.pytest.ini_options]
 log_cli = true
-testpaths = "tests"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 120
@@ -236,10 +243,12 @@ module = [
   "email_validator.*",
   "exa_py.*",
   "fastapi.*",
+  "filetype.*",
   "firecrawl.*",
   "github.*",
   "google.*",
   "googlemaps.*",
+  "google_maps_places.*",
   "google_auth_oauthlib.*",
   "googleapiclient.*",
   "googlesearch.*",
@@ -252,7 +261,9 @@ module = [
   "lancedb.*",
   "langchain_core.*",
   "langchain.*",
+  "litellm.*",
   "llama_index.*",
+  "litellm.*",
   "mem0.*",
   "mcp.*",
   "memory_profiler.*",
@@ -295,6 +306,7 @@ module = [
   "tavily.*",
   "textract.*",
   "timeout_decorator.*",
+  "tiktoken.*",
   "torch.*",
   "todoist_api_python.*",
   "tweepy.*",

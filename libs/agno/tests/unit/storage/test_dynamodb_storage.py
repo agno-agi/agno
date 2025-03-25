@@ -220,7 +220,7 @@ def test_get_all_sessions(agent_storage):
     assert len(result) == 4
     assert all(isinstance(s, AgentSession) for s in result)
     mock_table.scan.assert_called_once_with(
-        ProjectionExpression="session_id, agent_id, user_id, memory, agent_data, session_data, extra_data, created_at, updated_at"
+        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at"
     )
 
     # Test filtering by user_id
@@ -235,7 +235,7 @@ def test_get_all_sessions(agent_storage):
     mock_table.query.assert_called_once_with(
         IndexName="user_id-index",
         KeyConditionExpression=Key("user_id").eq("user-1"),
-        ProjectionExpression="session_id, agent_id, user_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
+        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
     )
 
     # Test filtering by agent_id
@@ -249,7 +249,7 @@ def test_get_all_sessions(agent_storage):
     mock_table.query.assert_called_once_with(
         IndexName="agent_id-index",
         KeyConditionExpression=Key("agent_id").eq("agent-1"),
-        ProjectionExpression="session_id, agent_id, user_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
+        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
     )
 
 

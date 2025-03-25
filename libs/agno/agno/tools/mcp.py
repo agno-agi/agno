@@ -6,10 +6,11 @@ from agno.agent import Agent
 from agno.media import ImageArtifact
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
-    from mcp import ClientSession, ListToolsResult
+    from mcp import ClientSession, ListToolsResult, StdioServerParameters
+    from mcp.client.stdio import stdio_client
     from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
     from mcp.types import Tool as MCPTool
 except (ImportError, ModuleNotFoundError):
@@ -20,28 +21,83 @@ class MCPTools(Toolkit):
     """
     A toolkit for integrating Model Context Protocol (MCP) servers with Agno agents.
     This allows agents to access tools, resources, and prompts exposed by MCP servers.
+
+    Can be used in two ways:
+    1. Direct initialization with a ClientSession
+    2. As an async context manager with StdioServerParameters
     """
 
     def __init__(
         self,
-        session: ClientSession,
+        session: Optional[ClientSession] = None,
+        server_params: Optional[StdioServerParameters] = None,
         client=None,
     ):
         """
-        Initialize the MCP toolkit with a connected MCP client session.
+        Initialize the MCP toolkit.
 
         Args:
             session: An initialized MCP ClientSession connected to an MCP server
+            server_params: StdioServerParameters for creating a new session
             client: The underlying MCP client (optional, used to prevent garbage collection)
         """
         super().__init__(name="MCPToolkit")
-        self.session: ClientSession = session
+
+        if session is None and server_params is None:
+            raise ValueError("Either session or server_params must be provided")
+
+        self.session: Optional[ClientSession] = session
+        self.server_params: Optional[StdioServerParameters] = server_params
         self.available_tools: Optional[ListToolsResult] = None
         self._client = client
+        self._stdio_context = None
+        self._session_context = None
+        self._initialized = False
+
+    async def __aenter__(self) -> "MCPTools":
+        """Enter the async context manager."""
+        if self.session is not None:
+            # Already has a session, just initialize
+            if not self._initialized:
+                await self.initialize()
+            return self
+
+        # Create a new session using stdio_client
+        if self.server_params is None:
+            raise ValueError("server_params must be provided when using as context manager")
+
+        self._stdio_context = stdio_client(self.server_params)  # type: ignore
+        read, write = await self._stdio_context.__aenter__()  # type: ignore
+
+        self._session_context = ClientSession(read, write)  # type: ignore
+        self.session = await self._session_context.__aenter__()  # type: ignore
+
+        # Initialize with the new session
+        await self.initialize()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit the async context manager."""
+        if self._session_context is not None:
+            await self._session_context.__aexit__(exc_type, exc_val, exc_tb)
+            self.session = None
+            self._session_context = None
+
+        if self._stdio_context is not None:
+            await self._stdio_context.__aexit__(exc_type, exc_val, exc_tb)
+            self._stdio_context = None
+
+        self._initialized = False
 
     async def initialize(self) -> None:
         """Initialize the MCP toolkit by getting available tools from the MCP server"""
+        if self._initialized:
+            return
+
         try:
+            if self.session is None:
+                raise ValueError("Session is not available. Use as context manager or provide a session.")
+
             # Initialize the session if not already initialized
             await self.session.initialize()
 
@@ -66,13 +122,15 @@ class MCPTools(Toolkit):
 
                     # Register the Function with the toolkit
                     self.functions[f.name] = f
-                    logger.debug(f"Function: {f.name} registered with {self.name}")
+                    log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception as e:
                     logger.error(f"Failed to register tool {tool.name}: {e}")
 
-            logger.debug(f"{self.name} initialized with {len(self.available_tools.tools)} tools")
+            log_debug(f"{self.name} initialized with {len(self.available_tools.tools)} tools")
+            self._initialized = True
         except Exception as e:
             logger.error(f"Failed to get MCP tools: {e}")
+            raise
 
     def get_entrypoint_for_tool(self, tool: MCPTool):
         """
@@ -87,8 +145,8 @@ class MCPTools(Toolkit):
 
         async def call_tool(agent: Agent, tool_name: str, **kwargs) -> str:
             try:
-                logger.debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
-                result: CallToolResult = await self.session.call_tool(tool_name, kwargs)
+                log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
+                result: CallToolResult = await self.session.call_tool(tool_name, kwargs)  # type: ignore
 
                 # Return an error if the tool call failed
                 if result.isError:
@@ -121,4 +179,4 @@ class MCPTools(Toolkit):
                 logger.exception(f"Failed to call MCP tool '{tool_name}': {e}")
                 return f"Error: {e}"
 
-        return partial(call_tool, tool_name=tool.name)
+        return partial(call_tool, tool_name=tool.name, tool_description=tool.description)

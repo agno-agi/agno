@@ -24,5 +24,7 @@ agent.print_response(
             filepath=pdf_path,
         ),
     ],
-    stream=True,
 )
+
+print("Citations:")
+print(agent.run_response.citations)

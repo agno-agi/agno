@@ -1,10 +1,13 @@
 from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reddit import RedditTools
 
 web_searcher = Agent(
     name="Web Searcher",
     role="Searches the web for information on a topic",
+    model=OpenAIChat(id="gpt-4o"),
     description="An intelligent agent that performs comprehensive web searches to gather current and accurate information",
     tools=[DuckDuckGoTools()],
     instructions=[
@@ -20,6 +23,7 @@ web_searcher = Agent(
 reddit_agent = Agent(
     name="Reddit Agent",
     role="Uploads post on Reddit",
+    model=OpenAIChat(id="gpt-4o"),
     description="Specialized agent for crafting and publishing engaging Reddit posts",
     tools=[RedditTools()],
     instructions=[
@@ -34,8 +38,10 @@ reddit_agent = Agent(
     show_tool_calls=True,
 )
 
-post_team = Agent(
-    team=[web_searcher, reddit_agent],
+post_team = Team(
+    members=[web_searcher, reddit_agent],
+    mode="coordinate",
+    model=OpenAIChat(id="gpt-4o"),
     instructions=[
         "Work together to create engaging and informative Reddit posts",
         "Start by researching the topic thoroughly using web searches",
@@ -44,6 +50,8 @@ post_team = Agent(
     ],
     show_tool_calls=True,
     markdown=True,
+    success_criteria="A post on Reddit with a title and content that is engaging and informative in the subreddit.",
+    enable_agentic_context=True,
 )
 
 post_team.print_response(

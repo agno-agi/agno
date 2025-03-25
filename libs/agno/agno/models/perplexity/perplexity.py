@@ -5,9 +5,9 @@ from typing import Any, Dict, Optional, Union
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.models.message import Citations, CitationUrl
+from agno.models.message import Citations, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.log import log_warning
 
 try:
     from openai.types.chat.chat_completion import ChatCompletion
@@ -45,7 +45,7 @@ class Perplexity(OpenAILike):
     max_tokens: int = 1024
     top_k: Optional[float] = None
 
-    supports_structured_outputs: bool = True
+    supports_native_structured_outputs: bool = True
 
     @property
     def request_kwargs(self) -> Dict[str, Any]:
@@ -115,7 +115,7 @@ class Perplexity(OpenAILike):
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
         except Exception as e:
-            logger.warning(f"Error retrieving structured outputs: {e}")
+            log_warning(f"Error retrieving structured outputs: {e}")
 
         # Add role
         if response_message.role is not None:
@@ -130,12 +130,12 @@ class Perplexity(OpenAILike):
             try:
                 model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
             except Exception as e:
-                logger.warning(f"Error processing tool calls: {e}")
+                log_warning(f"Error processing tool calls: {e}")
 
         # Add citations if present
         if hasattr(response, "citations") and response.citations is not None:
             model_response.citations = Citations(
-                urls=[CitationUrl(url=c) for c in response.citations],
+                urls=[UrlCitation(url=c) for c in response.citations],
             )
 
         if response.usage is not None:
@@ -168,7 +168,7 @@ class Perplexity(OpenAILike):
         # Add citations if present
         if hasattr(response_delta, "citations") and response_delta.citations is not None:
             model_response.citations = Citations(
-                urls=[CitationUrl(url=c) for c in response_delta.citations],
+                urls=[UrlCitation(url=c) for c in response_delta.citations],
             )
 
         # Add usage metrics if present

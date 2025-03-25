@@ -11,7 +11,7 @@ except ImportError:
 from agno.document import Document
 from agno.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 from agno.vectordb.base import VectorDb
 
 DEFAULT_NAMESPACE = ""
@@ -285,7 +285,7 @@ class UpstashVectorDb(VectorDb):
             )
 
         if response is None:
-            logger.info(f"No results found for query: {query}")
+            log_info(f"No results found for query: {query}")
             return []
 
         search_results = []

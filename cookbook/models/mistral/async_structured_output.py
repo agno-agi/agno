@@ -29,7 +29,7 @@ class MovieScript(BaseModel):
 
 agent = Agent(
     model=MistralChat(
-        id="mistral-large-latest",
+        id="mistral-small-latest",
     ),
     tools=[DuckDuckGoTools()],
     description="You help people write movie scripts.",
@@ -37,9 +37,5 @@ agent = Agent(
     show_tool_calls=True,
     debug_mode=True,
 )
-
-# Get the response in a variable
-# json_mode_response: RunResponse = await json_mode_agent.arun("New York")
-# pprint(json_mode_response.content)
 
 asyncio.run(agent.aprint_response("Find a cool movie idea about London and write it."))

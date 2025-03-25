@@ -5,7 +5,7 @@ from typing import IO, Any, List, Union
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 try:
     from pypdf import PdfReader as DocumentReader  # noqa: F401
@@ -102,7 +102,7 @@ class PDFReader(BasePDFReader):
         except Exception:
             doc_name = "pdf"
 
-        logger.info(f"Reading: {doc_name}")
+        log_info(f"Reading: {doc_name}")
 
         try:
             doc_reader = DocumentReader(pdf)
@@ -133,7 +133,7 @@ class PDFReader(BasePDFReader):
         except Exception:
             doc_name = "pdf"
 
-        logger.info(f"Reading: {doc_name}")
+        log_info(f"Reading: {doc_name}")
 
         try:
             doc_reader = DocumentReader(pdf)
@@ -173,7 +173,7 @@ class PDFUrlReader(BasePDFReader):
 
         import httpx
 
-        logger.info(f"Reading: {url}")
+        log_info(f"Reading: {url}")
         # Retry the request up to 3 times with exponential backoff
         for attempt in range(3):
             try:
@@ -221,7 +221,7 @@ class PDFUrlReader(BasePDFReader):
         except ImportError:
             raise ImportError("`httpx` not installed. Please install it via `pip install httpx`.")
 
-        logger.info(f"Reading: {url}")
+        log_info(f"Reading: {url}")
 
         async with httpx.AsyncClient() as client:
             # Retry the request up to 3 times with exponential backoff
@@ -282,7 +282,7 @@ class PDFImageReader(BasePDFReader):
         except Exception:
             doc_name = "pdf"
 
-        logger.info(f"Reading: {doc_name}")
+        log_info(f"Reading: {doc_name}")
         doc_reader = DocumentReader(pdf)
 
         documents = []
@@ -306,7 +306,7 @@ class PDFImageReader(BasePDFReader):
         except Exception:
             doc_name = "pdf"
 
-        logger.info(f"Reading: {doc_name}")
+        log_info(f"Reading: {doc_name}")
         doc_reader = DocumentReader(pdf)
 
         documents = await asyncio.gather(
@@ -333,7 +333,7 @@ class PDFUrlImageReader(BasePDFReader):
         import httpx
 
         # Read the PDF from the URL
-        logger.info(f"Reading: {url}")
+        log_info(f"Reading: {url}")
         response = httpx.get(url)
 
         doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
@@ -357,7 +357,7 @@ class PDFUrlImageReader(BasePDFReader):
 
         import httpx
 
-        logger.info(f"Reading: {url}")
+        log_info(f"Reading: {url}")
 
         async with httpx.AsyncClient() as client:
             response = await client.get(url)

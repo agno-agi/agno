@@ -1,7 +1,9 @@
 import json
+from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.functions import cache_result
+from agno.utils.log import log_debug
 
 try:
     import yfinance as yf
@@ -10,6 +12,21 @@ except ImportError:
 
 
 class YFinanceTools(Toolkit):
+    """
+    YFinanceTools is a toolkit for getting financial data from Yahoo Finance.
+    Args:
+        stock_price (bool): Whether to get the current stock price.
+        company_info (bool): Whether to get company information.
+        stock_fundamentals (bool): Whether to get stock fundamentals.
+        income_statements (bool): Whether to get income statements.
+        key_financial_ratios (bool): Whether to get key financial ratios.
+        analyst_recommendations (bool): Whether to get analyst recommendations.
+        company_news (bool): Whether to get company news.
+        technical_indicators (bool): Whether to get technical indicators.
+        historical_prices (bool): Whether to get historical prices.
+        enable_all (bool): Whether to enable all tools.
+    """
+
     def __init__(
         self,
         stock_price: bool = True,
@@ -22,6 +39,9 @@ class YFinanceTools(Toolkit):
         technical_indicators: bool = False,
         historical_prices: bool = False,
         enable_all: bool = False,
+        cache_results: bool = False,
+        cache_ttl: int = 3600,
+        cache_dir: Optional[str] = None,
     ):
         super().__init__(name="yfinance_tools")
 
@@ -44,6 +64,11 @@ class YFinanceTools(Toolkit):
         if historical_prices or enable_all:
             self.register(self.get_historical_stock_prices)
 
+        self.cache_results = cache_results
+        self.cache_ttl = cache_ttl
+        self.cache_dir = cache_dir
+
+    @cache_result()
     def get_current_stock_price(self, symbol: str) -> str:
         """
         Use this function to get the current stock price for a given symbol.
@@ -55,7 +80,7 @@ class YFinanceTools(Toolkit):
             str: The current stock price or error message.
         """
         try:
-            logger.debug(f"Fetching current price for {symbol}")
+            log_debug(f"Fetching current price for {symbol}")
             stock = yf.Ticker(symbol)
             # Use "regularMarketPrice" for regular market hours, or "currentPrice" for pre/post market
             current_price = stock.info.get("regularMarketPrice", stock.info.get("currentPrice"))
@@ -63,6 +88,7 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching current price for {symbol}: {e}"
 
+    @cache_result()
     def get_company_info(self, symbol: str) -> str:
         """Use this function to get company information and overview for a given stock symbol.
 
@@ -77,7 +103,7 @@ class YFinanceTools(Toolkit):
             if company_info_full is None:
                 return f"Could not fetch company info for {symbol}"
 
-            logger.debug(f"Fetching company info for {symbol}")
+            log_debug(f"Fetching company info for {symbol}")
 
             company_info_cleaned = {
                 "Name": company_info_full.get("shortName"),
@@ -114,6 +140,7 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching company profile for {symbol}: {e}"
 
+    @cache_result()
     def get_historical_stock_prices(self, symbol: str, period: str = "1mo", interval: str = "1d") -> str:
         """
         Use this function to get the historical stock price for a given symbol.
@@ -129,13 +156,14 @@ class YFinanceTools(Toolkit):
           str: The current stock price or error message.
         """
         try:
-            logger.debug(f"Fetching historical prices for {symbol}")
+            log_debug(f"Fetching historical prices for {symbol}")
             stock = yf.Ticker(symbol)
             historical_price = stock.history(period=period, interval=interval)
             return historical_price.to_json(orient="index")
         except Exception as e:
             return f"Error fetching historical prices for {symbol}: {e}"
 
+    @cache_result()
     def get_stock_fundamentals(self, symbol: str) -> str:
         """Use this function to get fundamental data for a given stock symbol yfinance API.
 
@@ -159,7 +187,7 @@ class YFinanceTools(Toolkit):
                     - '52_week_low': The 52-week low price of the stock.
         """
         try:
-            logger.debug(f"Fetching fundamentals for {symbol}")
+            log_debug(f"Fetching fundamentals for {symbol}")
             stock = yf.Ticker(symbol)
             info = stock.info
             fundamentals = {
@@ -180,6 +208,7 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error getting fundamentals for {symbol}: {e}"
 
+    @cache_result()
     def get_income_statements(self, symbol: str) -> str:
         """Use this function to get income statements for a given stock symbol.
 
@@ -190,13 +219,14 @@ class YFinanceTools(Toolkit):
             dict: JSON containing income statements or an empty dictionary.
         """
         try:
-            logger.debug(f"Fetching income statements for {symbol}")
+            log_debug(f"Fetching income statements for {symbol}")
             stock = yf.Ticker(symbol)
             financials = stock.financials
             return financials.to_json(orient="index")
         except Exception as e:
             return f"Error fetching income statements for {symbol}: {e}"
 
+    @cache_result()
     def get_key_financial_ratios(self, symbol: str) -> str:
         """Use this function to get key financial ratios for a given stock symbol.
 
@@ -207,13 +237,14 @@ class YFinanceTools(Toolkit):
             dict: JSON containing key financial ratios.
         """
         try:
-            logger.debug(f"Fetching key financial ratios for {symbol}")
+            log_debug(f"Fetching key financial ratios for {symbol}")
             stock = yf.Ticker(symbol)
             key_ratios = stock.info
             return json.dumps(key_ratios, indent=2)
         except Exception as e:
             return f"Error fetching key financial ratios for {symbol}: {e}"
 
+    @cache_result()
     def get_analyst_recommendations(self, symbol: str) -> str:
         """Use this function to get analyst recommendations for a given stock symbol.
 
@@ -224,13 +255,14 @@ class YFinanceTools(Toolkit):
             str: JSON containing analyst recommendations.
         """
         try:
-            logger.debug(f"Fetching analyst recommendations for {symbol}")
+            log_debug(f"Fetching analyst recommendations for {symbol}")
             stock = yf.Ticker(symbol)
             recommendations = stock.recommendations
             return recommendations.to_json(orient="index")
         except Exception as e:
             return f"Error fetching analyst recommendations for {symbol}: {e}"
 
+    @cache_result()
     def get_company_news(self, symbol: str, num_stories: int = 3) -> str:
         """Use this function to get company news and press releases for a given stock symbol.
 
@@ -242,12 +274,13 @@ class YFinanceTools(Toolkit):
             str: JSON containing company news and press releases.
         """
         try:
-            logger.debug(f"Fetching company news for {symbol}")
+            log_debug(f"Fetching company news for {symbol}")
             news = yf.Ticker(symbol).news
             return json.dumps(news[:num_stories], indent=2)
         except Exception as e:
             return f"Error fetching company news for {symbol}: {e}"
 
+    @cache_result()
     def get_technical_indicators(self, symbol: str, period: str = "3mo") -> str:
         """Use this function to get technical indicators for a given stock symbol.
 
@@ -260,7 +293,7 @@ class YFinanceTools(Toolkit):
             str: JSON containing technical indicators.
         """
         try:
-            logger.debug(f"Fetching technical indicators for {symbol}")
+            log_debug(f"Fetching technical indicators for {symbol}")
             indicators = yf.Ticker(symbol).history(period=period)
             return indicators.to_json(orient="index")
         except Exception as e:
