@@ -4657,11 +4657,11 @@ class Team:
             return None
 
         # For memory use the deep_copy methods
-        if field_name == "memory":
+        if field_name == "memory" and field_value is not None:
             return field_value.deep_copy()
 
         # For storage, model and reasoning_model, use a deep copy
-        elif field_name in ("storage", "model", "reasoning_model"):
+        elif field_name in ("storage", "model", "reasoning_model") and field_value is not None:
             try:
                 return deepcopy(field_value)
             except Exception:
