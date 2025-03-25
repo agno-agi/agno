@@ -11,6 +11,7 @@ from agno.api.playground import PlaygroundEndpointCreate, create_playground_endp
 from agno.playground.async_router import get_async_playground_router
 from agno.playground.settings import PlaygroundSettings
 from agno.playground.sync_router import get_sync_playground_router
+from agno.team.team import Team
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
@@ -19,26 +20,28 @@ class Playground:
     def __init__(
         self,
         agents: Optional[List[Agent]] = None,
+        teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
         settings: Optional[PlaygroundSettings] = None,
         api_app: Optional[FastAPI] = None,
         router: Optional[APIRouter] = None,
     ):
-        if not agents and not workflows:
-            raise ValueError("Either agents or workflows must be provided.")
+        if not agents and not workflows and not teams:
+            raise ValueError("Either agents, teams or workflows must be provided.")
 
         self.agents: Optional[List[Agent]] = agents
         self.workflows: Optional[List[Workflow]] = workflows
+        self.teams: Optional[List[Team]] = teams
         self.settings: PlaygroundSettings = settings or PlaygroundSettings()
         self.api_app: Optional[FastAPI] = api_app
         self.router: Optional[APIRouter] = router
         self.endpoints_created: Set[str] = set()
 
     def get_router(self) -> APIRouter:
-        return get_sync_playground_router(self.agents, self.workflows)
+        return get_sync_playground_router(self.agents, self.workflows, self.teams)
 
     def get_async_router(self) -> APIRouter:
-        return get_async_playground_router(self.agents, self.workflows)
+        return get_async_playground_router(self.agents, self.workflows, self.teams)
 
     def get_app(self, use_async: bool = True, prefix: str = "/v1") -> FastAPI:
         if not self.api_app:
