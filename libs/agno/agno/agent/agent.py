@@ -2575,8 +2575,7 @@ class Agent:
         elif field_name in ("storage", "model", "reasoning_model"):
             try:
                 return deepcopy(field_value)
-            except Exception as e:
-                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+            except Exception:
                 try:
                     return copy(field_value)
                 except Exception as e:

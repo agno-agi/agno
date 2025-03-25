@@ -4626,7 +4626,7 @@ class Team:
         # Get all instance attributes
         attributes = self.__dict__.copy()
 
-        excluded_fields = ["team_session", "session_name", "_functions_for_model", "memory"]
+        excluded_fields = ["team_session", "session_name", "_functions_for_model"]
         # Deep copy each field
         copied_attributes = {}
         for field_name, field_value in attributes.items():
@@ -4653,7 +4653,7 @@ class Team:
         Returns:
             Deep copied value
         """
-        from copy import deepcopy
+        from copy import copy, deepcopy
 
         # Handle special cases
         if field_name == "members":
@@ -4662,17 +4662,50 @@ class Team:
                 return [member.deep_copy() for member in field_value]
             return None
 
-        if field_name == "model":
-            # Models should be copied directly without deep copy
-            return field_value
-
+        # For memory use the deep_copy methods
         if field_name == "memory":
-            # Memory objects should be copied directly
-            return field_value
+            return field_value.deep_copy()
 
-        if field_name == "storage":
-            # Storage objects should be copied directly
-            return field_value
+        # For storage, model and reasoning_model, use a deep copy
+        elif field_name in ("storage", "model", "reasoning_model"):
+            try:
+                return deepcopy(field_value)
+            except Exception:
+                try:
+                    return copy(field_value)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
 
-        # Default to standard deep copy for other fields
-        return deepcopy(field_value)
+        # For compound types, attempt a deep copy
+        elif isinstance(field_value, (list, dict, set)):
+            try:
+                return deepcopy(field_value)
+            except Exception as e:
+                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+                try:
+                    return copy(field_value)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For pydantic models, attempt a model_copy
+        elif isinstance(field_value, BaseModel):
+            try:
+                return field_value.model_copy(deep=True)
+            except Exception as e:
+                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+                try:
+                    return field_value.model_copy(deep=False)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For other types, attempt a shallow copy first
+        try:
+            from copy import copy
+
+            return copy(field_value)
+        except Exception:
+            # If copy fails, return as is
+            return field_value
