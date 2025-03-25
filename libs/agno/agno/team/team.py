@@ -4441,13 +4441,13 @@ class Team:
         if self.memory is None:
             self.memory = session.memory  # type: ignore
 
-        if not isinstance(self.memory, TeamMemory):
-            if isinstance(self.memory, dict):
-                # Convert dict to TeamMemory
-                self.memory = TeamMemory(**self.memory)
+        # if not isinstance(self.memory, TeamMemory):
+        #     if isinstance(self.memory, dict):
+        #         # Convert dict to TeamMemory
+        #         self.memory = TeamMemory(**self.memory)
 
-            elif self.memory is not None:
-                raise TypeError(f"Expected memory to be a dict or TeamMemory, but got {type(self.memory)}")
+        #     elif self.memory is not None:
+        #         raise TypeError(f"Expected memory to be a dict or TeamMemory, but got {type(self.memory)}")
 
         if session.memory is not None:
             try:
