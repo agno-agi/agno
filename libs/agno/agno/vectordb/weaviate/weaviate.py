@@ -105,13 +105,14 @@ class Weaviate(VectorDb):
             if self.wcd_url and self.wcd_api_key and not self.local:
                 log_info("Initializing Weaviate Cloud async client")
                 self.async_client = weaviate.use_async_with_weaviate_cloud(
-                    cluster_url=self.wcd_url, auth_credentials=Auth.api_key(self.wcd_api_key) #type: ignore
+                    cluster_url=self.wcd_url,
+                    auth_credentials=Auth.api_key(self.wcd_api_key),  # type: ignore
                 )
             else:
                 log_info("Initializing local Weaviate async client")
-                self.async_client = weaviate.use_async_with_local() #type: ignore
+                self.async_client = weaviate.use_async_with_local()  # type: ignore
 
-        return self.async_client # type: ignore
+        return self.async_client  # type: ignore
 
     def create(self) -> None:
         """Create the collection in Weaviate if it doesn't exist."""
@@ -396,7 +397,6 @@ class Weaviate(VectorDb):
 
         if self.reranker:
             search_results = self.reranker.rerank(query=query, documents=search_results)
-
 
         self.get_client().close()
         return search_results
