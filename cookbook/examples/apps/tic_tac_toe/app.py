@@ -4,6 +4,7 @@ import nest_asyncio
 import streamlit as st
 from agents import get_tic_tac_toe_team
 from agno.utils.log import logger
+
 from utils import (
     CUSTOM_CSS,
     TicTacToeBoard,
