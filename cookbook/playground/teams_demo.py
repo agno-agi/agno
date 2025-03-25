@@ -102,15 +102,17 @@ agent_team = Team(
     show_members_responses=True,
     debug_mode=True,
     storage=PostgresStorage(
+<<<<<<< HEAD
         table_name="financial_news_team",
         db_url=db_url,
         mode="team",
         auto_upgrade_schema=True,
+=======
+        table_name="financial_news_team", db_url=db_url, mode="team", auto_upgrade_schema=True
+>>>>>>> 6ae21ac2142a21b45bab7d465917e6b0cbecfdd6
     ),
     expected_output="A good financial news report.",
-    context={
-        "currency": "USD",
-    },
+    context="use USD as currency",
 )
 
 app = Playground(
