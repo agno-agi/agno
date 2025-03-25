@@ -103,7 +103,9 @@ agent_team = Team(
         table_name="financial_news_team", db_url=db_url, mode="team"
     ),
     expected_output="A good financial news report.",
-    # context="List in Indian Rupees",
+    context={
+        "currency": "USD",
+    },
 )
 
 app = Playground(
