@@ -69,8 +69,8 @@ class AgnoCliSettings(BaseSettings):
             from os import getenv
 
             if getenv("AGNO_RUNTIME") == "docker":
-                return "http://host.docker.internal:7070"
-            return "http://localhost:7070"
+                return "http://host.docker.internal:7777"
+            return "http://localhost:7777"
         elif api_runtime == "stg":
             return "https://api-stg.agno.com"
         else:

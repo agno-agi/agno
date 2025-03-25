@@ -46,7 +46,7 @@ def get_async_playground_router(
 ) -> APIRouter:
     playground_router = APIRouter(prefix="/playground", tags=["Playground"])
 
-    if agents is None and workflows and teams is None:
+    if agents is None and workflows is None and teams is None:
         raise ValueError("Either agents, teams or workflows must be provided.")
 
     @playground_router.get("/status")
@@ -551,6 +551,8 @@ def get_async_playground_router(
                 response_model=team.response_model,
                 mode=team.mode,
                 storage={"name": team.storage.__class__.__name__} if team.storage else None,
+                memory={"name": team.memory.__class__.__name__} if team.memory else None,
+                enable_agentic_context=team.enable_agentic_context,
                 members=[
                     AgentGetResponse(
                         agent_id=member.agent_id,
@@ -591,6 +593,7 @@ def get_async_playground_router(
             success_criteria=team.success_criteria,
             instructions=team.instructions,
             storage={"name": team.storage.__class__.__name__} if team.storage else None,
+            memory={"name": team.memory.__class__.__name__} if team.memory else None,
             expected_output=team.expected_output,
             context=team.context,
             enable_agentic_context=team.enable_agentic_context,
@@ -630,7 +633,7 @@ def get_async_playground_router(
         team_id: str,
         message: str = Form(...),
         stream: bool = Form(True),
-        monitor: bool = Form(False),
+        monitor: bool = Form(True),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
     ):

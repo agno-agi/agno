@@ -4445,6 +4445,7 @@ class Team:
             if isinstance(self.memory, dict):
                 # Convert dict to TeamMemory
                 self.memory = TeamMemory.from_dict(self.memory)
+
             elif self.memory is not None:
                 raise TypeError(f"Expected memory to be a dict or TeamMemory, but got {type(self.memory)}")
 
