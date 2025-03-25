@@ -124,7 +124,7 @@ class SqliteStorage(Storage):
                 Column("team_data", sqlite.JSON),
                 Column("team_session_id", String, index=True, nullable=True),
             ]
-        else:
+        elif self.mode == "workflow":
             specific_columns = [
                 Column("workflow_id", String, index=True),
                 Column("workflow_data", sqlite.JSON),
@@ -465,6 +465,7 @@ class SqliteStorage(Storage):
                 return self.upsert(session, create_and_retry=False)
             else:
                 log_warning(f"Exception upserting into table: {e}")
+                log_warning("Retrying upsert")
                 return None
         return self.read(session_id=session.session_id)
 
