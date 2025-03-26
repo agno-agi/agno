@@ -55,6 +55,10 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         @tool(name="custom_name", description="Custom description")
         def another_function():
             pass
+
+        @tool
+        async def my_async_function():
+            pass
     """
     # Move valid kwargs to a frozen set at module level
     VALID_KWARGS = frozenset(
@@ -78,25 +82,58 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         )
 
     def decorator(func: F) -> Function:
+        from inspect import iscoroutinefunction, iscoroutine, isasyncgenfunction, getdoc
+        
         @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return func(*args, **kwargs)
             except Exception as e:
                 logger.error(
                     f"Error in tool {func.__name__!r}: {e!r}",
-                    exc_info=True,  # Include stack trace
+                    exc_info=True,
                 )
                 raise
 
-        # Preserve the original signature
+        @wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                logger.error(
+                    f"Error in async tool {func.__name__!r}: {e!r}",
+                    exc_info=True,
+                )
+                raise
+
+        @wraps(func)
+        async def async_gen_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                logger.error(
+                    f"Error in async generator tool {func.__name__!r}: {e!r}",
+                    exc_info=True,
+                )
+                raise
+
+        # Choose appropriate wrapper based on function type
+        if isasyncgenfunction(func):
+            wrapper = async_gen_wrapper
+        elif iscoroutinefunction(func) or iscoroutine(func):
+            wrapper = async_wrapper
+        else:
+            wrapper = sync_wrapper
+
+        # Preserve the original signature and metadata
         update_wrapper(wrapper, func)
 
         # Create Function instance with any provided kwargs
         tool_config = {
             "name": kwargs.get("name", func.__name__),
+            "description": kwargs.get("description", getdoc(func)),  # Get docstring if description not provided
             "entrypoint": wrapper,
-            **{k: v for k, v in kwargs.items() if k != "name" and v is not None},
+            **{k: v for k, v in kwargs.items() if k not in ["name", "description"] and v is not None},
         }
         return Function(**tool_config)
 
