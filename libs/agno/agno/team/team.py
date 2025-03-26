@@ -3280,7 +3280,13 @@ class Team:
 
         return system_message_content
 
-    def get_system_message(self) -> Optional[Message]:
+    def get_system_message(
+        self,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+    ) -> Optional[Message]:
         """Get the system message for the team."""
         # 1. Build and return the default system message for the Agent.
         # 1.1 Build the list of instructions for the system message
@@ -3382,6 +3388,20 @@ class Team:
                 system_message_content += f"\n- {_ai}"
             system_message_content += "\n</additional_information>\n\n"
 
+        # 3.3.7 Attached media
+        if audio is not None or images is not None or videos is not None or files is not None:
+            system_message_content += "<attached_media>\n"
+            system_message_content += "You have the following media attached to your message:\n"
+            if audio is not None:
+                system_message_content += " - Audio\n"
+            if images is not None:
+                system_message_content += " - Images\n"
+            if videos is not None:
+                system_message_content += " - Videos\n"
+            if files is not None:
+                system_message_content += " - Files\n"
+            system_message_content += "</attached_media>\n\n"
+
         # Format the system message with the session state variables
         if self.add_state_in_messages:
             system_message_content = self._format_message_with_state_variables(system_message_content)
@@ -3431,7 +3451,7 @@ class Team:
         run_messages = RunMessages()
 
         # 1. Add system message to run_messages
-        system_message = self.get_system_message()
+        system_message = self.get_system_message(images=images, audio=audio, videos=videos, files=files)
         if system_message is not None:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)
