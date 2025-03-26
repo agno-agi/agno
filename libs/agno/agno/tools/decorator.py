@@ -21,7 +21,7 @@ def tool(
     strict: Optional[bool] = None,
     sanitize_arguments: Optional[bool] = None,
     show_result: Optional[bool] = None,
-    stop_after_call: Optional[bool] = None,
+    stop_after_tool_call: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
 ) -> Callable[[F], Function]: ...
@@ -40,7 +40,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         strict: Optional[bool] - Flag for strict parameter checking
         sanitize_arguments: Optional[bool] - If True, arguments are sanitized before passing to function
         show_result: Optional[bool] - If True, shows the result after function call
-        stop_after_call: Optional[bool] - If True, the agent will stop after the function call.
+        stop_after_tool_call: Optional[bool] - If True, the agent will stop after the function call.
         pre_hook: Optional[Callable] - Hook that runs before the function is executed.
         post_hook: Optional[Callable] - Hook that runs after the function is executed.
 
@@ -68,7 +68,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "strict",
             "sanitize_arguments",
             "show_result",
-            "stop_after_call",
+            "stop_after_tool_call",
             "pre_hook",
             "post_hook",
         }
