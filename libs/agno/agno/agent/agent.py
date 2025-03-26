@@ -1702,25 +1702,28 @@ class Agent:
 
         log_debug("Resolving context")
         if self.context is not None:
-            for ctx_key, ctx_value in self.context.items():
-                if callable(ctx_value):
-                    try:
-                        sig = signature(ctx_value)
-                        if "agent" in sig.parameters:
-                            resolved_ctx_value = ctx_value(agent=self)
-                        else:
-                            resolved_ctx_value = ctx_value()
-                        if resolved_ctx_value is not None:
-                            self.context[ctx_key] = resolved_ctx_value
-                    except Exception as e:
-                        log_warning(f"Failed to resolve context for {ctx_key}: {e}")
-                else:
-                    self.context[ctx_key] = ctx_value
+            if isinstance(self.context, dict):
+                for ctx_key, ctx_value in self.context.items():
+                    if callable(ctx_value):
+                        try:
+                            sig = signature(ctx_value)
+                            if "agent" in sig.parameters:
+                                resolved_ctx_value = ctx_value(agent=self)
+                            else:
+                                resolved_ctx_value = ctx_value()
+                            if resolved_ctx_value is not None:
+                                self.context[ctx_key] = resolved_ctx_value
+                        except Exception as e:
+                            log_warning(f"Failed to resolve context for {ctx_key}: {e}")
+                    else:
+                        self.context[ctx_key] = ctx_value
+            else:
+                log_warning("Context is not a dict")
 
     def load_user_memories(self) -> None:
         self.memory = cast(AgentMemory, self.memory)
         if self.memory and self.memory.create_user_memories:
-            if self.user_id is not None:
+            if self.user_id is not None and self.memory.user_id is None:
                 self.memory.user_id = self.user_id
 
             self.memory.load_user_memories()
@@ -2572,8 +2575,7 @@ class Agent:
         elif field_name in ("storage", "model", "reasoning_model"):
             try:
                 return deepcopy(field_value)
-            except Exception as e:
-                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+            except Exception:
                 try:
                     return copy(field_value)
                 except Exception as e:
@@ -2584,8 +2586,7 @@ class Agent:
         elif isinstance(field_value, (list, dict, set)):
             try:
                 return deepcopy(field_value)
-            except Exception as e:
-                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+            except Exception:
                 try:
                     return copy(field_value)
                 except Exception as e:
@@ -3014,6 +3015,8 @@ class Agent:
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
 
+        use_default_reasoning = False
+
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
@@ -3088,11 +3091,15 @@ class Agent:
                     reasoning_agent_messages=[openai_reasoning_message],
                 )
             else:
-                log_info(
-                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, adding manual CoT"
+                log_warning(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
                 )
+                use_default_reasoning = True
         # If no reasoning model is provided, use the default reasoning approach
         else:
+            use_default_reasoning = True
+
+        if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
 
@@ -3200,6 +3207,8 @@ class Agent:
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
 
+        use_default_reasoning = False
+
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
@@ -3274,11 +3283,15 @@ class Agent:
                     reasoning_agent_messages=[openai_reasoning_message],
                 )
             else:
-                log_info(
-                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, adding manual CoT"
+                log_warning(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
                 )
+                use_default_reasoning = True
         # If no reasoning model is provided, use the default reasoning approach
         else:
+            use_default_reasoning = True
+
+        if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
 

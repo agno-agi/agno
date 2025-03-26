@@ -25,6 +25,7 @@ class ApiRoutes:
 
     # Team paths
     TEAM_RUN_CREATE: str = "/v1/team-runs"
+    TEAM_SESSION_CREATE: str = "/v1/team-sessions"
 
     # Telemetry paths
     # TODO: Update to use the new telemetry paths

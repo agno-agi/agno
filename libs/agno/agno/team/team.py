@@ -134,6 +134,13 @@ class Team:
 
     # Show tool calls in Team response. This sets the default for the team.
     show_tool_calls: bool = True
+    # Controls which (if any) tool is called by the team model.
+    # "none" means the model will not call a tool and instead generates a message.
+    # "auto" means the model can pick between generating a message or calling a tool.
+    # Specifying a particular function via {"type: "function", "function": {"name": "my_function"}}
+    #   forces the model to call that tool.
+    # "none" is the default when no tools are present. "auto" is the default if tools are present.
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
     # --- Structured output ---
     # Response model for the team response
@@ -197,6 +204,7 @@ class Team:
         share_member_interactions: bool = False,
         read_team_history: bool = False,
         show_tool_calls: bool = True,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         response_model: Optional[Type[BaseModel]] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
@@ -243,7 +251,9 @@ class Team:
         self.share_member_interactions = share_member_interactions
 
         self.read_team_history = read_team_history
+
         self.show_tool_calls = show_tool_calls
+        self.tool_choice = tool_choice
 
         self.response_model = response_model
         self.use_json_mode = use_json_mode
@@ -477,7 +487,7 @@ class Team:
                     files=files,  # type: ignore
                 )
                 _built_in_tools.append(forward_task_func)
-                self.model.tool_choice = "required"  # type: ignore
+
             elif self.mode == "coordinate":
                 _built_in_tools.append(
                     self.get_transfer_task_function(
@@ -489,7 +499,6 @@ class Team:
                         files=files,  # type: ignore
                     )
                 )
-                self.model.tool_choice = "auto"  # type: ignore
 
                 if self.enable_agentic_context:
                     _built_in_tools.append(self.set_team_context)
@@ -503,7 +512,6 @@ class Team:
                     files=files,  # type: ignore
                 )
                 _built_in_tools.append(run_member_agents_func)
-                self.model.tool_choice = "auto"  # type: ignore
 
                 if self.enable_agentic_context:
                     _built_in_tools.append(self.set_team_context)
@@ -3026,6 +3034,7 @@ class Team:
         if from_run_response:
             content = from_run_response.content
             content_type = from_run_response.content_type
+            tools = from_run_response.tools
             audio = from_run_response.audio
             images = from_run_response.images
             videos = from_run_response.videos
@@ -3070,20 +3079,23 @@ class Team:
 
         log_debug("Resolving context")
         if self.context is not None:
-            for ctx_key, ctx_value in self.context.items():
-                if callable(ctx_value):
-                    try:
-                        sig = signature(ctx_value)
-                        if "agent" in sig.parameters:
-                            resolved_ctx_value = ctx_value(agent=self)
-                        else:
-                            resolved_ctx_value = ctx_value()
-                        if resolved_ctx_value is not None:
-                            self.context[ctx_key] = resolved_ctx_value
-                    except Exception as e:
-                        log_warning(f"Failed to resolve context for {ctx_key}: {e}")
-                else:
-                    self.context[ctx_key] = ctx_value
+            if isinstance(self.context, dict):
+                for ctx_key, ctx_value in self.context.items():
+                    if callable(ctx_value):
+                        try:
+                            sig = signature(ctx_value)
+                            if "agent" in sig.parameters:
+                                resolved_ctx_value = ctx_value(agent=self)
+                            else:
+                                resolved_ctx_value = ctx_value()
+                            if resolved_ctx_value is not None:
+                                self.context[ctx_key] = resolved_ctx_value
+                        except Exception as e:
+                            log_warning(f"Failed to resolve context for {ctx_key}: {e}")
+                    else:
+                        self.context[ctx_key] = ctx_value
+            else:
+                log_warning("Context is not a dict")
 
     def _configure_model(self, show_tool_calls: bool = False) -> None:
         # Set the default model
@@ -3136,6 +3148,10 @@ class Team:
 
         # Set show_tool_calls on the Model
         self.model.show_tool_calls = show_tool_calls
+
+        # Set tool_choice on the Model
+        if self.tool_choice is not None:
+            self.model.tool_choice = self.tool_choice
 
     def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable]]) -> None:
         # We have to reset for every run, because we will have new images/audio/video to attach
@@ -4343,6 +4359,23 @@ class Team:
             self.team_session = cast(TeamSession, self.storage.upsert(session=self._get_team_session()))
         return self.team_session
 
+    def rename_session(self, session_name: str) -> None:
+        """Rename the current session and save to storage"""
+
+        # -*- Read from storage
+        self.read_from_storage()
+        # -*- Rename session
+        self.session_name = session_name
+        # -*- Save to storage
+        self.write_to_storage()
+        # -*- Log Agent session
+        self._log_team_session()
+
+    def delete_session(self, session_id: str) -> None:
+        """Delete the current session and save to storage"""
+        if self.storage is not None:
+            self.storage.delete_session(session_id=session_id)
+
     def load_team_session(self, session: TeamSession):
         """Load the existing TeamSession from an TeamSession (from the database)"""
         from agno.utils.merge_dict import merge_dictionaries
@@ -4423,11 +4456,11 @@ class Team:
         if not isinstance(self.memory, TeamMemory):
             if isinstance(self.memory, dict):
                 # Convert dict to TeamMemory
-                self.memory = TeamMemory.from_dict(self.memory)
-            else:
+                self.memory = TeamMemory(**self.memory)
+            elif self.memory is not None:
                 raise TypeError(f"Expected memory to be a dict or TeamMemory, but got {type(self.memory)}")
 
-        if session.memory is not None:
+        if session.memory is not None and self.memory is not None:
             try:
                 if "runs" in session.memory:
                     try:
@@ -4436,12 +4469,12 @@ class Team:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "messages" in session.memory:
                     try:
-                        self.memory.messages = [Message(**m) for m in session.memory["messages"]]
+                        self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]]
                     except Exception as e:
                         log_warning(f"Failed to load messages from memory: {e}")
                 if "memories" in session.memory:
                     try:
-                        self.memory.memories = [Memory(**m) for m in session.memory["memories"]]
+                        self.memory.memories = [Memory.model_validate(m) for m in session.memory["memories"]]
                     except Exception as e:
                         log_warning(f"Failed to load user memories: {e}")
             except Exception as e:
@@ -4512,6 +4545,7 @@ class Team:
         from time import time
 
         """Get an TeamSession object, which can be saved to the database"""
+
         return TeamSession(
             session_id=self.session_id,  # type: ignore
             team_id=self.team_id,
@@ -4568,3 +4602,114 @@ class Team:
             )
         except Exception as e:
             log_debug(f"Could not create team event: {e}")
+
+    def _log_team_session(self):
+        if not (self.telemetry or self.monitoring):
+            return
+
+        from agno.api.team import TeamSessionCreate, upsert_team_session
+
+        try:
+            team_session: TeamSession = self.team_session or self._get_team_session()
+            upsert_team_session(
+                session=TeamSessionCreate(
+                    session_id=team_session.session_id,
+                    team_data=team_session.to_dict() if self.monitoring else team_session.telemetry_data(),
+                ),
+                monitor=self.monitoring,
+            )
+        except Exception as e:
+            log_debug(f"Could not create team monitor: {e}")
+
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> "Team":
+        """Create a deep copy of the Team with optional updates.
+        Args:
+            update: Optional dictionary of attributes to update in the copy
+        Returns:
+            A new Team instance with copied attributes
+        """
+        # Get all instance attributes
+        attributes = self.__dict__.copy()
+
+        excluded_fields = ["team_session", "session_name", "_functions_for_model"]
+        # Deep copy each field
+        copied_attributes = {}
+        for field_name, field_value in attributes.items():
+            if field_name in excluded_fields:
+                continue
+            copied_attributes[field_name] = self._deep_copy_field(field_name, field_value)
+
+        # Create new instance
+        team_copy = Team.__new__(Team)
+        team_copy.__dict__ = copied_attributes
+
+        # Apply any updates
+        if update:
+            for key, value in update.items():
+                setattr(team_copy, key, value)
+
+        return team_copy
+
+    def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
+        """Deep copy a single field value.
+        Args:
+            field_name: Name of the field being copied
+            field_value: Value to copy
+        Returns:
+            Deep copied value
+        """
+        from copy import copy, deepcopy
+
+        # Handle special cases
+        if field_name == "members":
+            # Deep copy each member
+            if field_value is not None:
+                return [member.deep_copy() for member in field_value]
+            return None
+
+        # For memory use the deep_copy methods
+        if field_name == "memory" and field_value is not None:
+            return field_value.deep_copy()
+
+        # For storage, model and reasoning_model, use a deep copy
+        elif field_name in ("storage", "model", "reasoning_model") and field_value is not None:
+            try:
+                return deepcopy(field_value)
+            except Exception:
+                try:
+                    return copy(field_value)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For compound types, attempt a deep copy
+        elif isinstance(field_value, (list, dict, set)):
+            try:
+                return deepcopy(field_value)
+            except Exception as e:
+                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+                try:
+                    return copy(field_value)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For pydantic models, attempt a model_copy
+        elif isinstance(field_value, BaseModel):
+            try:
+                return field_value.model_copy(deep=True)
+            except Exception:
+                try:
+                    return field_value.model_copy(deep=False)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For other types, attempt a shallow copy first
+        try:
+            from copy import copy
+
+            return copy(field_value)
+        except Exception:
+            # If copy fails, return as is
+            return field_value
