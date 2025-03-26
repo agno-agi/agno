@@ -22,7 +22,9 @@ web_agent = Agent(
     ],
     show_tool_calls=True,
     markdown=True,
-    storage=PostgresStorage(table_name="web_agent", db_url=db_url),
+    storage=PostgresStorage(
+        table_name="web_agent", db_url=db_url, auto_upgrade_schema=True
+    ),
 )
 
 finance_agent = Agent(
@@ -100,12 +102,13 @@ agent_team = Team(
     show_members_responses=True,
     debug_mode=True,
     storage=PostgresStorage(
-        table_name="financial_news_team", db_url=db_url, mode="team"
+        table_name="financial_news_team",
+        db_url=db_url,
+        mode="team",
+        auto_upgrade_schema=True,
     ),
     expected_output="A good financial news report.",
-    context={
-        "currency": "USD",
-    },
+    context="use USD as currency",
 )
 
 app = Playground(

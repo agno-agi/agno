@@ -12,6 +12,7 @@ from agno.playground.operator import (
     format_tools,
     get_agent_by_id,
     get_session_title,
+    get_session_title_from_team_session,
     get_session_title_from_workflow_session,
     get_team_by_id,
     get_workflow_by_id,
@@ -22,7 +23,6 @@ from agno.playground.schemas import (
     AgentRenameRequest,
     AgentSessionsResponse,
     TeamGetResponse,
-    TeamModel,
     TeamRenameRequest,
     TeamRunRequest,
     TeamSessionResponse,
@@ -510,48 +510,7 @@ def get_sync_playground_router(
         if teams is None:
             return []
 
-        return [
-            TeamGetResponse(
-                team_id=team.team_id,
-                name=team.name,
-                model=TeamModel(
-                    name=team.model.name or team.model.__class__.__name__ if team.model else None,
-                    model=team.model.id if team.model else None,
-                    provider=team.model.provider or team.model.__class__.__name__ if team.model else None,
-                ),
-                success_criteria=team.success_criteria,
-                instructions=team.instructions,
-                description=team.description,
-                mode=team.mode,
-                storage={"name": team.storage.__class__.__name__} if team.storage else None,
-                expected_output=team.expected_output,
-                context=team.context,
-                enable_agentic_context=team.enable_agentic_context,
-                response_model=team.response_model,
-                members=[
-                    AgentGetResponse(
-                        agent_id=member.agent_id,
-                        name=member.name,
-                        model=AgentModel(
-                            name=member.model.name or member.model.__class__.__name__ if member.model else None,
-                            model=member.model.id if member.model else None,
-                            provider=member.model.provider or member.model.__class__.__name__ if member.model else None,
-                        ),
-                        add_context=member.add_context,
-                        tools=format_tools(member.get_tools()) if member.get_tools() else None,
-                        memory={"name": member.memory.db.__class__.__name__}
-                        if member.memory and member.memory.db
-                        else None,
-                        storage={"name": member.storage.__class__.__name__} if member.storage else None,
-                        knowledge={"name": member.knowledge.__class__.__name__} if member.knowledge else None,
-                        description=member.description,
-                        instructions=member.instructions,
-                    )
-                    for member in team.members
-                ],
-            )
-            for team in teams
-        ]
+        return [TeamGetResponse.from_team(team) for team in teams]
 
     @playground_router.get("/teams/{team_id}")
     def get_team(team_id: str):
@@ -559,47 +518,7 @@ def get_sync_playground_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        return TeamGetResponse(
-            team_id=team.team_id,
-            name=team.name,
-            description=team.description,
-            mode=team.mode,
-            success_criteria=team.success_criteria,
-            instructions=team.instructions,
-            storage={"name": team.storage.__class__.__name__} if team.storage else None,
-            expected_output=team.expected_output,
-            context=team.context,
-            enable_agentic_context=team.enable_agentic_context,
-            response_model=team.response_model,
-            model=TeamModel(
-                name=team.model.name or team.model.__class__.__name__ if team.model else None,
-                model=team.model.id if team.model else None,
-                provider=team.model.provider or team.model.__class__.__name__ if team.model else None,
-            ),
-            members=[
-                AgentGetResponse(
-                    agent_id=member.agent_id,
-                    name=member.name,
-                    model=AgentModel(
-                        name=member.model.name or member.model.__class__.__name__ if member.model else None,
-                        model=member.model.id if member.model else None,
-                        provider=member.model.provider or member.model.__class__.__name__ if member.model else None,
-                    ),
-                    add_context=member.add_context,
-                    tools=format_tools(member.get_tools()) if member.get_tools() else None,
-                    memory={"name": member.memory.db.__class__.__name__}
-                    if member.memory and member.memory.db
-                    else None,
-                    storage={"name": member.storage.__class__.__name__} if member.storage else None,
-                    knowledge={"name": member.knowledge.__class__.__name__} if member.knowledge else None,
-                    description=member.description,
-                    instructions=member.instructions,
-                )
-                for member in team.members
-            ]
-            if team.members
-            else None,
-        )
+        return TeamGetResponse.from_team(team)
 
     @playground_router.post("/teams/{team_id}/runs")
     def create_team_run(team_id: str, body: TeamRunRequest):
@@ -618,21 +537,26 @@ def get_sync_playground_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
+        if team.storage is None:
+            raise HTTPException(status_code=404, detail="Team does not have storage enabled")
+
         try:
-            all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=user_id, team_id=team_id)
+            all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=user_id, entity_id=team_id)  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
 
-        return [
-            TeamSessionResponse(
-                title="dummy",
-                # title=get_session_title_from_team_session(session),
-                session_id=session.session_id,
-                session_name=session.session_data.get("session_name") if session.session_data else None,
-                created_at=session.created_at,
+        team_sessions: List[TeamSessionResponse] = []
+        for session in all_team_sessions:
+            title = get_session_title_from_team_session(session)
+            team_sessions.append(
+                TeamSessionResponse(
+                    title=title,
+                    session_id=session.session_id,
+                    session_name=session.session_data.get("session_name") if session.session_data else None,
+                    created_at=session.created_at,
+                )
             )
-            for session in all_team_sessions
-        ]
+        return team_sessions
 
     @playground_router.get("/teams/{team_id}/sessions/{session_id}")
     def get_team_session(team_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
@@ -640,8 +564,11 @@ def get_sync_playground_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
+        if team.storage is None:
+            raise HTTPException(status_code=404, detail="Team does not have storage enabled")
+
         try:
-            team_session: Optional[TeamSession] = team.storage.read(session_id, user_id)
+            team_session: Optional[TeamSession] = team.storage.read(session_id, user_id)  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving session: {str(e)}")
 
