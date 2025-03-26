@@ -14,7 +14,6 @@ from agno.models.perplexity.perplexity import Perplexity
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
-
 from utils import print_team_memory
 
 stock_searcher = Agent(

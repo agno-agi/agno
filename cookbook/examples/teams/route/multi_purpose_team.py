@@ -10,6 +10,7 @@ from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.dalle import DalleTools
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.e2b import E2BTools
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.media import download_file
 
@@ -125,6 +126,24 @@ reasoning_agent = Agent(
     debug_mode=True,
 )
 
+code_execution_agent = Agent(
+    name="Code Execution Sandbox",
+    agent_id="e2b-sandbox",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[E2BTools()],
+    markdown=True,
+    show_tool_calls=True,
+    instructions=[
+        "You are an expert at writing and validating Python code using a secure E2B sandbox environment.",
+        "Your primary purpose is to:",
+        "1. Write clear, efficient Python code based on user requests",
+        "2. Execute and verify the code in the E2B sandbox",
+        "3. Share the complete code with the user, as this is the main use case",
+        "4. Provide thorough explanations of how the code works",
+        "",
+    ],
+)
+
 agent_team = Team(
     name="Agent Team",
     mode="route",
@@ -137,6 +156,7 @@ agent_team = Team(
         calculator_writer_team,
         reasoning_agent,
         file_analysis_agent,
+        code_execution_agent,
     ],
     instructions=[
         "You are a team of agents that can answer questions about the web, finance, images, audio, and files.",
@@ -149,6 +169,11 @@ agent_team = Team(
     show_members_responses=True
 )
 
+# Use the reasoning agent to reason about the result
+
+agent_team.print_response(
+    "What is the square root of 6421123 times the square root of 9485271", stream=True
+)
 # Use web and finance agents to answer the question
 # agent_team.print_response(
 #     "Summarize analyst recommendations and share the latest news for NVDA", stream=True
@@ -179,10 +204,17 @@ agent_team = Team(
 #     "Generate an image of a cat", stream=True
 # )
 
-# # Use the calculator writer team to calculate the result
+# Use the calculator writer team to calculate the result
 # agent_team.print_response(
 #     "What is the square root of 6421123 times the square root of 9485271", stream=True
 # )
+
+# Use the code execution agent to write and execute code
+# agent_team.print_response(
+#     "write a python code to calculate the square root of 6421123 times the square root of 9485271",
+#     stream=True,
+# )
+
 
 # # Use the reasoning agent to reason about the result
 # agent_team.print_response("9.11 and 9.9 -- which is bigger?", stream=True)
