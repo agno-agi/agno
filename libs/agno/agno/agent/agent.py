@@ -3283,14 +3283,13 @@ class Agent:
                     reasoning_agent_messages=[openai_reasoning_message],
                 )
             else:
-                log_info(
+                log_warning(
                     f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
                 )
                 use_default_reasoning = True
         # If no reasoning model is provided, use the default reasoning approach
         else:
             use_default_reasoning = True
-
 
         if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent

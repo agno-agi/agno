@@ -12,7 +12,11 @@ reasoning_agent = Agent(
     reasoning_model=OpenAIChat(id="gpt-4o"),
     markdown=True,
 )
-reasoning_agent.print_response("Give me steps to write a python script for fibonacci series", stream=True, show_full_reasoning=True)
+reasoning_agent.print_response(
+    "Give me steps to write a python script for fibonacci series",
+    stream=True,
+    show_full_reasoning=True,
+)
 
 
 # It uses the default model of the Agent
@@ -20,4 +24,8 @@ reasoning_agent = Agent(
     reasoning=True,
     markdown=True,
 )
-reasoning_agent.print_response("Give me steps to write a python script for fibonacci series", stream=True, show_full_reasoning=True)
+reasoning_agent.print_response(
+    "Give me steps to write a python script for fibonacci series",
+    stream=True,
+    show_full_reasoning=True,
+)
