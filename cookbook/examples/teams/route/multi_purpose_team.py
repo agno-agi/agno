@@ -1,16 +1,18 @@
 from pathlib import Path
 
-import requests
 from agno.agent import Agent
-from agno.media import Audio, Image
+from agno.media import Audio, Image, File  
 from agno.models.deepseek import DeepSeek
 from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.dalle import DalleTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
+from agno.utils.media import download_file
+
 
 web_agent = Agent(
     name="Web Agent",
@@ -19,7 +21,6 @@ web_agent = Agent(
     tools=[DuckDuckGoTools()],
     instructions=["Always include sources"],
 )
-
 
 finance_agent = Agent(
     name="Finance Agent",
@@ -42,6 +43,17 @@ image_agent = Agent(
         "When the user asks you to create an image, use the DALL-E tool to create an image.",
         "The DALL-E tool will return an image URL.",
         "Return the image URL in your response in the following format: `![image description](image URL)`",
+    ],
+)
+
+file_analysis_agent = Agent(
+    name="File Analysis Agent",
+    role="Analyze files",
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    description="You are an AI agent that can analyze files.",
+    instructions=[
+        "You are an AI agent that can analyze files.",
+        "You are given a file and you need to answer questions about the file.",
     ],
 )
 
@@ -116,7 +128,7 @@ reasoning_agent = Agent(
 agent_team = Team(
     name="Agent Team",
     mode="route",
-    model=OpenAIChat("gpt-4.5-preview"),
+    model=OpenAIChat("gpt-4o"),
     members=[
         web_agent,
         finance_agent,
@@ -124,11 +136,17 @@ agent_team = Team(
         audio_agent,
         calculator_writer_team,
         reasoning_agent,
+        file_analysis_agent,
+    ],
+    instructions=[
+        "You are a team of agents that can answer questions about the web, finance, images, audio, and files.",
+        "You can use your member agents to answer the questions.",
+        "if you are asked about a file, use the file analysis agent to analyze the file.",
     ],
     show_tool_calls=True,
     markdown=True,
     debug_mode=True,
-    show_members_responses=True,
+    show_members_responses=True
 )
 
 # Use web and finance agents to answer the question
@@ -161,10 +179,28 @@ agent_team = Team(
 #     "Generate an image of a cat", stream=True
 # )
 
-# Use the calculator writer team to calculate the result
-agent_team.print_response(
-    "What is the square root of 6421123 times the square root of 9485271", stream=True
-)
+# # Use the calculator writer team to calculate the result
+# agent_team.print_response(
+#     "What is the square root of 6421123 times the square root of 9485271", stream=True
+# )
 
 # # Use the reasoning agent to reason about the result
 # agent_team.print_response("9.11 and 9.9 -- which is bigger?", stream=True)
+
+
+
+pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")
+
+# Download the file using the download_file function
+download_file(
+    "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf", str(pdf_path)
+)
+# Use file analysis agent to analyze the file
+agent_team.print_response(
+    "Summarize the contents of the attached file.",
+    files=[
+        File(
+            filepath=pdf_path,
+        ),
+    ],
+)
