@@ -86,8 +86,8 @@ def test_decorator_preserves_type_hints():
     from inspect import signature
 
     sig = signature(typed_function.entrypoint)
-    assert sig.parameters["x"].annotation == int
-    assert sig.parameters["y"].annotation == str
+    assert isinstance(sig.parameters["x"].annotation, int)
+    assert isinstance(sig.parameters["y"].annotation, str)
 
 
 @pytest.mark.asyncio

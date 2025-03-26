@@ -3172,7 +3172,7 @@ class Team:
         # Set tool_choice on the Model
         if self.tool_choice is not None:
             self.model.tool_choice = self.tool_choice
-        
+
         # Set tool_call_limit on the Model
         if self.tool_call_limit is not None:
             self.model.tool_call_limit = self.tool_call_limit

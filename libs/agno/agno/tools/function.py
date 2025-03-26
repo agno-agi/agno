@@ -410,7 +410,7 @@ class FunctionCall(BaseModel):
         """Handles the async pre-hook for the function call."""
         if self.function.pre_hook is not None:
             try:
-                from inspect import iscoroutinefunction, signature
+                from inspect import signature
 
                 pre_hook_args = {}
                 # Check if the pre-hook has an agent argument
@@ -433,7 +433,7 @@ class FunctionCall(BaseModel):
         """Handles the async post-hook for the function call."""
         if self.function.post_hook is not None:
             try:
-                from inspect import iscoroutinefunction, signature
+                from inspect import signature
 
                 post_hook_args = {}
                 # Check if the post-hook has an agent argument
