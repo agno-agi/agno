@@ -1,0 +1,7 @@
+agno>=0.1.0
+streamlit>=1.31.0
+python-dotenv>=1.0.0
+nest-asyncio>=1.5.8
+google-generativeai>=0.3.2
+duckduckgo-search>=4.1.1
+exa-py>=0.1.0
