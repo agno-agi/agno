@@ -149,6 +149,11 @@ agent_team = Team(
     show_members_responses=True,
 )
 
+# Use the reasoning agent to reason about the result
+
+agent_team.print_response(
+    "What is the square root of 6421123 times the square root of 9485271", stream=True
+)
 # Use web and finance agents to answer the question
 # agent_team.print_response(
 #     "Summarize analyst recommendations and share the latest news for NVDA", stream=True
@@ -189,11 +194,6 @@ agent_team = Team(
 #     stream=True,
 # )
 
-# Use the reasoning agent to reason about the result
-
-agent_team.print_response(
-    "What is the square root of 6421123 times the square root of 9485271", stream=True
-)
 
 # # Use the reasoning agent to reason about the result
 
