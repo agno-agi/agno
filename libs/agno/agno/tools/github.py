@@ -19,31 +19,31 @@ class GithubTools(Toolkit):
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
         search_repositories: bool = True,
-        list_repositories: bool = True,
-        get_repository: bool = True,
+        list_repositories: bool = False,
+        get_repository: bool = False,
         list_pull_requests: bool = False,
-        get_pull_request: bool = True,
+        get_pull_request: bool = False,
         get_pull_request_changes: bool = False,
-        create_issue: bool = True,
+        create_issue: bool = False,
         create_repository: bool = False,
         delete_repository: bool = False,
-        get_repository_languages: bool = True,
+        get_repository_languages: bool = False,
         list_branches: bool = False,
-        get_pull_request_count: bool = True,
-        get_repository_stars: bool = True,
-        get_pulls_by_query: bool = True,
+        get_pull_request_count: bool = False,
+        get_repository_stars: bool = False,
+        get_pull_requests: bool = False,
         get_pull_request_comments: bool = False,
         create_pull_request_comment: bool = False,
         edit_pull_request_comment: bool = False,
         get_pull_request_with_details: bool = False,
-        get_repository_with_stats: bool = True,
+        get_repository_with_stats: bool = False,
         list_issues: bool = False,
-        get_issue: bool = True,
+        get_issue: bool = False,
         comment_on_issue: bool = False,
-        close_issue: bool = True,
-        reopen_issue: bool = True,
-        assign_issue: bool = True,
-        label_issue: bool = True,
+        close_issue: bool = False,
+        reopen_issue: bool = False,
+        assign_issue: bool = False,
+        label_issue: bool = False,
         list_issue_comments: bool = False,
         edit_issue: bool = False,
         create_pull_request: bool = False,
@@ -53,7 +53,7 @@ class GithubTools(Toolkit):
         delete_file: bool = False,
         get_directory_content: bool = False,
         get_branch_content: bool = False,
-        create_branch: bool = True,
+        create_branch: bool = False,
         set_default_branch: bool = False,
         search_code: bool = False,
         search_issues_and_prs: bool = False,
@@ -92,8 +92,8 @@ class GithubTools(Toolkit):
             self.register(self.get_pull_request_count)
         if get_repository_stars:
             self.register(self.get_repository_stars)
-        if get_pulls_by_query:
-            self.register(self.get_pulls_by_query)
+        if get_pull_requests:
+            self.register(self.get_pull_requests)
         if get_pull_request_comments:
             self.register(self.get_pull_request_comments)
         if create_pull_request_comment:
@@ -804,7 +804,7 @@ class GithubTools(Toolkit):
             logger.error(f"Error getting repository stars: {e}")
             return json.dumps({"error": str(e)})
 
-    def get_pulls_by_query(
+    def get_pull_requests(
         self,
         repo_name: str,
         state: str = "open",
