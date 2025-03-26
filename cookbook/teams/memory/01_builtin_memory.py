@@ -1,8 +1,8 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.yfinance import YFinanceTools
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.yfinance import YFinanceTools
 from pydantic import BaseModel
 from rich.pretty import pprint
 

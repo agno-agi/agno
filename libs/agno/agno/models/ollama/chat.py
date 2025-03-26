@@ -120,8 +120,6 @@ class Ollama(Model):
                     for _, obj in tool["function"]["parameters"].get("properties", {}).items():  # type: ignore
                         if "type" in obj and isinstance(obj["type"], list) and len(obj["type"]) > 1:
                             obj["type"] = obj["type"][0]
-            if self.tool_choice is not None:
-                request_params["tool_choice"] = self.tool_choice
 
         # Add additional request params if provided
         if self.request_params:
