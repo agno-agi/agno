@@ -334,6 +334,25 @@ class Gemini(Model):
             GenerateContentResponse: The response from the model.
         """
         formatted_messages, system_message = self._format_messages(messages)
+
+        # Final safety check - never send empty content to Gemini API
+        if not formatted_messages:
+            log_warning("No content messages to send to Gemini API even after formatting. Creating a default user message.")
+            # Extract any user message text from the original messages
+            user_message_text = None
+            for msg in messages:
+                if msg.role == "user" and msg.content and isinstance(msg.content, str):
+                    user_message_text = msg.content
+                    break
+
+            # If no user message found, use a default
+            if not user_message_text:
+                user_message_text = "Hello"
+                log_warning(f"No user message found in messages. Using default: '{user_message_text}'")
+
+            formatted_messages = [Content(role="user", parts=[Part.from_text(text=user_message_text)])]
+            log_info(f"Created default content message with text: '{user_message_text}'")
+
         request_kwargs = self._get_request_kwargs(system_message)
         try:
             return self.get_client().models.generate_content(
@@ -360,10 +379,42 @@ class Gemini(Model):
         Returns:
             Iterator[GenerateContentResponse]: The response from the model as a stream.
         """
+        log_info(f"invoke_stream called with {len(messages)} messages")
+        for idx, msg in enumerate(messages):
+            log_info(f"Message {idx}: role={msg.role}, content_type={type(msg.content)}, content_length={len(str(msg.content)) if msg.content else 0}")
+
         formatted_messages, system_message = self._format_messages(messages)
+        log_info(f"After _format_messages: {len(formatted_messages)} formatted messages, system_message present: {system_message is not None}")
+
+        # Final safety check - never send empty content to Gemini API
+        if not formatted_messages:
+            log_warning("*** SAFETY CHECK TRIGGERED: No content messages after formatting ***")
+            # Extract any user message text from the original messages
+            user_message_text = None
+            for msg in messages:
+                if msg.role == "user" and msg.content and isinstance(msg.content, str):
+                    user_message_text = msg.content
+                    log_info(f"Found user message: '{user_message_text}'")
+                    break
+
+            # If no user message found, check if it's in the request_kwargs
+            if not user_message_text and hasattr(self, '_last_prompt') and self._last_prompt:
+                user_message_text = self._last_prompt
+                log_info(f"Using last prompt as user message: '{user_message_text}'")
+
+            # If still no user message, use a default
+            if not user_message_text:
+                user_message_text = "Hello"
+                log_warning(f"No user message found in messages. Using default: '{user_message_text}'")
+
+            formatted_messages = [Content(role="user", parts=[Part.from_text(text=user_message_text)])]
+            log_info(f"Created default content message with text: '{user_message_text}'")
+
+        log_info(f"Final formatted messages count: {len(formatted_messages)}")
 
         request_kwargs = self._get_request_kwargs(system_message)
         try:
+            log_info(f"Calling generate_content_stream with {len(formatted_messages)} messages")
             yield from self.get_client().models.generate_content_stream(
                 model=self.id,
                 contents=formatted_messages,
@@ -383,6 +434,24 @@ class Gemini(Model):
         Invokes the model with a list of messages and returns the response.
         """
         formatted_messages, system_message = self._format_messages(messages)
+
+        # Final safety check - never send empty content to Gemini API
+        if not formatted_messages:
+            log_warning("No content messages to send to Gemini API even after formatting. Creating a default user message.")
+            # Extract any user message text from the original messages
+            user_message_text = None
+            for msg in messages:
+                if msg.role == "user" and msg.content and isinstance(msg.content, str):
+                    user_message_text = msg.content
+                    break
+
+            # If no user message found, use a default
+            if not user_message_text:
+                user_message_text = "Hello"
+                log_warning(f"No user message found in messages. Using default: '{user_message_text}'")
+
+            formatted_messages = [Content(role="user", parts=[Part.from_text(text=user_message_text)])]
+            log_info(f"Created default content message with text: '{user_message_text}'")
 
         request_kwargs = self._get_request_kwargs(system_message)
 
@@ -406,6 +475,24 @@ class Gemini(Model):
         Invokes the model with a list of messages and returns the response as a stream.
         """
         formatted_messages, system_message = self._format_messages(messages)
+
+        # Final safety check - never send empty content to Gemini API
+        if not formatted_messages:
+            log_warning("No content messages to send to Gemini API even after formatting. Creating a default user message.")
+            # Extract any user message text from the original messages
+            user_message_text = None
+            for msg in messages:
+                if msg.role == "user" and msg.content and isinstance(msg.content, str):
+                    user_message_text = msg.content
+                    break
+
+            # If no user message found, use a default
+            if not user_message_text:
+                user_message_text = "Hello"
+                log_warning(f"No user message found in messages. Using default: '{user_message_text}'")
+
+            formatted_messages = [Content(role="user", parts=[Part.from_text(text=user_message_text)])]
+            log_info(f"Created default content message with text: '{user_message_text}'")
 
         request_kwargs = self._get_request_kwargs(system_message)
 
@@ -433,12 +520,28 @@ class Gemini(Model):
         Args:
             messages (List[Message]): The list of messages to convert.
         """
+        log_info(f"_format_messages called with {len(messages)} messages")
+        for idx, msg in enumerate(messages):
+            log_info(f"Format Message {idx}: role={msg.role}, content_type={type(msg.content)}, content_length={len(str(msg.content)) if msg.content else 0}")
+
         formatted_messages: List = []
         system_message = None
+        user_message_content = None
+
+        # First pass - extract system message and user message content
+        for message in messages:
+            if message.role in ["system", "developer"]:
+                system_message = message.content
+                log_info(f"Found system message of length {len(str(system_message)) if system_message else 0}")
+            elif message.role == "user" and message.content and isinstance(message.content, str):
+                user_message_content = message.content
+                log_info(f"Found user message: '{user_message_content}'")
+
+        # Second pass - format messages
         for message in messages:
             role = message.role
             if role in ["system", "developer"]:
-                system_message = message.content
+                # System messages are handled separately in Gemini
                 continue
 
             role = "model" if role == "assistant" else role
@@ -457,6 +560,7 @@ class Gemini(Model):
                             args=json.loads(tool_call["function"]["arguments"]),
                         )
                     )
+                log_info(f"Added {len(message.tool_calls)} function calls to message parts")
             # Function results
             elif role == "tool" and message.tool_calls:
                 for tool_call in message.tool_calls:
@@ -465,25 +569,33 @@ class Gemini(Model):
                             name=tool_call["tool_name"], response={"result": tool_call["content"]}
                         )
                     )
+                log_info(f"Added {len(message.tool_calls)} function responses to message parts")
             else:
                 if isinstance(content, str):
                     message_parts = [Part.from_text(text=content)]
+                    log_info(f"Added text content to message parts: '{content[:50]}...' (truncated)")
 
+            # Add media to user messages
             if message.role == "user":
                 # Add images to the message for the model
                 if message.images is not None:
+                    image_count = 0
                     for image in message.images:
                         if image.content is not None and isinstance(image.content, GeminiFile):
                             # Google recommends that if using a single image, place the text prompt after the image.
                             message_parts.insert(0, image.content)
+                            image_count += 1
                         else:
                             image_content = _format_image_for_message(image)
                             if image_content:
                                 message_parts.append(Part.from_bytes(**image_content))
+                                image_count += 1
+                    log_info(f"Added {image_count} images to message parts")
 
                 # Add videos to the message for the model
                 if message.videos is not None:
                     try:
+                        video_count = 0
                         for video in message.videos:
                             # Case 1: Video is a file_types.File object (Recommended)
                             # Add it as a File object
@@ -492,12 +604,15 @@ class Gemini(Model):
                                 message_parts.insert(
                                     0, Part.from_uri(file_uri=video.content.uri, mime_type=video.content.mime_type)
                                 )
+                                video_count += 1
                             else:
                                 video_file = self._format_video_for_message(video)
 
                                 # Google recommends that if using a single video, place the text prompt after the video.
                                 if video_file is not None:
                                     message_parts.insert(0, video_file)  # type: ignore
+                                    video_count += 1
+                        log_info(f"Added {video_count} videos to message parts")
                     except Exception as e:
                         traceback.print_exc()
                         log_warning(f"Failed to load video from {message.videos}: {e}")
@@ -506,6 +621,7 @@ class Gemini(Model):
                 # Add audio to the message for the model
                 if message.audio is not None:
                     try:
+                        audio_count = 0
                         for audio_snippet in message.audio:
                             if audio_snippet.content is not None and isinstance(audio_snippet.content, GeminiFile):
                                 # Google recommends that if using a single image, place the text prompt after the image.
@@ -515,23 +631,51 @@ class Gemini(Model):
                                         file_uri=audio_snippet.content.uri, mime_type=audio_snippet.content.mime_type
                                     ),
                                 )
+                                audio_count += 1
                             else:
                                 audio_content = self._format_audio_for_message(audio_snippet)
                                 if audio_content:
                                     message_parts.append(audio_content)
+                                    audio_count += 1
+                        log_info(f"Added {audio_count} audio files to message parts")
                     except Exception as e:
                         log_warning(f"Failed to load audio from {message.audio}: {e}")
                         continue
 
                 # Add files to the message for the model
                 if message.files is not None:
+                    file_count = 0
                     for file in message.files:
                         file_content = self._format_file_for_message(file)
                         if file_content:
                             message_parts.append(file_content)
+                            file_count += 1
+                    log_info(f"Added {file_count} files to message parts")
 
-            final_message = Content(role=role, parts=message_parts)
-            formatted_messages.append(final_message)
+            # Only add messages with content
+            if message_parts:
+                final_message = Content(role=role, parts=message_parts)
+                formatted_messages.append(final_message)
+                log_info(f"Added formatted message with role '{role}' and {len(message_parts)} parts")
+            else:
+                log_warning(f"Skipping message with role '{role}' because it has no content or media")
+
+        # Ensure we have at least one message to send to the API
+        if not formatted_messages:
+            log_warning("No valid messages to send to Gemini API. Attempting to create a default message.")
+
+            # Check for last stored prompt first
+            if hasattr(self, '_last_prompt') and self._last_prompt:
+                user_text = self._last_prompt
+                log_info(f"Using last stored prompt: '{user_text}'")
+            else:
+                # Use the actual user prompt if available, otherwise use a generic prompt
+                user_text = user_message_content if user_message_content else "Tell me something interesting"
+
+            formatted_messages.append(Content(role="user", parts=[Part.from_text(text=user_text)]))
+            log_info(f"Created a default user message with text: '{user_text}'")
+
+        log_info(f"_format_messages returning {len(formatted_messages)} formatted messages, system_message: {system_message is not None}")
         return formatted_messages, system_message
 
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:
@@ -839,3 +983,14 @@ class Gemini(Model):
             }
 
         return model_response
+
+    def store_prompt(self, prompt: str) -> None:
+        """
+        Store the prompt in the model for emergency recovery.
+        This is used to ensure we always have a prompt to use in case of formatting issues.
+
+        Args:
+            prompt: The user prompt to store
+        """
+        self._last_prompt = prompt
+        log_info(f"Stored prompt in Gemini model: '{prompt}'")

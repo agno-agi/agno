@@ -1,305 +1,191 @@
 """
-Gemini Tutor: Advanced Educational AI Assistant
+Gemini Tutor: Advanced Educational AI Assistant with Multimodal Learning
 """
 
 import nest_asyncio
 import os
 import streamlit as st
-from agents import tutor_agent
+from agents import TutorAppAgent
 from agno.utils.log import logger
-from agno.media import Image, Audio, Video
-from utils import (
-    CUSTOM_CSS,
-    about_widget,
-    add_message,
-    display_tool_calls,
-    rename_session_widget,
-    session_selector_widget,
-    sidebar_widget,
-)
+from utils import display_grounding_metadata, display_tool_calls
 
+# Initialize asyncio support
 nest_asyncio.apply()
 
 # Page configuration
 st.set_page_config(
-    page_title="Gemini Tutor: Learn Anything",
-    page_icon="🎓",
+    page_title="Gemini Multimodal Tutor",
+    page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Load custom CSS with dark mode support
+# Custom CSS with dark mode support
+CUSTOM_CSS = """
+<style>
+    .main-title {
+        font-size: 2.5rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        color: #5186EC;
+    }
+    .subtitle {
+        font-size: 1.2rem;
+        font-weight: 400;
+        margin-bottom: 2rem;
+        opacity: 0.8;
+    }
+</style>
+"""
+
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-# Constants
-ALLOWED_IMAGE_TYPES = ["png", "jpg", "jpeg", "webp"]
-ALLOWED_AUDIO_TYPES = ["mp3", "wav", "ogg"]
-ALLOWED_VIDEO_TYPES = ["mp4", "webm", "avi", "mov"]
+# Model and education options
+MODEL_OPTIONS = {
+    "Gemini 2.5 Pro Experimental (Recommended)": "gemini-2.5-pro-exp-03-25",
+    "Gemini 2.0 Pro": "gemini-2.0-pro",
+    "Gemini 1.5 Pro": "gemini-1.5-pro",
+}
 
-def save_uploaded_file(uploaded_file):
-    """Save an uploaded file to a temporary directory and return the path."""
-    # Create a tmp directory if it doesn't exist
-    if not os.path.exists("tmp"):
-        os.makedirs("tmp")
+EDUCATION_LEVELS = [
+    "Elementary School",
+    "Middle School",
+    "High School",
+    "College",
+    "Undergrad",
+    "Graduate",
+    "PhD",
+]
 
-    # Save the file
-    file_path = os.path.join("tmp", uploaded_file.name)
-    with open(file_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+def check_api_key():
+    """Check if API key is set and valid."""
+    if not os.environ.get("GOOGLE_API_KEY"):
+        st.error("""
+        **ERROR: Missing Gemini API Key**
 
-    return file_path
+        Please set up your Gemini API key in the .env file.
 
-def main() -> None:
-    ####################################################################
-    # App header
-    ####################################################################
-    st.markdown("<h1 class='main-title'>Gemini Tutor</h1>", unsafe_allow_html=True)
+        1. Create a `.env` file in this directory if it doesn't exist
+        2. Add your API key: `GOOGLE_API_KEY=your_gemini_api_key_here`
+        3. Restart the application
+
+        You can get a Gemini API key from: https://makersuite.google.com/app/apikey
+        """)
+        return False
+    return True
+
+def handle_streaming_response(learning_generator):
+    """
+    Handle a streaming response by consuming the generator.
+
+    Args:
+        learning_generator: Generator from the agent.run call
+
+    Returns:
+        Accumulated content string and grounding metadata
+    """
+    response_placeholder = st.empty()
+    tool_calls_container = st.empty()
+
+    # Initialize variables to accumulate content
+    accumulated_content = ""
+    grounding_metadata = None
+
+    # Process the streamed response
+    for chunk in learning_generator:
+        # Display tool calls if available
+        if hasattr(chunk, 'tools') and chunk.tools and len(chunk.tools) > 0:
+            display_tool_calls(tool_calls_container, chunk.tools)
+
+        # Display response with proper markdown formatting
+        if hasattr(chunk, 'content') and chunk.content is not None:
+            accumulated_content += chunk.content
+            response_placeholder.markdown(accumulated_content)
+
+        # Capture grounding metadata if available
+        if hasattr(chunk, 'grounding_metadata') and chunk.grounding_metadata:
+            grounding_metadata = chunk.grounding_metadata
+
+    # Return the accumulated content and metadata
+    return accumulated_content, grounding_metadata
+
+def main():
+    """Main application entry point"""
+    st.title("🔍 Gemini Tutor 📚")
     st.markdown(
-        "<p class='subtitle'>Your intelligent multimodal learning companion powered by Gemini 2.5 Pro</p>",
-        unsafe_allow_html=True,
+        "A streamlined AI tutor that creates personalized learning experiences on any topic."
     )
 
-    ####################################################################
-    # Model configuration - use Gemini 2.5 Pro Experimental
-    ####################################################################
-    available_models = {
-        "Gemini 2.5 Pro Experimental (Recommended)": "gemini-2.5-pro-exp-03-25",
-        "Gemini 2.0 Flash": "gemini-2.0-flash",
-        "Gemini 1.5 Pro": "gemini-1.5-pro",
-    }
-
-    selected_model_name = st.sidebar.selectbox(
-        "Model",
-        options=list(available_models.keys()),
-        index=0,  # Default to Gemini 2.5 Pro Experimental
-        key="model_selector",
-    )
-
-    model_id = available_models[selected_model_name]
-
-    ####################################################################
-    # Education level selector
-    ####################################################################
-    education_levels = [
-        "Elementary School",
-        "Middle School",
-        "High School",
-        "College",
-        "Undergrad",
-        "Graduate",
-    ]
-
-    selected_education_level = st.sidebar.selectbox(
-        "Education Level",
-        options=education_levels,
-        index=2,  # Default to High School
-        key="education_level_selector",
-    )
-
-    # Store the education level in session state
-    if "education_level" not in st.session_state:
-        st.session_state["education_level"] = selected_education_level
-    elif st.session_state["education_level"] != selected_education_level:
-        st.session_state["education_level"] = selected_education_level
-        # Reset the agent if education level changes
-        if "gemini_tutor" in st.session_state:
-            st.session_state["gemini_tutor"] = None
-
-    # Reset agent if model changes
-    if "current_model" in st.session_state and st.session_state["current_model"] != model_id:
-        if "gemini_tutor" in st.session_state:
-            st.session_state["gemini_tutor"] = None
-
-    ####################################################################
-    # Initialize Agent
-    ####################################################################
-    gemini_tutor: Agent
-    if (
-        "gemini_tutor" not in st.session_state
-        or st.session_state["gemini_tutor"] is None
-        or st.session_state.get("current_model") != model_id
-    ):
-        logger.info(f"---*--- Creating new Gemini Tutor agent with {model_id} ---*---")
-        gemini_tutor = tutor_agent(
-            model_id=model_id,
-            education_level=st.session_state["education_level"],
-        )
-        st.session_state["gemini_tutor"] = gemini_tutor
-        st.session_state["current_model"] = model_id
-    else:
-        gemini_tutor = st.session_state["gemini_tutor"]
-
-    ####################################################################
-    # Load Agent Session from the database
-    ####################################################################
-    try:
-        st.session_state["gemini_tutor_session_id"] = gemini_tutor.load_session()
-    except Exception:
-        st.warning("Could not create Agent session, is the database running?")
+    # Check for API key
+    if not check_api_key():
         return
 
-    ####################################################################
-    # Load runs from memory
-    ####################################################################
-    agent_runs = gemini_tutor.memory.runs
-
-    ####################################################################
-    # Sidebar widgets
-    ####################################################################
-    sidebar_widget()
-
-    ####################################################################
-    # Chat interface
-    ####################################################################
-    # Display chat messages
-    for message in st.session_state.get("messages", []):
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-            # Display uploaded media if any
-            if message.get("image"):
-                st.image(message["image"], caption="Uploaded Image")
-            if message.get("audio"):
-                st.audio(message["audio"], caption="Uploaded Audio")
-            if message.get("video"):
-                st.video(message["video"], caption="Uploaded Video")
-
-            if message.get("tool_calls"):
-                display_tool_calls(st.empty(), message["tool_calls"])
-
-    ####################################################################
-    # File upload options
-    ####################################################################
-    st.sidebar.markdown("### 📎 Upload Media")
-
-    uploaded_image = st.sidebar.file_uploader(
-        "Upload an image",
-        type=ALLOWED_IMAGE_TYPES,
-        key="image_uploader"
+    # Setup sidebar
+    st.sidebar.title("Settings")
+    education_level = st.sidebar.selectbox(
+        "Education Level",
+        EDUCATION_LEVELS,
+        index=EDUCATION_LEVELS.index("High School")
     )
 
-    uploaded_audio = st.sidebar.file_uploader(
-        "Upload audio",
-        type=ALLOWED_AUDIO_TYPES,
-        key="audio_uploader"
+    model_name = st.sidebar.selectbox(
+        "Model",
+        list(MODEL_OPTIONS.keys()),
+        index=0
+    )
+    model_id = MODEL_OPTIONS[model_name]
+
+    # Initialize TutorAppAgent if needed
+    if "tutor_agent" not in st.session_state:
+        st.session_state.tutor_agent = TutorAppAgent(model_id=model_id, education_level=education_level)
+
+    # Search interface
+    search_topic = st.text_input(
+        "What would you like to learn about?",
+        placeholder="e.g., quantum physics, French Revolution, machine learning",
+        key="search_box"
     )
 
-    uploaded_video = st.sidebar.file_uploader(
-        "Upload video",
-        type=ALLOWED_VIDEO_TYPES,
-        key="video_uploader"
+    if st.button("Search & Create Learning Experience", key="search_button"):
+        if not search_topic:
+            st.warning("Please enter a search topic")
+            return
+
+        with st.spinner("Creating learning experience..."):
+            try:
+                # Display learning experience header
+                st.markdown("## 📚 Learning Experience")
+
+                # Offload all processing to the agent (returns a generator)
+                learning_generator = st.session_state.tutor_agent.create_learning_experience(
+                    search_topic=search_topic,
+                    education_level=education_level
+                )
+
+                # Handle the streaming response
+                content, metadata = handle_streaming_response(learning_generator)
+
+                # Display grounding metadata if available
+                if metadata:
+                    display_grounding_metadata(metadata)
+
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+                logger.error(f"Application error: {str(e)}")
+
+    # Show about information
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### About Gemini Tutor")
+    st.sidebar.markdown(
+        """
+        Gemini Tutor is an AI-powered educational tool that helps you learn about any topic.
+
+        Features:
+        - Personalized learning experiences for your education level
+        - Fact-checked information with live web search
+        - Interactive content with examples and exercises
+        """
     )
-
-    # Initialize media containers
-    images = []
-    audio = None
-    video = None
-
-    # Process uploaded files
-    if uploaded_image is not None:
-        image_path = save_uploaded_file(uploaded_image)
-        images.append(Image(path=image_path))
-        st.sidebar.success(f"Image {uploaded_image.name} uploaded successfully!")
-
-    if uploaded_audio is not None:
-        audio_path = save_uploaded_file(uploaded_audio)
-        audio = Audio(path=audio_path)
-        st.sidebar.success(f"Audio {uploaded_audio.name} uploaded successfully!")
-
-    if uploaded_video is not None:
-        video_path = save_uploaded_file(uploaded_video)
-        video = Video(path=video_path)
-        st.sidebar.success(f"Video {uploaded_video.name} uploaded successfully!")
-
-    # Chat input
-    if prompt := st.chat_input("Ask me anything..."):
-        # Prepare media message additions
-        media_message = {}
-        if uploaded_image:
-            media_message["image"] = image_path
-        if uploaded_audio:
-            media_message["audio"] = audio_path
-        if uploaded_video:
-            media_message["video"] = video_path
-
-        # Add user message to chat history
-        add_message("user", prompt, **media_message)
-
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-            # Display uploaded media
-            if uploaded_image:
-                st.image(image_path, caption="Uploaded Image")
-            if uploaded_audio:
-                st.audio(audio_path, caption="Uploaded Audio")
-            if uploaded_video:
-                st.video(video_path, caption="Uploaded Video")
-
-        # Get the last message
-        last_message = st.session_state["messages"][-1]
-
-        if last_message and last_message.get("role") == "user":
-            question = last_message["content"]
-            with st.chat_message("assistant"):
-                # Create container for tool calls
-                tool_calls_container = st.empty()
-                resp_container = st.empty()
-                with st.spinner("🧠 Gemini Tutor is analyzing your content and researching..."):
-                    response = ""
-                    try:
-                        # Run the agent with multimedia content if available
-                        run_kwargs = {
-                            "prompt": question,
-                            "stream": True
-                        }
-
-                        # Add media to the run if available
-                        if images:
-                            run_kwargs["images"] = images
-                        if audio:
-                            run_kwargs["audio"] = audio
-                        if video:
-                            run_kwargs["video"] = video
-
-                        # Run the agent and stream the response
-                        run_response = gemini_tutor.run(**run_kwargs)
-
-                        for _resp_chunk in run_response:
-                            # Display tool calls if available
-                            if _resp_chunk.tools and len(_resp_chunk.tools) > 0:
-                                display_tool_calls(tool_calls_container, _resp_chunk.tools)
-
-                            # Display response
-                            if _resp_chunk.content is not None:
-                                response += _resp_chunk.content
-                                resp_container.markdown(response)
-
-                        add_message("assistant", response, gemini_tutor.run_response.tools)
-                    except Exception as e:
-                        error_message = f"Sorry, I encountered an error: {str(e)}"
-                        add_message("assistant", error_message)
-                        st.error(error_message)
-
-                    # Clear uploaded files after processing
-                    if uploaded_image:
-                        st.session_state["image_uploader"] = None
-                    if uploaded_audio:
-                        st.session_state["audio_uploader"] = None
-                    if uploaded_video:
-                        st.session_state["video_uploader"] = None
-
-    ####################################################################
-    # Session selector
-    ####################################################################
-    session_selector_widget(gemini_tutor, model_id)
-    rename_session_widget(gemini_tutor)
-
-    ####################################################################
-    # About section
-    ####################################################################
-    about_widget()
-
 
 if __name__ == "__main__":
     main()

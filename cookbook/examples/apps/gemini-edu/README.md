@@ -1,25 +1,38 @@
-# Gemini Tutor: Advanced Educational AI Assistant
+# Multimodal Learning Tutor
 
-Gemini Tutor is a powerful educational AI assistant powered by Google's Gemini 2.5 Pro Experimental, offering:
+Multimodal Learning Tutor is a powerful educational AI assistant powered by Google's Gemini 2.5 Pro Experimental, offering comprehensive learning through multiple modalities:
+
+## Multimodal Capabilities
+
+- 🖼️ **Image Analysis**: Process diagrams, charts, equations, and visual content
+- 🔊 **Audio Processing**: Extract knowledge from lectures, podcasts, and spoken explanations
+- 🎬 **Video Analysis**: Learn from educational videos, demonstrations, and presentations
+- 🔄 **Cross-Modal Learning**: Combine multiple types of media for enhanced understanding
+
+## Advanced Search & Information
+
+- 🔍 **Google Search**: Comprehensive web results for broad context and current events
+- 📚 **Exa Search**: Academic and structured educational content for reliable information
+- 🦆 **DuckDuckGo**: Additional search perspectives for balanced information
+- 📊 **Multi-source Validation**: Cross-references information from multiple sources for accuracy
+
+## Advanced AI Features
 
 - 🧠 Advanced reasoning and thinking capabilities for complex problems
+- 💭 Visible step-by-step reasoning process that shows its thinking
+- 🤖 Agentic AI capabilities to complete multi-step educational tasks
 - 🔢 Expert at math, science, and coding challenges
 - 📊 1 million token context window for comprehensive understanding
-- 🎨 Visual explanations and diagrams
-- 🖼️ Multimodal learning with image, audio, and video analysis
-- 🔍 Real-time information retrieval
 - 📚 Personalized learning experiences
 - 💾 Save lessons for future reference
 
-## Features
+## Educational Features
 
-- **Advanced Reasoning**: Leverages Gemini 2.5 Pro's state-of-the-art thinking capabilities
+- **Advanced Reasoning Modes**: Choose between standard responses or detailed thinking processes
 - **Step-by-Step Problem Solving**: Breaks down complex concepts with detailed explanations
 - **Visual Learning**: Generates visual explanations and diagrams to aid understanding
-- **Multimodal Analysis**: Processes images, audio, and video for rich educational experiences
-- **Code Generation**: Creates well-structured, executable code examples and challenges
-- **Real-time Information**: Uses DuckDuckGo and Exa for up-to-date information
-- **Personalized Experience**: Adapts to different education levels
+- **Comprehensive Research**: Uses multiple search engines for thorough, balanced information
+- **Personalized Experience**: Adapts to different education levels from elementary to PhD
 - **Interactive Learning**: Includes practice questions and assessments
 - **Session Management**: Save and organize your learning sessions
 
@@ -28,7 +41,7 @@ Gemini Tutor is a powerful educational AI assistant powered by Google's Gemini 2
 - 🤖 Gemini 2.5 Pro Experimental (March 2025) from Google
 - 🚀 Agno framework for AI agents
 - 💫 Streamlit for the UI
-- 🔍 DuckDuckGo and Exa for search
+- 🔍 Multiple search engines (Google Search, DuckDuckGo, Exa)
 - 💾 File system for saving lessons
 
 ## Setup
@@ -54,7 +67,7 @@ GOOGLE_API_KEY=your_gemini_api_key_here
 EXA_API_KEY=your_exa_api_key_here
 ```
 
-4. Run Gemini Tutor:
+4. Run Multimodal Learning Tutor:
 
 ```bash
 streamlit run app.py
@@ -62,62 +75,57 @@ streamlit run app.py
 
 ## Usage
 
-1. Select your education level in the sidebar
-2. Upload images, audio, or video files for analysis (optional)
-3. Ask any question in the chat interface
-4. Receive comprehensive answers with:
-   - Clear explanations
+1. Select your education level in the sidebar (Elementary through PhD)
+2. Choose your preferred reasoning mode (Standard or Thinking)
+3. Select the Gemini model to use (recommended: Gemini 2.5 Pro Experimental)
+4. **Upload media for analysis**:
+   - Images: Diagrams, charts, problems, or any visual content
+   - Audio: Lectures, explanations, or other audio content
+   - Video: Educational videos or demonstrations
+5. Use suggested prompts or ask custom questions about the uploaded media
+6. Receive comprehensive answers with:
+   - Clear explanations of the multimodal content
    - Step-by-step reasoning
    - Visual aids
-   - Code examples
+   - Code examples when relevant
    - Practice questions
    - Further reading suggestions
-5. Save lessons for future reference
-6. Manage your learning sessions
+7. Save lessons for future reference
+8. Manage your learning sessions
 
-## Features in Detail
+## Multimodal Learning Features in Detail
 
-### Advanced Reasoning
+### Image Analysis
 
-- Complex problem-solving in math, science, and coding
-- Step-by-step explanations with thinking process
-- Logical reasoning
-- Critical thinking exercises
+- **Visual Problem Solving**: Analyze mathematical equations, diagrams, and problems
+- **Chart and Graph Interpretation**: Extract data and insights from visual representations
+- **Text in Images**: Recognize and interpret text within images
+- **Spatial Reasoning**: Understand spatial relationships in visual content
+- **Scientific Diagrams**: Interpret complex scientific visualizations
 
-### Multimodal Learning
+### Audio Analysis
 
-- Upload and analyze images (diagrams, charts, photos)
-- Process audio content for learning
-- Analyze video material for educational insights
-- Rich multimedia educational experiences
+- **Lecture Understanding**: Extract key concepts from educational audio
+- **Speech Comprehension**: Process spoken explanations and instructions
+- **Language Learning**: Analyze pronunciation and language patterns
+- **Music Education**: Interpret musical concepts and theory
+- **Sound Pattern Recognition**: Identify patterns in audio data
 
-### Visual Learning
+### Video Analysis
 
-- Generated diagrams
-- Visual explanations
-- Interactive visualizations
-- Concept maps
+- **Tutorial Comprehension**: Extract step-by-step instructions from video tutorials
+- **Demo Understanding**: Process demonstrations of concepts or experiments
+- **Presentation Analysis**: Extract key points from educational presentations
+- **Motion Analysis**: Understand physical processes shown in videos
+- **Visual Storytelling**: Interpret narrative and sequential information
 
-### Code Education
+### Advanced Search Features
 
-- Clean, well-commented code examples
-- Interactive coding challenges
-- Debugging assistance
-- Best practices explanation
-
-### Personalized Experience
-
-- Adapts to education level
-- Customized examples
-- Level-appropriate language
-- Progressive difficulty
-
-### Interactive Elements
-
-- Practice questions
-- Self-assessment
-- Progress tracking
-- Engagement features
+- **Multi-engine Search**: Leverages Google Search, Exa, and DuckDuckGo simultaneously
+- **Information Synthesis**: Combines results from multiple sources for comprehensive answers
+- **Current Events**: Access up-to-date information on recent developments
+- **Academic Content**: Retrieve scholarly and educational resources
+- **Source Credibility**: Cross-validate information across different search providers
 
 ## Contributing
 
