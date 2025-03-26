@@ -6,7 +6,6 @@ from agno.models.anthropic.claude import Claude
 from agno.models.mistral.mistral import MistralChat
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
-
 from agno.tools.agentql import AgentQLTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.wikipedia import WikipediaTools
@@ -39,7 +38,7 @@ custom_query = """
 }
 """
 user_id = str(uuid4())
-team_id=str(uuid4())
+team_id = str(uuid4())
 
 company_info_team = Team(
     name="Company Info Team",

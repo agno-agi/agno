@@ -74,7 +74,7 @@ class Function(BaseModel):
 
     @classmethod
     def from_callable(cls, c: Callable, strict: bool = False) -> "Function":
-        from inspect import getdoc, isasyncgenfunction, iscoroutinefunction, signature
+        from inspect import getdoc, isasyncgenfunction, signature
 
         from agno.utils.json_schema import get_json_schema
 
@@ -128,7 +128,7 @@ class Function(BaseModel):
         except Exception as e:
             log_warning(f"Could not parse args for {function_name}: {e}", exc_info=True)
 
-        # Don't wrap async functions with validate_call
+        # Don't wrap async generator with validate_call
         if isasyncgenfunction(c):
             entrypoint = c
         else:
@@ -142,7 +142,7 @@ class Function(BaseModel):
 
     def process_entrypoint(self, strict: bool = False):
         """Process the entrypoint and make it ready for use by an agent."""
-        from inspect import getdoc, isasyncgenfunction, iscoroutinefunction, signature
+        from inspect import getdoc, isasyncgenfunction, signature
 
         from agno.utils.json_schema import get_json_schema
 
@@ -214,7 +214,7 @@ class Function(BaseModel):
             self.parameters = parameters
 
         try:
-            # Only apply validate_call to non-async functions
+            # Don't wrap async generator with validate_call
             if not isasyncgenfunction(self.entrypoint):
                 self.entrypoint = validate_call(self.entrypoint, config=dict(arbitrary_types_allowed=True))  # type: ignore
         except Exception as e:
@@ -419,11 +419,8 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
-                
-                if iscoroutinefunction(self.function.pre_hook):
-                    await self.function.pre_hook(**pre_hook_args)
-                else:
-                    self.function.pre_hook(**pre_hook_args)
+
+                await self.function.pre_hook(**pre_hook_args)
             except AgentRunException as e:
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
@@ -445,11 +442,8 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
-                
-                if iscoroutinefunction(self.function.post_hook):
-                    await self.function.post_hook(**post_hook_args)
-                else:
-                    self.function.post_hook(**post_hook_args)
+
+                await self.function.post_hook(**post_hook_args)
             except AgentRunException as e:
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)

@@ -1,5 +1,5 @@
-import json
 import asyncio
+import json
 from typing import AsyncIterator
 
 import httpx
@@ -10,8 +10,10 @@ from agno.tools import FunctionCall, tool
 async def pre_hook(fc: FunctionCall):
     print(f"About to run: {fc.function.name}")
 
+
 async def post_hook(fc: FunctionCall):
     print("After running: ", fc.function.name)
+
 
 @tool(show_result=True, pre_hook=pre_hook, post_hook=post_hook)
 async def get_top_hackernews_stories(agent: Agent) -> AsyncIterator[str]:
@@ -19,7 +21,9 @@ async def get_top_hackernews_stories(agent: Agent) -> AsyncIterator[str]:
 
     async with httpx.AsyncClient() as client:
         # Fetch top story IDs
-        response = await client.get("https://hacker-news.firebaseio.com/v0/topstories.json")
+        response = await client.get(
+            "https://hacker-news.firebaseio.com/v0/topstories.json"
+        )
         story_ids = response.json()
 
         # Yield story details
@@ -39,9 +43,7 @@ agent = Agent(
     },
     tools=[get_top_hackernews_stories],
     markdown=True,
-    show_tool_calls=True
+    show_tool_calls=True,
 )
 if __name__ == "__main__":
-    asyncio.run(
-        agent.aprint_response("What are the top hackernews stories?")
-    )
+    asyncio.run(agent.aprint_response("What are the top hackernews stories?"))

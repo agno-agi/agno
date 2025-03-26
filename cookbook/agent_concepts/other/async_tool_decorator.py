@@ -1,5 +1,5 @@
-import json
 import asyncio
+import json
 from typing import AsyncIterator
 
 import httpx
@@ -13,7 +13,9 @@ async def get_top_hackernews_stories(agent: Agent) -> AsyncIterator[str]:
 
     async with httpx.AsyncClient() as client:
         # Fetch top story IDs
-        response = await client.get("https://hacker-news.firebaseio.com/v0/topstories.json")
+        response = await client.get(
+            "https://hacker-news.firebaseio.com/v0/topstories.json"
+        )
         story_ids = response.json()
 
         # Yield story details

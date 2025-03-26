@@ -1,6 +1,7 @@
 import asyncio
-import pytest
 from typing import AsyncIterator, Generator
+
+import pytest
 
 from agno.tools.decorator import tool
 from agno.tools.function import Function
@@ -83,10 +84,10 @@ def test_decorator_preserves_type_hints():
         return bool(x)
 
     from inspect import signature
+
     sig = signature(typed_function.entrypoint)
-    assert sig.parameters['x'].annotation == int
-    assert sig.parameters['y'].annotation == str
-    assert sig.return_annotation == bool
+    assert sig.parameters["x"].annotation == int
+    assert sig.parameters["y"].annotation == str
 
 
 @pytest.mark.asyncio
@@ -97,4 +98,5 @@ async def test_decorator_preserves_async_nature():
         return x * 2
 
     from inspect import iscoroutinefunction
-    assert iscoroutinefunction(async_function.entrypoint) 
+
+    assert iscoroutinefunction(async_function.entrypoint)

@@ -530,10 +530,6 @@ class Team:
 
                 if self.enable_agentic_context:
                     _tools.append(self.set_team_context)
-            
-            if self.tools is not None:
-                for tool in self.tools:
-                    _tools.append(tool)
 
             self._add_tools_to_model(self.model, tools=_tools)  # type: ignore
 
@@ -3176,6 +3172,10 @@ class Team:
         # Set tool_choice on the Model
         if self.tool_choice is not None:
             self.model.tool_choice = self.tool_choice
+        
+        # Set tool_call_limit on the Model
+        if self.tool_call_limit is not None:
+            self.model.tool_call_limit = self.tool_call_limit
 
     def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
         # We have to reset for every run, because we will have new images/audio/video to attach

@@ -82,8 +82,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         )
 
     def decorator(func: F) -> Function:
-        from inspect import iscoroutinefunction, iscoroutine, isasyncgenfunction, getdoc
-        
+        from inspect import getdoc, isasyncgenfunction, iscoroutine, iscoroutinefunction
+
         @wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
