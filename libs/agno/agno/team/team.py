@@ -349,6 +349,9 @@ class Team:
         member.team_session_id = self.session_id
         member.team_id = self.team_id
 
+        if member.name is None and member.role is None:
+            log_warning("Team member name and role is undefined.")
+
     def _initialize_team(self) -> None:
         self._set_storage_mode()
 
@@ -1666,8 +1669,8 @@ class Team:
             response_timer.stop()
 
             team_markdown = False
+            member_markdown = {}
             if markdown:
-                member_markdown = {}
                 for member in self.members:
                     if isinstance(member, Agent) and member.agent_id is not None:
                         member_markdown[member.agent_id] = True
@@ -1732,10 +1735,11 @@ class Team:
                                 panels.append(member_reasoning_panel)
 
                         show_markdown = False
-                        if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                            show_markdown = member_markdown.get(member_response.agent_id, False)
-                        elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
-                            show_markdown = member_markdown.get(member_response.team_id, False)
+                        if member_markdown:
+                            if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                                show_markdown = member_markdown.get(member_response.agent_id, False)
+                            elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                                show_markdown = member_markdown.get(member_response.team_id, False)
 
                         member_response_content: Union[str, JSON, Markdown] = self._parse_response_content(
                             member_response,
@@ -2176,8 +2180,8 @@ class Team:
             response_timer.stop()
 
             team_markdown = False
+            member_markdown = {}
             if markdown:
-                member_markdown = {}
                 for member in self.members:
                     if isinstance(member, Agent) and member.agent_id is not None:
                         member_markdown[member.agent_id] = True
@@ -2243,10 +2247,11 @@ class Team:
                                 panels.append(member_reasoning_panel)
 
                         show_markdown = False
-                        if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                            show_markdown = member_markdown.get(member_response.agent_id, False)  # type: ignore
-                        elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
-                            show_markdown = member_markdown.get(member_response.team_id, False)  # type: ignore
+                        if member_markdown:
+                            if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                                show_markdown = member_markdown.get(member_response.agent_id, False)  # type: ignore
+                            elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                                show_markdown = member_markdown.get(member_response.team_id, False)  # type: ignore
 
                         member_response_content: Union[str, JSON, Markdown] = self._parse_response_content(
                             member_response,
@@ -3912,7 +3917,8 @@ class Team:
             # Find the member agent using the helper function
             result = self._find_member_by_name(agent_name)
             if result is None:
-                raise ValueError(f"Agent with name {agent_name} not found in the team or any subteams.")
+                yield f"Agent with name {agent_name} not found in the team or any subteams. Please choose the correct agent from the list of agents."
+                return
 
             member_agent_index, member_agent = result
             self._initialize_member(member_agent)
@@ -4011,7 +4017,8 @@ class Team:
             # Find the member agent using the helper function
             result = self._find_member_by_name(agent_name)
             if result is None:
-                raise ValueError(f"Agent with name {agent_name} not found in the team or any subteams.")
+                yield f"Agent with name {agent_name} not found in the team or any subteams. Please choose the correct agent from the list of agents."
+                return
 
             member_agent_index, member_agent = result
             self._initialize_member(member_agent)
@@ -4158,7 +4165,7 @@ class Team:
             # Find the member agent using the helper function
             result = self._find_member_by_name(agent_name)
             if result is None:
-                yield f"Agent with name {agent_name} not found. Please choose the correct agent from the list of agents."
+                yield f"Agent with name {agent_name} not found in the team or any subteams. Please choose the correct agent from the list of agents."
                 return
 
             member_agent_index, member_agent = result
@@ -4241,7 +4248,8 @@ class Team:
             # Find the member agent using the helper function
             result = self._find_member_by_name(agent_name)
             if result is None:
-                raise ValueError(f"Agent with name {agent_name} not found in the team or any subteams.")
+                yield f"Agent with name {agent_name} not found in the team or any subteams. Please choose the correct agent from the list of agents."
+                return
 
             member_agent_index, member_agent = result
             self._initialize_member(member_agent)
