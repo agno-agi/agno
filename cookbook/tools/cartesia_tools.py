@@ -50,11 +50,11 @@ Always check if operations succeeded by examining the "success" field in respons
 # Choose which example to run (uncomment the one you want to try)
 
 # Example 1: Basic TTS - Generate speech for a simple phrase
-# agent.print_response(
-#     "Generate speech for 'Welcome to Agno with Cartesia integration' using the sonic-2 model and save it as a high-quality MP3 file.",
-#     markdown=True,
-#     stream=False
-# )
+agent.print_response(
+    "Generate speech for 'Welcome to Agno with Cartesia integration' using the sonic-2 model and save it as a high-quality MP3 file.",
+    markdown=True,
+    stream=False,
+)
 
 # Example 2: List available voices
 # agent.print_response(
@@ -82,11 +82,11 @@ Always check if operations succeeded by examining the "success" field in respons
 # )
 
 # Example 5: Stream TTS - Generate speech with streaming capabilities
-agent.print_response(
-    "Generate streaming speech for 'This is a demonstration of streaming text-to-speech capabilities' using the sonic-turbo model.",
-    markdown=True,
-    stream=False,
-)
+# agent.print_response(
+#     "Generate streaming speech for 'This is a demonstration of streaming text-to-speech capabilities' using the sonic-turbo model.",
+#     markdown=True,
+#     stream=False,
+# )
 
 # Example 6: TTS with different audio formats (WAV)
 # agent.print_response(

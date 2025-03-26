@@ -1,8 +1,8 @@
-import json
-from os import getenv
-from typing import Dict, List, Optional, Any
-import os
 import datetime
+import json
+import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -36,17 +36,19 @@ class CartesiaTools(Toolkit):
     ):
         super().__init__(name="cartesia_tools")
 
-        self.api_key = api_key or getenv("CARTESIA_API_KEY")
+        self.api_key = api_key or os.getenv("CARTESIA_API_KEY")
 
         if not self.api_key:
-            raise ValueError("`api_key` is required")
+            raise ValueError("CARTESIA_API_KEY not set. Please set the CARTESIA_API_KEY environment variable.")
 
         self.client = Cartesia(api_key=self.api_key)
 
         # Set default output directory for audio files
-        self.output_dir = os.path.join(os.getcwd(), "tmp/cartesia")
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
+        self.output_dir = Path("tmp/audio_output")
+
+        # Ensure the directory exists
+        if not self.output_dir.exists():
+            self.output_dir.mkdir(parents=True, exist_ok=True)
 
         if voice_clone_enabled:
             self.register(self.clone_voice)
@@ -91,7 +93,7 @@ class CartesiaTools(Toolkit):
         language: Optional[str] = None,
         mode: str = "stability",
         enhance: bool = False,
-        transcript: Optional[str] = None
+        transcript: Optional[str] = None,
     ) -> str:
         """Clone a voice using an audio sample.
 
@@ -110,12 +112,7 @@ class CartesiaTools(Toolkit):
         logger.info(f"Cloning voice from audio file: {audio_file_path}")
         try:
             with open(audio_file_path, "rb") as file:
-                params = {
-                    "name": name,
-                    "clip": file,
-                    "mode": mode,
-                    "enhance": enhance
-                }
+                params = {"name": name, "clip": file, "mode": mode, "enhance": enhance}
 
                 if description:
                     params["description"] = description
@@ -149,12 +146,7 @@ class CartesiaTools(Toolkit):
             logger.error(f"Error deleting voice from Cartesia: {e}")
             return json.dumps({"error": str(e)})
 
-    def update_voice(
-        self,
-        voice_id: str,
-        name: str,
-        description: str
-    ) -> str:
+    def update_voice(self, voice_id: str, name: str, description: str) -> str:
         """Update voice information in Cartesia.
 
         Args:
@@ -202,10 +194,7 @@ class CartesiaTools(Toolkit):
             # Filter to only include id and description for each voice
             filtered_result = []
             for voice in result:
-                filtered_voice = {
-                    "id": voice.get("id"),
-                    "description": voice.get("description")
-                }
+                filtered_voice = {"id": voice.get("id"), "description": voice.get("description")}
                 filtered_result.append(filtered_voice)
             return json.dumps(filtered_result, indent=4)
         except Exception as e:
@@ -219,7 +208,7 @@ class CartesiaTools(Toolkit):
         description: str,
         language: str,
         original_speaker_gender: str,
-        dialect: Optional[str] = None
+        dialect: Optional[str] = None,
     ) -> str:
         """Create a new voice localized to a different language.
 
@@ -241,7 +230,7 @@ class CartesiaTools(Toolkit):
                 "name": name,
                 "description": description,
                 "language": language,
-                "original_speaker_gender": original_speaker_gender
+                "original_speaker_gender": original_speaker_gender,
             }
 
             if dialect:
@@ -253,10 +242,7 @@ class CartesiaTools(Toolkit):
             logger.error(f"Error localizing voice with Cartesia: {e}")
             return json.dumps({"error": str(e)})
 
-    def mix_voices(
-        self,
-        voices: List[Dict[str, Any]]
-    ) -> str:
+    def mix_voices(self, voices: List[Dict[str, Any]]) -> str:
         """Mix multiple voices together.
 
         Args:
@@ -279,7 +265,7 @@ class CartesiaTools(Toolkit):
         description: str,
         embedding: List[float],
         language: Optional[str] = None,
-        base_voice_id: Optional[str] = None
+        base_voice_id: Optional[str] = None,
     ) -> str:
         """Create a voice from raw features.
 
@@ -295,11 +281,7 @@ class CartesiaTools(Toolkit):
         """
         logger.info(f"Creating voice: {name}")
         try:
-            params = {
-                "name": name,
-                "description": description,
-                "embedding": embedding
-            }
+            params = {"name": name, "description": description, "embedding": embedding}
 
             if language:
                 params["language"] = language
@@ -320,7 +302,7 @@ class CartesiaTools(Toolkit):
         output_format_container: str,
         output_format_sample_rate: int,
         output_format_encoding: Optional[str] = None,
-        output_format_bit_rate: Optional[int] = None
+        output_format_bit_rate: Optional[int] = None,
     ) -> str:
         """Change the voice in an audio file.
 
@@ -342,7 +324,7 @@ class CartesiaTools(Toolkit):
                     "clip": file,
                     "voice_id": voice_id,
                     "output_format_container": output_format_container,
-                    "output_format_sample_rate": output_format_sample_rate
+                    "output_format_sample_rate": output_format_sample_rate,
                 }
 
                 if output_format_encoding:
@@ -391,7 +373,7 @@ class CartesiaTools(Toolkit):
         logger.info(f"Generating speech for: {transcript[:50]}...")
         try:
             # Normalize language code - API expects "en" not "en-US"
-            normalized_language = language.split('-')[0] if '-' in language else language
+            normalized_language = language.split("-")[0] if "-" in language else language
             logger.info(f"Normalized language from {language} to {normalized_language}")
 
             # Create proper output_format based on container type
@@ -400,21 +382,21 @@ class CartesiaTools(Toolkit):
                     "container": "mp3",
                     "sample_rate": output_format_sample_rate,
                     "bit_rate": output_format_bit_rate or 128000,  # Default to 128kbps if not provided
-                    "encoding": output_format_encoding or "mp3"    # API requires encoding field even for mp3
+                    "encoding": output_format_encoding or "mp3",  # API requires encoding field even for mp3
                 }
             elif output_format_container in ["wav", "raw"]:
                 encoding = output_format_encoding or "pcm_s16le"  # Default encoding if not provided
                 output_format = {
                     "container": output_format_container,
                     "sample_rate": output_format_sample_rate,
-                    "encoding": encoding
+                    "encoding": encoding,
                 }
             else:
                 # Fallback for any other container
                 output_format = {
                     "container": output_format_container,
                     "sample_rate": output_format_sample_rate,
-                    "encoding": output_format_encoding or "pcm_s16le"  # Always provide an encoding
+                    "encoding": output_format_encoding or "pcm_s16le",  # Always provide an encoding
                 }
                 # Add bit_rate for formats that need it
                 if output_format_bit_rate:
@@ -426,7 +408,7 @@ class CartesiaTools(Toolkit):
                 "transcript": transcript,
                 "voice_id": voice_id,
                 "language": normalized_language,
-                "output_format": output_format
+                "output_format": output_format,
             }
 
             # Log the API call for debugging
@@ -443,7 +425,7 @@ class CartesiaTools(Toolkit):
                 file_path = None
 
                 if output_path:
-                    file_path = os.path.join(self.output_dir, output_path)
+                    file_path = self.output_dir / output_path
                 else:
                     # For backward compatibility
                     output_filename = kwargs.get("output_filename")
@@ -451,25 +433,19 @@ class CartesiaTools(Toolkit):
                         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
                         output_filename = f"tts_{timestamp}.{output_format_container}"
 
-                    file_path = os.path.join(self.output_dir, output_filename)
+                    file_path = self.output_dir / output_filename
 
                 with open(file_path, "wb") as f:
                     f.write(audio_data)
 
                 logger.info(f"Generated {total_bytes} bytes of audio, saved to {file_path}")
 
-                return json.dumps({
-                    "success": True,
-                    "file_path": file_path,
-                    "total_bytes": total_bytes
-                }, indent=4)
+                return json.dumps({"success": True, "file_path": str(file_path), "total_bytes": total_bytes}, indent=4)
             else:
                 # Even when not saving to file, return a JSON string not binary data
-                return json.dumps({
-                    "success": True,
-                    "total_bytes": total_bytes,
-                    "data": "Binary audio data (not displayed)"
-                }, indent=4)
+                return json.dumps(
+                    {"success": True, "total_bytes": total_bytes, "data": "Binary audio data (not displayed)"}, indent=4
+                )
 
         except Exception as e:
             logger.error(f"Error generating speech with Cartesia: {e}")
@@ -488,7 +464,7 @@ class CartesiaTools(Toolkit):
         output_format_encoding: Optional[str] = None,
         output_format_bit_rate: Optional[int] = None,
         voice_experimental_controls_speed: Optional[str] = None,
-        voice_experimental_controls_emotion: Optional[List[str]] = None
+        voice_experimental_controls_emotion: Optional[List[str]] = None,
     ) -> str:
         """Generate audio that smoothly connects two existing audio segments.
 
@@ -517,7 +493,7 @@ class CartesiaTools(Toolkit):
                 "transcript": transcript,
                 "voice_id": voice_id,
                 "output_format_container": output_format_container,
-                "output_format_sample_rate": output_format_sample_rate
+                "output_format_sample_rate": output_format_sample_rate,
             }
 
             if output_format_encoding:
@@ -608,12 +584,7 @@ class CartesiaTools(Toolkit):
             logger.error(f"Error listing files in Cartesia dataset: {e}")
             return json.dumps({"error": str(e)})
 
-    def save_audio_to_file(
-        self,
-        audio_data: bytes,
-        filename: str,
-        directory: Optional[str] = None
-    ) -> str:
+    def save_audio_to_file(self, audio_data: bytes, filename: str, directory: Optional[str] = None) -> str:
         """Save audio data to a file.
 
         Args:
@@ -626,20 +597,13 @@ class CartesiaTools(Toolkit):
         """
         logger.info(f"Saving audio data to file: {filename}")
         try:
-            save_dir = directory or self.output_dir
-            if not os.path.exists(save_dir):
-                os.makedirs(save_dir)
-
-            file_path = os.path.join(save_dir, filename)
+            save_dir = Path(directory) if directory else self.output_dir
+            file_path = save_dir / filename
 
             with open(file_path, "wb") as f:
                 f.write(audio_data)
 
-            return json.dumps({
-                "success": True,
-                "file_path": file_path,
-                "size_bytes": len(audio_data)
-            }, indent=4)
+            return json.dumps({"success": True, "file_path": str(file_path), "size_bytes": len(audio_data)}, indent=4)
         except Exception as e:
             logger.error(f"Error saving audio data: {e}")
             return json.dumps({"error": str(e)})
@@ -676,7 +640,7 @@ class CartesiaTools(Toolkit):
         logger.info(f"Streaming speech for text: {transcript[:50]}...")
         try:
             # Normalize language code - API expects "en" not "en-US"
-            normalized_language = language.split('-')[0] if '-' in language else language
+            normalized_language = language.split("-")[0] if "-" in language else language
             logger.info(f"Normalized language from {language} to {normalized_language}")
 
             # Create proper output_format based on container type
@@ -685,21 +649,21 @@ class CartesiaTools(Toolkit):
                     "container": "mp3",
                     "sample_rate": output_format_sample_rate,
                     "bit_rate": output_format_bit_rate or 128000,  # Default to 128kbps if not provided
-                    "encoding": output_format_encoding or "mp3"    # API requires encoding field even for mp3
+                    "encoding": output_format_encoding or "mp3",  # API requires encoding field even for mp3
                 }
             elif output_format_container in ["wav", "raw"]:
                 encoding = output_format_encoding or "pcm_s16le"  # Default encoding if not provided
                 output_format = {
                     "container": output_format_container,
                     "sample_rate": output_format_sample_rate,
-                    "encoding": encoding
+                    "encoding": encoding,
                 }
             else:
                 # Fallback for any other container
                 output_format = {
                     "container": output_format_container,
                     "sample_rate": output_format_sample_rate,
-                    "encoding": output_format_encoding or "pcm_s16le"  # Always provide an encoding
+                    "encoding": output_format_encoding or "pcm_s16le",  # Always provide an encoding
                 }
                 # Add bit_rate for formats that need it
                 if output_format_bit_rate:
@@ -711,7 +675,7 @@ class CartesiaTools(Toolkit):
                 "transcript": transcript,
                 "voice_id": voice_id,
                 "language": normalized_language,
-                "output_format": output_format
+                "output_format": output_format,
             }
 
             # Log the API call for debugging
@@ -734,24 +698,30 @@ class CartesiaTools(Toolkit):
                     filename_base = "".join(c for c in filename_base if c.isalnum() or c == "_")
                     output_filename = f"{filename_base}.{output_format_container}"
 
-                file_path = os.path.join(self.output_dir, output_filename)
+                file_path = self.output_dir / output_filename
                 with open(file_path, "wb") as f:
                     f.write(audio_data)
 
-                return json.dumps({
-                    "success": True,
-                    "streaming": False,  # We're using bytes method, not streaming
-                    "total_bytes": total_bytes,
-                    "file_path": file_path
-                }, indent=4)
+                return json.dumps(
+                    {
+                        "success": True,
+                        "streaming": False,  # We're using bytes method, not streaming
+                        "total_bytes": total_bytes,
+                        "file_path": str(file_path),
+                    },
+                    indent=4,
+                )
             else:
                 # Even when not saving to file, return JSON string not binary data
-                return json.dumps({
-                    "success": True,
-                    "streaming": False,
-                    "total_bytes": total_bytes,
-                    "data": "Binary audio data (not displayed)"
-                }, indent=4)
+                return json.dumps(
+                    {
+                        "success": True,
+                        "streaming": False,
+                        "total_bytes": total_bytes,
+                        "data": "Binary audio data (not displayed)",
+                    },
+                    indent=4,
+                )
 
         except Exception as e:
             logger.error(f"Error streaming speech with Cartesia: {e}")
@@ -791,13 +761,10 @@ class CartesiaTools(Toolkit):
         logger.info(f"Batch processing {len(transcripts)} texts to speech")
         try:
             # Normalize language code - API expects "en" not "en-US"
-            normalized_language = language.split('-')[0] if '-' in language else language
+            normalized_language = language.split("-")[0] if "-" in language else language
             logger.info(f"Normalized language from {language} to {normalized_language}")
 
-            save_dir = output_dir or self.output_dir
-            if not os.path.exists(save_dir):
-                os.makedirs(save_dir)
-
+            save_dir = Path(output_dir) if output_dir else self.output_dir
             results = []
 
             for i, text in enumerate(transcripts):
@@ -808,21 +775,21 @@ class CartesiaTools(Toolkit):
                             "container": "mp3",
                             "sample_rate": output_format_sample_rate,
                             "bit_rate": output_format_bit_rate or 128000,  # Default to 128kbps if not provided
-                            "encoding": output_format_encoding or "mp3"    # API requires encoding field even for mp3
+                            "encoding": output_format_encoding or "mp3",  # API requires encoding field even for mp3
                         }
                     elif output_format_container in ["wav", "raw"]:
                         encoding = output_format_encoding or "pcm_s16le"  # Default encoding if not provided
                         output_format = {
                             "container": output_format_container,
                             "sample_rate": output_format_sample_rate,
-                            "encoding": encoding
+                            "encoding": encoding,
                         }
                     else:
                         # Fallback for any other container
                         output_format = {
                             "container": output_format_container,
                             "sample_rate": output_format_sample_rate,
-                            "encoding": output_format_encoding or "pcm_s16le"  # Always provide an encoding
+                            "encoding": output_format_encoding or "pcm_s16le",  # Always provide an encoding
                         }
                         # Add bit_rate for formats that need it
                         if output_format_bit_rate:
@@ -834,27 +801,27 @@ class CartesiaTools(Toolkit):
                         "transcript": text,
                         "voice_id": voice_id,
                         "language": normalized_language,
-                        "output_format": output_format
+                        "output_format": output_format,
                     }
 
                     # Log the API call for debugging
-                    logger.info(f"Calling TTS API with params for text {i+1}: {json.dumps(params)}")
+                    logger.info(f"Calling TTS API with params for text {i + 1}: {json.dumps(params)}")
 
                     # Make the API call
                     audio_data = self.client.tts.bytes(**params)
 
                     # Create filename
-                    filename = f"batch_tts_{i+1}.{output_format_container}"
-                    file_path = os.path.join(save_dir, filename)
+                    filename = f"batch_tts_{i + 1}.{output_format_container}"
+                    file_path = save_dir / filename
 
                     # Save the file
                     with open(file_path, "wb") as f:
                         f.write(audio_data)
 
-                    results.append(file_path)
+                    results.append(str(file_path))
 
                 except Exception as e:
-                    logger.error(f"Error processing text {i+1}: {e}")
+                    logger.error(f"Error processing text {i + 1}: {e}")
                     results.append(None)
 
             # Filter out None values
@@ -864,14 +831,17 @@ class CartesiaTools(Toolkit):
             success_count = len(results)
             error_count = 0
 
-            return json.dumps({
-                "success": True,
-                "total": len(transcripts),
-                "success_count": success_count,
-                "error_count": error_count,
-                "output_directory": save_dir,
-                "details": results
-            }, indent=4)
+            return json.dumps(
+                {
+                    "success": True,
+                    "total": len(transcripts),
+                    "success_count": success_count,
+                    "error_count": error_count,
+                    "output_directory": str(save_dir),
+                    "details": results,
+                },
+                indent=4,
+            )
 
         except Exception as e:
             logger.error(f"Error in batch text-to-speech processing: {e}")

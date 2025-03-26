@@ -1,6 +1,7 @@
 """Unit tests for Cartesia tools."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
@@ -13,7 +14,15 @@ def mock_cartesia():
     """Create a mock Cartesia client."""
     with patch("agno.tools.cartesia.Cartesia") as mock_cartesia, patch.dict(
         "os.environ", {"CARTESIA_API_KEY": "dummy_token"}
-    ):
+    ), patch("agno.tools.cartesia.Path") as mock_path:
+        # Setup the Path class to handle directory creation and checks
+        mock_path_instance = MagicMock()
+        mock_path.return_value = mock_path_instance
+
+        # Make the path instance handle / operator calls
+        mock_path_instance.__truediv__.return_value = mock_path_instance
+
+        # Create the mock client
         mock_client = MagicMock()
         mock_cartesia.return_value = mock_client
 
@@ -63,20 +72,18 @@ class TestCartesiaTools:
         """Test initialization with environment variable."""
         with patch("agno.tools.cartesia.Cartesia") as mock_cartesia, patch.dict(
             "os.environ", {"CARTESIA_API_KEY": "env_key"}
-        ), patch("agno.tools.cartesia.getenv", return_value="env_key"):
+        ), patch("os.getenv", return_value="env_key"):
             CartesiaTools()
             mock_cartesia.assert_called_once_with(api_key="env_key")
 
     def test_init_missing_api_key(self):
         """Test initialization with missing API key."""
-        with patch("agno.tools.cartesia.getenv", return_value=None), pytest.raises(ValueError):
+        with patch("os.getenv", return_value=None), pytest.raises(ValueError):
             CartesiaTools()
 
     def test_feature_registration(self):
         """Test that features are correctly registered based on flags."""
-        with patch("agno.tools.cartesia.Cartesia"), patch.dict(
-            "os.environ", {"CARTESIA_API_KEY": "dummy"}
-        ):
+        with patch("agno.tools.cartesia.Cartesia"), patch.dict("os.environ", {"CARTESIA_API_KEY": "dummy"}):
             # Test with all features disabled
             tools = CartesiaTools(
                 text_to_speech_enabled=False,
@@ -84,7 +91,7 @@ class TestCartesiaTools:
                 list_voices_enabled=False,
                 voice_get_enabled=False,
                 save_audio_enabled=False,
-                batch_processing_enabled=False
+                batch_processing_enabled=False,
             )
             assert len(tools.functions) == 0
 
@@ -95,7 +102,7 @@ class TestCartesiaTools:
                 voice_get_enabled=False,
                 text_to_speech_streaming_enabled=False,
                 save_audio_enabled=False,
-                batch_processing_enabled=False
+                batch_processing_enabled=False,
             )
             assert len(tools.functions) == 2
             assert "text_to_speech" in tools.functions
@@ -108,7 +115,7 @@ class TestCartesiaTools:
                 text_to_speech_enabled=False,
                 list_voices_enabled=False,
                 text_to_speech_streaming_enabled=False,
-                save_audio_enabled=False
+                save_audio_enabled=False,
             )
             assert len(tools.functions) == 2
             assert "get_voice" in tools.functions
@@ -151,7 +158,7 @@ class TestCartesiaTools:
                 description="Test cloned voice",
                 language="en",
                 mode="stability",
-                enhance=True
+                enhance=True,
             )
 
             result_data = json.loads(result)
@@ -174,10 +181,7 @@ class TestCartesiaTools:
         mock_cartesia.voices.clone.side_effect = Exception("Cloning failed")
 
         with patch("builtins.open", mock_open(read_data=b"audio data")):
-            result = tools.clone_voice(
-                name="Cloned Voice",
-                audio_file_path="path/to/audio.wav"
-            )
+            result = tools.clone_voice(name="Cloned Voice", audio_file_path="path/to/audio.wav")
 
             result_data = json.loads(result)
             assert "error" in result_data
@@ -188,54 +192,64 @@ class TestCartesiaTools:
         tools = CartesiaTools()
         mock_cartesia.tts.bytes.return_value = b"audio data"
 
-        result = tools.text_to_speech(
-            transcript="Hello world",
-            model_id="sonic-2",
-            voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
-            language="en"
-        )
+        # Create a temporary mock for file operations
+        with patch("builtins.open", mock_open()):
+            result = tools.text_to_speech(
+                transcript="Hello world",
+                model_id="sonic-2",
+                voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
+                language="en",
+            )
 
-        result_data = json.loads(result)
+            result_data = json.loads(result)
 
-        mock_cartesia.tts.bytes.assert_called_once()
-        assert "model_id" in mock_cartesia.tts.bytes.call_args[1]
-        assert "transcript" in mock_cartesia.tts.bytes.call_args[1]
-        assert "voice_id" in mock_cartesia.tts.bytes.call_args[1]
-        assert "language" in mock_cartesia.tts.bytes.call_args[1]
-        assert "output_format" in mock_cartesia.tts.bytes.call_args[1]
+            mock_cartesia.tts.bytes.assert_called_once()
+            assert "model_id" in mock_cartesia.tts.bytes.call_args[1]
+            assert "transcript" in mock_cartesia.tts.bytes.call_args[1]
+            assert "voice_id" in mock_cartesia.tts.bytes.call_args[1]
+            assert "language" in mock_cartesia.tts.bytes.call_args[1]
+            assert "output_format" in mock_cartesia.tts.bytes.call_args[1]
 
-        # Verify output_format has the correct structure
-        output_format = mock_cartesia.tts.bytes.call_args[1]["output_format"]
-        assert "container" in output_format
-        assert "sample_rate" in output_format
-        assert "encoding" in output_format
-        assert output_format["encoding"] == "mp3"
-        assert "bit_rate" in output_format
+            # Verify output_format has the correct structure
+            output_format = mock_cartesia.tts.bytes.call_args[1]["output_format"]
+            assert "container" in output_format
+            assert "sample_rate" in output_format
+            assert "encoding" in output_format
+            assert output_format["encoding"] == "mp3"
+            assert "bit_rate" in output_format
 
-        assert result_data["success"] is True
+            assert result_data["success"] is True
 
     def test_text_to_speech_with_file_output(self, mock_cartesia):
         """Test TTS with file output."""
         tools = CartesiaTools()
         mock_cartesia.tts.bytes.return_value = b"audio data"
 
-        with patch("builtins.open", mock_open()) as mock_file, patch("os.path.join", return_value="output_dir/output.mp3"):
-            result = tools.text_to_speech(
-                transcript="Hello world",
-                model_id="sonic-2",
-                voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
-                language="en",
-                output_path="output.mp3"
-            )
+        # Create a Path object for the test
+        output_path = Path("output_dir/output.mp3")
 
-            result_data = json.loads(result)
+        with patch("builtins.open", mock_open()) as mock_file:
+            # Directly set the file_path that would be created
+            with patch.object(tools, "output_dir") as mock_output_dir:
+                mock_output_dir.__truediv__.return_value = output_path
 
-            mock_file.assert_called_once_with("output_dir/output.mp3", "wb")
-            mock_file().write.assert_called_once_with(b"audio data")
-            assert result_data["success"] is True
-            assert "file_path" in result_data
-            assert "total_bytes" in result_data
-            assert result_data["total_bytes"] == len(b"audio data")
+                result = tools.text_to_speech(
+                    transcript="Hello world",
+                    model_id="sonic-2",
+                    voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
+                    language="en",
+                    output_path="output.mp3",
+                )
+
+                result_data = json.loads(result)
+
+                # Verify the correct file path is used
+                mock_file.assert_called_once_with(output_path, "wb")
+                mock_file().write.assert_called_once_with(b"audio data")
+                assert result_data["success"] is True
+                assert "file_path" in result_data
+                assert "total_bytes" in result_data
+                assert result_data["total_bytes"] == len(b"audio data")
 
     def test_text_to_speech_with_experimental_controls(self, mock_cartesia):
         """Test TTS with speed and emotion controls."""
@@ -243,24 +257,25 @@ class TestCartesiaTools:
         mock_cartesia.tts.bytes.return_value = b"audio data"
 
         # In the current implementation, experimental controls are passed through kwargs
-        result = tools.text_to_speech(
-            transcript="Hello world",
-            model_id="sonic-2",
-            voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
-            language="en",
-            voice_experimental_controls_speed="fast",
-            voice_experimental_controls_emotion=["positivity", "curiosity:low"]
-        )
+        with patch("builtins.open", mock_open()):
+            result = tools.text_to_speech(
+                transcript="Hello world",
+                model_id="sonic-2",
+                voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
+                language="en",
+                voice_experimental_controls_speed="fast",
+                voice_experimental_controls_emotion=["positivity", "curiosity:low"],
+            )
 
-        result_data = json.loads(result)
+            result_data = json.loads(result)
 
-        # Check that parameters were passed in call
-        assert "model_id" in mock_cartesia.tts.bytes.call_args[1]
-        assert "transcript" in mock_cartesia.tts.bytes.call_args[1]
-        assert "voice_id" in mock_cartesia.tts.bytes.call_args[1]
+            # Check that parameters were passed in call
+            assert "model_id" in mock_cartesia.tts.bytes.call_args[1]
+            assert "transcript" in mock_cartesia.tts.bytes.call_args[1]
+            assert "voice_id" in mock_cartesia.tts.bytes.call_args[1]
 
-        # These should be passed through if SDK supports them
-        assert result_data["success"] is True
+            # These should be passed through if SDK supports them
+            assert result_data["success"] is True
 
     def test_text_to_speech_missing_voice_id(self, mock_cartesia):
         """Test TTS with missing voice_id parameter."""
@@ -271,7 +286,7 @@ class TestCartesiaTools:
             transcript="Hello world",
             model_id="sonic-2",
             voice_id=None,  # Missing voice_id
-            language="en"
+            language="en",
         )
 
         result_data = json.loads(result)
@@ -287,20 +302,16 @@ class TestCartesiaTools:
             "id": "mixed-voice-id",
             "name": "Mixed Voice",
             "description": "A mixed voice",
-            "language": "en"
+            "language": "en",
         }
 
-        result = tools.mix_voices(voices=[
-            {"id": "voice_id_1", "weight": 0.25},
-            {"id": "voice_id_2", "weight": 0.75}
-        ])
+        result = tools.mix_voices(voices=[{"id": "voice_id_1", "weight": 0.25}, {"id": "voice_id_2", "weight": 0.75}])
 
         result_data = json.loads(result)
 
-        mock_cartesia.voices.mix.assert_called_once_with(voices=[
-            {"id": "voice_id_1", "weight": 0.25},
-            {"id": "voice_id_2", "weight": 0.75}
-        ])
+        mock_cartesia.voices.mix.assert_called_once_with(
+            voices=[{"id": "voice_id_1", "weight": 0.25}, {"id": "voice_id_2", "weight": 0.75}]
+        )
 
         assert result_data["id"] == "mixed-voice-id"
         assert result_data["name"] == "Mixed Voice"
@@ -321,7 +332,7 @@ class TestCartesiaTools:
                 output_format_container="mp3",
                 output_format_sample_rate=44100,
                 output_format_encoding="mp3",
-                output_format_bit_rate=128000
+                output_format_bit_rate=128000,
             )
 
             result_data = json.loads(result)
@@ -355,7 +366,7 @@ class TestCartesiaTools:
             language="en",
             output_format_container="wav",
             output_format_sample_rate=48000,
-            output_format_encoding="pcm_s16le"
+            output_format_encoding="pcm_s16le",
         )
 
         # Verify WAV parameters were passed correctly
@@ -371,7 +382,7 @@ class TestCartesiaTools:
             language="en",
             output_format_container="raw",
             output_format_sample_rate=22050,
-            output_format_encoding="pcm_s16le"
+            output_format_encoding="pcm_s16le",
         )
 
         # Verify RAW parameters were passed correctly
@@ -382,10 +393,7 @@ class TestCartesiaTools:
     def test_get_api_status(self, mock_cartesia):
         """Test getting API status."""
         tools = CartesiaTools()
-        mock_cartesia.api_status.get.return_value = {
-            "status": "operational",
-            "message": "All systems operational"
-        }
+        mock_cartesia.api_status.get.return_value = {"status": "operational", "message": "All systems operational"}
 
         result = tools.get_api_status()
         result_data = json.loads(result)
@@ -401,10 +409,7 @@ class TestCartesiaTools:
         # Test error in TTS
         mock_cartesia.tts.bytes.side_effect = Exception("TTS error")
         result = tools.text_to_speech(
-            transcript="Hello world",
-            model_id="sonic-2",
-            voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
-            language="en"
+            transcript="Hello world", model_id="sonic-2", voice_id="a0e99841-438c-4a64-b679-ae501e7d6091", language="en"
         )
         result_data = json.loads(result)
         assert "error" in result_data
@@ -415,19 +420,20 @@ class TestCartesiaTools:
         tools = CartesiaTools()
         mock_cartesia.tts.bytes.return_value = b"audio data"
 
-        result = tools.text_to_speech(
-            transcript="Hello world",
-            model_id="sonic-turbo",
-            voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
-            language="en"
-        )
+        with patch("builtins.open", mock_open()):
+            result = tools.text_to_speech(
+                transcript="Hello world",
+                model_id="sonic-turbo",
+                voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
+                language="en",
+            )
 
-        result_data = json.loads(result)
+            result_data = json.loads(result)
 
-        mock_cartesia.tts.bytes.assert_called_once()
-        assert mock_cartesia.tts.bytes.call_args[1]["model_id"] == "sonic-turbo"
-        assert "output_format" in mock_cartesia.tts.bytes.call_args[1]
-        assert result_data["success"] is True
+            mock_cartesia.tts.bytes.assert_called_once()
+            assert mock_cartesia.tts.bytes.call_args[1]["model_id"] == "sonic-turbo"
+            assert "output_format" in mock_cartesia.tts.bytes.call_args[1]
+            assert result_data["success"] is True
 
     def test_text_to_speech_without_saving(self, mock_cartesia):
         """Test TTS without saving to file."""
@@ -440,7 +446,7 @@ class TestCartesiaTools:
             voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
             language="en",
             output_path=None,
-            save_to_file=False
+            save_to_file=False,
         )
 
         result_data = json.loads(result)
@@ -457,49 +463,51 @@ class TestCartesiaTools:
         tools = CartesiaTools()
         mock_cartesia.tts.bytes.return_value = b"streamed audio data"
 
-        result = tools.text_to_speech_stream(
-            transcript="Hello world",
-            model_id="sonic-2",
-            voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
-            language="en"
-        )
+        with patch("builtins.open", mock_open()):
+            result = tools.text_to_speech_stream(
+                transcript="Hello world",
+                model_id="sonic-2",
+                voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
+                language="en",
+            )
 
-        result_data = json.loads(result)
+            result_data = json.loads(result)
 
-        mock_cartesia.tts.bytes.assert_called_once()
-        assert "model_id" in mock_cartesia.tts.bytes.call_args[1]
-        assert "transcript" in mock_cartesia.tts.bytes.call_args[1]
-        assert "voice_id" in mock_cartesia.tts.bytes.call_args[1]
-        assert "language" in mock_cartesia.tts.bytes.call_args[1]
-        assert "output_format" in mock_cartesia.tts.bytes.call_args[1]
+            mock_cartesia.tts.bytes.assert_called_once()
+            assert "model_id" in mock_cartesia.tts.bytes.call_args[1]
+            assert "transcript" in mock_cartesia.tts.bytes.call_args[1]
+            assert "voice_id" in mock_cartesia.tts.bytes.call_args[1]
+            assert "language" in mock_cartesia.tts.bytes.call_args[1]
+            assert "output_format" in mock_cartesia.tts.bytes.call_args[1]
 
-        # Verify output_format has the encoding field
-        output_format = mock_cartesia.tts.bytes.call_args[1]["output_format"]
-        assert "encoding" in output_format
+            # Verify output_format has the encoding field
+            output_format = mock_cartesia.tts.bytes.call_args[1]["output_format"]
+            assert "encoding" in output_format
 
-        assert result_data["success"] is True
-        assert "streaming" in result_data
-        assert result_data["streaming"] is False  # Using bytes method, not true streaming
-        assert "total_bytes" in result_data
+            assert result_data["success"] is True
+            assert "streaming" in result_data
+            assert result_data["streaming"] is False  # Using bytes method, not true streaming
+            assert "total_bytes" in result_data
 
     def test_batch_text_to_speech(self, mock_cartesia):
         """Test batch TTS functionality."""
         tools = CartesiaTools()
         mock_cartesia.tts.bytes.return_value = b"audio data"
 
-        result = tools.batch_text_to_speech(
-            transcripts=["Hello", "World", "Test"],
-            model_id="sonic-2",
-            voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
-            language="en"
-        )
+        with patch("builtins.open", mock_open()):
+            result = tools.batch_text_to_speech(
+                transcripts=["Hello", "World", "Test"],
+                model_id="sonic-2",
+                voice_id="a0e99841-438c-4a64-b679-ae501e7d6091",
+                language="en",
+            )
 
-        result_data = json.loads(result)
+            result_data = json.loads(result)
 
-        assert mock_cartesia.tts.bytes.call_count == 3
-        assert "success" in result_data
-        assert result_data["success"] is True
-        assert "total" in result_data
-        assert result_data["total"] == 3
-        assert "success_count" in result_data
-        assert "output_directory" in result_data
+            assert mock_cartesia.tts.bytes.call_count == 3
+            assert "success" in result_data
+            assert result_data["success"] is True
+            assert "total" in result_data
+            assert result_data["total"] == 3
+            assert "success_count" in result_data
+            assert "output_directory" in result_data
