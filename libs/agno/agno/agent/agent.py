@@ -3091,8 +3091,8 @@ class Agent:
                     reasoning_agent_messages=[openai_reasoning_message],
                 )
             else:
-                log_info(
-                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, adding manual CoT"
+                log_warning(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
                 )
                 use_default_reasoning = True
         # If no reasoning model is provided, use the default reasoning approach
@@ -3207,6 +3207,8 @@ class Agent:
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
 
+        use_default_reasoning = False
+
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
@@ -3282,10 +3284,15 @@ class Agent:
                 )
             else:
                 log_info(
-                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, adding manual CoT"
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
                 )
+                use_default_reasoning = True
         # If no reasoning model is provided, use the default reasoning approach
         else:
+            use_default_reasoning = True
+
+
+        if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
 
