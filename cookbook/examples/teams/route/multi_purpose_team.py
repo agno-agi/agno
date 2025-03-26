@@ -1,11 +1,11 @@
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.media import Audio, Image, File  
+from agno.media import Audio, File, Image
+from agno.models.anthropic import Claude
 from agno.models.deepseek import DeepSeek
 from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
-from agno.models.anthropic import Claude
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.dalle import DalleTools
@@ -13,7 +13,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.e2b import E2BTools
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.media import download_file
-
 
 web_agent = Agent(
     name="Web Agent",
@@ -166,7 +165,7 @@ agent_team = Team(
     show_tool_calls=True,
     markdown=True,
     debug_mode=True,
-    show_members_responses=True
+    show_members_responses=True,
 )
 
 # Use the reasoning agent to reason about the result
@@ -218,7 +217,6 @@ agent_team.print_response(
 
 # # Use the reasoning agent to reason about the result
 # agent_team.print_response("9.11 and 9.9 -- which is bigger?", stream=True)
-
 
 
 pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")

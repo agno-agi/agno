@@ -3239,11 +3239,13 @@ class Team:
 
         return system_message_content
 
-    def get_system_message(self,
+    def get_system_message(
+        self,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,) -> Optional[Message]:
+        files: Optional[Sequence[File]] = None,
+    ) -> Optional[Message]:
         """Get the system message for the team."""
         # 1. Build and return the default system message for the Agent.
         # 1.1 Build the list of instructions for the system message
