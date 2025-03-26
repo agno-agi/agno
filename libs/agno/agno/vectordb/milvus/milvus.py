@@ -2,9 +2,10 @@ from hashlib import md5
 from typing import Any, Dict, List, Optional
 
 try:
-    from pymilvus import MilvusClient, AsyncMilvusClient  # type: ignore
     import asyncio
     import os
+
+    from pymilvus import AsyncMilvusClient, MilvusClient  # type: ignore
 except ImportError:
     raise ImportError("The `pymilvus` package is not installed. Please install it via `pip install pymilvus`.")
 
@@ -13,6 +14,7 @@ from agno.embedder import Embedder
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
+
 
 class Milvus(VectorDb):
     def __init__(
@@ -75,7 +77,7 @@ class Milvus(VectorDb):
                 **self.kwargs,
             )
         return self._client
-    
+
     @property
     def async_client(self) -> AsyncMilvusClient:
         if not hasattr(self, "_async_client") or self._async_client is None:
@@ -103,7 +105,7 @@ class Milvus(VectorDb):
                 id_type="string",
                 max_length=65_535,
             )
-            
+
     async def async_create(self) -> None:
         """Create collection asynchronously if it doesn't exist."""
         _distance = "COSINE"
@@ -140,7 +142,7 @@ class Milvus(VectorDb):
             )
             return len(collection_points) > 0
         return False
-    
+
     async def async_doc_exists(self, document: Document) -> bool:
         """
         Check if document exists asynchronously.
@@ -210,7 +212,7 @@ class Milvus(VectorDb):
                 data=data,
             )
             log_debug(f"Inserted document: {document.name} ({document.meta_data})")
-            
+
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents asynchronously with controlled concurrency."""
         log_debug(f"Inserting {len(documents)} documents asynchronously")
@@ -232,13 +234,12 @@ class Milvus(VectorDb):
                 collection_name=self.collection,
                 data=data,
             )
-            log_debug(
-                f"Inserted document asynchronously: {document.name} ({document.meta_data})")
+            log_debug(f"Inserted document asynchronously: {document.name} ({document.meta_data})")
             return data
 
         BATCH_SIZE = 5
         for i in range(0, len(documents), BATCH_SIZE):
-            batch = documents[i:i+BATCH_SIZE]
+            batch = documents[i : i + BATCH_SIZE]
             await asyncio.gather(*[process_document(doc) for doc in batch])
 
         log_debug(f"Inserted {len(documents)} documents asynchronously")
@@ -278,10 +279,10 @@ class Milvus(VectorDb):
                 data=data,
             )
             log_debug(f"Upserted document: {document.name} ({document.meta_data})")
-            
+
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents asynchronously in parallel."""
-        print('--> async upsert')
+        print("--> async upsert")
         log_debug(f"Upserting {len(documents)} documents asynchronously")
 
         async def process_document(document):
@@ -300,15 +301,13 @@ class Milvus(VectorDb):
                 collection_name=self.collection,
                 data=data,
             )
-            log_debug(
-                f"Upserted document asynchronously: {document.name} ({document.meta_data})")
+            log_debug(f"Upserted document asynchronously: {document.name} ({document.meta_data})")
             return data
 
         # Process all documents in parallel
         await asyncio.gather(*[process_document(doc) for doc in documents])
 
-        log_debug(
-            f"Upserted {len(documents)} documents asynchronously in parallel")
+        log_debug(f"Upserted {len(documents)} documents asynchronously in parallel")
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
@@ -348,7 +347,7 @@ class Milvus(VectorDb):
             )
 
         return search_results
-    
+
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
@@ -386,7 +385,7 @@ class Milvus(VectorDb):
         if self.exists():
             log_debug(f"Deleting collection: {self.collection}")
             self.client.drop_collection(self.collection)
-            
+
     async def async_drop(self) -> None:
         """
         Drop collection asynchronously.
@@ -402,11 +401,11 @@ class Milvus(VectorDb):
             if self.client.has_collection(self.collection):
                 return True
         return False
-    
+
     async def async_exists(self) -> bool:
         """
         Check if collection exists asynchronously.
-        
+
         has_collection() is not supported by AsyncMilvusClient,
         so we use the synchronous client.
         """
