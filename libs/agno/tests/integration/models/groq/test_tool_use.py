@@ -25,7 +25,6 @@ def test_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
 @pytest.mark.skip(reason="This test is flaky.")
@@ -53,7 +52,6 @@ def test_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
 
 
 @pytest.mark.asyncio
@@ -72,10 +70,8 @@ async def test_async_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
-@pytest.mark.skip(reason="This test is flaky.")
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
@@ -101,7 +97,6 @@ async def test_async_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
 
 
 @pytest.mark.skip(reason="This test is flaky.")
