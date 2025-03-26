@@ -3401,7 +3401,7 @@ class Team:
         run_messages = RunMessages()
 
         # 1. Add system message to run_messages
-        system_message = self.get_system_message(images=images, files=files)
+        system_message = self.get_system_message(images=images, audio=audio, videos=videos, files=files)
         if system_message is not None:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)
