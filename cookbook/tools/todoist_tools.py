@@ -13,7 +13,7 @@ Usage:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.google.gemini import Gemini
 from agno.tools.todoist import TodoistTools
 
 todoist_agent = Agent(
@@ -27,7 +27,7 @@ todoist_agent = Agent(
         "When given a task to get, get the todoist task.",
     ],
     agent_id="todoist-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=Gemini("gemini-2.0-flash-exp"),
     tools=[TodoistTools()],
     markdown=True,
     debug_mode=True,
