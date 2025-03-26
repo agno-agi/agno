@@ -3,8 +3,6 @@ from typing import Any, Dict, List, Optional
 
 try:
     import asyncio
-    import os
-
     from pymilvus import AsyncMilvusClient, MilvusClient  # type: ignore
 except ImportError:
     raise ImportError("The `pymilvus` package is not installed. Please install it via `pip install pymilvus`.")
