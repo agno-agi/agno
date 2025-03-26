@@ -1723,7 +1723,7 @@ class Agent:
     def load_user_memories(self) -> None:
         self.memory = cast(AgentMemory, self.memory)
         if self.memory and self.memory.create_user_memories:
-            if self.user_id is not None:
+            if self.user_id is not None and self.memory.user_id is None:
                 self.memory.user_id = self.user_id
 
             self.memory.load_user_memories()
