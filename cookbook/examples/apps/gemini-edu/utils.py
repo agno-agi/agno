@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import streamlit as st
 from agno.utils.log import logger
+from agno.models.message import Citations
 
 
 def add_message(
@@ -62,38 +63,34 @@ def display_tool_calls(container: Any, tool_calls: List[Dict[str, Any]]) -> None
                 st.code(formatted_args, language="json")
 
 
-def display_grounding_metadata(grounding_metadata: Any) -> None:
+def display_grounding_metadata(citations: Optional[Citations]) -> None:
     """
-    Display search grounding metadata if available.
+    Display search grounding metadata (sources) if available.
 
     Args:
-        grounding_metadata: Grounding metadata from agent response
+        citations: Citations object from the agent response chunk or final message.
     """
-    if not grounding_metadata:
+    # Check if citations object exists and has the 'urls' attribute and it's not empty
+    if not citations or not hasattr(citations, 'urls') or not citations.urls:
         return
 
     try:
         st.markdown("---")
         st.markdown("### 🌐 Sources")
 
-        # Display grounding sources if available
-        if (
-            hasattr(grounding_metadata, "search_entry_point")
-            and grounding_metadata.search_entry_point
-        ):
-            if hasattr(grounding_metadata.search_entry_point, "rendered_content"):
-                grounding_content = (
-                    grounding_metadata.search_entry_point.rendered_content
-                )
-                st.markdown(grounding_content)
+        # Display grounding sources from the pre-parsed list
+        for citation_url in citations.urls:
+            # Ensure url and title exist
+            if hasattr(citation_url, 'url') and citation_url.url and hasattr(citation_url, 'title') and citation_url.title:
+                 st.markdown(f"- [{citation_url.title}]({citation_url.url})")
+            elif hasattr(citation_url, 'url') and citation_url.url: # Fallback if title is missing
+                 st.markdown(f"- [{citation_url.url}]({citation_url.url})")
 
-        # Display search suggestions if available
-        if (
-            hasattr(grounding_metadata, "search_suggestions")
-            and grounding_metadata.search_suggestions
-        ):
-            st.markdown("### 🔍 Related Searches")
-            for suggestion in grounding_metadata.search_suggestions:
-                st.markdown(f"- {suggestion}")
+        # Optionally, display raw metadata in an expander for debugging if needed
+        # if hasattr(citations, 'raw') and citations.raw:
+        #     with st.expander("Raw Grounding Metadata (Debug)"):
+        #         st.json(citations.raw)
+
     except Exception as e:
-        logger.warning(f"Error displaying grounding metadata: {str(e)}")
+        logger.error(f"Error displaying grounding metadata: {e}", exc_info=True)
+        st.warning("Could not display sources.")

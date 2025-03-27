@@ -36,6 +36,16 @@ CUSTOM_CSS = """
         margin-bottom: 2rem;
         opacity: 0.8;
     }
+    /* Target images within Streamlit's chat message content */
+    /* Adjust the max-width percentage or pixel value as needed */
+    [data-testid="stChatMessageContent"] img {
+        max-width: 350px; /* Limit image width */
+        max-height: 300px; /* Optional: Limit image height */
+        display: block; /* Ensure image is block level */
+        margin-top: 10px; /* Add some space above the image */
+        margin-bottom: 10px; /* Add some space below the image */
+        border-radius: 5px; /* Optional: rounded corners */
+    }
 </style>
 """
 
@@ -50,10 +60,8 @@ MODEL_OPTIONS = {
 
 EDUCATION_LEVELS = [
     "Elementary School",
-    "Middle School",
     "High School",
     "College",
-    "Undergrad",
     "Graduate",
     "PhD",
 ]
@@ -116,77 +124,181 @@ def handle_streaming_response(learning_generator):
 def main():
     """Main application entry point"""
     st.title("🔍 Gemini Tutor 📚")
-    st.markdown(
-        "A streamlined AI tutor that creates personalized learning experiences on any topic."
-    )
+    st.markdown('<p class="subtitle">Your AI-powered guide for exploring any topic</p>', unsafe_allow_html=True)
 
     # Check for API key
     if not check_api_key():
-        return
+        st.stop()
 
-    # Setup sidebar
-    st.sidebar.title("Settings")
-    education_level = st.sidebar.selectbox(
-        "Education Level", EDUCATION_LEVELS, index=EDUCATION_LEVELS.index("High School")
-    )
-
-    model_name = st.sidebar.selectbox("Model", list(MODEL_OPTIONS.keys()), index=0)
-    model_id = MODEL_OPTIONS[model_name]
-
-    # Initialize TutorAppAgent if needed
+    # Initialize agent in session state if not already present
     if "tutor_agent" not in st.session_state:
-        st.session_state.tutor_agent = TutorAppAgent(
-            model_id=model_id, education_level=education_level
+        st.session_state.tutor_agent = None
+        st.session_state.model_id = MODEL_OPTIONS["Gemini 2.5 Pro Experimental (Recommended)"]
+        st.session_state.education_level = "High School"
+        st.session_state.messages = [] # Initialize chat history
+        st.session_state.processing = False # Flag to track if we're currently processing a request
+
+    # Sidebar for configuration
+    with st.sidebar:
+        st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Google_Gemini_logo.svg/1200px-Google_Gemini_logo.svg.png", width=100)
+        st.header("Configuration")
+
+        selected_model_name = st.selectbox(
+            "Select Gemini Model",
+            options=list(MODEL_OPTIONS.keys()),
+            index=0, # Default to recommended
+            key="selected_model_name",
+        )
+        st.session_state.model_id = MODEL_OPTIONS[selected_model_name]
+
+        st.session_state.education_level = st.selectbox(
+            "Select Education Level",
+            options=EDUCATION_LEVELS,
+            index=EDUCATION_LEVELS.index(st.session_state.education_level), # Maintain selected level
+            key="education_level_selector",
         )
 
-    # Search interface
-    search_topic = st.text_input(
-        "What would you like to learn about?",
-        placeholder="e.g., quantum physics, French Revolution, machine learning",
-        key="search_box",
-    )
-
-    if st.button("Search & Create Learning Experience", key="search_button"):
-        if not search_topic:
-            st.warning("Please enter a search topic")
-            return
-
-        with st.spinner("Creating learning experience..."):
+        if st.button("Apply & Reset", key="apply_reset"):
+            # Re-initialize the agent with new settings and clear history
             try:
-                # Display learning experience header
-                st.markdown("## 📚 Learning Experience")
-
-                # Offload all processing to the agent (returns a generator)
-                learning_generator = (
-                    st.session_state.tutor_agent.create_learning_experience(
-                        search_topic=search_topic, education_level=education_level
-                    )
+                st.session_state.tutor_agent = TutorAppAgent(
+                    model_id=st.session_state.model_id,
+                    education_level=st.session_state.education_level,
                 )
-
-                # Handle the streaming response
-                content, metadata = handle_streaming_response(learning_generator)
-
-                # Display grounding metadata if available
-                if metadata:
-                    display_grounding_metadata(metadata)
-
+                st.session_state.messages = [] # Clear history on reset
+                st.success("Settings applied. Agent reset.")
+                st.rerun() # Rerun to reflect changes immediately
             except Exception as e:
-                st.error(f"Error: {str(e)}")
-                logger.error(f"Application error: {str(e)}")
+                st.error(f"Failed to initialize agent: {e}")
+                st.session_state.tutor_agent = None
 
-    # Show about information
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### About Gemini Tutor")
-    st.sidebar.markdown(
-        """
-        Gemini Tutor is an AI-powered educational tool that helps you learn about any topic.
+    # Ensure agent is initialized if not already
+    if st.session_state.tutor_agent is None:
+        try:
+            st.session_state.tutor_agent = TutorAppAgent(
+                model_id=st.session_state.model_id,
+                education_level=st.session_state.education_level,
+            )
+        except Exception as e:
+            st.error(f"Failed to initialize agent: {e}")
+            st.stop()
 
-        Features:
-        - Personalized learning experiences for your education level
-        - Fact-checked information with live web search
-        - Interactive content with examples and exercises
-        """
-    )
+    # Display chat history FIRST, before the form
+    st.markdown("### Learning Session")
+
+    # Display previous messages
+    for message in st.session_state.messages:
+        # Skip empty messages if any occurred
+        if not message.get("content"):
+            continue
+        with st.chat_message(message["role"]):
+            # Display content
+            st.markdown(message["content"])
+
+            # If assistant message, display tools and citations *within the same bubble*
+            if message["role"] == "assistant":
+                if message.get("tools"):
+                    # Display tools here, potentially collapsed
+                     with st.expander("🛠️ Tool Calls", expanded=False):
+                         display_tool_calls(message["tools"]) # Pass tools from message
+
+                if message.get("citations"):
+                    # Display citations here
+                    display_grounding_metadata(message["citations"]) # Pass Citations object
+
+    # Use st.form to handle Enter key submission
+    with st.form(key="topic_form"):
+        search_topic = st.text_input(
+            "What would you like to learn about?",
+            key="search_topic_input",
+            placeholder="e.g., Quantum Physics, History of Rome, Python programming"
+        )
+        submitted = st.form_submit_button("Start Learning", type="primary")
+
+        if submitted and search_topic and not st.session_state.processing:
+            # Set processing flag to prevent duplicate execution
+            st.session_state.processing = True
+
+            # Add user message to history
+            user_message = {"role": "user", "content": f"Teach me about: {search_topic}"}
+            st.session_state.messages.append(user_message)
+
+            # Rerun to display message before starting the processing
+            st.rerun()
+
+    # Process the query outside the form - this runs after the rerun
+    # if processing flag is set and there's a user message
+    if st.session_state.processing and st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+        try:
+            # Extract the search topic from the last user message
+            search_topic = st.session_state.messages[-1]["content"].replace("Teach me about: ", "")
+
+            # Create a placeholder for the thinking indicator (outside chat bubbles)
+            thinking_placeholder = st.empty()
+            thinking_placeholder.info("🧠 Thinking...")
+
+            # Stream response
+            response_stream = st.session_state.tutor_agent.create_learning_experience(
+                search_topic=search_topic,
+                education_level=st.session_state.education_level
+            )
+
+            # Stream and accumulate the response content and metadata
+            full_response = ""
+            stream_error = None
+            final_tools = None
+            final_citations = None
+
+            for chunk in response_stream:
+                # Check for content
+                if hasattr(chunk, "content") and chunk.content:
+                    full_response += chunk.content
+                    # Don't update the placeholder here - let history display handle it
+
+                # Accumulate tools
+                if hasattr(chunk, "tools") and chunk.tools:
+                    final_tools = chunk.tools
+
+                # Accumulate citations
+                if hasattr(chunk, "citations") and chunk.citations:
+                    final_citations = chunk.citations
+
+            # Clear thinking indicator
+            thinking_placeholder.empty()
+
+            # Prepare the assistant message dictionary with content, tools, and citations
+            assistant_message = {"role": "assistant"}
+            if stream_error:
+                logger.error(f"Stream ended with error: {stream_error}")
+                assistant_message["content"] = f"An error occurred: {stream_error}"
+            elif full_response:
+                assistant_message["content"] = full_response
+                if final_tools:
+                    assistant_message["tools"] = final_tools
+                if final_citations:
+                    assistant_message["citations"] = final_citations
+            else:
+                logger.warning("Stream finished with no content.")
+                assistant_message["content"] = "[No content received]"
+
+            # Add the complete assistant message to history
+            st.session_state.messages.append(assistant_message)
+
+        except Exception as e:
+            # Log error but only show it once
+            logger.error(f"Error during agent run: {e}", exc_info=True)
+
+            # Add error message to history
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": f"An error occurred: {e}"
+            })
+
+        # Reset processing flag
+        st.session_state.processing = False
+
+        # Rerun to display the results and reset the form
+        st.rerun()
 
 
 if __name__ == "__main__":

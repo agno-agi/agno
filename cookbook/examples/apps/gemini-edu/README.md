@@ -1,97 +1,85 @@
-# Multimodal Learning Tutor
+# Gemini Multimodal Learning Tutor 📚🧠
 
-Multimodal Learning Tutor is a powerful educational AI assistant powered by Google's Gemini 2.5 Pro Experimental, offering comprehensive learning through multiple modalities:
+Gemini Multimodal Learning Tutor is an advanced educational AI assistant powered by Google's Gemini 2.5 Pro Experimental. It provides personalized, interactive, and multimodal learning experiences tailored to various education levels.
 
-## Multimodal Capabilities
+---
 
-- 🖼️ **Image Analysis**: Process diagrams, charts, equations, and visual content
-- 🔊 **Audio Processing**: Extract knowledge from lectures, podcasts, and spoken explanations
-- 🎬 **Video Analysis**: Learn from educational videos, demonstrations, and presentations
-- 🔄 **Cross-Modal Learning**: Combine multiple types of media for enhanced understanding
+## 🚀 Features
 
-## Advanced Search & Information
+### Multimodal Capabilities
 
-- 🔍 **Google Search**: Comprehensive web results for broad context and current events
-- 📚 **Exa Search**: Academic and structured educational content for reliable information
-- 🦆 **DuckDuckGo**: Additional search perspectives for balanced information
-- 📊 **Multi-source Validation**: Cross-references information from multiple sources for accuracy
+- 🖼️ **Image Analysis**: Interpret diagrams, charts, equations, and visual content.
+- 🔊 **Audio Processing**: Extract insights from lectures, podcasts, and spoken explanations.
+- 🎬 **Video Analysis**: Learn from educational videos, demonstrations, and presentations.
+- 🔄 **Cross-Modal Learning**: Combine multiple media types for enhanced understanding.
 
-## Advanced AI Features
+### Advanced Search & Information
 
-- 🧠 Advanced reasoning and thinking capabilities for complex problems
-- 💭 Visible step-by-step reasoning process that shows its thinking
-- 🤖 Agentic AI capabilities to complete multi-step educational tasks
-- 🔢 Expert at math, science, and coding challenges
-- 📊 1 million token context window for comprehensive understanding
-- 📚 Personalized learning experiences
-- 💾 Save lessons for future reference
+- 🔍 **Google Search**: Comprehensive web results for broad context and current events.
+- 📚 **Exa Search**: Academic and structured educational content.
+- 🦆 **DuckDuckGo**: Additional search perspectives for balanced information.
+- 📊 **Multi-source Validation**: Cross-reference information from multiple sources.
 
-## Educational Features
+### Advanced AI Features
 
-- **Advanced Reasoning Modes**: Choose between standard responses or detailed thinking processes
-- **Step-by-Step Problem Solving**: Breaks down complex concepts with detailed explanations
-- **Visual Learning**: Generates visual explanations and diagrams to aid understanding
-- **Comprehensive Research**: Uses multiple search engines for thorough, balanced information
-- **Personalized Experience**: Adapts to different education levels from elementary to PhD
-- **Interactive Learning**: Includes practice questions and assessments
-- **Session Management**: Save and organize your learning sessions
+- 🧠 Advanced reasoning for complex problems.
+- 💭 Visible step-by-step reasoning.
+- 🤖 Agentic AI for multi-step educational tasks.
+- 🔢 Expert at math, science, and coding challenges.
+- 📊 1 million token context window.
+- 📚 Personalized learning experiences.
+- 💾 Save lessons for future reference.
 
-## Tech Stack
+### Educational Features
 
-- 🤖 Gemini 2.5 Pro Experimental (March 2025) from Google
-- 🚀 Agno framework for AI agents
-- 💫 Streamlit for the UI
-- 🔍 Multiple search engines (Google Search, DuckDuckGo, Exa)
-- 💾 File system for saving lessons
+- **Reasoning Modes**: Standard responses or detailed thinking processes.
+- **Step-by-Step Problem Solving**: Detailed explanations of complex concepts.
+- **Visual Learning**: Visual explanations and diagrams.
+- **Interactive Learning**: Practice questions and assessments.
+- **Session Management**: Save and organize learning sessions.
 
-## Setup
+---
 
-1. Create a virtual environment:
+## 🛠️ Tech Stack
 
-```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+- 🤖 **Gemini 2.5 Pro Experimental** (March 2025) from Google
+- 🚀 **Agno Framework** for AI agents
+- 💫 **Streamlit** for interactive UI
+- 🔍 **Multiple Search Engines** (Google, DuckDuckGo, Exa)
+- 💾 **File System** for saving lessons
+
+---
+
+## ⚙️ Setup Instructions
+
+### 1. Create a virtual environment
+
+```shell
+python3 -m venv ~/.venvs/aienv
+source ~/.venvs/aienv/bin/activate
 ```
 
-2. Install dependencies:
+### 2. Install requirements
 
-```bash
-pip install -r requirements.txt
+```shell
+pip install -r cookbook/examples/apps/gemini-edu/requirements.txt
 ```
 
-3. Configure API Keys:
-   Create a `.env` file with your API keys:
+### 3. Export `GEMINI_API_KEY`
 
-```
-GOOGLE_API_KEY=your_gemini_api_key_here
-EXA_API_KEY=your_exa_api_key_here
+```shell
+export GEMINI_API_KEY=***
 ```
 
-4. Run Multimodal Learning Tutor:
+### 4. Run Streamlit App
 
-```bash
-streamlit run app.py
+```shell
+streamlit run cookbook/examples/apps/gemini-edu/app.py
 ```
 
-## Usage
+---
 
-1. Select your education level in the sidebar (Elementary through PhD)
-2. Choose your preferred reasoning mode (Standard or Thinking)
-3. Select the Gemini model to use (recommended: Gemini 2.5 Pro Experimental)
-4. **Upload media for analysis**:
-   - Images: Diagrams, charts, problems, or any visual content
-   - Audio: Lectures, explanations, or other audio content
-   - Video: Educational videos or demonstrations
-5. Use suggested prompts or ask custom questions about the uploaded media
-6. Receive comprehensive answers with:
-   - Clear explanations of the multimodal content
-   - Step-by-step reasoning
-   - Visual aids
-   - Code examples when relevant
-   - Practice questions
-   - Further reading suggestions
-7. Save lessons for future reference
-8. Manage your learning sessions
+## 📂 Project Structure
 
 ## Multimodal Learning Features in Detail
 

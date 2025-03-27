@@ -71,29 +71,36 @@ class TutorAppAgent:
             max_output_tokens=4096,
         )
 
-        # Enable search grounding if supported
+        # Enable grounding if supported (replaces google_search_retrieval)
         if "gemini-2." in self.model_id or "gemini-1.5" in self.model_id:
             try:
-                model.config.tools = ["google_search_retrieval"]
-                logger.info("Enabled google_search_retrieval")
+                # Use the 'grounding' attribute instead of 'config.tools'
+                model.grounding = True
+                # Optionally set dynamic threshold if needed
+                # model.grounding_dynamic_threshold = 0.7
+                logger.info("Enabled model grounding (google_search_retrieval)")
             except Exception as e:
-                logger.warning(f"Could not enable google_search_retrieval: {e}")
+                # This exception handling might not be strictly necessary anymore
+                # if setting a simple boolean, but we keep it for safety.
+                logger.warning(f"Could not enable model grounding: {e}")
 
-        # Add search tools
-        tools = [
-            GoogleSearchTools(fixed_max_results=50, timeout=20, cache_results=True),
-        ]
+        # Remove explicit GoogleSearchTools if using model's grounding,
+        # as model grounding disables external tools.
+        # tools = [
+        #    GoogleSearchTools(fixed_max_results=50, timeout=20, cache_results=True),
+        # ]
+        tools = [] # No external tools needed if using model grounding
 
-        # Add logging for tool usage
-        logger.info("Initializing search tools with max results: 50")
-        logger.debug("Search tool configuration: timeout=20, cache_results=True")
+        # Remove logging related to the removed tool
+        # logger.info("Initializing search tools with max results: 50")
+        # logger.debug("Search tool configuration: timeout=20, cache_results=True")
 
         # Create agent with tutor capabilities
         return Agent(
             name="Gemini Tutor",
             model=model,
             session_id=str(uuid.uuid4()),
-            tools=tools,
+            tools=tools, # Pass the (now potentially empty) tools list
             read_chat_history=True,
             read_tool_call_history=True,
             add_history_to_messages=True,
