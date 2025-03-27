@@ -548,10 +548,13 @@ class Team:
 
                 # Prepare run messages
                 if self.mode == "route":
-                    # In route mode the model shouldn't get images/audio/video
                     run_messages: RunMessages = self.get_run_messages(
                         run_response=self.run_response,
                         message=message,
+                        audio=audio,
+                        images=images,
+                        videos=videos,
+                        files=files,
                         **kwargs,
                     )
                 else:
@@ -1142,6 +1145,10 @@ class Team:
                     run_messages: RunMessages = self.get_run_messages(
                         run_response=self.run_response,
                         message=message,
+                        audio=audio,
+                        images=images,
+                        videos=videos,
+                        files=files,
                         **kwargs,
                     )
                 else:
