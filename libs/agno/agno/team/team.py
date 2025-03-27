@@ -1026,7 +1026,6 @@ class Team:
         """Run the Team asynchronously and return the response."""
         self._initialize_team()
 
-        print(f"Files abc: {files}")
 
         retries = retries or 3
         if retries < 1:
