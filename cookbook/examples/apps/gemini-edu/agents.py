@@ -2,20 +2,19 @@
 Gemini Tutor: Advanced Educational AI Assistant powered by Gemini 2.5
 """
 
+import json
 import os
 import uuid
-import json
-from typing import Optional, Dict, Any
 from pathlib import Path
+from typing import Any, Dict, Optional
 
+import dotenv
 from agno.agent import Agent, RunResponse
 from agno.models.google import Gemini
+from agno.models.message import Message
 from agno.tools.file import FileTools
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.utils.log import logger, set_log_level_to_debug
-from agno.models.message import Message
-
-import dotenv
 
 # Load environment variables
 dotenv.load_dotenv()
@@ -33,12 +32,16 @@ SEARCH_GROUNDING_INSTRUCTIONS = """
 Use search to get accurate, up-to-date information and cite your sources.
 """
 
+
 class TutorAppAgent:
     """
     Central agent that handles all tutoring functionality.
     Offloads search, content preparation, and learning experience generation.
     """
-    def __init__(self, model_id="gemini-2.5-pro-exp-03-25", education_level="High School"):
+
+    def __init__(
+        self, model_id="gemini-2.5-pro-exp-03-25", education_level="High School"
+    ):
         """
         Initialize the TutorAppAgent.
 
@@ -49,7 +52,9 @@ class TutorAppAgent:
         self.model_id = model_id
         self.education_level = education_level
         self.agent = self._create_agent()
-        logger.info(f"TutorAppAgent initialized with {model_id} model and {education_level} education level")
+        logger.info(
+            f"TutorAppAgent initialized with {model_id} model and {education_level} education level"
+        )
 
     def _create_agent(self):
         """Create and configure the agent with all necessary capabilities"""
@@ -67,7 +72,7 @@ class TutorAppAgent:
         )
 
         # Enable search grounding if supported
-        if 'gemini-2.' in self.model_id or 'gemini-1.5' in self.model_id:
+        if "gemini-2." in self.model_id or "gemini-1.5" in self.model_id:
             try:
                 model.config.tools = ["google_search_retrieval"]
                 logger.info("Enabled google_search_retrieval")
@@ -78,6 +83,10 @@ class TutorAppAgent:
         tools = [
             GoogleSearchTools(fixed_max_results=50, timeout=20, cache_results=True),
         ]
+
+        # Add logging for tool usage
+        logger.info("Initializing search tools with max results: 50")
+        logger.debug("Search tool configuration: timeout=20, cache_results=True")
 
         # Create agent with tutor capabilities
         return Agent(
@@ -101,7 +110,9 @@ class TutorAppAgent:
         if not api_key:
             raise ValueError("GOOGLE_API_KEY is not set in environment variables")
         if api_key == "your_gemini_api_key_here":
-            raise ValueError("Please replace the placeholder API key with your actual Gemini API key")
+            raise ValueError(
+                "Please replace the placeholder API key with your actual Gemini API key"
+            )
         return api_key
 
     def _get_tutor_description(self):
@@ -133,7 +144,9 @@ class TutorAppAgent:
             The learning experience response from the agent
         """
         education_level = education_level or self.education_level
-        logger.info(f"Creating learning experience for '{search_topic}' at {education_level} level")
+        logger.info(
+            f"Creating learning experience for '{search_topic}' at {education_level} level"
+        )
 
         # Construct a comprehensive prompt for the agent
         prompt = f"""

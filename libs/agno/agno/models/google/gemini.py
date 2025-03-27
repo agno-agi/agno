@@ -337,7 +337,9 @@ class Gemini(Model):
 
         # Final safety check - never send empty content to Gemini API
         if not formatted_messages:
-            log_warning("No content messages to send to Gemini API even after formatting. Creating a default user message.")
+            log_warning(
+                "No content messages to send to Gemini API even after formatting. Creating a default user message."
+            )
             # Extract any user message text from the original messages
             user_message_text = None
             for msg in messages:
@@ -381,10 +383,14 @@ class Gemini(Model):
         """
         log_info(f"invoke_stream called with {len(messages)} messages")
         for idx, msg in enumerate(messages):
-            log_info(f"Message {idx}: role={msg.role}, content_type={type(msg.content)}, content_length={len(str(msg.content)) if msg.content else 0}")
+            log_info(
+                f"Message {idx}: role={msg.role}, content_type={type(msg.content)}, content_length={len(str(msg.content)) if msg.content else 0}"
+            )
 
         formatted_messages, system_message = self._format_messages(messages)
-        log_info(f"After _format_messages: {len(formatted_messages)} formatted messages, system_message present: {system_message is not None}")
+        log_info(
+            f"After _format_messages: {len(formatted_messages)} formatted messages, system_message present: {system_message is not None}"
+        )
 
         # Final safety check - never send empty content to Gemini API
         if not formatted_messages:
@@ -398,7 +404,7 @@ class Gemini(Model):
                     break
 
             # If no user message found, check if it's in the request_kwargs
-            if not user_message_text and hasattr(self, '_last_prompt') and self._last_prompt:
+            if not user_message_text and hasattr(self, "_last_prompt") and self._last_prompt:
                 user_message_text = self._last_prompt
                 log_info(f"Using last prompt as user message: '{user_message_text}'")
 
@@ -437,7 +443,9 @@ class Gemini(Model):
 
         # Final safety check - never send empty content to Gemini API
         if not formatted_messages:
-            log_warning("No content messages to send to Gemini API even after formatting. Creating a default user message.")
+            log_warning(
+                "No content messages to send to Gemini API even after formatting. Creating a default user message."
+            )
             # Extract any user message text from the original messages
             user_message_text = None
             for msg in messages:
@@ -478,7 +486,9 @@ class Gemini(Model):
 
         # Final safety check - never send empty content to Gemini API
         if not formatted_messages:
-            log_warning("No content messages to send to Gemini API even after formatting. Creating a default user message.")
+            log_warning(
+                "No content messages to send to Gemini API even after formatting. Creating a default user message."
+            )
             # Extract any user message text from the original messages
             user_message_text = None
             for msg in messages:
@@ -522,7 +532,9 @@ class Gemini(Model):
         """
         log_info(f"_format_messages called with {len(messages)} messages")
         for idx, msg in enumerate(messages):
-            log_info(f"Format Message {idx}: role={msg.role}, content_type={type(msg.content)}, content_length={len(str(msg.content)) if msg.content else 0}")
+            log_info(
+                f"Format Message {idx}: role={msg.role}, content_type={type(msg.content)}, content_length={len(str(msg.content)) if msg.content else 0}"
+            )
 
         formatted_messages: List = []
         system_message = None
@@ -665,7 +677,7 @@ class Gemini(Model):
             log_warning("No valid messages to send to Gemini API. Attempting to create a default message.")
 
             # Check for last stored prompt first
-            if hasattr(self, '_last_prompt') and self._last_prompt:
+            if hasattr(self, "_last_prompt") and self._last_prompt:
                 user_text = self._last_prompt
                 log_info(f"Using last stored prompt: '{user_text}'")
             else:
@@ -675,7 +687,9 @@ class Gemini(Model):
             formatted_messages.append(Content(role="user", parts=[Part.from_text(text=user_text)]))
             log_info(f"Created a default user message with text: '{user_text}'")
 
-        log_info(f"_format_messages returning {len(formatted_messages)} formatted messages, system_message: {system_message is not None}")
+        log_info(
+            f"_format_messages returning {len(formatted_messages)} formatted messages, system_message: {system_message is not None}"
+        )
         return formatted_messages, system_message
 
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:

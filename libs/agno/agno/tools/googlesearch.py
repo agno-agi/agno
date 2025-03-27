@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.functions import cache_result
-from agno.utils.log import log_debug
+from agno.utils.log import log_debug, log_info
 
 try:
     from googlesearch import search
@@ -82,6 +82,7 @@ class GoogleSearchTools(Toolkit):
                 language = "en"
 
         log_debug(f"Searching Google [{language}] for: {query}")
+        log_info(f"Executing search with max_results={max_results}")
 
         # Perform Google search using the googlesearch-python package
         results = list(search(query, num_results=max_results, lang=language, proxy=self.proxy, advanced=True))
@@ -97,4 +98,5 @@ class GoogleSearchTools(Toolkit):
                 }
             )
 
+        log_debug(f"Search completed. Found {len(res)} results")
         return json.dumps(res, indent=2)

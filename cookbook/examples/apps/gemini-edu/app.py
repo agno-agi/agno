@@ -2,8 +2,9 @@
 Gemini Tutor: Advanced Educational AI Assistant with Multimodal Learning
 """
 
-import nest_asyncio
 import os
+
+import nest_asyncio
 import streamlit as st
 from agents import TutorAppAgent
 from agno.utils.log import logger
@@ -57,6 +58,7 @@ EDUCATION_LEVELS = [
     "PhD",
 ]
 
+
 def check_api_key():
     """Check if API key is set and valid."""
     if not os.environ.get("GOOGLE_API_KEY"):
@@ -73,6 +75,7 @@ def check_api_key():
         """)
         return False
     return True
+
 
 def handle_streaming_response(learning_generator):
     """
@@ -94,20 +97,21 @@ def handle_streaming_response(learning_generator):
     # Process the streamed response
     for chunk in learning_generator:
         # Display tool calls if available
-        if hasattr(chunk, 'tools') and chunk.tools and len(chunk.tools) > 0:
+        if hasattr(chunk, "tools") and chunk.tools and len(chunk.tools) > 0:
             display_tool_calls(tool_calls_container, chunk.tools)
 
         # Display response with proper markdown formatting
-        if hasattr(chunk, 'content') and chunk.content is not None:
+        if hasattr(chunk, "content") and chunk.content is not None:
             accumulated_content += chunk.content
             response_placeholder.markdown(accumulated_content)
 
         # Capture grounding metadata if available
-        if hasattr(chunk, 'grounding_metadata') and chunk.grounding_metadata:
+        if hasattr(chunk, "grounding_metadata") and chunk.grounding_metadata:
             grounding_metadata = chunk.grounding_metadata
 
     # Return the accumulated content and metadata
     return accumulated_content, grounding_metadata
+
 
 def main():
     """Main application entry point"""
@@ -123,27 +127,23 @@ def main():
     # Setup sidebar
     st.sidebar.title("Settings")
     education_level = st.sidebar.selectbox(
-        "Education Level",
-        EDUCATION_LEVELS,
-        index=EDUCATION_LEVELS.index("High School")
+        "Education Level", EDUCATION_LEVELS, index=EDUCATION_LEVELS.index("High School")
     )
 
-    model_name = st.sidebar.selectbox(
-        "Model",
-        list(MODEL_OPTIONS.keys()),
-        index=0
-    )
+    model_name = st.sidebar.selectbox("Model", list(MODEL_OPTIONS.keys()), index=0)
     model_id = MODEL_OPTIONS[model_name]
 
     # Initialize TutorAppAgent if needed
     if "tutor_agent" not in st.session_state:
-        st.session_state.tutor_agent = TutorAppAgent(model_id=model_id, education_level=education_level)
+        st.session_state.tutor_agent = TutorAppAgent(
+            model_id=model_id, education_level=education_level
+        )
 
     # Search interface
     search_topic = st.text_input(
         "What would you like to learn about?",
         placeholder="e.g., quantum physics, French Revolution, machine learning",
-        key="search_box"
+        key="search_box",
     )
 
     if st.button("Search & Create Learning Experience", key="search_button"):
@@ -157,9 +157,10 @@ def main():
                 st.markdown("## 📚 Learning Experience")
 
                 # Offload all processing to the agent (returns a generator)
-                learning_generator = st.session_state.tutor_agent.create_learning_experience(
-                    search_topic=search_topic,
-                    education_level=education_level
+                learning_generator = (
+                    st.session_state.tutor_agent.create_learning_experience(
+                        search_topic=search_topic, education_level=education_level
+                    )
                 )
 
                 # Handle the streaming response
@@ -186,6 +187,7 @@ def main():
         - Interactive content with examples and exercises
         """
     )
+
 
 if __name__ == "__main__":
     main()
