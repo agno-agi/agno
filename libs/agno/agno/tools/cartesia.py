@@ -1,6 +1,6 @@
 import datetime
 import json
-import os
+from os import getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -36,7 +36,7 @@ class CartesiaTools(Toolkit):
     ):
         super().__init__(name="cartesia_tools")
 
-        self.api_key = api_key or os.getenv("CARTESIA_API_KEY")
+        self.api_key = api_key or getenv("CARTESIA_API_KEY")
 
         if not self.api_key:
             raise ValueError("CARTESIA_API_KEY not set. Please set the CARTESIA_API_KEY environment variable.")

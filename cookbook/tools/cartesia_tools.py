@@ -3,20 +3,12 @@ pip install cartesia
 Get an API key from https://play.cartesia.ai/keys
 """
 
-import os
-import sys
-
 from agno.agent import Agent
 from agno.tools.cartesia import CartesiaTools
-from dotenv import load_dotenv
-
-# Get Cartesia API key from environment or use a default for demo
-cartesia_api_key = os.environ.get("CARTESIA_API_KEY")
-load_dotenv()
 
 # Create the agent with CartesiaTools
 agent = Agent(
-    tools=[CartesiaTools(api_key=cartesia_api_key)],
+    tools=[CartesiaTools()],
     show_tool_calls=True,
     instructions="""You are an expert assistant that uses Cartesia for high-quality speech synthesis.
 
