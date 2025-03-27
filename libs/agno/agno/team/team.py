@@ -1026,7 +1026,6 @@ class Team:
         """Run the Team asynchronously and return the response."""
         self._initialize_team()
 
-
         retries = retries or 3
         if retries < 1:
             raise ValueError("Retries must be at least 1")
@@ -1975,7 +1974,7 @@ class Team:
                 videos=videos,
                 files=files,
                 stream=True,
-                stream_intermediate_steps=True,
+                stream_intermediate_steps=stream_intermediate_steps,
                 **kwargs,
             )
 

@@ -43,8 +43,5 @@ team = Team(
 
 if __name__ == "__main__":
     asyncio.run(
-        team.aprint_response(
-            "What is the current stock price of NVDA?",
-            stream=True
-        )
+        team.aprint_response("What is the current stock price of NVDA?", stream=True)
     )
