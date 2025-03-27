@@ -134,6 +134,10 @@ class Team:
     # If True, read the team history
     read_team_history: bool = False
 
+    # --- Team Tools ---
+    # A list of tools provided to the Model.
+    # Tools are functions the model may generate JSON inputs for.
+    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
     # Show tool calls in Team response. This sets the default for the team.
     show_tool_calls: bool = True
     # Controls which (if any) tool is called by the team model.
@@ -143,6 +147,8 @@ class Team:
     #   forces the model to call that tool.
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    # Maximum number of tool calls allowed.
+    tool_call_limit: Optional[int] = None
 
     # --- Structured output ---
     # Response model for the team response
@@ -205,7 +211,9 @@ class Team:
         enable_agentic_context: bool = False,
         share_member_interactions: bool = False,
         read_team_history: bool = False,
+        tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         show_tool_calls: bool = True,
+        tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         response_model: Optional[Type[BaseModel]] = None,
         use_json_mode: bool = False,
@@ -254,8 +262,10 @@ class Team:
 
         self.read_team_history = read_team_history
 
+        self.tools = tools
         self.show_tool_calls = show_tool_calls
         self.tool_choice = tool_choice
+        self.tool_call_limit = tool_call_limit
 
         self.response_model = response_model
         self.use_json_mode = use_json_mode
@@ -474,11 +484,16 @@ class Team:
                 else:
                     self.run_input = message
 
-            # Prepare built-in tools
-            _built_in_tools: List[Union[Function, Callable]] = []
+            # Prepare tools
+            _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+            # Add provided tools
+            if self.tools is not None:
+                for tool in self.tools:
+                    _tools.append(tool)
 
             if self.read_team_history:
-                _built_in_tools.append(self.get_team_history)
+                _tools.append(self.get_team_history)
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
@@ -491,10 +506,10 @@ class Team:
                     audio=audio,  # type: ignore
                     files=files,  # type: ignore
                 )
-                _built_in_tools.append(forward_task_func)
+                _tools.append(forward_task_func)
 
             elif self.mode == "coordinate":
-                _built_in_tools.append(
+                _tools.append(
                     self.get_transfer_task_function(
                         stream=stream,
                         async_mode=False,
@@ -506,7 +521,7 @@ class Team:
                 )
 
                 if self.enable_agentic_context:
-                    _built_in_tools.append(self.set_team_context)
+                    _tools.append(self.set_team_context)
             elif self.mode == "collaborate":
                 run_member_agents_func = self.get_run_member_agents_function(
                     stream=stream,
@@ -516,12 +531,12 @@ class Team:
                     audio=audio,  # type: ignore
                     files=files,  # type: ignore
                 )
-                _built_in_tools.append(run_member_agents_func)
+                _tools.append(run_member_agents_func)
 
                 if self.enable_agentic_context:
-                    _built_in_tools.append(self.set_team_context)
+                    _tools.append(self.set_team_context)
 
-            self._add_tools_to_model(self.model, tools=_built_in_tools)  # type: ignore
+            self._add_tools_to_model(self.model, tools=_tools)  # type: ignore
 
             # Run the team
             try:
@@ -1054,11 +1069,16 @@ class Team:
                 else:
                     self.run_input = message
 
-            # Prepare built-in tools
-            _built_in_tools: List[Union[Function, Callable]] = []
+            # Prepare tools
+            _tools: List[Union[Function, Callable, Toolkit, Dict]] = []
+
+            # Add provided tools
+            if self.tools is not None:
+                for tool in self.tools:
+                    _tools.append(tool)
 
             if self.read_team_history:
-                _built_in_tools.append(self.get_team_history)
+                _tools.append(self.get_team_history)
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
@@ -1071,10 +1091,10 @@ class Team:
                     audio=audio,  # type: ignore
                     files=files,  # type: ignore
                 )
-                _built_in_tools.append(forward_task_func)
+                _tools.append(forward_task_func)
                 self.model.tool_choice = "required"  # type: ignore
             elif self.mode == "coordinate":
-                _built_in_tools.append(
+                _tools.append(
                     self.get_transfer_task_function(
                         stream=stream,
                         async_mode=True,
@@ -1087,7 +1107,7 @@ class Team:
                 self.model.tool_choice = "auto"  # type: ignore
 
                 if self.enable_agentic_context:
-                    _built_in_tools.append(self.set_team_context)
+                    _tools.append(self.set_team_context)
             elif self.mode == "collaborate":
                 run_member_agents_func = self.get_run_member_agents_function(
                     stream=stream,
@@ -1097,13 +1117,13 @@ class Team:
                     audio=audio,  # type: ignore
                     files=files,  # type: ignore
                 )
-                _built_in_tools.append(run_member_agents_func)
+                _tools.append(run_member_agents_func)
                 self.model.tool_choice = "auto"  # type: ignore
 
                 if self.enable_agentic_context:
-                    _built_in_tools.append(self.set_team_context)
+                    _tools.append(self.set_team_context)
 
-            self._add_tools_to_model(self.model, tools=_built_in_tools)  # type: ignore
+            self._add_tools_to_model(self.model, tools=_tools)  # type: ignore
 
             # Run the team
             try:
@@ -3160,10 +3180,15 @@ class Team:
         if self.tool_choice is not None:
             self.model.tool_choice = self.tool_choice
 
-    def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable]]) -> None:
+        # Set tool_call_limit on the Model
+        if self.tool_call_limit is not None:
+            self.model.tool_call_limit = self.tool_call_limit
+
+    def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
         # We have to reset for every run, because we will have new images/audio/video to attach
         self._functions_for_model = {}
         self._tools_for_model = []
+
         # Get Agent tools
         if len(tools) > 0:
             log_debug("Processing tools for model")
@@ -3173,11 +3198,27 @@ class Team:
             if self.response_model is not None and not self.use_json_mode and model.supports_native_structured_outputs:
                 strict = True
 
-            self._tools_for_model = []
-            self._functions_for_model = {}
-
             for tool in tools:
-                if isinstance(tool, Function):
+                if isinstance(tool, Dict):
+                    # If a dict is passed, it is a builtin tool
+                    # that is run by the model provider and not the Agent
+                    self._tools_for_model.append(tool)
+                    log_debug(f"Included builtin tool {tool}")
+
+                elif isinstance(tool, Toolkit):
+                    # For each function in the toolkit and process entrypoint
+                    for name, func in tool.functions.items():
+                        # If the function does not exist in self.functions
+                        if name not in self._functions_for_model:
+                            func._agent = self
+                            func.process_entrypoint(strict=strict)
+                            if strict:
+                                func.strict = True
+                            self._functions_for_model[name] = func
+                            self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                            log_debug(f"Included function {name} from {tool.name}")
+
+                elif isinstance(tool, Function):
                     if tool.name not in self._functions_for_model:
                         tool._agent = self
                         tool.process_entrypoint(strict=strict)
