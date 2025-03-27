@@ -548,10 +548,13 @@ class Team:
 
                 # Prepare run messages
                 if self.mode == "route":
-                    # In route mode the model shouldn't get images/audio/video
                     run_messages: RunMessages = self.get_run_messages(
                         run_response=self.run_response,
                         message=message,
+                        audio=audio,
+                        images=images,
+                        videos=videos,
+                        files=files,
                         **kwargs,
                     )
                 else:
@@ -1084,7 +1087,6 @@ class Team:
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
-                print("files in route mode: ", files)
                 forward_task_func: Function = self.get_forward_task_function(
                     message=user_message,
                     stream=stream,
@@ -1142,6 +1144,10 @@ class Team:
                     run_messages: RunMessages = self.get_run_messages(
                         run_response=self.run_response,
                         message=message,
+                        audio=audio,
+                        images=images,
+                        videos=videos,
+                        files=files,
                         **kwargs,
                     )
                 else:
