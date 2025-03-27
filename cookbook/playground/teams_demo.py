@@ -111,7 +111,7 @@ agent_team = Team(
         table_name="financial_news_team",
         db_url=db_url,
         mode="team",
-        auto_upgrade_schema=True
+        auto_upgrade_schema=True,
     ),
     expected_output="A good financial news report.",
     context="use USD as currency",
