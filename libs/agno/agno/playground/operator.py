@@ -109,4 +109,21 @@ def get_session_title_from_team_session(team_session: TeamSession) -> str:
     if team_session is None:
         return "Unnamed session"
     session_name = team_session.session_data.get("session_name") if team_session.session_data is not None else None
-    return session_name if session_name else "Unnamed session"
+    if session_name is not None:
+        return session_name
+    memory = team_session.memory
+    if memory is not None:
+        runs = memory.get("runs")
+        if isinstance(runs, list):
+            for _run in runs:
+                try:
+                    run_parsed = AgentRun.model_validate(_run)
+                    if run_parsed.message is not None and run_parsed.message.role == "user":
+                        content = run_parsed.message.get_content_string()
+                        if content:
+                            return content
+                        else:
+                            return "No title"
+                except Exception as e:
+                    logger.error(f"Error parsing chat: {e}")
+    return "Unnamed session"
