@@ -80,6 +80,12 @@ research_team = Team(
     show_tool_calls=True,
     markdown=True,
     enable_agentic_context=True,
+    storage=PostgresStorage(
+        table_name="research_team",
+        db_url=db_url,
+        mode="team",
+        auto_upgrade_schema=True,
+    ),
 )
 
 agent_team = Team(
