@@ -2,10 +2,12 @@
 Utility functions for Gemini Tutor
 """
 
-import streamlit as st
-from typing import Any, Dict, List, Optional
 import json
+from typing import Any, Dict, List, Optional
+
+import streamlit as st
 from agno.utils.log import logger
+
 
 def add_message(
     role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None, **kwargs
@@ -32,6 +34,7 @@ def add_message(
 
     st.session_state["messages"].append(message)
 
+
 def display_tool_calls(container: Any, tool_calls: List[Dict[str, Any]]) -> None:
     """
     Display tool calls in a formatted way.
@@ -54,9 +57,10 @@ def display_tool_calls(container: Any, tool_calls: List[Dict[str, Any]]) -> None
             args = tool_call.get("arguments", {})
             formatted_args = json.dumps(args, indent=2)
 
-            expander_label = f"📋 Tool Call {i+1}: {tool_name}"
+            expander_label = f"📋 Tool Call {i + 1}: {tool_name}"
             with st.expander(expander_label, expanded=False):
                 st.code(formatted_args, language="json")
+
 
 def display_grounding_metadata(grounding_metadata: Any) -> None:
     """
@@ -73,13 +77,21 @@ def display_grounding_metadata(grounding_metadata: Any) -> None:
         st.markdown("### 🌐 Sources")
 
         # Display grounding sources if available
-        if hasattr(grounding_metadata, 'search_entry_point') and grounding_metadata.search_entry_point:
-            if hasattr(grounding_metadata.search_entry_point, 'rendered_content'):
-                grounding_content = grounding_metadata.search_entry_point.rendered_content
+        if (
+            hasattr(grounding_metadata, "search_entry_point")
+            and grounding_metadata.search_entry_point
+        ):
+            if hasattr(grounding_metadata.search_entry_point, "rendered_content"):
+                grounding_content = (
+                    grounding_metadata.search_entry_point.rendered_content
+                )
                 st.markdown(grounding_content)
 
         # Display search suggestions if available
-        if hasattr(grounding_metadata, 'search_suggestions') and grounding_metadata.search_suggestions:
+        if (
+            hasattr(grounding_metadata, "search_suggestions")
+            and grounding_metadata.search_suggestions
+        ):
             st.markdown("### 🔍 Related Searches")
             for suggestion in grounding_metadata.search_suggestions:
                 st.markdown(f"- {suggestion}")
