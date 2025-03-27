@@ -469,7 +469,7 @@ def get_async_playground_router(
         # Retrieve all sessions for the given workflow and user
         try:
             all_workflow_sessions: List[WorkflowSession] = workflow.storage.get_all_sessions(
-                user_id=user_id, workflow_id=workflow_id
+                user_id=user_id, entity_id=workflow_id
             )  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
