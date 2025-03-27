@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File as FileMedia, Image, Video
 from agno.playground.operator import (
     format_tools,
     get_agent_by_id,
@@ -134,7 +134,7 @@ def get_async_playground_router(
         images: Optional[List[Image]] = None,
         audio: Optional[List[Audio]] = None,
         videos: Optional[List[Video]] = None,
-        # files: Optional[List[UploadFile]] = None,
+        files: Optional[List[FileMedia]] = None,
     ) -> AsyncGenerator:
         try:
             run_response = await team.arun(
@@ -142,7 +142,7 @@ def get_async_playground_router(
                 images=images,
                 audio=audio,
                 videos=videos,
-                # files=files,
+                files=files,
                 stream=True,
                 stream_intermediate_steps=True,
             )
@@ -179,6 +179,17 @@ def get_async_playground_router(
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
         return Video(content=content, format=file.content_type)
+    
+    async def process_document(file: UploadFile) -> Optional[FileMedia]:
+        try:
+            content = await file.read()
+            if not content:
+                raise HTTPException(status_code=400, detail="Empty file")
+                        
+            return FileMedia(content=content, mime_type=file.content_type)
+        except Exception as e:
+            logger.error(f"Error processing document {file.filename}: {e}")
+            return None
 
     @playground_router.post("/agents/{agent_id}/runs")
     async def create_agent_run(
@@ -214,6 +225,7 @@ def get_async_playground_router(
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
         base64_videos: List[Video] = []
+
         if files:
             for file in files:
                 logger.info(f"Processing file: {file.content_type}")
@@ -574,7 +586,6 @@ def get_async_playground_router(
         new_team_instance = team.deep_copy(update={"team_id": team_id, "session_id": session_id})
         new_team_instance.session_name = None
 
-
         if user_id is not None:
             team.user_id = user_id
 
@@ -586,6 +597,7 @@ def get_async_playground_router(
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
         base64_videos: List[Video] = []
+        document_files: List[FileMedia] = []
 
         if files:
             for file in files:
@@ -622,9 +634,12 @@ def get_async_playground_router(
                     except Exception as e:
                         logger.error(f"Error processing video {file.filename}: {e}")
                         continue    
+                elif file.content_type in ["application/pdf", "text/csv", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain", "application/json"]:
+                    document_file = await process_document(file)
+                    if document_file is not None:
+                        document_files.append(document_file)
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
-                    
                     
         if stream:
             return StreamingResponse(
@@ -634,6 +649,7 @@ def get_async_playground_router(
                     images=base64_images if base64_images else None,
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
+                    files=document_files if document_files else None,
                 ),
                 media_type="text/event-stream",
             )
@@ -643,6 +659,7 @@ def get_async_playground_router(
                 images=base64_images if base64_images else None,
                 audio=base64_audios if base64_audios else None,
                 videos=base64_videos if base64_videos else None,
+                files=document_files if document_files else None,
                 stream=False,
             )
             return run_response.to_dict()

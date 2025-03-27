@@ -1023,6 +1023,8 @@ class Team:
         """Run the Team asynchronously and return the response."""
         self._initialize_team()
 
+        print(f"Files abc: {files}")
+
         retries = retries or 3
         if retries < 1:
             raise ValueError("Retries must be at least 1")
@@ -1082,6 +1084,7 @@ class Team:
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
+                print("files in route mode: ", files)
                 forward_task_func: Function = self.get_forward_task_function(
                     message=user_message,
                     stream=stream,
