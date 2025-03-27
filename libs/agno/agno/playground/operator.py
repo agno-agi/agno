@@ -47,18 +47,18 @@ def get_session_title(session: Union[AgentSession, TeamSession]) -> str:
     memory = session.memory
     if memory is not None:
         runs = memory.get("runs") or memory.get("chats")
-        if isinstance(runs, list):
-            for _run in runs:
-                try:
-                    run_parsed = AgentRun.model_validate(_run)
-                    if run_parsed.message is not None and run_parsed.message.role == "user":
-                        content = run_parsed.message.get_content_string()
-                        if content:
-                            return content
-                        else:
-                            return "No title"
-                except Exception as e:
-                    logger.error(f"Error parsing chat: {e}")
+        runs = cast(List[Any], runs)
+        for _run in runs:
+            try:
+                run_parsed = AgentRun.model_validate(_run)
+                if run_parsed.message is not None and run_parsed.message.role == "user":
+                    content = run_parsed.message.get_content_string()
+                    if content:
+                        return content
+                    else:
+                        return "No title"
+            except Exception as e:
+                logger.error(f"Error parsing chat: {e}")
     return "Unnamed session"
 
 
