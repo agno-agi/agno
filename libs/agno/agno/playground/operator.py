@@ -73,14 +73,14 @@ def get_session_title_from_workflow_session(workflow_session: WorkflowSession) -
     memory = workflow_session.memory
     if memory is not None:
         runs = memory.get("runs")
-        if isinstance(runs, list):
-            for _run in runs:
-                try:
-                    response = _run.get("response")
-                    content = response.get("content") if response else None
-                    return content.split("\n")[0] if content else "No title"
-                except Exception as e:
-                    logger.error(f"Error parsing chat: {e}")
+        runs = cast(List[Any], runs)
+        for _run in runs:
+            try:
+                response = _run.get("response")
+                content = response.get("content") if response else None
+                return content.split("\n")[0] if content else "No title"
+            except Exception as e:
+                logger.error(f"Error parsing chat: {e}")
     return "Unnamed session"
 
 
