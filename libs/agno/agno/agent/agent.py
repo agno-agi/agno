@@ -3037,11 +3037,6 @@ class Agent:
                 ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
                 )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content="Reasoning started",
-                        event=RunEvent.reasoning_started,
-                    )
                 log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
                 ds_reasoning_message: Optional[Message] = get_deepseek_reasoning(
                     reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages()
@@ -3067,11 +3062,6 @@ class Agent:
                 groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
                 )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content="Reasoning started",
-                        event=RunEvent.reasoning_started,
-                    )
                 log_debug("Starting Groq Reasoning", center=True, symbol="=")
                 groq_reasoning_message: Optional[Message] = get_groq_reasoning(
                     reasoning_agent=groq_reasoning_agent, messages=run_messages.get_input_messages()
@@ -3099,11 +3089,6 @@ class Agent:
                 openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
                 )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content="Reasoning started",
-                        event=RunEvent.reasoning_started,
-                    )
                 log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
                 openai_reasoning_message: Optional[Message] = get_openai_reasoning(
                     reasoning_agent=openai_reasoning_agent, messages=run_messages.get_input_messages()
@@ -3263,11 +3248,6 @@ class Agent:
                 ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
                 )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content="Reasoning started",
-                        event=RunEvent.reasoning_started,
-                    )
                 log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
                 ds_reasoning_message: Optional[Message] = await aget_deepseek_reasoning(
                     reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages()
@@ -3293,11 +3273,6 @@ class Agent:
                 groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
                 )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content="Reasoning started",
-                        event=RunEvent.reasoning_started,
-                    )
                 log_debug("Starting Groq Reasoning", center=True, symbol="=")
                 groq_reasoning_message: Optional[Message] = await aget_groq_reasoning(
                     reasoning_agent=groq_reasoning_agent, messages=run_messages.get_input_messages()
@@ -3326,11 +3301,6 @@ class Agent:
                 openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
                 )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content="Reasoning started",
-                        event=RunEvent.reasoning_started,
-                    )
                 log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
                 openai_reasoning_message: Optional[Message] = await aget_openai_reasoning(
                     reasoning_agent=openai_reasoning_agent, messages=run_messages.get_input_messages()
