@@ -1087,7 +1087,6 @@ class Team:
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
-                print("files in route mode: ", files)
                 forward_task_func: Function = self.get_forward_task_function(
                     message=user_message,
                     stream=stream,
