@@ -2,14 +2,61 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.models.google.gemini import Gemini
 from agno.playground import Playground, serve_playground_app
 from agno.storage.postgres import PostgresStorage
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
+from agno.models.anthropic import Claude
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
+
+file_agent = Agent(
+    name="File Upload Agent",
+    agent_id="file-upload-agent",
+    role="Answer questions about the uploaded files",
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    storage=PostgresStorage(
+        table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
+    ),
+    instructions=[
+        "You are an AI agent that can analyze files.",
+        "You are given a file and you need to answer questions about the file.",
+    ],
+    show_tool_calls=True,
+    markdown=True,
+)
+
+video_agent = Agent(
+    name="Video Understanding Agent",
+    model=Gemini(id="gemini-2.0-flash"),
+    agent_id="video-understanding-agent",
+    role="Answer questions about video files",
+    storage=PostgresStorage(
+        table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
+    ),
+    add_history_to_messages=True,
+    add_datetime_to_instructions=True,
+    show_tool_calls=True,
+    markdown=True,
+)
+
+audio_agent = Agent(
+    name="Audio Understanding Agent",
+    agent_id="audio-understanding-agent",
+    role="Answer questions about audio files",
+    model=OpenAIChat(id="gpt-4o-audio-preview"),
+    storage=PostgresStorage(
+        table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
+    ),
+    add_history_to_messages=True,
+    add_datetime_to_instructions=True,
+    show_tool_calls=True,
+    markdown=True,
+)
 
 web_agent = Agent(
     name="Web Agent",
@@ -88,10 +135,30 @@ research_team = Team(
     ),
 )
 
+multimodal_team = Team(
+    name="Multimodal Team",
+    description="A team of agents that can handle multiple modalities",
+    members=[file_agent, audio_agent, video_agent],
+    model=OpenAIChat(id="gpt-4o"),
+    mode="route",
+    team_id="multimodal_team",
+    success_criteria=dedent("""\
+        A comprehensive report with clear sections and data-driven insights.
+    """),
+    instructions=[
+        "You are the lead editor of a prestigious financial news desk! 📰",
+    ],
+    storage=PostgresStorage(
+        table_name="multimodal_team",
+        db_url=db_url,
+        mode="team",
+        auto_upgrade_schema=True,
+    ),
+)
 agent_team = Team(
     name="Financial News Team",
     description="A team of agents that search the web for financial news and analyze it.",
-    members=[web_agent, finance_agent, research_agent],
+    members=[web_agent, finance_agent, research_agent, file_agent, audio_agent, video_agent],
     model=OpenAIChat(id="gpt-4o"),
     mode="route",
     team_id="financial_news_team",
@@ -100,6 +167,9 @@ agent_team = Team(
     """),
     instructions=[
         "You are the lead editor of a prestigious financial news desk! 📰",
+        "If you are given a file send it to the file agent.",
+        "If you are given an audio file send it to the audio agent.",
+        "If you are given a video file send it to the video agent.",
     ],
     add_datetime_to_instructions=True,
     show_tool_calls=True,
@@ -118,7 +188,7 @@ agent_team = Team(
 )
 
 app = Playground(
-    teams=[agent_team, research_team],
+    teams=[agent_team, research_team, multimodal_team],
     agents=[web_agent, finance_agent, research_agent, simple_agent],
 ).get_app()
 

@@ -113,7 +113,7 @@ class TeamGetResponse(BaseModel):
     model: Optional[TeamModel] = None
     success_criteria: Optional[str] = None
     instructions: Optional[Union[List[str], str, Callable]] = None
-    members: Optional[List[AgentGetResponse]] = None
+    members: Optional[List[Union[AgentGetResponse, "TeamGetResponse"]]] = None
     expected_output: Optional[str] = None
     context: Optional[str] = None
     enable_agentic_context: Optional[bool] = None
@@ -156,6 +156,7 @@ class TeamRunRequest(BaseModel):
     input: Dict[str, Any]
     user_id: Optional[str] = None
     session_id: Optional[str] = None
+    files: Optional[List[UploadFile]] = None
 
 
 class TeamSessionResponse(BaseModel):

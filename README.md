@@ -217,7 +217,7 @@ finance_agent = Agent(
     markdown=True,
 )
 
-agent_team = Agent(
+agent_team = Team(
     mode="coordinate",
     members=[web_agent, finance_agent],
     model=OpenAIChat(id="gpt-4o"),
