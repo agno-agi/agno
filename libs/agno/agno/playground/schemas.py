@@ -156,6 +156,7 @@ class TeamRunRequest(BaseModel):
     input: Dict[str, Any]
     user_id: Optional[str] = None
     session_id: Optional[str] = None
+    files: Optional[List[UploadFile]] = None
 
 
 class TeamSessionResponse(BaseModel):

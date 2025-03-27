@@ -131,10 +131,18 @@ def get_async_playground_router(
     async def team_chat_response_streamer(
         team: Team,
         message: str,
+        images: Optional[List[Image]] = None,
+        audio: Optional[List[Audio]] = None,
+        videos: Optional[List[Video]] = None,
+        # files: Optional[List[UploadFile]] = None,
     ) -> AsyncGenerator:
         try:
             run_response = await team.arun(
                 message,
+                images=images,
+                audio=audio,
+                videos=videos,
+                # files=files,
                 stream=True,
                 stream_intermediate_steps=True,
             )
@@ -551,8 +559,9 @@ def get_async_playground_router(
         monitor: bool = Form(True),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
+        files: Optional[List[UploadFile]] = File(None),
     ):
-        logger.debug(f"Creating team run: {message} {session_id} {user_id} {team_id}")
+        logger.debug(f"Creating team run: {message} {session_id} {monitor} {user_id} {team_id} {files}")
         team = get_team_by_id(team_id, teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -565,20 +574,75 @@ def get_async_playground_router(
         new_team_instance = team.deep_copy(update={"team_id": team_id, "session_id": session_id})
         new_team_instance.session_name = None
 
+
         if user_id is not None:
             team.user_id = user_id
 
+        if monitor:
+            new_team_instance.monitoring = True
+        else:
+            new_team_instance.monitoring = False
+
+        base64_images: List[Image] = []
+        base64_audios: List[Audio] = []
+        base64_videos: List[Video] = []
+
+        if files:
+            for file in files:
+                if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
+                    try:
+                        base64_image = await process_image(file)
+                        base64_images.append(base64_image)
+                    except Exception as e:
+                        logger.error(f"Error processing image {file.filename}: {e}")
+                        continue
+                elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
+                    try:
+                        base64_audio = await process_audio(file)
+                        base64_audios.append(base64_audio)
+                    except Exception as e:
+                        logger.error(f"Error processing audio {file.filename}: {e}")
+                        continue
+                elif file.content_type in [
+                    "video/x-flv",
+                    "video/quicktime",
+                    "video/mpeg",
+                    "video/mpegs",
+                    "video/mpgs",
+                    "video/mpg",
+                    "video/mpg",
+                    "video/mp4",
+                    "video/webm",
+                    "video/wmv",
+                    "video/3gpp",
+                ]:
+                    try:
+                        base64_video = await process_video(file)
+                        base64_videos.append(base64_video)
+                    except Exception as e:
+                        logger.error(f"Error processing video {file.filename}: {e}")
+                        continue    
+                else:
+                    raise HTTPException(status_code=400, detail="Unsupported file type")
+                    
+                    
         if stream:
             return StreamingResponse(
                 team_chat_response_streamer(
                     new_team_instance,
                     message,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
                 ),
                 media_type="text/event-stream",
             )
         else:
             run_response = await team.arun(
                 message=message,
+                images=base64_images if base64_images else None,
+                audio=base64_audios if base64_audios else None,
+                videos=base64_videos if base64_videos else None,
                 stream=False,
             )
             return run_response.to_dict()
