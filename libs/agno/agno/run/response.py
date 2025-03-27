@@ -68,7 +68,6 @@ class RunResponseExtraData:
 
         return cls(
             add_messages=add_messages,
-            history=history,
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references,
