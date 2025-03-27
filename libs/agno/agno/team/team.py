@@ -3401,13 +3401,13 @@ class Team:
         if audio is not None or images is not None or videos is not None or files is not None:
             system_message_content += "<attached_media>\n"
             system_message_content += "You have the following media attached to your message:\n"
-            if audio is not None:
+            if audio is not None and len(audio) > 0:
                 system_message_content += " - Audio\n"
-            if images is not None:
+            if images is not None and len(images) > 0:
                 system_message_content += " - Images\n"
-            if videos is not None:
+            if videos is not None and len(videos) > 0:
                 system_message_content += " - Videos\n"
-            if files is not None:
+            if files is not None and len(files) > 0:
                 system_message_content += " - Files\n"
             system_message_content += "</attached_media>\n\n"
 
