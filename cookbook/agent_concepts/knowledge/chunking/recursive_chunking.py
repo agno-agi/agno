@@ -10,7 +10,7 @@ knowledge_base = PDFUrlKnowledgeBase(
     vector_db=PgVector(table_name="recipes_recursive_chunking", db_url=db_url),
     chunking_strategy=RecursiveChunking(),
 )
-knowledge_base.load(recreate=True)  # Comment out after first run
+knowledge_base.load(recreate=False)  # Comment out after first run
 
 agent = Agent(
     knowledge=knowledge_base,
