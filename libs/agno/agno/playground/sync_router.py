@@ -7,7 +7,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
-from agno.media import Audio, Image, Video, File as FileMedia
+from agno.media import Audio, Image, Video
+from agno.media import File as FileMedia
 from agno.playground.operator import (
     format_tools,
     get_agent_by_id,
