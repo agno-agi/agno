@@ -36,13 +36,11 @@ agent = Agent(
 agent.print_response("What's happening in New York?", stream=True)
 ```
 
-## 🚨 Introducing the Global Agent Hackathon! 🚨
+## 🚨 Open Source AI Agent Hackathon! 🚨
 
-To celebrate our [General Availability](https://x.com/ashpreetbedi/status/1905311368510931106), we are running a Global Agent Hackathon!
+We're launching a Global AI Agent Hackathon in collaboration with AI Agent ecosystem partners — open to all developers, builders, and startups working on agents, RAG, tool use, or multi-agent systems.
 
-Star this repo and follow along to stay updated.
-
-### Win up to $20,000 in cash by building Agents
+### 💰 Win up to $20,000 in cash by building Agents
 
 - 🏅 10 winners: $300 each
 - 🥉 10 winners: $500 each
@@ -50,7 +48,14 @@ Star this repo and follow along to stay updated.
 - 🥇 1 winner: $2,000
 - 🏆 GRAND PRIZE: $5,000 🏆
 
-### Here's the timeline:
+### 🎁 Bonus
+- Top 5 projects will be featured in the top trending [Awesome LLM Apps](https://github.com/Shubhamsaboo/awesome-llm-apps) repo.
+
+### 🤝 Partners
+
+[Agno](https://www.agno.com), [Unwind AI](https://www.theunwindai.com) and more Agent ecosystem companies joining soon.
+
+### 📅 Here's the timeline:
 
 - April 3rd - Final dates revealed
 - April 10th - Prize and success criteria announced
@@ -59,11 +64,13 @@ Star this repo and follow along to stay updated.
 
 Join us for a month of building Agents!
 
-### Want to join us as a sponsor or judge?
-
-We're looking for sponsors and judges for the hackathon. If you're interested in joining, please reach out to [ashpreet@agno.com](mailto:ashpreet@agno.com).
-
 > Prizes will be distributed on an ongoing basis and continue till all prizes are awarded.
+
+⭐ Star this repo and follow along to stay updated.
+
+### 🤝 Want to join us as a partner or judge?
+
+If you're a company in the AI agent ecosystem or would like to judge the hackathon, reach out to [Shubham Saboo](https://x.com/Saboo_Shubham_) or [Ashpreet Bedi](https://x.com/ashpreetbedi) on X to partner. Let’s make this the biggest open source AI Agent hackathon.
 
 ## Key features
 
