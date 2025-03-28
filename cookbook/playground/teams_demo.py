@@ -1,15 +1,15 @@
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
 from agno.models.google.gemini import Gemini
+from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
 from agno.storage.postgres import PostgresStorage
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
-from agno.models.anthropic import Claude
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -158,7 +158,14 @@ multimodal_team = Team(
 agent_team = Team(
     name="Financial News Team",
     description="A team of agents that search the web for financial news and analyze it.",
-    members=[web_agent, finance_agent, research_agent, file_agent, audio_agent, video_agent],
+    members=[
+        web_agent,
+        finance_agent,
+        research_agent,
+        file_agent,
+        audio_agent,
+        video_agent,
+    ],
     model=OpenAIChat(id="gpt-4o"),
     mode="route",
     team_id="financial_news_team",
