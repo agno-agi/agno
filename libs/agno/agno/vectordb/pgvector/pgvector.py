@@ -235,7 +235,14 @@ class PgVector(VectorDb):
             bool: True if the document exists, False otherwise.
         """
         cleaned_content = document.content.replace("\x00", "\ufffd")
-        content_hash = md5(cleaned_content.encode()).hexdigest()
+        try:
+            content_hash = md5(cleaned_content.encode('utf-8')).hexdigest()
+        except UnicodeEncodeError:
+            cleaned_content = ''.join(
+                '\ufffd' if '\ud800' <= c <= '\udfff' else c 
+                for c in cleaned_content
+            )
+            content_hash = md5(cleaned_content.encode('utf-8')).hexdigest()
         return self._record_exists(self.table.c.content_hash, content_hash)
 
     def name_exists(self, name: str) -> bool:
