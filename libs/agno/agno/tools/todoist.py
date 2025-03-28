@@ -24,6 +24,7 @@ class TodoistTools(Toolkit):
         delete_task: bool = True,
         get_active_tasks: bool = True,
         get_projects: bool = True,
+        **kwargs,
     ):
         """Initialize the Todoist toolkit.
 
@@ -37,7 +38,7 @@ class TodoistTools(Toolkit):
             get_active_tasks: Whether to register the get_active_tasks function
             get_projects: Whether to register the get_projects function
         """
-        super().__init__(name="todoist")
+        super().__init__(name="todoist", **kwargs)
 
         self.api_token = api_token or os.getenv("TODOIST_API_TOKEN")
         if not self.api_token:

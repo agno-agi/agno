@@ -22,9 +22,10 @@ class DalleTools(Toolkit):
         size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = "1024x1024",
         quality: Literal["standard", "hd"] = "standard",
         style: Literal["vivid", "natural"] = "vivid",
-        api_key: Optional[str] = None,
+        api_key: Optional[str] = None,  
+        **kwargs,
     ):
-        super().__init__(name="dalle")
+        super().__init__(name="dalle", **kwargs)
 
         self.model = model
         self.n = n
