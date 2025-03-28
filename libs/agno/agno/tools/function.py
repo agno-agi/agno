@@ -69,11 +69,10 @@ class Function(BaseModel):
     cache_results: bool = False
     cache_dir: Optional[str] = None
     cache_ttl: int = 3600
-    
+
     # --*-- FOR INTERNAL USE ONLY --*--
     # The agent that the function is associated with
     _agent: Optional[Any] = None
-
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(exclude_none=True, include={"name", "description", "parameters", "strict"})
@@ -265,21 +264,22 @@ class Function(BaseModel):
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
         """Generate a cache key based on function name and arguments."""
         from hashlib import md5
+
         copy_entrypoint_args = entrypoint_args.copy()
         # Remove agent from entrypoint_args
         if "agent" in copy_entrypoint_args:
             del copy_entrypoint_args["agent"]
         args_str = str(copy_entrypoint_args)
-            
+
         kwargs_str = str(sorted((call_args or {}).items()))
         key_str = f"{self.name}:{args_str}:{kwargs_str}"
         return md5(key_str.encode()).hexdigest()
 
     def _get_cache_file_path(self, cache_key: str) -> str:
         """Get the full path for the cache file."""
-        from os import path, makedirs
+        from os import makedirs, path
         from tempfile import gettempdir
-        
+
         base_cache_dir = self.cache_dir or path.join(gettempdir(), "agno_cache")
         func_cache_dir = path.join(base_cache_dir, "functions", self.name)
         makedirs(func_cache_dir, exist_ok=True)
@@ -321,6 +321,7 @@ class Function(BaseModel):
                 json.dump({"timestamp": time(), "result": result}, f)
         except Exception as e:
             log_error(f"Error writing cache: {e}")
+
 
 class FunctionCall(BaseModel):
     """Model for Function Calls"""
@@ -440,7 +441,7 @@ class FunctionCall(BaseModel):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
             cached_result = self.function._get_cached_result(cache_file)
-            
+
             if cached_result is not None:
                 log_debug(f"Cache hit for: {self.get_call_str()}")
                 self.result = cached_result
@@ -453,7 +454,7 @@ class FunctionCall(BaseModel):
                 result = self.function.entrypoint(**entrypoint_args)
             else:
                 result = self.function.entrypoint(**entrypoint_args, **self.arguments)
-            
+
             # Handle generator case
             if isgenerator(result):
                 self.result = result  # Store generator directly, can't cache
@@ -464,7 +465,7 @@ class FunctionCall(BaseModel):
                     cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
                     cache_file = self.function._get_cache_file_path(cache_key)
                     self.function._save_to_cache(cache_file, self.result)
-            
+
             function_call_success = True
 
         except AgentRunException as e:
@@ -547,7 +548,9 @@ class FunctionCall(BaseModel):
         entrypoint_args = self._build_entrypoint_args()
 
         # Check cache if enabled and not a generator function
-        if self.function.cache_results and not (isasyncgen(self.function.entrypoint) or isgenerator(self.function.entrypoint)):
+        if self.function.cache_results and not (
+            isasyncgen(self.function.entrypoint) or isgenerator(self.function.entrypoint)
+        ):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
             cached_result = self.function._get_cached_result(cache_file)
@@ -571,13 +574,13 @@ class FunctionCall(BaseModel):
                     self.result = result  # Store async generator directly
                 else:
                     self.result = await result
-            
+
             # Only cache if not a generator
             if self.function.cache_results and not (isgenerator(self.result) or isasyncgenerator(self.result)):
                 cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
                 cache_file = self.function._get_cache_file_path(cache_key)
                 self.function._save_to_cache(cache_file, self.result)
-            
+
             function_call_success = True
 
         except AgentRunException as e:
@@ -597,4 +600,3 @@ class FunctionCall(BaseModel):
             self._handle_post_hook()
 
         return function_call_success
-

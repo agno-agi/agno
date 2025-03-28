@@ -78,7 +78,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "pre_hook",
             "post_hook",
             "cache_results",
-            "cache_dir", 
+            "cache_dir",
             "cache_ttl",
         }
     )
@@ -145,7 +145,11 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "cache_results": kwargs.get("cache_results", False),
             "cache_dir": kwargs.get("cache_dir"),
             "cache_ttl": kwargs.get("cache_ttl", 3600),
-            **{k: v for k, v in kwargs.items() if k not in ["name", "description", "cache_results", "cache_dir", "cache_ttl"] and v is not None},
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k not in ["name", "description", "cache_results", "cache_dir", "cache_ttl"] and v is not None
+            },
         }
         return Function(**tool_config)
 

@@ -38,7 +38,7 @@ class GoogleSearchTools(Toolkit):
         headers: Optional[Any] = None,
         proxy: Optional[str] = None,
         timeout: Optional[int] = 10,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(name="googlesearch", **kwargs)
 

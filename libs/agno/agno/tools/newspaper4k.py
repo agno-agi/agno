@@ -20,11 +20,7 @@ class Newspaper4kTools(Toolkit):
     """
 
     def __init__(
-        self,
-        read_article: bool = True,
-        include_summary: bool = False,
-        article_length: Optional[int] = None,
-        **kwargs
+        self, read_article: bool = True, include_summary: bool = False, article_length: Optional[int] = None, **kwargs
     ):
         super().__init__(name="newspaper4k_tools", **kwargs)
 

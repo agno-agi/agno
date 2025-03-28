@@ -1,10 +1,8 @@
 import json
-from typing import Optional
 
 import httpx
 
 from agno.tools import Toolkit
-from agno.utils.functions import cache_result
 from agno.utils.log import log_debug, logger
 
 
@@ -16,12 +14,7 @@ class HackerNewsTools(Toolkit):
         get_user_details (bool): Whether to get user details from Hacker News.
     """
 
-    def __init__(
-        self,
-        get_top_stories: bool = True,
-        get_user_details: bool = True,
-        **kwargs
-    ):
+    def __init__(self, get_top_stories: bool = True, get_user_details: bool = True, **kwargs):
         super().__init__(name="hackers_news", **kwargs)
 
         # Register functions in the toolkit

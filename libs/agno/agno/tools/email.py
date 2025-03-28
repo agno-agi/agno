@@ -14,7 +14,7 @@ class EmailTools(Toolkit):
         **kwargs,
     ):
         super().__init__(name="email_tools", **kwargs)
-        
+
         self.receiver_email: Optional[str] = receiver_email
         self.sender_name: Optional[str] = sender_name
         self.sender_email: Optional[str] = sender_email

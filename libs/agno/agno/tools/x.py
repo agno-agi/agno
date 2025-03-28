@@ -17,7 +17,7 @@ class XTools(Toolkit):
         bearer_token: Optional[str] = None,
         consumer_key: Optional[str] = None,
         consumer_secret: Optional[str] = None,
-        access_token: Optional[str] = None, 
+        access_token: Optional[str] = None,
         access_token_secret: Optional[str] = None,
         **kwargs,
     ):

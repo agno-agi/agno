@@ -2,7 +2,6 @@ import json
 from typing import Any, Optional
 
 from agno.tools import Toolkit
-from agno.utils.functions import cache_result
 from agno.utils.log import log_debug
 
 try:
