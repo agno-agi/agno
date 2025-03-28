@@ -531,7 +531,7 @@ class FunctionCall(BaseModel):
 
     async def aexecute(self) -> bool:
         """Runs the function call asynchronously."""
-        from inspect import isasyncgen, isasyncgenerator, iscoroutinefunction, isgenerator
+        from inspect import isasyncgen, iscoroutinefunction, isgenerator
 
         if self.function.entrypoint is None:
             return False
@@ -576,7 +576,7 @@ class FunctionCall(BaseModel):
                     self.result = await result
 
             # Only cache if not a generator
-            if self.function.cache_results and not (isgenerator(self.result) or isasyncgenerator(self.result)):
+            if self.function.cache_results and not (isgenerator(self.result) or isasyncgen(self.result)):
                 cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
                 cache_file = self.function._get_cache_file_path(cache_key)
                 self.function._save_to_cache(cache_file, self.result)
