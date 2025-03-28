@@ -67,6 +67,7 @@ gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthl
 googlemaps = ["googlemaps", "google-maps-places"]
 todoist = ["todoist-api-python"]
 elevenlabs = ["elevenlabs"]
+smallestai = ["smallestai"]
 fal = ["fal_client"]
 webex = ["webexpythonsdk"]
 mcp = ["mcp"]
@@ -130,6 +131,7 @@ tools = [
   "agno[googlemaps]",
   "agno[todoist]",
   "agno[elevenlabs]",
+  "agno[smallestai]",
   "agno[fal]",
   "agno[webex]",
   "agno[mcp]",
