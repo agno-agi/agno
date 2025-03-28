@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.2.3"
+version = "1.2.5"
 description = "Agno: a lightweight framework for building multi-modal Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -241,6 +241,7 @@ module = [
   "duckdb.*",
   "duckduckgo_search.*",
   "email_validator.*",
+  "e2b_code_interpreter.*",
   "exa_py.*",
   "fastapi.*",
   "filetype.*",

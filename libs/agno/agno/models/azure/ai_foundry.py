@@ -58,10 +58,10 @@ def _format_message(message: Message) -> Dict[str, Any]:
             message_dict["content"] = [{"type": "text", "text": message.content}]
             message_dict["content"].extend(images_to_message(images=message.images))
 
-    if message.audio is not None:
+    if message.audio is not None and len(message.audio) > 0:
         log_warning("Audio input is currently unsupported.")
 
-    if message.videos is not None:
+    if message.videos is not None and len(message.videos) > 0:
         log_warning("Video input is currently unsupported.")
 
     return message_dict

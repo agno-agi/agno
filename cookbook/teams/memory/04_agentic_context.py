@@ -1,5 +1,6 @@
 """
-This recipe shows how to store personalized memories and summaries in a sqlite database.
+This recipe shows how to use agentic context to improve the performance of the team.
+
 Steps:
 1. Run: `pip install openai sqlalchemy agno` to install dependencies
 2. Run: `python cookbook/teams/memory/04_agentic_context.py` to run the agent
@@ -64,8 +65,11 @@ team = Team(
 team.print_response(
     "First find the stock price of apple.Then find any information about the company.",
     stream=True,
+    stream_intermediate_steps=True,
 )
 
-team.print_response("What is the price of google stock?", stream=True)
+team.print_response(
+    "What is the price of google stock?", stream=True, stream_intermediate_steps=True
+)
 
 print("TEAM CONTEXT: ", team.memory.team_context.text)

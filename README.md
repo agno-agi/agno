@@ -36,6 +36,35 @@ agent = Agent(
 agent.print_response("What's happening in New York?", stream=True)
 ```
 
+## 🚨 Introducing the Global Agent Hackathon! 🚨
+
+To celebrate our [General Availability](https://x.com/ashpreetbedi/status/1905311368510931106), we are running a Global Agent Hackathon!
+
+Star this repo and follow along to stay updated.
+
+### Win up to $20,000 in cash by building Agents
+
+- 🏅 10 winners: $300 each
+- 🥉 10 winners: $500 each
+- 🥈 5 winners: $1,000 each
+- 🥇 1 winner: $2,000
+- 🏆 GRAND PRIZE: $5,000 🏆
+
+### Here's the timeline:
+
+- April 3rd - Final dates revealed
+- April 10th - Prize and success criteria announced
+- April 15th (tentative) - Hackathon starts
+- May 30th (tentative) - Hackathon ends
+
+Join us for a month of building Agents!
+
+### Want to join us as a sponsor or judge?
+
+We're looking for sponsors and judges for the hackathon. If you're interested in joining, please reach out to [ashpreet@agno.com](mailto:ashpreet@agno.com).
+
+> Prizes will be distributed on an ongoing basis and continue till all prizes are awarded.
+
 ## Key features
 
 Agno is simple, fast and model agnostic. Here are some key features:
@@ -217,7 +246,7 @@ finance_agent = Agent(
     markdown=True,
 )
 
-agent_team = Agent(
+agent_team = Team(
     mode="coordinate",
     members=[web_agent, finance_agent],
     model=OpenAIChat(id="gpt-4o"),

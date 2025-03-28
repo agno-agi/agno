@@ -5,11 +5,6 @@ from agno.models.mistral import MistralChat
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 
-english_agent = Agent(
-    name="English Agent",
-    role="You only answer in English",
-    model=OpenAIChat(id="gpt-4o"),
-)
 japanese_agent = Agent(
     name="Japanese Agent",
     role="You only answer in Japanese",
@@ -41,7 +36,6 @@ multi_language_team = Team(
     mode="route",
     model=OpenAIChat("gpt-4o"),
     members=[
-        english_agent,
         spanish_agent,
         japanese_agent,
         french_agent,
@@ -52,8 +46,9 @@ multi_language_team = Team(
     instructions=[
         "Identify the language of the user's question and direct it to the appropriate language agent.",
         "Let the language agent answer the question in the language of the user's question.",
-        "If the user asks in a language whose agent is not a team member, respond in English with:",
-        "'I only answer in the following languages: English, Spanish, Japanese, French and German. Please ask your question in one of these languages.'",
+        "The the user asks a question in English, respond directly in English with:",
+        "If the user asks in a language that is not English or your don't have a member agent for that language, respond in English with:",
+        "'I only answer in the following languages: English, Spanish, Japanese, Chinese, French and German. Please ask your question in one of these languages.'",
         "Always check the language of the user's input before routing to an agent.",
         "For unsupported languages like Italian, respond in English with the above message.",
     ],
