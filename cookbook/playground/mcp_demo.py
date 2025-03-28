@@ -29,6 +29,7 @@ async def run_server() -> None:
     # Create a client session to connect to the MCP server
     async with MCPTools(server_params=server_params) as mcp_tools:
         agent = Agent(
+            name="MCP GitHub Agent",
             tools=[mcp_tools],
             instructions=dedent("""\
                 You are a GitHub assistant. Help users explore repositories and their activity.
