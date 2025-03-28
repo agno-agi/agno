@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import warnings
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
@@ -22,6 +23,9 @@ from typing import (
     overload,
 )
 from uuid import uuid4
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
+import threading
 
 from pydantic import BaseModel
 
@@ -67,6 +71,8 @@ class Agent:
     agent_id: Optional[str] = None
     # Agent introduction. This is added to the message history when a run is started.
     introduction: Optional[str] = None
+    # Register the agent on the agno platform
+    register_on_platform: bool = False
 
     # --- User settings ---
     # ID of the user interacting with this agent
@@ -253,6 +259,7 @@ class Agent:
         name: Optional[str] = None,
         agent_id: Optional[str] = None,
         introduction: Optional[str] = None,
+        register_on_platform: bool = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -322,7 +329,7 @@ class Agent:
         self.name = name
         self.agent_id = agent_id
         self.introduction = introduction
-
+        self.register_on_platform = register_on_platform
         self.user_id = user_id
 
         self.session_id = session_id
@@ -436,6 +443,9 @@ class Agent:
         self._formatter: Optional[SafeFormatter] = None
 
     def set_agent_id(self) -> str:
+        if self.name is not None:
+            hash_object = hashlib.sha256(self.name.encode())
+            self.agent_id = hash_object.hexdigest()[:36]
         if self.agent_id is None:
             self.agent_id = str(uuid4())
         log_debug(f"Agent ID: {self.agent_id}", center=True)
@@ -836,8 +846,15 @@ class Agent:
         elif messages is not None:
             self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
-        # Log Agent Run
-        self._log_agent_run()
+        # Define a function to log and register
+        def log_and_register():
+            self._log_agent_run()
+            if self.register_on_platform:
+                self._register_agent_on_platform()
+
+        # Start the log_and_register function in a separate thread
+        thread = threading.Thread(target=log_and_register)
+        thread.start()
 
         log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
         if self.stream_intermediate_steps:
@@ -1355,10 +1372,20 @@ class Agent:
         elif messages is not None:
             self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
-        # Log Agent Run
-        await self._alog_agent_run()
+        # Define an async function to log and register
+        async def alog_and_register():
+            await self._alog_agent_run()
+            if self.register_on_platform:
+                await self._aregister_agent_on_platform()
 
-        log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
+        # Define a synchronous wrapper to run the async function
+        def run_async_in_thread():
+            asyncio.run(alog_and_register())
+
+        # Run the synchronous wrapper in a separate thread
+        await asyncio.to_thread(run_async_in_thread)
+
+        log_debug(f"Async Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,
@@ -3622,6 +3649,50 @@ class Agent:
             )
 
         return run_data
+
+    def _register_agent_on_platform(self) -> None:
+        if not self.register_on_platform:
+            return
+
+        from agno.api.agent import AgentAppCreate, create_agent_app
+
+        try:
+            create_agent_app(
+                app=AgentAppCreate(
+                    name=self.name,
+                    agent_id=self.agent_id,
+                    agent_config={
+                        "instructions": self.instructions,
+                        "tools": self.tools,
+                        "knowledge": self.knowledge.__class__.__name__ if self.knowledge is not None else None,
+                        "storage": self.storage.__class__.__name__ if self.storage is not None else None,
+                    },
+                )
+            )
+        except Exception as e:
+            log_debug(f"Could not create Agent app: {e}")
+
+    async def _aregister_agent_on_platform(self) -> None:
+        if not self.register_on_platform:
+            return
+
+        from agno.api.agent import AgentAppCreate, acreate_agent_app
+
+        try:
+            await acreate_agent_app(
+                app=AgentAppCreate(
+                    name=self.name,
+                    agent_id=self.agent_id,
+                    agent_config={
+                        "instructions": self.instructions,
+                        "tools": self.tools,
+                        "knowledge": self.knowledge.__class__.__name__ if self.knowledge is not None else None,
+                        "storage": self.storage.__class__.__name__ if self.storage is not None else None,
+                    },
+                )
+            )
+        except Exception as e:
+            log_debug(f"Could not create Agent app: {e}")
 
     def _log_agent_run(self) -> None:
         self.set_monitoring()
