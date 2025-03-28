@@ -7,7 +7,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
-from agno.media import Audio, File as FileMedia, Image, Video
+from agno.media import Audio, Image, Video
+from agno.media import File as FileMedia
 from agno.playground.operator import (
     format_tools,
     get_agent_by_id,
@@ -179,13 +180,13 @@ def get_async_playground_router(
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
         return Video(content=content, format=file.content_type)
-    
+
     async def process_document(file: UploadFile) -> Optional[FileMedia]:
         try:
             content = await file.read()
             if not content:
                 raise HTTPException(status_code=400, detail="Empty file")
-                        
+
             return FileMedia(content=content, mime_type=file.content_type)
         except Exception as e:
             logger.error(f"Error processing document {file.filename}: {e}")
@@ -633,14 +634,20 @@ def get_async_playground_router(
                         base64_videos.append(base64_video)
                     except Exception as e:
                         logger.error(f"Error processing video {file.filename}: {e}")
-                        continue    
-                elif file.content_type in ["application/pdf", "text/csv", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain", "application/json"]:
+                        continue
+                elif file.content_type in [
+                    "application/pdf",
+                    "text/csv",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "text/plain",
+                    "application/json",
+                ]:
                     document_file = await process_document(file)
                     if document_file is not None:
                         document_files.append(document_file)
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
-                    
+
         if stream:
             return StreamingResponse(
                 team_chat_response_streamer(

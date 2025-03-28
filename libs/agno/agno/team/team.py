@@ -1026,7 +1026,6 @@ class Team:
         """Run the Team asynchronously and return the response."""
         self._initialize_team()
 
-
         retries = retries or 3
         if retries < 1:
             raise ValueError("Retries must be at least 1")
@@ -1587,6 +1586,7 @@ class Team:
         message: Optional[Union[List, Dict, str, Message]] = None,
         *,
         stream: bool = False,
+        stream_intermediate_steps: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_reasoning_verbose: bool = False,
@@ -1623,6 +1623,7 @@ class Team:
                 videos=videos,
                 files=files,
                 markdown=markdown,
+                stream_intermediate_steps=stream_intermediate_steps,
                 **kwargs,
             )
         else:
@@ -1913,6 +1914,7 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         markdown: bool = False,
+        stream_intermediate_steps: bool = False,
         **kwargs: Any,
     ) -> None:
         import textwrap
@@ -1927,6 +1929,8 @@ class Team:
 
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
+
+        stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
 
         _response_content: str = ""
         _response_thinking: str = ""
@@ -1970,7 +1974,7 @@ class Team:
                 videos=videos,
                 files=files,
                 stream=True,
-                stream_intermediate_steps=True,
+                stream_intermediate_steps=stream_intermediate_steps,
                 **kwargs,
             )
 
@@ -2376,6 +2380,7 @@ class Team:
         message: Optional[Union[List, Dict, str, Message]] = None,
         *,
         stream: bool = False,
+        stream_intermediate_steps: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_reasoning_verbose: bool = False,
@@ -2412,6 +2417,7 @@ class Team:
                 videos=videos,
                 files=files,
                 markdown=markdown,
+                stream_intermediate_steps=stream_intermediate_steps,
                 **kwargs,
             )
         else:
@@ -2700,6 +2706,7 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         markdown: bool = False,
+        stream_intermediate_steps: bool = False,
         **kwargs: Any,
     ) -> None:
         import textwrap
@@ -2712,6 +2719,8 @@ class Team:
 
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
+
+        stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
 
         self.run_response = cast(TeamRunResponse, self.run_response)
 
@@ -2760,7 +2769,7 @@ class Team:
                 videos=videos,
                 files=files,
                 stream=True,
-                stream_intermediate_steps=True, # to stream tool calls panel
+                stream_intermediate_steps=stream_intermediate_steps,
                 **kwargs,
             )
             team_markdown = None
