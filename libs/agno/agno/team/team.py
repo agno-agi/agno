@@ -134,6 +134,10 @@ class Team:
     # If True, read the team history
     read_team_history: bool = False
 
+    # --- Team Tools ---
+    # A list of tools provided to the Model.
+    # Tools are functions the model may generate JSON inputs for.
+    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
     # Show tool calls in Team response. This sets the default for the team.
     show_tool_calls: bool = True
     # Controls which (if any) tool is called by the team model.
@@ -143,6 +147,8 @@ class Team:
     #   forces the model to call that tool.
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    # Maximum number of tool calls allowed.
+    tool_call_limit: Optional[int] = None
 
     # --- Structured output ---
     # Response model for the team response
@@ -205,7 +211,9 @@ class Team:
         enable_agentic_context: bool = False,
         share_member_interactions: bool = False,
         read_team_history: bool = False,
+        tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         show_tool_calls: bool = True,
+        tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         response_model: Optional[Type[BaseModel]] = None,
         use_json_mode: bool = False,
@@ -254,8 +262,10 @@ class Team:
 
         self.read_team_history = read_team_history
 
+        self.tools = tools
         self.show_tool_calls = show_tool_calls
         self.tool_choice = tool_choice
+        self.tool_call_limit = tool_call_limit
 
         self.response_model = response_model
         self.use_json_mode = use_json_mode
@@ -474,11 +484,16 @@ class Team:
                 else:
                     self.run_input = message
 
-            # Prepare built-in tools
-            _built_in_tools: List[Union[Function, Callable]] = []
+            # Prepare tools
+            _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+            # Add provided tools
+            if self.tools is not None:
+                for tool in self.tools:
+                    _tools.append(tool)
 
             if self.read_team_history:
-                _built_in_tools.append(self.get_team_history)
+                _tools.append(self.get_team_history)
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
@@ -491,10 +506,10 @@ class Team:
                     audio=audio,  # type: ignore
                     files=files,  # type: ignore
                 )
-                _built_in_tools.append(forward_task_func)
+                _tools.append(forward_task_func)
 
             elif self.mode == "coordinate":
-                _built_in_tools.append(
+                _tools.append(
                     self.get_transfer_task_function(
                         stream=stream,
                         async_mode=False,
@@ -506,7 +521,7 @@ class Team:
                 )
 
                 if self.enable_agentic_context:
-                    _built_in_tools.append(self.set_team_context)
+                    _tools.append(self.set_team_context)
             elif self.mode == "collaborate":
                 run_member_agents_func = self.get_run_member_agents_function(
                     stream=stream,
@@ -516,12 +531,12 @@ class Team:
                     audio=audio,  # type: ignore
                     files=files,  # type: ignore
                 )
-                _built_in_tools.append(run_member_agents_func)
+                _tools.append(run_member_agents_func)
 
                 if self.enable_agentic_context:
-                    _built_in_tools.append(self.set_team_context)
+                    _tools.append(self.set_team_context)
 
-            self._add_tools_to_model(self.model, tools=_built_in_tools)  # type: ignore
+            self._add_tools_to_model(self.model, tools=_tools)  # type: ignore
 
             # Run the team
             try:
@@ -533,10 +548,13 @@ class Team:
 
                 # Prepare run messages
                 if self.mode == "route":
-                    # In route mode the model shouldn't get images/audio/video
                     run_messages: RunMessages = self.get_run_messages(
                         run_response=self.run_response,
                         message=message,
+                        audio=audio,
+                        images=images,
+                        videos=videos,
+                        files=files,
                         **kwargs,
                     )
                 else:
@@ -860,7 +878,7 @@ class Team:
                 # Format tool calls whenever new ones are added during streaming
                 run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
 
-                # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
+                # Only yield the event if streaming intermediate steps
                 if stream_intermediate_steps:
                     yield self._create_run_response(
                         content=model_response_chunk.content,
@@ -1054,11 +1072,16 @@ class Team:
                 else:
                     self.run_input = message
 
-            # Prepare built-in tools
-            _built_in_tools: List[Union[Function, Callable]] = []
+            # Prepare tools
+            _tools: List[Union[Function, Callable, Toolkit, Dict]] = []
+
+            # Add provided tools
+            if self.tools is not None:
+                for tool in self.tools:
+                    _tools.append(tool)
 
             if self.read_team_history:
-                _built_in_tools.append(self.get_team_history)
+                _tools.append(self.get_team_history)
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
@@ -1071,10 +1094,10 @@ class Team:
                     audio=audio,  # type: ignore
                     files=files,  # type: ignore
                 )
-                _built_in_tools.append(forward_task_func)
+                _tools.append(forward_task_func)
                 self.model.tool_choice = "required"  # type: ignore
             elif self.mode == "coordinate":
-                _built_in_tools.append(
+                _tools.append(
                     self.get_transfer_task_function(
                         stream=stream,
                         async_mode=True,
@@ -1087,7 +1110,7 @@ class Team:
                 self.model.tool_choice = "auto"  # type: ignore
 
                 if self.enable_agentic_context:
-                    _built_in_tools.append(self.set_team_context)
+                    _tools.append(self.set_team_context)
             elif self.mode == "collaborate":
                 run_member_agents_func = self.get_run_member_agents_function(
                     stream=stream,
@@ -1097,13 +1120,13 @@ class Team:
                     audio=audio,  # type: ignore
                     files=files,  # type: ignore
                 )
-                _built_in_tools.append(run_member_agents_func)
+                _tools.append(run_member_agents_func)
                 self.model.tool_choice = "auto"  # type: ignore
 
                 if self.enable_agentic_context:
-                    _built_in_tools.append(self.set_team_context)
+                    _tools.append(self.set_team_context)
 
-            self._add_tools_to_model(self.model, tools=_built_in_tools)  # type: ignore
+            self._add_tools_to_model(self.model, tools=_tools)  # type: ignore
 
             # Run the team
             try:
@@ -1119,6 +1142,10 @@ class Team:
                     run_messages: RunMessages = self.get_run_messages(
                         run_response=self.run_response,
                         message=message,
+                        audio=audio,
+                        images=images,
+                        videos=videos,
+                        files=files,
                         **kwargs,
                     )
                 else:
@@ -1441,7 +1468,7 @@ class Team:
                 # Format tool calls whenever new ones are added during streaming
                 run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
 
-                # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
+                # Only yield the event if streaming intermediate steps
                 if stream_intermediate_steps:
                     yield self._create_run_response(
                         content=model_response_chunk.content,
@@ -1559,6 +1586,7 @@ class Team:
         message: Optional[Union[List, Dict, str, Message]] = None,
         *,
         stream: bool = False,
+        stream_intermediate_steps: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_reasoning_verbose: bool = False,
@@ -1595,6 +1623,7 @@ class Team:
                 videos=videos,
                 files=files,
                 markdown=markdown,
+                stream_intermediate_steps=stream_intermediate_steps,
                 **kwargs,
             )
         else:
@@ -1628,12 +1657,16 @@ class Team:
         markdown: bool = False,
         **kwargs: Any,
     ) -> None:
+        import textwrap
+
         from rich.console import Group
         from rich.json import JSON
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
         from rich.text import Text
+
+        from agno.utils.response import format_tool_calls
 
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
@@ -1736,6 +1769,37 @@ class Team:
                                 )
                                 panels.append(member_reasoning_panel)
 
+                        # Add tool calls panel for member if available
+                        if self.show_tool_calls and hasattr(member_response, "tools") and member_response.tools:
+                            member_name = None
+                            if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                                member_name = self._get_member_name(member_response.agent_id)
+                            elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                                member_name = self._get_member_name(member_response.team_id)
+
+                            if member_name:
+                                formatted_calls = format_tool_calls(member_response.tools)
+                                if formatted_calls:
+                                    console_width = console.width if console else 80
+                                    panel_width = console_width + 30
+
+                                    lines = []
+                                    for call in formatted_calls:
+                                        wrapped_call = textwrap.fill(
+                                            f"• {call}", width=panel_width, subsequent_indent="  "
+                                        )
+                                        lines.append(wrapped_call)
+
+                                    tool_calls_text = "\n\n".join(lines)
+
+                                    member_tool_calls_panel = create_panel(
+                                        content=tool_calls_text,
+                                        title=f"{member_name} Tool Calls",
+                                        border_style="yellow",
+                                    )
+                                    panels.append(member_tool_calls_panel)
+                                    live_console.update(Group(*panels))
+
                         show_markdown = False
                         if member_markdown:
                             if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
@@ -1780,20 +1844,31 @@ class Team:
 
                     live_console.update(Group(*panels))
 
-                # Add tool calls panel if available
-                if self.show_tool_calls and run_response.formatted_tool_calls:
-                    # Create bullet points for each tool call
-                    tool_calls_content = Text()
-                    for tool_call in run_response.formatted_tool_calls:
-                        tool_calls_content.append(f"• {tool_call}\n")
+                # Add team level tool calls panel if available
+                if self.show_tool_calls and run_response.tools:
+                    formatted_calls = format_tool_calls(run_response.tools)
+                    if formatted_calls:
+                        console_width = console.width if console else 80
+                        # Allow for panel borders and padding
+                        panel_width = console_width + 30
 
-                    tool_calls_panel = create_panel(
-                        content=tool_calls_content.plain.rstrip(),
-                        title="Tool Calls",
-                        border_style="yellow",
-                    )
-                    panels.append(tool_calls_panel)
-                    live_console.update(Group(*panels))
+                        lines = []
+                        for call in formatted_calls:
+                            wrapped_call = textwrap.fill(
+                                f"• {call}", width=panel_width, subsequent_indent="  "
+                            )  # Indent continuation lines
+                            lines.append(wrapped_call)
+
+                        # Join with blank lines between items
+                        tool_calls_text = "\n\n".join(lines)
+
+                        team_tool_calls_panel = create_panel(
+                            content=tool_calls_text,
+                            title="Team Tool Calls",
+                            border_style="yellow",
+                        )
+                        panels.append(team_tool_calls_panel)
+                        live_console.update(Group(*panels))
 
                 response_content_batch: Union[str, JSON, Markdown] = self._parse_response_content(
                     run_response, tags_to_include_in_markdown, show_markdown=team_markdown
@@ -1839,21 +1914,34 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         markdown: bool = False,
+        stream_intermediate_steps: bool = False,
         **kwargs: Any,
     ) -> None:
+        import textwrap
+
         from rich.console import Group
-        from rich.json import JSON
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
         from rich.text import Text
 
+        from agno.utils.response import format_tool_calls
+
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
+
+        stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
 
         _response_content: str = ""
         _response_thinking: str = ""
         reasoning_steps: List[ReasoningStep] = []
+
+        # Track tool calls by member and team
+        member_tool_calls = {}  # type: ignore
+        team_tool_calls = []  # type: ignore
+
+        # Track processed tool calls to avoid duplicates
+        processed_tool_calls = set()
 
         with Live(console=console) as live_console:
             status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
@@ -1880,11 +1968,21 @@ class Team:
 
             # Get response from the team
             stream_resp = self.run(  # type: ignore
-                message=message, audio=audio, images=images, videos=videos, files=files, stream=True, **kwargs
+                message=message,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                stream=True,
+                stream_intermediate_steps=stream_intermediate_steps,
+                **kwargs,
             )
 
             team_markdown = None
             member_markdown = {}
+
+            # Dict to track member response panels by member_id
+            member_response_panels = {}
 
             for resp in stream_resp:
                 if team_markdown is None:
@@ -1905,6 +2003,35 @@ class Team:
                     if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
                         reasoning_steps = resp.extra_data.reasoning_steps
 
+                    # Collect team tool calls, avoiding duplicates
+                    if self.show_tool_calls and resp.tools:
+                        for tool in resp.tools:
+                            # Generate a unique ID for this tool call
+                            tool_id = tool.get("tool_call_id", str(hash(str(tool))))
+                            if tool_id not in processed_tool_calls:
+                                processed_tool_calls.add(tool_id)
+                                team_tool_calls.append(tool)
+
+                # Collect member tool calls, avoiding duplicates
+                if self.show_tool_calls and resp.member_responses:
+                    for member_response in resp.member_responses:
+                        member_id = None
+                        if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                            member_id = member_response.agent_id
+                        elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                            member_id = member_response.team_id
+
+                        if member_id and hasattr(member_response, "tools") and member_response.tools:
+                            if member_id not in member_tool_calls:
+                                member_tool_calls[member_id] = []
+
+                            for tool in member_response.tools:
+                                # Generate a unique ID for this tool call
+                                tool_id = tool.get("tool_call_id", str(hash(str(tool))))
+                                if tool_id not in processed_tool_calls:
+                                    processed_tool_calls.add(tool_id)
+                                    member_tool_calls[member_id].append(tool)
+
                 response_content_stream: Union[str, Markdown] = _response_content
                 # Escape special tags before markdown conversion
                 if team_markdown:
@@ -1912,7 +2039,7 @@ class Team:
                     response_content_stream = Markdown(escaped_content)
 
                 # Create new panels for each chunk
-                panels = [status]
+                panels = []
 
                 if message and show_message:
                     render = True
@@ -1924,8 +2051,6 @@ class Team:
                         border_style="cyan",
                     )
                     panels.append(message_panel)
-                if render:
-                    live_console.update(Group(*panels))
 
                 if len(reasoning_steps) > 0 and show_reasoning:
                     render = True
@@ -1933,8 +2058,6 @@ class Team:
                     for i, step in enumerate(reasoning_steps, 1):
                         reasoning_panel = self._build_reasoning_step_panel(i, step, show_reasoning_verbose)
                         panels.append(reasoning_panel)
-                if render:
-                    live_console.update(Group(*panels))
 
                 if len(_response_thinking) > 0:
                     render = True
@@ -1945,24 +2068,94 @@ class Team:
                         border_style="green",
                     )
                     panels.append(thinking_panel)
-                if render:
-                    live_console.update(Group(*panels))
+                elif _response_content == "":
+                    # Keep showing status if no content yet
+                    panels.append(status)
 
-                # Add tool calls panel if available
-                if self.show_tool_calls and resp is not None and resp.formatted_tool_calls:
-                    render = True
-                    # Create bullet points for each tool call
-                    tool_calls_content = Text()
-                    for tool_call in resp.formatted_tool_calls:
-                        tool_calls_content.append(f"• {tool_call}\n")
+                # Process member responses and their tool calls
+                for member_response in resp.member_responses if hasattr(resp, "member_responses") else []:
+                    member_id = None
+                    member_name = "Team Member"
+                    if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                        member_id = member_response.agent_id
+                        member_name = self._get_member_name(member_id)
+                    elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                        member_id = member_response.team_id
+                        member_name = self._get_member_name(member_id)
 
-                    tool_calls_panel = create_panel(
-                        content=tool_calls_content.plain.rstrip(),
-                        title="Tool Calls",
-                        border_style="yellow",
-                    )
-                    panels.append(tool_calls_panel)
+                    # If we have tool calls for this member, display them
+                    if self.show_tool_calls and member_id in member_tool_calls and member_tool_calls[member_id]:
+                        formatted_calls = format_tool_calls(member_tool_calls[member_id])
+                        if formatted_calls:
+                            console_width = console.width if console else 80
+                            panel_width = console_width + 30
 
+                            lines = []
+                            for call in formatted_calls:
+                                wrapped_call = textwrap.fill(f"• {call}", width=panel_width, subsequent_indent="  ")
+                                lines.append(wrapped_call)
+
+                            tool_calls_text = "\n\n".join(lines)
+
+                            member_tool_calls_panel = create_panel(
+                                content=tool_calls_text,
+                                title=f"{member_name} Tool Calls",
+                                border_style="yellow",
+                            )
+                            panels.append(member_tool_calls_panel)
+
+                    # Process member response content
+                    if self.show_members_responses and member_id is not None:
+                        show_markdown = False
+                        if markdown:
+                            show_markdown = True
+
+                        member_response_content = self._parse_response_content(
+                            member_response,
+                            tags_to_include_in_markdown,
+                            show_markdown=show_markdown,
+                        )
+
+                        member_response_panel = create_panel(
+                            content=member_response_content,
+                            title=f"{member_name} Response",
+                            border_style="magenta",
+                        )
+
+                        panels.append(member_response_panel)
+
+                        # Store for reference
+                        if member_id is not None:
+                            member_response_panels[member_id] = member_response_panel
+
+                # Add team tool calls panel if available (before the team response)
+                if self.show_tool_calls and team_tool_calls:
+                    formatted_calls = format_tool_calls(team_tool_calls)
+                    if formatted_calls:
+                        console_width = console.width if console else 80
+                        panel_width = console_width + 30
+
+                        lines = []
+                        # Create a set to track already added calls by their string representation
+                        added_calls = set()
+                        for call in formatted_calls:
+                            if call not in added_calls:
+                                added_calls.add(call)
+                                # Wrap the call text to fit within the panel
+                                wrapped_call = textwrap.fill(f"• {call}", width=panel_width, subsequent_indent="  ")
+                                lines.append(wrapped_call)
+
+                        # Join with blank lines between items
+                        tool_calls_text = "\n\n".join(lines)
+
+                        team_tool_calls_panel = create_panel(
+                            content=tool_calls_text,
+                            title="Team Tool Calls",
+                            border_style="yellow",
+                        )
+                        panels.append(team_tool_calls_panel)
+
+                # Add the team response panel at the end
                 if len(_response_content) > 0:
                     render = True
                     # Create panel for response
@@ -1972,8 +2165,10 @@ class Team:
                         border_style="blue",
                     )
                     panels.append(response_panel)
-                if render:
+
+                if render or len(panels) > 0:
                     live_console.update(Group(*panels))
+
             response_timer.stop()
 
             # Add citations
@@ -2008,66 +2203,184 @@ class Team:
                 if member.response_model is not None and isinstance(member, Team) and member.team_id is not None:
                     member_markdown[member.team_id] = False  # type: ignore
 
-            # Create panel for member responses
-            for i, member_response in enumerate(self.run_response.member_responses):  # type: ignore
-                reasoning_steps = []
-                if member_response.extra_data is not None and member_response.extra_data.reasoning_steps is not None:
-                    reasoning_steps = member_response.extra_data.reasoning_steps
-                if len(reasoning_steps) > 0 and show_reasoning:
-                    # Create panels for reasoning steps
-                    for j, step in enumerate(reasoning_steps, 1):
-                        member_reasoning_panel = self._build_reasoning_step_panel(
-                            j, step, show_reasoning_verbose, color="magenta"
-                        )
-                        panels.insert(i + 1, member_reasoning_panel)
+            # Final panels assembly - we'll recreate the panels from scratch to ensure correct order
+            final_panels = []
 
-                show_markdown = False
-                if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                    show_markdown = member_markdown.get(member_response.agent_id, False)
-                elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
-                    show_markdown = member_markdown.get(member_response.team_id, False)
-
-                member_response_content: Union[str, JSON, Markdown] = self._parse_response_content(
-                    member_response,
-                    tags_to_include_in_markdown,
-                    show_markdown=show_markdown,
+            # Start with the message
+            if message and show_message:
+                message_content = get_text_from_message(message)
+                message_panel = create_panel(
+                    content=Text(message_content, style="green"),
+                    title="Message",
+                    border_style="cyan",
                 )
+                final_panels.append(message_panel)
 
+            # Add reasoning steps
+            if reasoning_steps and show_reasoning:
+                for i, step in enumerate(reasoning_steps, 1):
+                    reasoning_panel = self._build_reasoning_step_panel(i, step, show_reasoning_verbose)
+                    final_panels.append(reasoning_panel)
+
+            # Add thinking panel if available
+            if _response_thinking:
+                thinking_panel = create_panel(
+                    content=Text(_response_thinking),
+                    title=f"Thinking ({response_timer.elapsed:.1f}s)",
+                    border_style="green",
+                )
+                final_panels.append(thinking_panel)
+
+            # Add member tool calls and responses in correct order
+            for i, member_response in enumerate(self.run_response.member_responses if self.run_response else []):
+                member_id = None
                 if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                    member_response_panel = create_panel(
-                        content=member_response_content,
-                        title=f"{self._get_member_name(member_response.agent_id)} Response",
-                        border_style="magenta",
-                    )
+                    member_id = member_response.agent_id
                 elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                    member_id = member_response.team_id
+
+                if member_id:
+                    # First add tool calls if any
+                    if self.show_tool_calls and member_id in member_tool_calls and member_tool_calls[member_id]:
+                        formatted_calls = format_tool_calls(member_tool_calls[member_id])
+                        if formatted_calls:
+                            console_width = console.width if console else 80
+                            panel_width = console_width + 30
+
+                            lines = []
+                            for call in formatted_calls:
+                                wrapped_call = textwrap.fill(f"• {call}", width=panel_width, subsequent_indent="  ")
+                                lines.append(wrapped_call)
+
+                            tool_calls_text = "\n\n".join(lines)
+
+                            member_name = self._get_member_name(member_id)
+                            member_tool_calls_panel = create_panel(
+                                content=tool_calls_text,
+                                title=f"{member_name} Tool Calls",
+                                border_style="yellow",
+                            )
+                            final_panels.append(member_tool_calls_panel)
+
+                    # Add reasoning steps if any
+                    reasoning_steps = []
+                    if (
+                        member_response.extra_data is not None
+                        and member_response.extra_data.reasoning_steps is not None
+                    ):
+                        reasoning_steps = member_response.extra_data.reasoning_steps
+                    if reasoning_steps and show_reasoning:
+                        for j, step in enumerate(reasoning_steps, 1):
+                            member_reasoning_panel = self._build_reasoning_step_panel(
+                                j, step, show_reasoning_verbose, color="magenta"
+                            )
+                            final_panels.append(member_reasoning_panel)
+
+                    # Then add response
+                    show_markdown = False
+                    if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                        show_markdown = member_markdown.get(member_response.agent_id, False)
+                    elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                        show_markdown = member_markdown.get(member_response.team_id, False)
+
+                    member_response_content = self._parse_response_content(
+                        member_response,
+                        tags_to_include_in_markdown,
+                        show_markdown=show_markdown,
+                    )
+
+                    member_name = "Team Member"
+                    if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                        member_name = self._get_member_name(member_response.agent_id)
+                    elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                        member_name = self._get_member_name(member_response.team_id)
+
                     member_response_panel = create_panel(
                         content=member_response_content,
-                        title=f"{self._get_member_name(member_response.team_id)} Response",
+                        title=f"{member_name} Response",
                         border_style="magenta",
                     )
-                panels.insert(i + 1, member_response_panel)
+                    final_panels.append(member_response_panel)
 
-                if member_response.citations is not None and member_response.citations.urls is not None:
-                    md_content = "\n".join(
-                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
-                        for i, citation in enumerate(member_response.citations.urls)
-                        if citation.url  # Only include citations with valid URLs
-                    )
-                    if md_content:  # Only create panel if there are citations
-                        citations_panel = create_panel(
-                            content=Markdown(md_content),
-                            title="Citations",
-                            border_style="magenta",
+                    # Add citations if any
+                    if member_response.citations is not None and member_response.citations.urls is not None:
+                        md_content = "\n".join(
+                            f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                            for i, citation in enumerate(member_response.citations.urls)
+                            if citation.url  # Only include citations with valid URLs
                         )
-                        panels.insert(i + 2, citations_panel)
+                        if md_content:  # Only create panel if there are citations
+                            citations_panel = create_panel(
+                                content=Markdown(md_content),
+                                title="Citations",
+                                border_style="magenta",
+                            )
+                            final_panels.append(citations_panel)
 
-            live_console.update(Group(*panels))
+            # Add team tool calls before team response
+            if self.show_tool_calls and team_tool_calls:
+                formatted_calls = format_tool_calls(team_tool_calls)
+                if formatted_calls:
+                    console_width = console.width if console else 80
+                    panel_width = console_width + 30
+
+                    lines = []
+                    # Create a set to track already added calls by their string representation
+                    added_calls = set()
+                    for call in formatted_calls:
+                        if call not in added_calls:
+                            added_calls.add(call)
+                            # Wrap the call text to fit within the panel
+                            wrapped_call = textwrap.fill(f"• {call}", width=panel_width, subsequent_indent="  ")
+                            lines.append(wrapped_call)
+
+                    tool_calls_text = "\n\n".join(lines)
+
+                    team_tool_calls_panel = create_panel(
+                        content=tool_calls_text,
+                        title="Team Tool Calls",
+                        border_style="yellow",
+                    )
+                    final_panels.append(team_tool_calls_panel)
+
+            # Add team response
+            if _response_content:
+                response_content_stream = _response_content
+                if team_markdown:
+                    escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
+                    response_content_stream = Markdown(escaped_content)
+
+                response_panel = create_panel(
+                    content=response_content_stream,
+                    title=f"Response ({response_timer.elapsed:.1f}s)",
+                    border_style="blue",
+                )
+                final_panels.append(response_panel)
+
+            # Add team citations
+            if resp.citations is not None and resp.citations.urls is not None:
+                md_content = "\n".join(
+                    f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                    for i, citation in enumerate(resp.citations.urls)
+                    if citation.url  # Only include citations with valid URLs
+                )
+                if md_content:  # Only create panel if there are citations
+                    citations_panel = create_panel(
+                        content=Markdown(md_content),
+                        title="Citations",
+                        border_style="green",
+                    )
+                    final_panels.append(citations_panel)
+
+            # Final update with correctly ordered panels
+            live_console.update(Group(*final_panels))
 
     async def aprint_response(
         self,
         message: Optional[Union[List, Dict, str, Message]] = None,
         *,
         stream: bool = False,
+        stream_intermediate_steps: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_reasoning_verbose: bool = False,
@@ -2104,6 +2417,7 @@ class Team:
                 videos=videos,
                 files=files,
                 markdown=markdown,
+                stream_intermediate_steps=stream_intermediate_steps,
                 **kwargs,
             )
         else:
@@ -2137,6 +2451,8 @@ class Team:
         markdown: bool = False,
         **kwargs: Any,
     ) -> None:
+        import textwrap
+
         from rich.console import Group
         from rich.json import JSON
         from rich.live import Live
@@ -2144,10 +2460,10 @@ class Team:
         from rich.status import Status
         from rich.text import Text
 
+        from agno.utils.response import format_tool_calls
+
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
-
-        self.run_response = cast(TeamRunResponse, self.run_response)
 
         with Live(console=console) as live_console:
             status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
@@ -2172,8 +2488,8 @@ class Team:
             # Run the agent
             run_response: TeamRunResponse = await self.arun(  # type: ignore
                 message=message,
-                audio=audio,
                 images=images,
+                audio=audio,
                 videos=videos,
                 files=files,
                 stream=False,
@@ -2230,7 +2546,6 @@ class Team:
                 # Handle member responses
                 if self.show_members_responses:
                     for member_response in run_response.member_responses:
-                        member_response = cast(RunResponse, member_response)
                         # Handle member reasoning
                         reasoning_steps = []
                         if (
@@ -2238,7 +2553,7 @@ class Team:
                             and member_response.extra_data is not None
                             and member_response.extra_data.reasoning_steps is not None
                         ):
-                            reasoning_steps = member_response.extra_data.reasoning_steps
+                            reasoning_steps.extend(member_response.extra_data.reasoning_steps)
 
                         if len(reasoning_steps) > 0 and show_reasoning:
                             # Create panels for reasoning steps
@@ -2248,12 +2563,43 @@ class Team:
                                 )
                                 panels.append(member_reasoning_panel)
 
-                        show_markdown = False
-                        if member_markdown:
+                        # Add tool calls panel for member if available
+                        if self.show_tool_calls and hasattr(member_response, "tools") and member_response.tools:
+                            member_name = None
                             if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                                show_markdown = member_markdown.get(member_response.agent_id, False)  # type: ignore
+                                member_name = self._get_member_name(member_response.agent_id)
                             elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
-                                show_markdown = member_markdown.get(member_response.team_id, False)  # type: ignore
+                                member_name = self._get_member_name(member_response.team_id)
+
+                            if member_name:
+                                # Format tool calls
+                                formatted_calls = format_tool_calls(member_response.tools)
+                                if formatted_calls:
+                                    console_width = console.width if console else 80
+                                    panel_width = console_width + 30
+
+                                    lines = []
+                                    for call in formatted_calls:
+                                        wrapped_call = textwrap.fill(
+                                            f"• {call}", width=panel_width, subsequent_indent="  "
+                                        )
+                                        lines.append(wrapped_call)
+
+                                    tool_calls_text = "\n\n".join(lines)
+
+                                    member_tool_calls_panel = create_panel(
+                                        content=tool_calls_text,
+                                        title=f"{member_name} Tool Calls",
+                                        border_style="yellow",
+                                    )
+                                    panels.append(member_tool_calls_panel)
+                                    live_console.update(Group(*panels))
+
+                        show_markdown = False
+                        if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                            show_markdown = member_markdown.get(member_response.agent_id, False)
+                        elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                            show_markdown = member_markdown.get(member_response.team_id, False)
 
                         member_response_content: Union[str, JSON, Markdown] = self._parse_response_content(
                             member_response,
@@ -2262,10 +2608,16 @@ class Team:
                         )
 
                         # Create panel for member response
-                        if member_response.agent_id:
+                        if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
                             member_response_panel = create_panel(
                                 content=member_response_content,
                                 title=f"{self._get_member_name(member_response.agent_id)} Response",
+                                border_style="magenta",
+                            )
+                        elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                            member_response_panel = create_panel(
+                                content=member_response_content,
+                                title=f"{self._get_member_name(member_response.team_id)} Response",
                                 border_style="magenta",
                             )
                         panels.append(member_response_panel)
@@ -2276,7 +2628,7 @@ class Team:
                                 for i, citation in enumerate(member_response.citations.urls)
                                 if citation.url  # Only include citations with valid URLs
                             )
-                            if md_content:  # Only create panel if there are citations
+                            if md_content:
                                 citations_panel = create_panel(
                                     content=Markdown(md_content),
                                     title="Citations",
@@ -2286,20 +2638,29 @@ class Team:
 
                     live_console.update(Group(*panels))
 
-                # Add tool calls panel if available
-                if self.show_tool_calls and run_response.formatted_tool_calls:
-                    # Create bullet points for each tool call
-                    tool_calls_content = Text()
-                    for tool_call in run_response.formatted_tool_calls:
-                        tool_calls_content.append(f"• {tool_call}\n")
+                # Add team level tool calls panel if available
+                if self.show_tool_calls and run_response.tools:
+                    formatted_calls = format_tool_calls(run_response.tools)
+                    if formatted_calls:
+                        console_width = console.width if console else 80
+                        # Allow for panel borders and padding
+                        panel_width = console_width + 30
 
-                    tool_calls_panel = create_panel(
-                        content=tool_calls_content.plain.rstrip(),
-                        title="Tool Calls",
-                        border_style="yellow",
-                    )
-                    panels.append(tool_calls_panel)
-                    live_console.update(Group(*panels))
+                        lines = []
+                        for call in formatted_calls:
+                            # Wrap the call text to fit within the panel
+                            wrapped_call = textwrap.fill(f"• {call}", width=panel_width, subsequent_indent="  ")
+                            lines.append(wrapped_call)
+
+                        tool_calls_text = "\n\n".join(lines)
+
+                        team_tool_calls_panel = create_panel(
+                            content=tool_calls_text,
+                            title="Team Tool Calls",
+                            border_style="yellow",
+                        )
+                        panels.append(team_tool_calls_panel)
+                        live_console.update(Group(*panels))
 
                 response_content_batch: Union[str, JSON, Markdown] = self._parse_response_content(
                     run_response, tags_to_include_in_markdown, show_markdown=team_markdown
@@ -2345,10 +2706,12 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         markdown: bool = False,
+        stream_intermediate_steps: bool = False,
         **kwargs: Any,
     ) -> None:
+        import textwrap
+
         from rich.console import Group
-        from rich.json import JSON
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
@@ -2357,11 +2720,23 @@ class Team:
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
+        stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
+
         self.run_response = cast(TeamRunResponse, self.run_response)
 
         _response_content: str = ""
         _response_thinking: str = ""
         reasoning_steps: List[ReasoningStep] = []
+
+        # Track tool calls by member and team
+        member_tool_calls = {}  # type: ignore
+        team_tool_calls = []
+
+        # Track processed tool calls to avoid duplicates
+        processed_tool_calls = set()
+
+        # Initialize final_panels here
+        final_panels = []  # type: ignore
 
         with Live(console=console) as live_console:
             status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
@@ -2388,7 +2763,14 @@ class Team:
 
             # Get response from the team
             stream_resp = await self.arun(  # type: ignore
-                message=message, audio=audio, images=images, videos=videos, files=files, stream=True, **kwargs
+                message=message,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                stream=True,
+                stream_intermediate_steps=stream_intermediate_steps,
+                **kwargs,
             )
             team_markdown = None
             member_markdown = {}
@@ -2411,6 +2793,34 @@ class Team:
                             _response_thinking += resp.thinking
                     if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
                         reasoning_steps = resp.extra_data.reasoning_steps
+
+                    # Collect team tool calls, avoiding duplicates
+                    if self.show_tool_calls and resp.tools:
+                        for tool in resp.tools:
+                            # Generate a unique ID for this tool call
+                            tool_id = tool.get("tool_call_id", str(hash(str(tool))))
+                            if tool_id not in processed_tool_calls:
+                                processed_tool_calls.add(tool_id)
+                                team_tool_calls.append(tool)
+
+                # Collect member tool calls, avoiding duplicates
+                if self.show_tool_calls and resp.member_responses:
+                    for member_response in resp.member_responses:
+                        member_id = None
+                        if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                            member_id = member_response.agent_id
+                        elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                            member_id = member_response.team_id
+
+                        if member_id and hasattr(member_response, "tools") and member_response.tools:
+                            if member_id not in member_tool_calls:
+                                member_tool_calls[member_id] = []
+
+                            for tool in member_response.tools:
+                                tool_id = tool.get("tool_call_id", str(hash(str(tool))))
+                                if tool_id not in processed_tool_calls:
+                                    processed_tool_calls.add(tool_id)
+                                    member_tool_calls[member_id].append(tool)
 
                 response_content_stream: Union[str, Markdown] = _response_content
                 # Escape special tags before markdown conversion
@@ -2460,8 +2870,12 @@ class Team:
                     render = True
                     # Create bullet points for each tool call
                     tool_calls_content = Text()
+                    # Use a set to track already processed tool calls
+                    added_tool_calls = set()
                     for tool_call in resp.formatted_tool_calls:
-                        tool_calls_content.append(f"• {tool_call}\n")
+                        if tool_call not in added_tool_calls:
+                            added_tool_calls.add(tool_call)
+                            tool_calls_content.append(f"• {tool_call}\n")
 
                     tool_calls_panel = create_panel(
                         content=tool_calls_content.plain.rstrip(),
@@ -2515,60 +2929,182 @@ class Team:
                 if member.response_model is not None and isinstance(member, Team) and member.team_id is not None:
                     member_markdown[member.team_id] = False  # type: ignore
 
-            # Create panel for member responses
-            for i, member_response in enumerate(self.run_response.member_responses):
-                reasoning_steps = []
-                if member_response.extra_data is not None and member_response.extra_data.reasoning_steps is not None:
-                    reasoning_steps = member_response.extra_data.reasoning_steps
-                if len(reasoning_steps) > 0 and show_reasoning:
-                    # Create panels for reasoning steps
-                    for j, step in enumerate(reasoning_steps, 1):
-                        member_reasoning_panel = self._build_reasoning_step_panel(
-                            j, step, show_reasoning_verbose, color="magenta"
-                        )
-                        panels.insert(i + 1, member_reasoning_panel)
+            # Final panels assembly - we'll recreate the panels from scratch to ensure correct order
+            final_panels = []
 
-                show_markdown = False
-                if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                    show_markdown = member_markdown.get(member_response.agent_id, False)
-                elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
-                    show_markdown = member_markdown.get(member_response.team_id, False)
-
-                member_response_content: Union[str, JSON, Markdown] = self._parse_response_content(
-                    member_response,
-                    tags_to_include_in_markdown,
-                    show_markdown=show_markdown,
+            # Start with the message
+            if message and show_message:
+                message_content = get_text_from_message(message)
+                message_panel = create_panel(
+                    content=Text(message_content, style="green"),
+                    title="Message",
+                    border_style="cyan",
                 )
+                final_panels.append(message_panel)
 
+            # Add reasoning steps
+            if reasoning_steps and show_reasoning:
+                for i, step in enumerate(reasoning_steps, 1):
+                    reasoning_panel = self._build_reasoning_step_panel(i, step, show_reasoning_verbose)
+                    final_panels.append(reasoning_panel)
+
+            # Add thinking panel if available
+            if _response_thinking:
+                thinking_panel = create_panel(
+                    content=Text(_response_thinking),
+                    title=f"Thinking ({response_timer.elapsed:.1f}s)",
+                    border_style="green",
+                )
+                final_panels.append(thinking_panel)
+
+            # Add member tool calls and responses in correct order
+            for i, member_response in enumerate(self.run_response.member_responses if self.run_response else []):
+                member_id = None
                 if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                    member_response_panel = create_panel(
-                        content=member_response_content,
-                        title=f"{self._get_member_name(member_response.agent_id)} Response",
-                        border_style="magenta",
-                    )
+                    member_id = member_response.agent_id
                 elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                    member_id = member_response.team_id
+
+                if member_id:
+                    # First add tool calls if any
+                    if self.show_tool_calls and member_id in member_tool_calls and member_tool_calls[member_id]:
+                        formatted_calls = format_tool_calls(member_tool_calls[member_id])
+                        if formatted_calls:
+                            console_width = console.width if console else 80
+                            panel_width = console_width + 30
+
+                            lines = []
+                            # Create a set to track already added calls by their string representation
+                            added_calls = set()
+                            for call in formatted_calls:
+                                if call not in added_calls:
+                                    added_calls.add(call)
+                                    # Wrap the call text to fit within the panel
+                                    wrapped_call = textwrap.fill(f"• {call}", width=panel_width, subsequent_indent="  ")
+                                    lines.append(wrapped_call)
+
+                            tool_calls_text = "\n\n".join(lines)
+
+                            member_name = self._get_member_name(member_id)
+                            member_tool_calls_panel = create_panel(
+                                content=tool_calls_text,
+                                title=f"{member_name} Tool Calls",
+                                border_style="yellow",
+                            )
+                            final_panels.append(member_tool_calls_panel)
+
+                    # Add reasoning steps if any
+                    reasoning_steps = []
+                    if (
+                        member_response.extra_data is not None
+                        and member_response.extra_data.reasoning_steps is not None
+                    ):
+                        reasoning_steps = member_response.extra_data.reasoning_steps
+                    if reasoning_steps and show_reasoning:
+                        for j, step in enumerate(reasoning_steps, 1):
+                            member_reasoning_panel = self._build_reasoning_step_panel(
+                                j, step, show_reasoning_verbose, color="magenta"
+                            )
+                            final_panels.append(member_reasoning_panel)
+
+                    # Then add response
+                    show_markdown = False
+                    if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                        show_markdown = member_markdown.get(member_response.agent_id, False)
+                    elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                        show_markdown = member_markdown.get(member_response.team_id, False)
+
+                    member_response_content = self._parse_response_content(
+                        member_response,
+                        tags_to_include_in_markdown,
+                        show_markdown=show_markdown,
+                    )
+
+                    member_name = "Team Member"
+                    if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                        member_name = self._get_member_name(member_response.agent_id)
+                    elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
+                        member_name = self._get_member_name(member_response.team_id)
+
                     member_response_panel = create_panel(
                         content=member_response_content,
-                        title=f"{self._get_member_name(member_response.team_id)} Response",
+                        title=f"{member_name} Response",
                         border_style="magenta",
                     )
-                panels.insert(i + 1, member_response_panel)
+                    final_panels.append(member_response_panel)
 
-                if member_response.citations is not None and member_response.citations.urls is not None:
-                    md_content = "\n".join(
-                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
-                        for i, citation in enumerate(member_response.citations.urls)
-                        if citation.url  # Only include citations with valid URLs
-                    )
-                    if md_content:  # Only create panel if there are citations
-                        citations_panel = create_panel(
-                            content=Markdown(md_content),
-                            title="Citations",
-                            border_style="magenta",
+                    # Add citations if any
+                    if member_response.citations is not None and member_response.citations.urls is not None:
+                        md_content = "\n".join(
+                            f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                            for i, citation in enumerate(member_response.citations.urls)
+                            if citation.url  # Only include citations with valid URLs
                         )
-                        panels.insert(i + 2, citations_panel)
+                        if md_content:  # Only create panel if there are citations
+                            citations_panel = create_panel(
+                                content=Markdown(md_content),
+                                title="Citations",
+                                border_style="magenta",
+                            )
+                            final_panels.append(citations_panel)
 
-            live_console.update(Group(*panels))
+            # Add team tool calls before team response
+            if self.show_tool_calls and team_tool_calls:
+                formatted_calls = format_tool_calls(team_tool_calls)
+                if formatted_calls:
+                    console_width = console.width if console else 80
+                    panel_width = console_width + 30
+
+                    lines = []
+                    # Create a set to track already added calls by their string representation
+                    added_calls = set()
+                    for call in formatted_calls:
+                        if call not in added_calls:
+                            added_calls.add(call)
+                            # Wrap the call text to fit within the panel
+                            wrapped_call = textwrap.fill(f"• {call}", width=panel_width, subsequent_indent="  ")
+                            lines.append(wrapped_call)
+
+                    tool_calls_text = "\n\n".join(lines)
+
+                    team_tool_calls_panel = create_panel(
+                        content=tool_calls_text,
+                        title="Team Tool Calls",
+                        border_style="yellow",
+                    )
+                    final_panels.append(team_tool_calls_panel)
+
+            # Add team response
+            if _response_content:
+                response_content_stream = _response_content
+                if team_markdown:
+                    escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
+                    response_content_stream = Markdown(escaped_content)
+
+                response_panel = create_panel(
+                    content=response_content_stream,
+                    title=f"Response ({response_timer.elapsed:.1f}s)",
+                    border_style="blue",
+                )
+                final_panels.append(response_panel)
+
+            # Add team citations
+            if resp.citations is not None and resp.citations.urls is not None:
+                md_content = "\n".join(
+                    f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                    for i, citation in enumerate(resp.citations.urls)
+                    if citation.url  # Only include citations with valid URLs
+                )
+                if md_content:  # Only create panel if there are citations
+                    citations_panel = create_panel(
+                        content=Markdown(md_content),
+                        title="Citations",
+                        border_style="green",
+                    )
+                    final_panels.append(citations_panel)
+
+            # Final update with correctly ordered panels
+            live_console.update(Group(*final_panels))
 
     def _build_reasoning_step_panel(
         self, step_idx: int, step: ReasoningStep, show_reasoning_verbose: bool = False, color: str = "green"
@@ -3160,10 +3696,15 @@ class Team:
         if self.tool_choice is not None:
             self.model.tool_choice = self.tool_choice
 
-    def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable]]) -> None:
+        # Set tool_call_limit on the Model
+        if self.tool_call_limit is not None:
+            self.model.tool_call_limit = self.tool_call_limit
+
+    def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
         # We have to reset for every run, because we will have new images/audio/video to attach
         self._functions_for_model = {}
         self._tools_for_model = []
+
         # Get Agent tools
         if len(tools) > 0:
             log_debug("Processing tools for model")
@@ -3173,11 +3714,27 @@ class Team:
             if self.response_model is not None and not self.use_json_mode and model.supports_native_structured_outputs:
                 strict = True
 
-            self._tools_for_model = []
-            self._functions_for_model = {}
-
             for tool in tools:
-                if isinstance(tool, Function):
+                if isinstance(tool, Dict):
+                    # If a dict is passed, it is a builtin tool
+                    # that is run by the model provider and not the Agent
+                    self._tools_for_model.append(tool)
+                    log_debug(f"Included builtin tool {tool}")
+
+                elif isinstance(tool, Toolkit):
+                    # For each function in the toolkit and process entrypoint
+                    for name, func in tool.functions.items():
+                        # If the function does not exist in self.functions
+                        if name not in self._functions_for_model:
+                            func._agent = self
+                            func.process_entrypoint(strict=strict)
+                            if strict:
+                                func.strict = True
+                            self._functions_for_model[name] = func
+                            self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                            log_debug(f"Included function {name} from {tool.name}")
+
+                elif isinstance(tool, Function):
                     if tool.name not in self._functions_for_model:
                         tool._agent = self
                         tool.process_entrypoint(strict=strict)
@@ -3351,13 +3908,13 @@ class Team:
         if audio is not None or images is not None or videos is not None or files is not None:
             system_message_content += "<attached_media>\n"
             system_message_content += "You have the following media attached to your message:\n"
-            if audio is not None:
+            if audio is not None and len(audio) > 0:
                 system_message_content += " - Audio\n"
-            if images is not None:
+            if images is not None and len(images) > 0:
                 system_message_content += " - Images\n"
-            if videos is not None:
+            if videos is not None and len(videos) > 0:
                 system_message_content += " - Videos\n"
-            if files is not None:
+            if files is not None and len(files) > 0:
                 system_message_content += " - Files\n"
             system_message_content += "</attached_media>\n\n"
 

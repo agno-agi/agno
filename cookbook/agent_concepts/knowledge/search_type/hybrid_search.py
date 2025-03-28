@@ -1,5 +1,5 @@
-from agno.vectordb.pgvector import PgVector, SearchType
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.vectordb.pgvector import PgVector, SearchType
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 

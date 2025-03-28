@@ -173,11 +173,14 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         else:
             log_error(f"Document file not found: {file}")
             return None
-    # Case 3: Document is base64 encoded content
+    # Case 3: Document is bytes content
     elif file.content is not None:
+        import base64
+
+        file_data = base64.standard_b64encode(file.content).decode("utf-8")
         return {
             "type": "document",
-            "source": {"type": "base64", "media_type": "application/pdf", "data": file.content},
+            "source": {"type": "base64", "media_type": file.mime_type or "application/pdf", "data": file_data},
             "citations": {"enabled": True},
         }
     return None

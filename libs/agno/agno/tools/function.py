@@ -128,6 +128,7 @@ class Function(BaseModel):
         except Exception as e:
             log_warning(f"Could not parse args for {function_name}: {e}", exc_info=True)
 
+        # Don't wrap async generator with validate_call
         if isasyncgenfunction(c):
             entrypoint = c
         else:
@@ -213,6 +214,7 @@ class Function(BaseModel):
             self.parameters = parameters
 
         try:
+            # Don't wrap async generator with validate_call
             if not isasyncgenfunction(self.entrypoint):
                 self.entrypoint = validate_call(self.entrypoint, config=dict(arbitrary_types_allowed=True))  # type: ignore
         except Exception as e:
@@ -404,13 +406,59 @@ class FunctionCall(BaseModel):
 
         return function_call_success
 
+    async def _handle_pre_hook_async(self):
+        """Handles the async pre-hook for the function call."""
+        if self.function.pre_hook is not None:
+            try:
+                from inspect import signature
+
+                pre_hook_args = {}
+                # Check if the pre-hook has an agent argument
+                if "agent" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["agent"] = self.function._agent
+                # Check if the pre-hook has an fc argument
+                if "fc" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["fc"] = self
+
+                await self.function.pre_hook(**pre_hook_args)
+            except AgentRunException as e:
+                log_debug(f"{e.__class__.__name__}: {e}")
+                self.error = str(e)
+                raise
+            except Exception as e:
+                log_warning(f"Error in pre-hook callback: {e}")
+                log_exception(e)
+
+    async def _handle_post_hook_async(self):
+        """Handles the async post-hook for the function call."""
+        if self.function.post_hook is not None:
+            try:
+                from inspect import signature
+
+                post_hook_args = {}
+                # Check if the post-hook has an agent argument
+                if "agent" in signature(self.function.post_hook).parameters:
+                    post_hook_args["agent"] = self.function._agent
+                # Check if the post-hook has an fc argument
+                if "fc" in signature(self.function.post_hook).parameters:
+                    post_hook_args["fc"] = self
+
+                await self.function.post_hook(**post_hook_args)
+            except AgentRunException as e:
+                log_debug(f"{e.__class__.__name__}: {e}")
+                self.error = str(e)
+                raise
+            except Exception as e:
+                log_warning(f"Error in post-hook callback: {e}")
+                log_exception(e)
+
     async def aexecute(self) -> bool:
         """Runs the function call asynchronously.
 
         Returns True if the function call was successful, False otherwise.
         The result of the function call is stored in self.result.
         """
-        from inspect import isasyncgenfunction
+        from inspect import isasyncgenfunction, iscoroutinefunction
 
         if self.function.entrypoint is None:
             return False
@@ -419,7 +467,10 @@ class FunctionCall(BaseModel):
         function_call_success = False
 
         # Execute pre-hook if it exists
-        self._handle_pre_hook()
+        if iscoroutinefunction(self.function.pre_hook):
+            await self._handle_pre_hook_async()
+        else:
+            self._handle_pre_hook()
 
         # Call the function with no arguments if none are provided.
         if self.arguments == {} or self.arguments is None:
@@ -442,7 +493,6 @@ class FunctionCall(BaseModel):
         else:
             try:
                 entrypoint_args = self._build_entrypoint_args()
-
                 if isasyncgenfunction(self.function.entrypoint):
                     self.result = self.function.entrypoint(**entrypoint_args, **self.arguments)
                 else:
@@ -459,6 +509,9 @@ class FunctionCall(BaseModel):
                 return function_call_success
 
         # Execute post-hook if it exists
-        self._handle_post_hook()
+        if iscoroutinefunction(self.function.post_hook):
+            await self._handle_post_hook_async()
+        else:
+            self._handle_post_hook()
 
         return function_call_success

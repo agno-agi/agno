@@ -32,6 +32,8 @@ class MCPTools(Toolkit):
         session: Optional[ClientSession] = None,
         server_params: Optional[StdioServerParameters] = None,
         client=None,
+        include_tools: Optional[list[str]] = None,
+        exclude_tools: Optional[list[str]] = None,
     ):
         """
         Initialize the MCP toolkit.
@@ -40,6 +42,8 @@ class MCPTools(Toolkit):
             session: An initialized MCP ClientSession connected to an MCP server
             server_params: StdioServerParameters for creating a new session
             client: The underlying MCP client (optional, used to prevent garbage collection)
+            include_tools: Optional list of tool names to include (if None, includes all)
+            exclude_tools: Optional list of tool names to exclude (if None, excludes none)
         """
         super().__init__(name="MCPToolkit")
 
@@ -53,6 +57,8 @@ class MCPTools(Toolkit):
         self._stdio_context = None
         self._session_context = None
         self._initialized = False
+        self.include_tools = include_tools
+        self.exclude_tools = exclude_tools or []
 
     async def __aenter__(self) -> "MCPTools":
         """Enter the async context manager."""
@@ -104,8 +110,16 @@ class MCPTools(Toolkit):
             # Get the list of tools from the MCP server
             self.available_tools = await self.session.list_tools()
 
-            # Register the tools with the toolkit
+            # Filter tools based on include/exclude lists
+            filtered_tools = []
             for tool in self.available_tools.tools:
+                if tool.name in self.exclude_tools:
+                    continue
+                if self.include_tools is None or tool.name in self.include_tools:
+                    filtered_tools.append(tool)
+
+            # Register the tools with the toolkit
+            for tool in filtered_tools:
                 try:
                     # Get an entrypoint for the tool
                     entrypoint = self.get_entrypoint_for_tool(tool)
@@ -126,7 +140,7 @@ class MCPTools(Toolkit):
                 except Exception as e:
                     logger.error(f"Failed to register tool {tool.name}: {e}")
 
-            log_debug(f"{self.name} initialized with {len(self.available_tools.tools)} tools")
+            log_debug(f"{self.name} initialized with {len(filtered_tools)} tools")
             self._initialized = True
         except Exception as e:
             logger.error(f"Failed to get MCP tools: {e}")

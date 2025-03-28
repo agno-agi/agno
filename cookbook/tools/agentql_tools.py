@@ -29,7 +29,7 @@ custom_query = """
 """
 
 # Create AgentQL tool with custom query
-custom_scraper = AgentQLTools(agentql_query=custom_query, custom_scrape=True)
+custom_scraper = AgentQLTools(agentql_query=custom_query)
 
 # Create agent with custom AgentQL tool
 custom_agent = Agent(

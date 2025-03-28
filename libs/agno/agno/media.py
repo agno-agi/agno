@@ -272,7 +272,7 @@ class Image(BaseModel):
 class File(BaseModel):
     url: Optional[str] = None
     filepath: Optional[Union[Path, str]] = None
-    content: Optional[Any] = None
+    content: Optional[Any] = None  # Actual file bytes content
     mime_type: Optional[str] = None
 
     @model_validator(mode="before")
