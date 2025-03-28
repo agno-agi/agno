@@ -24,38 +24,33 @@ agent = Agent(
         "You are a sophisticated web research assistant capable of extracting insights from various online sources. "
         "Use the available tools for your tasks to gather accurate, well-structured information."
     ],
-    tools=[ApifyTools()],
+    tools=[ApifyTools(["apify/rag-web-browser","compass/crawler-google-places", "clockworks/free-tiktok-scraper"])],
     show_tool_calls=True,
     markdown=True
 )
 
 def demonstrate_tools():
     print("Apify Tools Exploration 🔍")
-    
+    """ 
     # RAG Web Search Demonstrations
     print("\n1.1 🕵️ RAG Web Search Scenarios:")
     prompt = "Research the latest AI ethics guidelines from top tech companies. Compile a summary from at least 3 different sources comparing their approaches using RAG Web Browser."
-    agent.print_response(prompt)
+    agent.print_response(prompt, show_full_reasoning=True)
     
     print("\n1.2 🕵️ RAG Web Search Scenarios:")
     prompt = "Carefully extract the key introduction details from https://docs.agno.com/introduction" #  Extract content from specific website
     agent.print_response(prompt)
-
+    
     # Google Places Demonstration
     print("\n2. Google Places Crawler:")
     prompt = "Find the top 5 highest-rated coffee shops in San Francisco with detailed information about each location"
     agent.print_response(prompt)
-    
-    # Instagram Scraper Demonstration
-    print("\n3. Instagram Profile Analysis:")
-    prompt = "Analyze the profile of a popular tech influencer, extracting key follower statistics and recent content trends"
+     """
+    # Tiktok Scraper Demonstration
+    print("\n3. Tiktok Profile Analysis:")
+    prompt = "Analyze two profiles on Tiktok that lately added #AI (hashtag AI), extracting their statistics and recent content trends"
     agent.print_response(prompt)
     
-    # Website Content Crawler
-    print("\n4. Website Content Extraction:")
-    prompt = "Extract the main content and key sections from https://docs.agno.com/introduction/playground"
-    agent.tools = [ApifyTools(use_website_content_crawler=True, use_rag_web_search=False)] # Temporarily disable RAG Web Search and enable only Website Content Crawler
-    agent.print_response(prompt)
 
 if __name__ == "__main__":
     demonstrate_tools()
