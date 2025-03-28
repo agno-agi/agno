@@ -24,6 +24,7 @@ content_team = Team(
     members=[researcher, writer],
     instructions="You are a team of researchers and writers that work together to create high-quality content.",
     model=OpenAIChat("gpt-4o"),
+    show_members_responses=True,
 )
 
 # Run the team with a task
