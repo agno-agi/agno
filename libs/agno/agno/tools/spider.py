@@ -17,8 +17,9 @@ class SpiderTools(Toolkit):
         max_results: Optional[int] = None,
         url: Optional[str] = None,
         optional_params: Optional[dict] = None,
+        **kwargs,
     ):
-        super().__init__(name="spider")
+        super().__init__(name="spider", **kwargs)
         self.max_results = max_results
         self.url = url
         self.optional_params = optional_params or {}

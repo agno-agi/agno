@@ -34,6 +34,7 @@ class MCPTools(Toolkit):
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
+        **kwargs,
     ):
         """
         Initialize the MCP toolkit.
@@ -45,7 +46,7 @@ class MCPTools(Toolkit):
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
         """
-        super().__init__(name="MCPToolkit")
+        super().__init__(name="MCPToolkit", **kwargs)
 
         if session is None and server_params is None:
             raise ValueError("Either session or server_params must be provided")

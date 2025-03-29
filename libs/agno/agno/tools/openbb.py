@@ -22,8 +22,9 @@ class OpenBBTools(Toolkit):
         company_news: bool = False,
         company_profile: bool = False,
         price_targets: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="yfinance_tools")
+        super().__init__(name="yfinance_tools", **kwargs)
 
         self.obb = obb or openbb_app
         try:

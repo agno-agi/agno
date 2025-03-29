@@ -8,8 +8,8 @@ from agno.utils.log import log_debug, log_info
 
 
 class WikipediaTools(Toolkit):
-    def __init__(self, knowledge_base: Optional[WikipediaKnowledgeBase] = None):
-        super().__init__(name="wikipedia_tools")
+    def __init__(self, knowledge_base: Optional[WikipediaKnowledgeBase] = None, **kwargs):
+        super().__init__(name="wikipedia_tools", **kwargs)
         self.knowledge_base: Optional[WikipediaKnowledgeBase] = knowledge_base
 
         if self.knowledge_base is not None and isinstance(self.knowledge_base, WikipediaKnowledgeBase):

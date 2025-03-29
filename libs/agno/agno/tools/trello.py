@@ -24,8 +24,9 @@ class TrelloTools(Toolkit):
         create_board: bool = True,
         create_list: bool = True,
         list_boards: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="trello")
+        super().__init__(name="trello", **kwargs)
 
         self.api_key = api_key or getenv("TRELLO_API_KEY")
         self.api_secret = api_secret or getenv("TRELLO_API_SECRET")

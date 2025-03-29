@@ -27,8 +27,9 @@ class PostgresTools(Toolkit):
         summarize_tables: bool = True,
         export_tables: bool = False,
         table_schema: str = "public",
+        **kwargs,
     ):
-        super().__init__(name="postgres_tools")
+        super().__init__(name="postgres_tools", **kwargs)
         self._connection: Optional[psycopg2.extensions.connection] = connection
         self.db_name: Optional[str] = db_name
         self.user: Optional[str] = user

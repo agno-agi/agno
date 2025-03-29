@@ -19,8 +19,9 @@ class SlackTools(Toolkit):
         send_message: bool = True,
         list_channels: bool = True,
         get_channel_history: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="slack")
+        super().__init__(name="slack", **kwargs)
         self.token: Optional[str] = token or os.getenv("SLACK_TOKEN")
         if self.token is None or self.token == "":
             raise ValueError("SLACK_TOKEN is not set")

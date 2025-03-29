@@ -38,8 +38,9 @@ class ElevenLabsTools(Toolkit):
         target_directory: Optional[str] = None,
         model_id: str = "eleven_multilingual_v2",
         output_format: ElevenLabsAudioOutputFormat = "mp3_44100_64",
+        **kwargs,
     ):
-        super().__init__(name="elevenlabs_tools")
+        super().__init__(name="elevenlabs_tools", **kwargs)
 
         self.api_key = api_key or getenv("ELEVEN_LABS_API_KEY")
         if not self.api_key:

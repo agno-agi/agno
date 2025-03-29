@@ -26,8 +26,9 @@ class JinaReaderTools(Toolkit):
         timeout: Optional[int] = None,
         read_url: bool = True,
         search_query: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="jina_reader_tools")
+        super().__init__(name="jina_reader_tools", **kwargs)
 
         self.config: JinaReaderToolsConfig = JinaReaderToolsConfig(
             api_key=api_key,

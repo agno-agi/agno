@@ -24,6 +24,7 @@ class BrowserbaseTools(Toolkit):
         api_key: Optional[str] = None,
         project_id: Optional[str] = None,
         base_url: Optional[str] = None,
+        **kwargs,
     ):
         """Initialize BrowserbaseTools.
 
@@ -32,7 +33,7 @@ class BrowserbaseTools(Toolkit):
             project_id (str, optional): Browserbase project ID.
             base_url (str, optional): Custom Browserbase API endpoint URL (NOT the target website URL). Only use this if you're using a self-hosted Browserbase instance or need to connect to a different region.
         """
-        super().__init__(name="browserbase_tools")
+        super().__init__(name="browserbase_tools", **kwargs)
 
         self.api_key = api_key or getenv("BROWSERBASE_API_KEY")
         if not self.api_key:

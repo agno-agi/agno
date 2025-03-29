@@ -22,8 +22,9 @@ class DuckDbTools(Toolkit):
         create_tables: bool = True,
         summarize_tables: bool = True,
         export_tables: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="duckdb_tools")
+        super().__init__(name="duckdb_tools", **kwargs)
 
         self.db_path: Optional[str] = db_path
         self.read_only: bool = read_only

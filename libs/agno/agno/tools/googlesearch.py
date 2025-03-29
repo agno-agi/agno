@@ -2,7 +2,6 @@ import json
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.functions import cache_result
 from agno.utils.log import log_debug
 
 try:
@@ -39,11 +38,9 @@ class GoogleSearchTools(Toolkit):
         headers: Optional[Any] = None,
         proxy: Optional[str] = None,
         timeout: Optional[int] = 10,
-        cache_results: bool = False,
-        cache_ttl: int = 3600,
-        cache_dir: Optional[str] = None,
+        **kwargs,
     ):
-        super().__init__(name="googlesearch")
+        super().__init__(name="googlesearch", **kwargs)
 
         self.fixed_max_results: Optional[int] = fixed_max_results
         self.fixed_language: Optional[str] = fixed_language
@@ -53,11 +50,6 @@ class GoogleSearchTools(Toolkit):
 
         self.register(self.google_search)
 
-        self.cache_results = cache_results
-        self.cache_ttl = cache_ttl
-        self.cache_dir = cache_dir
-
-    @cache_result()
     def google_search(self, query: str, max_results: int = 5, language: str = "en") -> str:
         """
         Use this function to search Google for a specified query.

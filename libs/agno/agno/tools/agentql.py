@@ -12,8 +12,8 @@ except ImportError:
 
 
 class AgentQLTools(Toolkit):
-    def __init__(self, api_key: Optional[str] = None, scrape: bool = True, agentql_query: str = ""):
-        super().__init__(name="agentql_tools")
+    def __init__(self, api_key: Optional[str] = None, scrape: bool = True, agentql_query: str = "", **kwargs):
+        super().__init__(name="agentql_tools", **kwargs)
 
         self.api_key = api_key or getenv("AGENTQL_API_KEY")
         if not self.api_key:

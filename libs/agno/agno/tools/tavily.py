@@ -21,8 +21,9 @@ class TavilyTools(Toolkit):
         search_depth: Literal["basic", "advanced"] = "advanced",
         format: Literal["json", "markdown"] = "markdown",
         use_search_context: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="tavily_tools")
+        super().__init__(name="tavily_tools", **kwargs)
 
         self.api_key = api_key or getenv("TAVILY_API_KEY")
         if not self.api_key:

@@ -18,8 +18,9 @@ class CsvTools(Toolkit):
         read_column_names: bool = True,
         duckdb_connection: Optional[Any] = None,
         duckdb_kwargs: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ):
-        super().__init__(name="csv_tools")
+        super().__init__(name="csv_tools", **kwargs)
 
         self.csvs: List[Path] = []
         if csvs:

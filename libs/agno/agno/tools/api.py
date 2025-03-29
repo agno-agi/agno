@@ -22,8 +22,9 @@ class CustomApiTools(Toolkit):
         verify_ssl: bool = True,
         timeout: int = 30,
         make_request: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="api_tools")
+        super().__init__(name="api_tools", **kwargs)
 
         self.base_url = base_url
         self.username = username

@@ -22,8 +22,9 @@ class YouTubeTools(Toolkit):
         get_video_timestamps: bool = True,
         languages: Optional[List[str]] = None,
         proxies: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ):
-        super().__init__(name="youtube_tools")
+        super().__init__(name="youtube_tools", **kwargs)
 
         self.languages: Optional[List[str]] = languages
         self.proxies: Optional[Dict[str, Any]] = proxies

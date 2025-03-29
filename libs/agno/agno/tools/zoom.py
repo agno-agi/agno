@@ -16,6 +16,7 @@ class ZoomTools(Toolkit):
         account_id: Optional[str] = None,
         client_id: Optional[str] = None,
         client_secret: Optional[str] = None,
+        **kwargs,
     ):
         """
         Initialize the ZoomTool.
@@ -26,7 +27,7 @@ class ZoomTools(Toolkit):
             client_secret (str): The client secret for authentication. If not provided, will use ZOOM_CLIENT_SECRET env var.
             name (str): The name of the tool. Defaults to "zoom_tool".
         """
-        super().__init__("zoom_tool")
+        super().__init__(name="zoom_tool", **kwargs)
 
         # Get credentials from env vars if not provided
         self.account_id = account_id or getenv("ZOOM_ACCOUNT_ID")

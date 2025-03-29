@@ -13,8 +13,10 @@ except ImportError:
 
 
 class WebexTools(Toolkit):
-    def __init__(self, send_message: bool = True, list_rooms: bool = True, access_token: Optional[str] = None):
-        super().__init__(name="webex")
+    def __init__(
+        self, send_message: bool = True, list_rooms: bool = True, access_token: Optional[str] = None, **kwargs
+    ):
+        super().__init__(name="webex", **kwargs)
         if access_token is None:
             access_token = os.getenv("WEBEX_ACCESS_TOKEN")
         if access_token is None:

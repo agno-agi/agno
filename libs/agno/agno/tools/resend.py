@@ -15,8 +15,9 @@ class ResendTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         from_email: Optional[str] = None,
+        **kwargs,
     ):
-        super().__init__(name="resend_tools")
+        super().__init__(name="resend_tools", **kwargs)
 
         self.from_email = from_email
         self.api_key = api_key or getenv("RESEND_API_KEY")

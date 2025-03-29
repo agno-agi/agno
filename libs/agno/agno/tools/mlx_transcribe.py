@@ -47,8 +47,9 @@ class MLXTranscribeTools(Toolkit):
         clip_timestamps: Optional[Union[str, List[float]]] = None,
         hallucination_silence_threshold: Optional[float] = None,
         decode_options: Optional[dict] = None,
+        **kwargs,
     ):
-        super().__init__(name="mlx_transcribe")
+        super().__init__(name="mlx_transcribe", **kwargs)
 
         self.base_dir: Path = base_dir or Path.cwd()
         self.path_or_hf_repo: str = path_or_hf_repo

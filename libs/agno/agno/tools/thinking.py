@@ -6,8 +6,8 @@ from agno.utils.log import log_debug, logger
 
 
 class ThinkingTools(Toolkit):
-    def __init__(self, think: bool = True):
-        super().__init__(name="thinking_tools")
+    def __init__(self, think: bool = True, **kwargs):
+        super().__init__(name="thinking_tools", **kwargs)
 
         if think:
             # Register the think tool

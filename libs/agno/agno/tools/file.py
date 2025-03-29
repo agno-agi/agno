@@ -13,8 +13,9 @@ class FileTools(Toolkit):
         save_files: bool = True,
         read_files: bool = True,
         list_files: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="file_tools")
+        super().__init__(name="file_tools", **kwargs)
 
         self.base_dir: Path = base_dir or Path.cwd()
         if save_files:

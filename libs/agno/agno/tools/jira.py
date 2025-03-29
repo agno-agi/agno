@@ -18,8 +18,9 @@ class JiraTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
+        **kwargs,
     ):
-        super().__init__(name="jira_tools")
+        super().__init__(name="jira_tools", **kwargs)
 
         self.server_url = server_url or os.getenv("JIRA_SERVER_URL")
         self.username = username or os.getenv("JIRA_USERNAME")

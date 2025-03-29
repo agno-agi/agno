@@ -24,8 +24,9 @@ class ClickUpTools(Toolkit):
         delete_task: bool = True,
         list_spaces: bool = True,
         list_lists: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="clickup")
+        super().__init__(name="clickup", **kwargs)
 
         self.api_key = api_key or os.getenv("CLICKUP_API_KEY")
         self.master_space_id = master_space_id or os.getenv("MASTER_SPACE_ID")

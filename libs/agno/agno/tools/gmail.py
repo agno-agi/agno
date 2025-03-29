@@ -110,6 +110,7 @@ class GmailTools(Toolkit):
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
         scopes: Optional[List[str]] = None,
+        **kwargs,
     ):
         """Initialize GmailTools and authenticate with Gmail API
 
@@ -130,7 +131,7 @@ class GmailTools(Toolkit):
             token_path (Optional[str]): Path to token file. Defaults to None.
             scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
         """
-        super().__init__(name="gmail_tools")
+        super().__init__(name="gmail_tools", **kwargs)
         self.creds = creds
         self.credentials_path = credentials_path
         self.token_path = token_path

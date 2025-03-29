@@ -13,8 +13,9 @@ class Crawl4aiTools(Toolkit):
     def __init__(
         self,
         max_length: Optional[int] = 1000,
+        **kwargs,
     ):
-        super().__init__(name="crawl4ai_tools")
+        super().__init__(name="crawl4ai_tools", **kwargs)
 
         self.max_length = max_length
 
