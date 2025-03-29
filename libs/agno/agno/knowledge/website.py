@@ -1,4 +1,5 @@
-from typing import Any, Dict, Iterator, List, Optional
+import asyncio
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
 from pydantic import model_validator
 
@@ -33,6 +34,18 @@ class WebsiteKnowledgeBase(AgentKnowledge):
         if self.reader is not None:
             for _url in self.urls:
                 yield self.reader.read(url=_url)
+
+    @property
+    async def async_document_lists(self) -> AsyncIterator[List[Document]]:
+        """Asynchronously iterate over urls and yield lists of documents.
+        Each object yielded by the iterator is a list of documents.
+
+        Returns:
+            AsyncIterator[List[Document]]: AsyncIterator yielding list of documents
+        """
+        if self.reader is not None:
+            for _url in self.urls:
+                yield await self.reader.async_read(url=_url)
 
     def load(
         self,
@@ -86,3 +99,74 @@ class WebsiteKnowledgeBase(AgentKnowledge):
         if self.optimize_on is not None and num_documents > self.optimize_on:
             log_debug("Optimizing Vector DB")
             self.vector_db.optimize()
+
+    async def async_load(
+        self,
+        recreate: bool = False,
+        upsert: bool = True,
+        skip_existing: bool = True,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Asynchronously load the website contents to the vector db"""
+
+        if self.vector_db is None:
+            logger.warning("No vector db provided")
+            return
+
+        if self.reader is None:
+            logger.warning("No reader provided")
+            return
+
+        vector_db = self.vector_db
+        reader = self.reader
+
+        if recreate:
+            log_debug("Dropping collection asynchronously")
+            await vector_db.async_drop()
+
+        log_debug("Creating collection asynchronously")
+        await vector_db.async_create()
+
+        log_info("Loading knowledge base asynchronously")
+        num_documents = 0
+
+        urls_to_read = self.urls.copy()
+        if not recreate:
+            for url in urls_to_read[:]:
+                log_debug(f"Checking if {url} exists in the vector db")
+                name_exists = vector_db.async_name_exists(name=url)
+                if name_exists:
+                    log_debug(f"Skipping {url} as it exists in the vector db")
+                    urls_to_read.remove(url)
+
+        async def process_url(url: str) -> List[Document]:
+            try:
+                document_list = await reader.async_read(url=url)
+
+                if not recreate:
+                    filtered_documents = []
+                    for document in document_list:
+                        if not await vector_db.async_doc_exists(document):
+                            filtered_documents.append(document)
+                    document_list = filtered_documents
+
+                return document_list
+            except Exception as e:
+                logger.error(f"Error processing URL {url}: {e}")
+                return []
+
+        url_tasks = [process_url(url) for url in urls_to_read]
+        all_document_lists = await asyncio.gather(*url_tasks)
+
+        for document_list in all_document_lists:
+            if document_list:
+                if upsert and vector_db.upsert_available():
+                    await vector_db.async_upsert(documents=document_list, filters=filters)
+                else:
+                    await vector_db.async_insert(documents=document_list, filters=filters)
+                num_documents += len(document_list)
+                log_info(f"Loaded {num_documents} documents to knowledge base asynchronously")
+
+        if self.optimize_on is not None and num_documents > self.optimize_on:
+            log_debug("Optimizing Vector DB")
+            vector_db.optimize()
