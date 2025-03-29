@@ -114,8 +114,9 @@ class Weaviate(VectorDb):
                 log_info("Initializing local Weaviate async client")
                 self.async_client = weaviate.use_async_with_local()  # type: ignore
 
-        if not self.async_client.is_connected():
-            await self.async_client.connect()
+        if not self.async_client.is_connected():  # type: ignore
+            await self.async_client.connect()  # type: ignore
+
         return self.async_client  # type: ignore
 
     def create(self) -> None:
