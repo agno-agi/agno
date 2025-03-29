@@ -1,9 +1,9 @@
+import asyncio
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.knowledge.text import TextKnowledgeBase
 from agno.vectordb.qdrant import Qdrant
-import asyncio
 
 COLLECTION_NAME = "essay-txt"
 
@@ -26,5 +26,8 @@ if __name__ == "__main__":
     # Comment out after first run
     asyncio.run(knowledge_base.aload(recreate=False))
 
-    asyncio.run(agent.aprint_response(
-        "Ask me about something from the knowledge base", markdown=True))
+    asyncio.run(
+        agent.aprint_response(
+            "Ask me about something from the knowledge base", markdown=True
+        )
+    )

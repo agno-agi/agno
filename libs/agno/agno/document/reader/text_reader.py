@@ -1,6 +1,6 @@
+import asyncio
 from pathlib import Path
 from typing import IO, Any, List, Union
-import asyncio
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
@@ -40,7 +40,7 @@ class TextReader(Reader):
         except Exception as e:
             logger.error(f"Error reading: {file}: {e}")
             return []
-        
+
     async def async_read(self, file: Union[Path, IO[Any]]) -> List[Document]:
         try:
             if isinstance(file, Path):
@@ -52,11 +52,11 @@ class TextReader(Reader):
 
                 try:
                     import aiofiles
-                    async with aiofiles.open(file, 'r', encoding='utf-8') as f:
+
+                    async with aiofiles.open(file, "r", encoding="utf-8") as f:
                         file_contents = await f.read()
                 except ImportError:
-                    logger.warning(
-                        "aiofiles not installed, using synchronous file I/O")
+                    logger.warning("aiofiles not installed, using synchronous file I/O")
                     file_contents = file.read_text("utf-8")
             else:
                 log_info(f"Reading uploaded file asynchronously: {file.name}")

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Iterator, List, Union, AsyncIterator
+from typing import AsyncIterator, Iterator, List, Union
 
 from agno.document import Document
 from agno.document.reader.text_reader import TextReader
@@ -28,7 +28,7 @@ class TextKnowledgeBase(AgentKnowledge):
                     yield self.reader.read(file=_file)
         elif _file_path.exists() and _file_path.is_file() and _file_path.suffix in self.formats:
             yield self.reader.read(file=_file_path)
-            
+
     @property
     async def async_document_lists(self) -> AsyncIterator[List[Document]]:
         """Asynchronously iterate over text files and yield lists of documents.
