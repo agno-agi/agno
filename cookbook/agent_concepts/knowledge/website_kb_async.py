@@ -13,7 +13,7 @@ vector_db = Qdrant(collection=COLLECTION_NAME, url="http://localhost:6333")
 knowledge_base = WebsiteKnowledgeBase(
     urls=["https://docs.agno.com/introduction"],
     # Number of links to follow from the seed URLs
-    max_links=10,
+    max_links=5,
     # Table name: ai.website_documents
     vector_db=vector_db,
 )
