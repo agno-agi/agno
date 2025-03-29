@@ -5,7 +5,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 try:
-    import warnings
+    from warnings import filterwarnings
 
     import weaviate
     from weaviate import WeaviateAsyncClient
@@ -13,7 +13,7 @@ try:
     from weaviate.classes.init import Auth
     from weaviate.classes.query import Filter
 
-    warnings.filterwarnings("ignore", category=ResourceWarning)
+    filterwarnings("ignore", category=ResourceWarning)
 except ImportError:
     raise ImportError("Weaviate is not installed. Install using 'pip install weaviate-client'.")
 
@@ -134,7 +134,6 @@ class Weaviate(VectorDb):
         """Create the collection in Weaviate asynchronously if it doesn't exist."""
         if not await self.async_exists():
             log_debug(f"Creating collection '{self.collection}' in Weaviate asynchronously.")
-            print(".. inside async create")
             client = self.get_async_client()
             await client.connect()
             try:
@@ -215,6 +214,28 @@ class Weaviate(VectorDb):
             filters=Filter.by_property("name").equal(name),
         )
         return len(result.objects) > 0
+
+    async def async_name_exists(self, name: str) -> bool:
+        """
+        Asynchronously validate if a document with the given name exists in Weaviate.
+
+        Args:
+            name (str): The name of the document to check.
+
+        Returns:
+            bool: True if a document with the given name exists, False otherwise.
+        """
+        client = self.get_async_client()
+        await client.connect()
+        try:
+            collection = client.collections.get(self.collection)
+            result = await collection.query.fetch_objects(
+                limit=1,
+                filters=Filter.by_property("name").equal(name),
+            )
+            return len(result.objects) > 0
+        finally:
+            await client.close()
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -311,17 +332,52 @@ class Weaviate(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
+        self.insert(documents)
 
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Upsert documents into Weaviate asynchronously.
+        When documents with the same ID already exist, they will be replaced.
+        Otherwise, new documents will be created.
 
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
+        if not documents:
+            return
+
         log_debug(f"Upserting {len(documents)} documents into Weaviate asynchronously.")
-        await self.async_insert(documents)
+
+        client = self.get_async_client()
+        await client.connect()
+        try:
+            collection = client.collections.get(self.collection)
+
+            for document in documents:
+                document.embed(embedder=self.embedder)
+                if document.embedding is None:
+                    logger.error(f"Document embedding is None: {document.name}")
+                    continue
+
+                cleaned_content = document.content.replace("\x00", "\ufffd")
+                content_hash = md5(cleaned_content.encode()).hexdigest()
+                doc_uuid = uuid.UUID(hex=content_hash[:32])
+
+                # Serialize meta_data to JSON string
+                meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
+
+                properties = {
+                    "name": document.name,
+                    "content": cleaned_content,
+                    "meta_data": meta_data_str,
+                }
+
+                await collection.data.replace(uuid=doc_uuid, properties=properties, vector=document.embedding)
+
+                log_debug(f"Upserted document asynchronously: {document.name}")
+        finally:
+            await client.close()
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
