@@ -131,25 +131,22 @@ class Weaviate(VectorDb):
             log_debug(f"Collection '{self.collection}' created in Weaviate.")
 
     async def async_create(self) -> None:
-        """Create the collection in Weaviate asynchronously if it doesn't exist."""
-        if not await self.async_exists():
-            log_debug(f"Creating collection '{self.collection}' in Weaviate asynchronously.")
-            client = self.get_async_client()
-            await client.connect()
-            try:
-                await client.collections.create(
-                    name=self.collection,
-                    properties=[
-                        Property(name="name", data_type=DataType.TEXT),
-                        Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
-                        Property(name="meta_data", data_type=DataType.TEXT),
-                    ],
-                    vectorizer_config=Configure.Vectorizer.none(),
-                    vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
-                )
-                log_debug(f"Collection '{self.collection}' created in Weaviate asynchronously.")
-            finally:
-                await client.close()
+        client = self.get_async_client()
+        await client.connect()
+        try:
+            await client.collections.create(
+                name=self.collection,
+                properties=[
+                    Property(name="name", data_type=DataType.TEXT),
+                    Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
+                    Property(name="meta_data", data_type=DataType.TEXT),
+                ],
+                vectorizer_config=Configure.Vectorizer.none(),
+                vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
+            )
+            log_debug(f"Collection '{self.collection}' created in Weaviate asynchronously.")
+        finally:
+            await client.close()
 
     def doc_exists(self, document: Document) -> bool:
         """
