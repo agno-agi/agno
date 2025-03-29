@@ -83,6 +83,7 @@ class Weaviate(VectorDb):
         Returns:
             weaviate.WeaviateClient: An initialized Weaviate client instance.
         """
+        print('--> inside sync client')
         if self.client is not None:
             return self.client
 
@@ -99,8 +100,9 @@ class Weaviate(VectorDb):
         self.client.is_ready()
         return self.client
 
-    def get_async_client(self) -> WeaviateAsyncClient:
+    async def get_async_client(self) -> WeaviateAsyncClient:
         """Get or create the async client."""
+        print('--> inside async client')
         if self.async_client is None:
             if self.wcd_url and self.wcd_api_key and not self.local:
                 log_info("Initializing Weaviate Cloud async client")
@@ -112,6 +114,8 @@ class Weaviate(VectorDb):
                 log_info("Initializing local Weaviate async client")
                 self.async_client = weaviate.use_async_with_local()  # type: ignore
 
+        if not self.async_client.is_connected():
+            await self.async_client.connect()
         return self.async_client  # type: ignore
 
     def create(self) -> None:
@@ -131,8 +135,8 @@ class Weaviate(VectorDb):
             log_debug(f"Collection '{self.collection}' created in Weaviate.")
 
     async def async_create(self) -> None:
-        client = self.get_async_client()
-        await client.connect()
+        print('--> inside async create')
+        client = await self.get_async_client()
         try:
             await client.collections.create(
                 name=self.collection,
@@ -158,6 +162,7 @@ class Weaviate(VectorDb):
         Returns:
             bool: True if the document exists, False otherwise
         """
+        print('--> inside doc exists')
         if not document or not document.content:
             logger.warning("Invalid document: Missing content.")
             return False  # Early exit for invalid input
@@ -179,6 +184,7 @@ class Weaviate(VectorDb):
         Returns:
             bool: True if the document exists, False otherwise
         """
+        print('--> inside async doc exists')
         if not document or not document.content:
             logger.warning("Invalid document: Missing content.")
             return False  # Early exit for invalid input
@@ -187,8 +193,7 @@ class Weaviate(VectorDb):
         content_hash = md5(cleaned_content.encode()).hexdigest()
         doc_uuid = uuid.UUID(hex=content_hash[:32])
 
-        client = self.get_async_client()
-        await client.connect()
+        client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
             return await collection.data.exists(doc_uuid)
@@ -222,8 +227,7 @@ class Weaviate(VectorDb):
         Returns:
             bool: True if a document with the given name exists, False otherwise.
         """
-        client = self.get_async_client()
-        await client.connect()
+        client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
             result = await collection.query.fetch_objects(
@@ -242,6 +246,7 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
         """
+        print('--> inside insert')
         log_debug(f"Inserting {len(documents)} documents into Weaviate.")
         collection = self.get_client().collections.get(self.collection)
 
@@ -277,12 +282,12 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
         """
+        print('--> inside async insert')
         log_debug(f"Inserting {len(documents)} documents into Weaviate asynchronously.")
         if not documents:
             return
 
-        client = self.get_async_client()
-        await client.connect()
+        client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
 
@@ -328,6 +333,7 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
+        print('--> inside upsert')
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
         self.insert(documents)
 
@@ -341,13 +347,13 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
+        print('--> inside async upsert')
         if not documents:
             return
 
         log_debug(f"Upserting {len(documents)} documents into Weaviate asynchronously.")
 
-        client = self.get_async_client()
-        await client.connect()
+        client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
 
@@ -388,6 +394,7 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
+        print('--> inside search')
         if self.search_type == SearchType.vector:
             return self.vector_search(query, limit)
         elif self.search_type == SearchType.keyword:
@@ -402,6 +409,7 @@ class Weaviate(VectorDb):
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         """
+        print('--> inside async search')
         Perform a search based on the configured search type asynchronously.
 
         Args:
@@ -433,6 +441,7 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
+        print('--> inside vector search')
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for query: {query}")
@@ -465,14 +474,14 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
+        print('--> inside async vector search')
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for query: {query}")
             return []
 
         search_results = []
-        client = self.get_async_client()
-        await client.connect()
+        client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
             response = await collection.query.near_vector(
@@ -486,6 +495,7 @@ class Weaviate(VectorDb):
 
             if self.reranker:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
+                
         finally:
             await client.close()
 
@@ -531,8 +541,7 @@ class Weaviate(VectorDb):
             List[Document]: List of matching documents.
         """
         search_results = []
-        client = self.get_async_client()
-        await client.connect()
+        client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
             response = await collection.query.bm25(
@@ -604,8 +613,7 @@ class Weaviate(VectorDb):
             return []
 
         search_results = []
-        client = self.get_async_client()
-        await client.connect()
+        client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
             response = await collection.query.hybrid(
@@ -629,13 +637,13 @@ class Weaviate(VectorDb):
 
     def exists(self) -> bool:
         """Check if the collection exists in Weaviate."""
+        print('--> inside exists')
         return self.get_client().collections.exists(self.collection)
 
     async def async_exists(self) -> bool:
         """Check if the collection exists in Weaviate asynchronously."""
-        client = self.get_async_client()
-        # Make sure client is ready before using it
-        await client.connect()
+        print('--> inside async exists')
+        client = await self.get_async_client()
         try:
             return await client.collections.exists(self.collection)
         finally:
@@ -651,8 +659,7 @@ class Weaviate(VectorDb):
         """Delete the Weaviate collection asynchronously."""
         if await self.async_exists():
             log_debug(f"Deleting collection '{self.collection}' from Weaviate asynchronously.")
-            client = self.get_async_client()
-            await client.connect()
+            client = await self.get_async_client()
             try:
                 await client.collections.delete(self.collection)
             finally:
