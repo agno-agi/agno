@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from collections import ChainMap, defaultdict, deque
+from collections import ChainMap, deque
 from dataclasses import asdict, dataclass
 from os import getenv
 from textwrap import dedent
@@ -9,6 +9,7 @@ from typing import (
     Any,
     AsyncIterator,
     Callable,
+    Deque,
     Dict,
     Iterator,
     List,
@@ -438,13 +439,11 @@ class Agent:
     def set_agent_id(self) -> str:
         if self.agent_id is None:
             self.agent_id = str(uuid4())
-        log_debug(f"Agent ID: {self.agent_id}", center=True)
         return self.agent_id
 
     def set_session_id(self) -> str:
         if self.session_id is None or self.session_id == "":
             self.session_id = str(uuid4())
-        log_debug(f"Session ID: {self.session_id}", center=True)
         return self.session_id
 
     def set_debug(self) -> None:
@@ -478,6 +477,10 @@ class Agent:
         self.set_debug()
         self.set_agent_id()
         self.set_session_id()
+
+        log_debug(f"Agent ID: {self.agent_id}", center=True)
+        log_debug(f"Session ID: {self.session_id}", center=True)
+
         if self.memory is None:
             self.memory = AgentMemory()
         if self._formatter is None:
@@ -489,7 +492,7 @@ class Agent:
 
     @property
     def has_team(self) -> bool:
-        return self.team is not None and len(self.team) > 0
+        return bool(self.team)
 
     def _run(
         self,
@@ -1698,27 +1701,28 @@ class Agent:
             self.model.tool_call_limit = self.tool_call_limit
 
     def resolve_run_context(self) -> None:
+        if not self.context or not isinstance(self.context, dict):
+            log_warning("Context is not a dict")
+            return
+
         from inspect import signature
 
         log_debug("Resolving context")
-        if self.context is not None:
-            if isinstance(self.context, dict):
-                for ctx_key, ctx_value in self.context.items():
-                    if callable(ctx_value):
-                        try:
-                            sig = signature(ctx_value)
-                            if "agent" in sig.parameters:
-                                resolved_ctx_value = ctx_value(agent=self)
-                            else:
-                                resolved_ctx_value = ctx_value()
-                            if resolved_ctx_value is not None:
-                                self.context[ctx_key] = resolved_ctx_value
-                        except Exception as e:
-                            log_warning(f"Failed to resolve context for {ctx_key}: {e}")
-                    else:
-                        self.context[ctx_key] = ctx_value
-            else:
-                log_warning("Context is not a dict")
+        resolved_context = {}
+        for ctx_key, ctx_value in self.context.items():
+            if not callable(ctx_value):
+                resolved_context[ctx_key] = ctx_value
+                continue
+
+            try:
+                sig = signature(ctx_value)
+                resolved_value = ctx_value(agent=self) if "agent" in sig.parameters else ctx_value()
+                if resolved_value is not None:
+                    resolved_context[ctx_key] = resolved_value
+            except Exception as e:
+                log_warning(f"Failed to resolve context for {ctx_key}: {e}")
+
+        self.context = resolved_context
 
     def load_user_memories(self) -> None:
         self.memory = cast(AgentMemory, self.memory)
@@ -1760,7 +1764,7 @@ class Agent:
             session_data["audio"] = [aud.model_dump() for aud in self.audio]  # type: ignore
         return session_data
 
-    def get_agent_session(self) -> AgentSession:
+    def create_agent_session(self) -> AgentSession:
         from time import time
 
         """Get an AgentSession object, which can be saved to the database"""
@@ -1912,7 +1916,7 @@ class Agent:
             Optional[AgentSession]: The saved AgentSession or None if not saved.
         """
         if self.storage is not None:
-            self.agent_session = cast(AgentSession, self.storage.upsert(session=self.get_agent_session()))
+            self.agent_session = cast(AgentSession, self.storage.upsert(session=self.create_agent_session()))
         return self.agent_session
 
     def add_introduction(self, introduction: str) -> None:
@@ -2424,47 +2428,42 @@ class Agent:
             message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
         """
-
         # Initialize the RunMessages object
         run_messages = RunMessages()
+        self.run_response = cast(RunResponse, self.run_response)
+        extra_data = self.run_response.extra_data or RunResponseExtraData()
+        self.run_response.extra_data = extra_data
+
+        if not message and not messages:
+            return run_messages
+
         self.memory = cast(AgentMemory, self.memory)
         self.run_response = cast(RunResponse, self.run_response)
 
         # 1. Add system message to run_messages
-        system_message = self.get_system_message()
-        if system_message is not None:
-            run_messages.system_message = system_message
-            run_messages.messages.append(system_message)
+        if system_msg := self.get_system_message():
+            run_messages.system_message = system_msg
+            run_messages.messages.append(system_msg)
 
         # 2. Add extra messages to run_messages if provided
         if self.add_messages is not None:
-            messages_to_add_to_run_response: List[Message] = []
             if run_messages.extra_messages is None:
                 run_messages.extra_messages = []
 
             for _m in self.add_messages:
-                if isinstance(_m, Message):
-                    messages_to_add_to_run_response.append(_m)
-                    run_messages.messages.append(_m)
-                    run_messages.extra_messages.append(_m)
-                elif isinstance(_m, dict):
-                    try:
-                        _m_parsed = Message.model_validate(_m)
-                        messages_to_add_to_run_response.append(_m_parsed)
-                        run_messages.messages.append(_m_parsed)
-                        run_messages.extra_messages.append(_m_parsed)
-                    except Exception as e:
-                        log_warning(f"Failed to validate message: {e}")
-            # Add the extra messages to the run_response
-            if len(messages_to_add_to_run_response) > 0:
-                log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData(add_messages=messages_to_add_to_run_response)
-                else:
-                    if self.run_response.extra_data.add_messages is None:
-                        self.run_response.extra_data.add_messages = messages_to_add_to_run_response
-                    else:
-                        self.run_response.extra_data.add_messages.extend(messages_to_add_to_run_response)
+                parsed_message = (
+                    message
+                    if isinstance(message, Message)
+                    else Message.model_validate(message)
+                    if isinstance(message, dict)
+                    else None
+                )
+                if parsed_message is not None:
+                    run_messages.messages.append(parsed_message)
+                    run_messages.extra_messages.append(parsed_message)
+                    if extra_data.add_messages is None:
+                        extra_data.add_messages = []
+                    extra_data.add_messages.append(parsed_message)
 
         # 3. Add history to run_messages
         if self.add_history_to_messages:
@@ -2567,14 +2566,18 @@ class Agent:
         """Helper method to deep copy a field based on its type."""
         from copy import copy, deepcopy
 
-        # For memory and reasoning_agent, use their deep_copy methods
-        if field_name in ("memory", "reasoning_agent"):
-            return field_value.deep_copy()
+        # Direct mapping for special fields
+        special_fields = {
+            "memory": lambda x: x.deep_copy(),
+            "reasoning_agent": lambda x: x.deep_copy(),
+            "storage": lambda x: deepcopy(x),
+            "model": lambda x: deepcopy(x),
+            "reasoning_model": lambda x: deepcopy(x),
+        }
 
-        # For storage, model and reasoning_model, use a deep copy
-        elif field_name in ("storage", "model", "reasoning_model"):
+        if field_name in special_fields:
             try:
-                return deepcopy(field_value)
+                return special_fields[field_name](field_value)
             except Exception:
                 try:
                     return copy(field_value)
@@ -2582,7 +2585,7 @@ class Agent:
                     log_warning(f"Failed to copy field: {field_name} - {e}")
                     return field_value
 
-        # For compound types, attempt a deep copy
+        # Handle compound types
         elif isinstance(field_value, (list, dict, set)):
             try:
                 return deepcopy(field_value)
@@ -2593,7 +2596,7 @@ class Agent:
                     log_warning(f"Failed to copy field: {field_name} - {e}")
                     return field_value
 
-        # For pydantic models, attempt a model_copy
+        # Handle Pydantic models
         elif isinstance(field_value, BaseModel):
             try:
                 return field_value.model_copy(deep=True)
@@ -2607,8 +2610,6 @@ class Agent:
 
         # For other types, attempt a shallow copy first
         try:
-            from copy import copy
-
             return copy(field_value)
         except Exception:
             # If copy fails, return as is
@@ -2841,7 +2842,9 @@ class Agent:
     def update_run_response_with_reasoning(
         self, reasoning_steps: List[ReasoningStep], reasoning_agent_messages: List[Message]
     ) -> None:
-        self.run_response = cast(RunResponse, self.run_response)
+        if not self.run_response:
+            return
+
         if self.run_response.extra_data is None:
             self.run_response.extra_data = RunResponseExtraData()
 
@@ -2860,18 +2863,14 @@ class Agent:
             extra_data.reasoning_messages.extend(reasoning_agent_messages)
 
     def aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
-        aggregated_metrics: Dict[str, Any] = defaultdict(list)
+        metrics: Dict[str, List] = {}
+
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
-        for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None:
-                for k, v in asdict(m.metrics).items():
-                    if k == "timer":
-                        continue
-                    if v is not None:
-                        aggregated_metrics[k].append(v)
-        if aggregated_metrics is not None:
-            aggregated_metrics = dict(aggregated_metrics)
-        return aggregated_metrics
+        for msg in (m for m in messages if m.role == assistant_message_role and m.metrics):
+            for k, v in asdict(msg.metrics).items():
+                if k != "timer" and v is not None:
+                    metrics.setdefault(k, []).append(v)
+        return dict(metrics)
 
     def calculate_session_metrics(self, messages: List[Message]) -> SessionMetrics:
         session_metrics = SessionMetrics()
@@ -3456,20 +3455,24 @@ class Agent:
         """
         import json
 
-        history: List[Dict[str, Any]] = []
         self.memory = cast(AgentMemory, self.memory)
+        if not self.memory or not self.memory.runs:
+            return ""
+
+        # deque for efficient FIFO operations
+        history: Deque[Message] = deque(maxlen=num_chats * 2 if num_chats else None)
+
         all_chats = self.memory.get_message_pairs()
         if len(all_chats) == 0:
             return ""
 
-        chats_added = 0
-        for chat in all_chats[::-1]:
+        for chat in reversed(self.memory.get_message_pairs()):
             history.insert(0, chat[1].to_dict())
             history.insert(0, chat[0].to_dict())
-            chats_added += 1
-            if num_chats is not None and chats_added >= num_chats:
+            if num_chats and len(history) >= num_chats * 2:
                 break
-        return json.dumps(history)
+
+        return json.dumps(list(history))
 
     def get_tool_call_history(self, num_calls: int = 3) -> str:
         """Use this function to get the tools called by the agent in reverse chronological order.
@@ -3581,7 +3584,7 @@ class Agent:
         from agno.api.agent import AgentSessionCreate, create_agent_session
 
         try:
-            agent_session: AgentSession = self.agent_session or self.get_agent_session()
+            agent_session: AgentSession = self.agent_session or self.create_agent_session()
             create_agent_session(
                 session=AgentSessionCreate(
                     session_id=agent_session.session_id,
@@ -3626,52 +3629,65 @@ class Agent:
     def _log_agent_run(self) -> None:
         self.set_monitoring()
 
-        if not self.telemetry and not self.monitoring:
+        if not (self.telemetry or self.monitoring):
             return
 
-        from agno.api.agent import AgentRunCreate, create_agent_run
+        def _do_log_agent_run():
+            from agno.api.agent import AgentRunCreate, create_agent_run
 
-        try:
-            run_data = self._create_run_data()
-            agent_session: AgentSession = self.agent_session or self.get_agent_session()
+            try:
+                run_data = self._create_run_data()
+                agent_session: AgentSession = self.agent_session or self.create_agent_session()
 
-            create_agent_run(
-                run=AgentRunCreate(
-                    run_id=self.run_id,
-                    run_data=run_data,
-                    session_id=agent_session.session_id,
-                    agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
-                    team_session_id=agent_session.team_session_id,
-                ),
-                monitor=self.monitoring,
-            )
-        except Exception as e:
-            log_debug(f"Could not create agent event: {e}")
+                create_agent_run(
+                    run=AgentRunCreate(
+                        run_id=self.run_id,
+                        run_data=run_data,
+                        session_id=agent_session.session_id,
+                        agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
+                        team_session_id=agent_session.team_session_id,
+                    ),
+                    monitor=self.monitoring,
+                )
+            except Exception as e:
+                log_debug(f"Could not create agent event: {e}")
+
+        # Create and start daemon thread for logging
+        import threading
+
+        thread = threading.Thread(target=_do_log_agent_run, daemon=True)
+        thread.start()
 
     async def _alog_agent_run(self) -> None:
         self.set_monitoring()
 
-        if not self.telemetry and not self.monitoring:
+        if not (self.telemetry or self.monitoring):
             return
 
-        from agno.api.agent import AgentRunCreate, acreate_agent_run
+        async def _do_alog_agent_run():
+            from agno.api.agent import AgentRunCreate, acreate_agent_run
 
-        try:
-            run_data = self._create_run_data()
-            agent_session: AgentSession = self.agent_session or self.get_agent_session()
+            try:
+                run_data = self._create_run_data()
+                agent_session: AgentSession = self.agent_session or self.create_agent_session()
 
-            await acreate_agent_run(
-                run=AgentRunCreate(
-                    run_id=self.run_id,
-                    run_data=run_data,
-                    session_id=agent_session.session_id,
-                    agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
-                    team_session_id=agent_session.team_session_id,
-                ),
-                monitor=self.monitoring,
-            )
-        except Exception as e:
-            log_debug(f"Could not create agent event: {e}")
+                await acreate_agent_run(
+                    run=AgentRunCreate(
+                        run_id=self.run_id,
+                        run_data=run_data,
+                        session_id=agent_session.session_id,
+                        agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
+                        team_session_id=agent_session.team_session_id,
+                    ),
+                    monitor=self.monitoring,
+                )
+            except Exception as e:
+                log_debug(f"Could not create agent event: {e}")
+
+        # Create asyncio task for logging
+        import asyncio
+
+        asyncio.create_task(_do_alog_agent_run())
 
     ###########################################################################
     # Print Response

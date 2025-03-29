@@ -1,6 +1,6 @@
 import asyncio
 import json
-from collections import ChainMap, defaultdict, deque
+from collections import ChainMap, deque
 from dataclasses import asdict, dataclass, replace
 from os import getenv
 from typing import (
@@ -3219,18 +3219,14 @@ class Team:
         return current_session_metrics
 
     def _aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
-        aggregated_metrics: Dict[str, Any] = defaultdict(list)
+        metrics: Dict[str, List] = {}
+
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
-        for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None:
-                for k, v in asdict(m.metrics).items():  # type: ignore
-                    if k == "timer":
-                        continue
-                    if v is not None:
-                        aggregated_metrics[k].append(v)
-        if aggregated_metrics is not None:
-            aggregated_metrics = dict(aggregated_metrics)
-        return aggregated_metrics
+        for msg in (m for m in messages if m.role == assistant_message_role and m.metrics):
+            for k, v in asdict(msg.metrics).items():
+                if k != "timer" and v is not None:
+                    metrics.setdefault(k, []).append(v)
+        return dict(metrics)
 
     def _get_reasoning_agent(self, reasoning_model: Model) -> Optional[Agent]:
         return Agent(
@@ -5146,49 +5142,60 @@ class Team:
         )
 
     def _log_team_run(self) -> None:
-        if not self.telemetry and not self.monitoring:
+        if not (self.telemetry or self.monitoring):
             return
 
-        from agno.api.team import TeamRunCreate, create_team_run
+        def _do_log_team_run():
+            from agno.api.team import TeamRunCreate, create_team_run
 
-        try:
-            run_data = self._create_run_data()
-            team_session: TeamSession = self.team_session or self._get_team_session()
+            try:
+                run_data = self._create_run_data()
+                team_session: TeamSession = self.team_session or self._get_team_session()
 
-            create_team_run(
-                run=TeamRunCreate(
-                    run_id=self.run_id,
-                    run_data=run_data,
-                    team_session_id=team_session.team_session_id,
-                    session_id=team_session.session_id,
-                    team_data=team_session.to_dict() if self.monitoring else team_session.telemetry_data(),
-                ),
-                monitor=self.monitoring,
-            )
-        except Exception as e:
-            log_debug(f"Could not create team event: {e}")
+                create_team_run(
+                    run=TeamRunCreate(
+                        run_id=self.run_id,
+                        run_data=run_data,
+                        team_session_id=team_session.team_session_id,
+                        session_id=team_session.session_id,
+                        team_data=team_session.to_dict() if self.monitoring else team_session.telemetry_data(),
+                    ),
+                    monitor=self.monitoring,
+                )
+            except Exception as e:
+                log_debug(f"Could not create team event: {e}")
+
+        import threading
+
+        thread = threading.Thread(target=_do_log_team_run, daemon=True)
+        thread.start()
 
     async def _alog_team_run(self) -> None:
-        if not self.telemetry and not self.monitoring:
+        if not (self.telemetry or self.monitoring):
             return
 
-        from agno.api.team import TeamRunCreate, acreate_team_run
+        async def _do_log_team_run():
+            from agno.api.team import TeamRunCreate, acreate_team_run
 
-        try:
-            run_data = self._create_run_data()
-            team_session: TeamSession = self.team_session or self._get_team_session()
+            try:
+                run_data = self._create_run_data()
+                team_session: TeamSession = self.team_session or self._get_team_session()
 
-            await acreate_team_run(
-                run=TeamRunCreate(
-                    run_id=self.run_id,
-                    run_data=run_data,
-                    session_id=team_session.session_id,
-                    team_data=team_session.to_dict() if self.monitoring else team_session.telemetry_data(),
-                ),
-                monitor=self.monitoring,
-            )
-        except Exception as e:
-            log_debug(f"Could not create team event: {e}")
+                await acreate_team_run(
+                    run=TeamRunCreate(
+                        run_id=self.run_id,
+                        run_data=run_data,
+                        session_id=team_session.session_id,
+                        team_data=team_session.to_dict() if self.monitoring else team_session.telemetry_data(),
+                    ),
+                    monitor=self.monitoring,
+                )
+            except Exception as e:
+                log_debug(f"Could not create team event: {e}")
+
+        import asyncio
+
+        asyncio.create_task(_do_log_team_run())
 
     def _log_team_session(self):
         if not (self.telemetry or self.monitoring):
@@ -5242,20 +5249,21 @@ class Team:
         Args:
             field_name: Name of the field being copied
             field_value: Value to copy
+
         Returns:
             Deep copied value
         """
         from copy import copy, deepcopy
 
-        # Handle special cases
-        if field_name == "members":
-            # Deep copy each member
-            if field_value is not None:
-                return [member.deep_copy() for member in field_value]
+        # Early return for None values
+        if field_value is None:
             return None
 
-        # For memory use the deep_copy methods
-        if field_name == "memory" and field_value is not None:
+        # Handle special cases first
+        if field_name == "members":
+            return [member.deep_copy() for member in field_value]
+
+        if field_name == "memory":
             return field_value.deep_copy()
 
         # For storage, model and reasoning_model, use a deep copy
