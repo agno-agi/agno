@@ -83,7 +83,7 @@ class Weaviate(VectorDb):
         Returns:
             weaviate.WeaviateClient: An initialized Weaviate client instance.
         """
-        print('--> inside sync client')
+        print("--> inside sync client")
         if self.client is not None:
             return self.client
 
@@ -102,7 +102,7 @@ class Weaviate(VectorDb):
 
     async def get_async_client(self) -> WeaviateAsyncClient:
         """Get or create the async client."""
-        print('--> inside async client')
+        print("--> inside async client")
         if self.async_client is None:
             if self.wcd_url and self.wcd_api_key and not self.local:
                 log_info("Initializing Weaviate Cloud async client")
@@ -135,7 +135,7 @@ class Weaviate(VectorDb):
             log_debug(f"Collection '{self.collection}' created in Weaviate.")
 
     async def async_create(self) -> None:
-        print('--> inside async create')
+        print("--> inside async create")
         client = await self.get_async_client()
         try:
             await client.collections.create(
@@ -162,7 +162,7 @@ class Weaviate(VectorDb):
         Returns:
             bool: True if the document exists, False otherwise
         """
-        print('--> inside doc exists')
+        print("--> inside doc exists")
         if not document or not document.content:
             logger.warning("Invalid document: Missing content.")
             return False  # Early exit for invalid input
@@ -184,7 +184,7 @@ class Weaviate(VectorDb):
         Returns:
             bool: True if the document exists, False otherwise
         """
-        print('--> inside async doc exists')
+        print("--> inside async doc exists")
         if not document or not document.content:
             logger.warning("Invalid document: Missing content.")
             return False  # Early exit for invalid input
@@ -246,7 +246,7 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
         """
-        print('--> inside insert')
+        print("--> inside insert")
         log_debug(f"Inserting {len(documents)} documents into Weaviate.")
         collection = self.get_client().collections.get(self.collection)
 
@@ -282,7 +282,7 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
         """
-        print('--> inside async insert')
+        print("--> inside async insert")
         log_debug(f"Inserting {len(documents)} documents into Weaviate asynchronously.")
         if not documents:
             return
@@ -333,7 +333,7 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        print('--> inside upsert')
+        print("--> inside upsert")
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
         self.insert(documents)
 
@@ -347,7 +347,7 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        print('--> inside async upsert')
+        print("--> inside async upsert")
         if not documents:
             return
 
@@ -394,7 +394,7 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
-        print('--> inside search')
+        print("--> inside search")
         if self.search_type == SearchType.vector:
             return self.vector_search(query, limit)
         elif self.search_type == SearchType.keyword:
@@ -441,7 +441,7 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
-        print('--> inside vector search')
+        print("--> inside vector search")
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for query: {query}")
@@ -474,7 +474,7 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
-        print('--> inside async vector search')
+        print("--> inside async vector search")
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for query: {query}")
@@ -495,7 +495,7 @@ class Weaviate(VectorDb):
 
             if self.reranker:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
-                
+
         finally:
             await client.close()
 
@@ -637,12 +637,12 @@ class Weaviate(VectorDb):
 
     def exists(self) -> bool:
         """Check if the collection exists in Weaviate."""
-        print('--> inside exists')
+        print("--> inside exists")
         return self.get_client().collections.exists(self.collection)
 
     async def async_exists(self) -> bool:
         """Check if the collection exists in Weaviate asynchronously."""
-        print('--> inside async exists')
+        print("--> inside async exists")
         client = await self.get_async_client()
         try:
             return await client.collections.exists(self.collection)
