@@ -108,7 +108,7 @@ class CacheCluster(AwsResource):
     # Read secrets from a file in yaml format
     secrets_file: Optional[Path] = None
 
-    # The follwing attributes are used for update function
+    # The following attributes are used for update function
     cache_node_ids_to_remove: Optional[List[str]] = None
     new_availability_zone: Optional[List[str]] = None
     security_group_ids: Optional[List[str]] = None
