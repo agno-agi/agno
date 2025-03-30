@@ -280,6 +280,7 @@ class Agent:
         reasoning_max_steps: int = 10,
         read_chat_history: bool = False,
         search_knowledge: bool = True,
+        asearch_knowledge: bool = False,
         update_knowledge: bool = False,
         read_tool_call_history: bool = False,
         system_message: Optional[Union[str, Callable, Message]] = None,
@@ -358,6 +359,7 @@ class Agent:
 
         self.read_chat_history = read_chat_history
         self.search_knowledge = search_knowledge
+        self.asearch_knowledge = asearch_knowledge
         self.update_knowledge = update_knowledge
         self.read_tool_call_history = read_tool_call_history
 
@@ -1053,6 +1055,10 @@ class Agent:
         self.run_id = str(uuid4())
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
+        # Running async so use async knowledge search
+        self.search_knowledge = False
+        self.asearch_knowledge = True
+
         log_debug(f"Async Agent Run Start: {self.run_response.run_id}", center=True, symbol="*")
 
         # 2. Update the Model and resolve context
@@ -1553,6 +1559,8 @@ class Agent:
         if self.knowledge is not None or self.retriever is not None:
             if self.search_knowledge:
                 agent_tools.append(self.search_knowledge_base)
+            if self.asearch_knowledge:
+                agent_tools.append(self.async_search_knowledge_base)
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
@@ -2754,8 +2762,19 @@ class Agent:
         if self.knowledge is None:
             return None
 
-        # TODO: add async support
         relevant_docs: List[Document] = self.knowledge.search(query=query, num_documents=num_documents, **kwargs)
+        if len(relevant_docs) == 0:
+            return None
+        return [doc.to_dict() for doc in relevant_docs]
+
+    async def async_get_relevant_docs_from_knowledge(
+        self, query: str, num_documents: Optional[int] = None, **kwargs
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Get relevant documents from knowledge base asynchronously."""
+        if self.knowledge is None or self.knowledge.vector_db is None:
+            return None
+
+        relevant_docs = await self.knowledge.async_search(query=query, num_documents=num_documents, **kwargs)
         if len(relevant_docs) == 0:
             return None
         return [doc.to_dict() for doc in relevant_docs]
@@ -3514,6 +3533,35 @@ class Agent:
                 query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
             )
             # Add the references to the run_response
+            if self.run_response.extra_data is None:
+                self.run_response.extra_data = RunResponseExtraData()
+            if self.run_response.extra_data.references is None:
+                self.run_response.extra_data.references = []
+            self.run_response.extra_data.references.append(references)
+        retrieval_timer.stop()
+        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+        if docs_from_knowledge is None:
+            return "No documents found"
+        return self.convert_documents_to_string(docs_from_knowledge)
+
+    async def async_search_knowledge_base(self, query: str) -> str:
+        """Use this function to search the knowledge base for information about a query asynchronously.
+
+        Args:
+            query: The query to search for.
+
+        Returns:
+            str: A string containing the response from the knowledge base.
+        """
+        self.run_response = cast(RunResponse, self.run_response)
+        retrieval_timer = Timer()
+        retrieval_timer.start()
+        docs_from_knowledge = await self.async_get_relevant_docs_from_knowledge(query=query)
+        if docs_from_knowledge is not None:
+            references = MessageReferences(
+                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+            )
             if self.run_response.extra_data is None:
                 self.run_response.extra_data = RunResponseExtraData()
             if self.run_response.extra_data.references is None:
