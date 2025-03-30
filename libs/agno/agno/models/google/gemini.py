@@ -205,11 +205,14 @@ class Gemini(Model):
     # Gemini client
     client: Optional[GeminiClient] = None
 
-    # The role to map the message role to.
+    # The role to map the Gemini response
     role_map = {
-        "system": "system",
-        "user": "user",
         "model": "assistant",
+    }
+
+    # The role to map the Message
+    reverse_role_map = {
+        "assistant": "model",
         "tool": "user",
     }
 
@@ -441,7 +444,8 @@ class Gemini(Model):
                 system_message = message.content
                 continue
 
-            role = self.role_map.get(role, role)
+            # Set the role for the message according to Gemini's requirements
+            role = self.reverse_role_map.get(role, role)
 
             # Add content to the message for the model
             content = message.content
@@ -449,7 +453,7 @@ class Gemini(Model):
             message_parts: List[Any] = []
 
             # Function calls
-            if (not content or role == "model") and message.tool_calls:
+            if (not content or role == "model") and message.tool_calls is not None and len(message.tool_calls) > 0:
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_call(
@@ -465,11 +469,12 @@ class Gemini(Model):
                             name=tool_call["tool_name"], response={"result": tool_call["content"]}
                         )
                     )
+            # Regular text content
             else:
                 if isinstance(content, str):
                     message_parts = [Part.from_text(text=content)]
 
-            if message.role == "user":
+            if role == "user" and message.tool_calls is None:
                 # Add images to the message for the model
                 if message.images is not None:
                     for image in message.images:
@@ -704,7 +709,7 @@ class Gemini(Model):
         if combined_content:
             messages.append(
                 Message(
-                    role="user", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
+                    role="tool", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
                 )
             )
 
