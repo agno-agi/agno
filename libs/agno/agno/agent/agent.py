@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from collections import ChainMap, defaultdict, deque
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from os import getenv
 from textwrap import dedent
 from typing import (
@@ -79,6 +79,29 @@ class Agent:
     session_name: Optional[str] = None
     # Session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
+
+    # --- Message Callbacks ---
+    _message_callbacks: List[Callable[[Message], None]] = field(default_factory=list)
+
+    def on_message(self, callback: Callable[[Message], None]) -> None:
+        """Register a callback to be called when a new message is added.
+        
+        Args:
+            callback: A function that takes a Message as argument and returns None
+        """
+        self._message_callbacks.append(callback)
+
+    def _emit_message(self, message: Message) -> None:
+        """Emit a message event to all registered callbacks.
+        
+        Args:
+            message: The message that was added
+        """
+        for callback in self._message_callbacks:
+            try:
+                callback(message)
+            except Exception as e:
+                log_warning(f"Error in message callback: {e}")
 
     # --- Agent Context ---
     # Context available for tools and prompt functions
@@ -328,6 +351,9 @@ class Agent:
         self.session_id = session_id
         self.session_name = session_name
         self.session_state = session_state
+
+        # Initialize message callbacks
+        self._message_callbacks = []
 
         self.context = context
         self.add_context = add_context
@@ -598,6 +624,7 @@ class Agent:
                     if model_response_chunk.citations is not None:
                         # We get citations in one chunk
                         self.run_response.citations = model_response_chunk.citations
+                        model_response.citations = model_response_chunk.citations
 
                     # Only yield if we have content or thinking to show
                     if (
@@ -606,6 +633,19 @@ class Agent:
                         or model_response_chunk.redacted_thinking is not None
                         or model_response_chunk.citations is not None
                     ):
+                        # Only emit a message when it's a complete message
+                        if model_response_chunk.event == ModelResponseEvent.message_complete.value:
+                            # Create a message with the accumulated content
+                            if model_response.content is not None:
+                                chunk_message = Message(
+                                    role="assistant",
+                                    content=model_response.content,
+                                    thinking=model_response.thinking,
+                                    citations=model_response.citations,
+                                    add_to_agent_memory=True
+                                )
+                                self._emit_message(chunk_message)
+
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
@@ -723,6 +763,17 @@ class Agent:
             if model_response.citations is not None:
                 self.run_response.citations = model_response.citations
 
+            # Create and emit the assistant message
+            if model_response.content is not None:
+                assistant_message = Message(
+                    role="assistant",
+                    content=model_response.content,
+                    thinking=model_response.thinking or model_response.redacted_thinking,
+                    citations=model_response.citations,
+                    add_to_agent_memory=True
+                )
+                self._emit_message(assistant_message)
+
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:
                 if self.run_response.tools is None:
@@ -755,6 +806,7 @@ class Agent:
         # Add the system message to the memory
         if run_messages.system_message is not None:
             self.memory.add_system_message(run_messages.system_message, system_message_role=self.system_message_role)
+            self._emit_message(run_messages.system_message)
 
         # Build a list of messages that should be added to the AgentMemory
         messages_for_memory: List[Message] = (
@@ -766,6 +818,8 @@ class Agent:
                 messages_for_memory.append(_rm)
         if len(messages_for_memory) > 0:
             self.memory.add_messages(messages=messages_for_memory)
+            for message in messages_for_memory:
+                self._emit_message(message)
 
         # Yield UpdatingMemory event
         if self.stream_intermediate_steps:
@@ -806,6 +860,7 @@ class Agent:
                     if agent_run.messages is None:
                         agent_run.messages = []
                     agent_run.messages.append(mp)
+                    self._emit_message(mp)
                     if self.memory.create_user_memories and self.memory.update_user_memories_after_run:
                         self.memory.update_memory(input=mp.get_content_string())
                 else:
@@ -1244,6 +1299,17 @@ class Agent:
             if model_response.citations is not None:
                 self.run_response.citations = model_response.citations
 
+            # Create and emit the assistant message
+            if model_response.content is not None:
+                assistant_message = Message(
+                    role="assistant",
+                    content=model_response.content,
+                    thinking=model_response.thinking or model_response.redacted_thinking,
+                    citations=model_response.citations,
+                    add_to_agent_memory=True
+                )
+                self._emit_message(assistant_message)
+
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:
                 if self.run_response.tools is None:
@@ -1276,6 +1342,7 @@ class Agent:
         # Add the system message to the memory
         if run_messages.system_message is not None:
             self.memory.add_system_message(run_messages.system_message, system_message_role=self.system_message_role)
+            self._emit_message(run_messages.system_message)
 
         # Build a list of messages that should be added to the AgentMemory
         messages_for_memory: List[Message] = (
@@ -1287,6 +1354,8 @@ class Agent:
                 messages_for_memory.append(_rm)
         if len(messages_for_memory) > 0:
             self.memory.add_messages(messages=messages_for_memory)
+            for message in messages_for_memory:
+                self._emit_message(message)
 
         # Yield UpdatingMemory event
         if self.stream_intermediate_steps:
@@ -1325,6 +1394,7 @@ class Agent:
                     if agent_run.messages is None:
                         agent_run.messages = []
                     agent_run.messages.append(mp)
+                    self._emit_message(mp)
                     if self.memory.create_user_memories and self.memory.update_user_memories_after_run:
                         await self.memory.aupdate_memory(input=mp.get_content_string())
                 else:
@@ -2435,6 +2505,7 @@ class Agent:
         if system_message is not None:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)
+            self._emit_message(system_message)
 
         # 2. Add extra messages to run_messages if provided
         if self.add_messages is not None:
@@ -2447,12 +2518,14 @@ class Agent:
                     messages_to_add_to_run_response.append(_m)
                     run_messages.messages.append(_m)
                     run_messages.extra_messages.append(_m)
+                    self._emit_message(_m)
                 elif isinstance(_m, dict):
                     try:
                         _m_parsed = Message.model_validate(_m)
                         messages_to_add_to_run_response.append(_m_parsed)
                         run_messages.messages.append(_m_parsed)
                         run_messages.extra_messages.append(_m_parsed)
+                        self._emit_message(_m_parsed)
                     except Exception as e:
                         log_warning(f"Failed to validate message: {e}")
             # Add the extra messages to the run_response
@@ -2491,6 +2564,9 @@ class Agent:
                     else:
                         self.run_response.extra_data.history.extend(history_copy)
                 run_messages.messages += history_copy
+                # Emit history messages
+                for msg in history_copy:
+                    self._emit_message(msg)
 
         # 4.Add user message to run_messages
         user_message: Optional[Message] = None
@@ -2512,6 +2588,7 @@ class Agent:
         if user_message is not None:
             run_messages.user_message = user_message
             run_messages.messages.append(user_message)
+            self._emit_message(user_message)
 
         # 5. Add messages to run_messages if provided
         if messages is not None and len(messages) > 0:
@@ -2521,12 +2598,15 @@ class Agent:
                     if run_messages.extra_messages is None:
                         run_messages.extra_messages = []
                     run_messages.extra_messages.append(_m)
+                    self._emit_message(_m)
                 elif isinstance(_m, dict):
                     try:
-                        run_messages.messages.append(Message.model_validate(_m))
+                        msg = Message.model_validate(_m)
+                        run_messages.messages.append(msg)
                         if run_messages.extra_messages is None:
                             run_messages.extra_messages = []
-                        run_messages.extra_messages.append(Message.model_validate(_m))
+                        run_messages.extra_messages.append(msg)
+                        self._emit_message(msg)
                     except Exception as e:
                         log_warning(f"Failed to validate message: {e}")
 
