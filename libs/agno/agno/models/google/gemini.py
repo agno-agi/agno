@@ -227,15 +227,18 @@ class Gemini(Model):
             return self.client
 
         client_params: Dict[str, Any] = {}
-        if not self.vertexai:
+        vertexai = self.vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
+
+        if not vertexai:
             self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
             if not self.api_key:
                 log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
             client_params["api_key"] = self.api_key
         else:
+            log_info("Using Vertex AI API")
             client_params["vertexai"] = True
             client_params["project"] = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
-            client_params["location"] = self.location
+            client_params["location"] = self.location or getenv("GOOGLE_CLOUD_LOCATION")
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
 
