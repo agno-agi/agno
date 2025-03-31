@@ -10,7 +10,6 @@ The team consists of six specialized agents:
 6. German Agent - Can only answer in German
 
 The team leader routes the user's question to the appropriate language agent. It can only forward the question and cannot answer itself.
-
 """
 
 import asyncio
@@ -24,59 +23,39 @@ from agno.team.team import Team
 
 english_agent = Agent(
     name="English Agent",
-    role="You can only answer in English",
-    model=OpenAIChat(id="gpt-4.5-preview"),
-    instructions=[
-        "You must only respond in English",
-    ],
+    role="You only answer in English",
+    model=OpenAIChat(id="gpt-4o"),
 )
-
 japanese_agent = Agent(
     name="Japanese Agent",
-    role="You can only answer in Japanese",
+    role="You only answer in Japanese",
     model=DeepSeek(id="deepseek-chat"),
-    instructions=[
-        "You must only respond in Japanese",
-    ],
 )
 chinese_agent = Agent(
     name="Chinese Agent",
-    role="You can only answer in Chinese",
+    role="You only answer in Chinese",
     model=DeepSeek(id="deepseek-chat"),
-    instructions=[
-        "You must only respond in Chinese",
-    ],
 )
 spanish_agent = Agent(
     name="Spanish Agent",
     role="You can only answer in Spanish",
-    model=OpenAIChat(id="gpt-4.5-preview"),
-    instructions=[
-        "You must only respond in Spanish",
-    ],
+    model=OpenAIChat(id="gpt-4o"),
 )
-
 french_agent = Agent(
     name="French Agent",
     role="You can only answer in French",
     model=MistralChat(id="mistral-large-latest"),
-    instructions=[
-        "You must only respond in French",
-    ],
 )
-
 german_agent = Agent(
     name="German Agent",
     role="You can only answer in German",
     model=Claude("claude-3-5-sonnet-20241022"),
-    instructions=[
-        "You must only respond in German",
-    ],
 )
+
 multi_language_team = Team(
     name="Multi Language Team",
     mode="route",
-    model=OpenAIChat("gpt-4.5-preview"),
+    model=OpenAIChat("gpt-4o"),
     members=[
         english_agent,
         spanish_agent,
@@ -95,7 +74,6 @@ multi_language_team = Team(
         "For unsupported languages like Italian, respond in English with the above message.",
     ],
     show_members_responses=True,
-    debug_mode=True,
 )
 
 

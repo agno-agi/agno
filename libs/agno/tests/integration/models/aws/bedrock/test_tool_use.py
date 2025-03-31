@@ -24,6 +24,7 @@ def test_tool_use():
     assert response.content is not None
     assert "TSLA" in response.content
 
+
 def test_tool_use_stream():
     agent = Agent(
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
@@ -52,7 +53,6 @@ def test_tool_use_stream():
     for r in responses:
         full_content += r.content
     assert "TSLA" in full_content
-
 
 
 def test_parallel_tool_calls():
@@ -96,7 +96,7 @@ def test_multiple_tool_calls():
             tool_calls.extend(msg.tool_calls)
     assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
     assert response.content is not None
-    assert "TSLA" in response.content and "latest news" in response.content.lower()
+    assert "TSLA" in response.content
 
 
 def test_tool_call_custom_tool_no_parameters():

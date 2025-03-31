@@ -38,14 +38,14 @@ agent = Agent(
 # Example 1: Business Search
 print("\n=== Business Search Example ===")
 agent.print_response(
-    "Find me highly rated Indian restaurants in Phoenix, AZ with their contact details",
+    "Find me highly rated Chinese restaurants in Phoenix, AZ with their contact details",
     stream=True,
 )
 
 # Example 2: Directions
 print("\n=== Directions Example ===")
 agent.print_response(
-    """Get driving directions from 'Phoenix Sky Harbor Airport' to 'Desert Botanical Garden', 
+    """Get driving directions from 'Phoenix Sky Harbor Airport' to 'Desert Botanical Garden',
     avoiding highways if possible""",
     stream=True,
 )
@@ -53,7 +53,7 @@ agent.print_response(
 # Example 3: Address Validation and Geocoding
 print("\n=== Address Validation and Geocoding Example ===")
 agent.print_response(
-    """Please validate and geocode this address: 
+    """Please validate and geocode this address:
     '1600 Amphitheatre Parkway, Mountain View, CA'""",
     stream=True,
 )
@@ -70,7 +70,7 @@ agent.print_response(
 # Example 5: Nearby Places and Details
 print("\n=== Nearby Places Example ===")
 agent.print_response(
-    """Find coffee shops near Arizona State University Tempe campus. 
+    """Find coffee shops near Arizona State University Tempe campus.
     Include ratings and opening hours if available.""",
     stream=True,
 )
@@ -88,7 +88,7 @@ print("\n=== Multi-step Route Planning Example ===")
 agent.print_response(
     """Plan a route with multiple stops in Phoenix:
     Start: Phoenix Sky Harbor Airport
-    Stops: 
+    Stops:
     1. Arizona Science Center
     2. Heard Museum
     3. Desert Botanical Garden

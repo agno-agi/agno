@@ -32,7 +32,6 @@ class RunEvent(str, Enum):
 class RunResponseExtraData:
     references: Optional[List[MessageReferences]] = None
     add_messages: Optional[List[Message]] = None
-    history: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
 
@@ -40,8 +39,6 @@ class RunResponseExtraData:
         _dict = {}
         if self.add_messages is not None:
             _dict["add_messages"] = [m.to_dict() for m in self.add_messages]
-        if self.history is not None:
-            _dict["history"] = [m.to_dict() for m in self.history]
         if self.reasoning_messages is not None:
             _dict["reasoning_messages"] = [m.to_dict() for m in self.reasoning_messages]
         if self.reasoning_steps is not None:
@@ -49,6 +46,32 @@ class RunResponseExtraData:
         if self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
         return _dict
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RunResponseExtraData":
+        add_messages = data.pop("add_messages", None)
+        add_messages = [Message.model_validate(message) for message in add_messages] if add_messages else None
+
+        history = data.pop("history", None)
+        history = [Message.model_validate(message) for message in history] if history else None
+
+        reasoning_steps = data.pop("reasoning_steps", None)
+        reasoning_steps = [ReasoningStep.model_validate(step) for step in reasoning_steps] if reasoning_steps else None
+
+        reasoning_messages = data.pop("reasoning_messages", None)
+        reasoning_messages = (
+            [Message.model_validate(message) for message in reasoning_messages] if reasoning_messages else None
+        )
+
+        references = data.pop("references", None)
+        references = [MessageReferences.model_validate(reference) for reference in references] if references else None
+
+        return cls(
+            add_messages=add_messages,
+            reasoning_steps=reasoning_steps,
+            reasoning_messages=reasoning_messages,
+            references=references,
+        )
 
 
 @dataclass
@@ -111,6 +134,13 @@ class RunResponse:
         _dict = self.to_dict()
 
         return json.dumps(_dict, indent=2)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
+        messages = data.pop("messages", None)
+        messages = [Message.model_validate(message) for message in messages] if messages else None
+
+        return cls(messages=messages, **data)
 
     def get_content_as_string(self, **kwargs) -> str:
         import json
