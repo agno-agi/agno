@@ -47,7 +47,9 @@ class ArxivReader(Reader):
 
         This function gets the top_k articles based on a user's query, sorted by relevance from arxiv
 
-        @param query:
+        @param query: Search query string
         @return: List of documents
         """
-        return await asyncio.to_thread(self.read, query)
+        task = asyncio.create_task(asyncio.to_thread(self.read, query))
+        result = await task
+        return result

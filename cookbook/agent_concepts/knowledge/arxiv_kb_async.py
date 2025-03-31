@@ -4,7 +4,7 @@ from agno.agent import Agent
 from agno.knowledge.arxiv import ArxivKnowledgeBase
 from agno.vectordb.qdrant import Qdrant
 
-COLLECTION_NAME = "arxivss"
+COLLECTION_NAME = "arxive-reader"
 
 vector_db = Qdrant(collection=COLLECTION_NAME, url="http://localhost:6333")
 
