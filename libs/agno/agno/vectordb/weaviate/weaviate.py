@@ -115,6 +115,9 @@ class Weaviate(VectorDb):
         if not self.async_client.is_connected():  # type: ignore
             await self.async_client.connect()  # type: ignore
 
+        if not await self.async_client.is_ready():  # type: ignore
+            raise Exception("Weaviate async client is not ready")
+
         return self.async_client  # type: ignore
 
     def create(self) -> None:
