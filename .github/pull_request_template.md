@@ -4,9 +4,10 @@ Describe key changes, mention related issues or motivation for the changes.
 
 ## Type of change
 
-- [ ] Bug fix
+- [ ] Bug fix (If applicable, issue number: #____)
 - [ ] New feature
 - [ ] Breaking change
+- [ ] Improvement
 - [ ] Model update
 - [ ] Other: _____________________
 
