@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 
 try:
     import asyncio
+
     from pymilvus import AsyncMilvusClient, MilvusClient  # type: ignore
 except ImportError:
     raise ImportError("The `pymilvus` package is not installed. Please install it via `pip install pymilvus`.")
@@ -235,10 +236,7 @@ class Milvus(VectorDb):
             log_debug(f"Inserted document asynchronously: {document.name} ({document.meta_data})")
             return data
 
-        BATCH_SIZE = 5
-        for i in range(0, len(documents), BATCH_SIZE):
-            batch = documents[i : i + BATCH_SIZE]
-            await asyncio.gather(*[process_document(doc) for doc in batch])
+        await asyncio.gather(*[process_document(doc) for doc in documents])
 
         log_debug(f"Inserted {len(documents)} documents asynchronously")
 
@@ -279,8 +277,6 @@ class Milvus(VectorDb):
             log_debug(f"Upserted document: {document.name} ({document.meta_data})")
 
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Upsert documents asynchronously in parallel."""
-        print("--> async upsert")
         log_debug(f"Upserting {len(documents)} documents asynchronously")
 
         async def process_document(document):
