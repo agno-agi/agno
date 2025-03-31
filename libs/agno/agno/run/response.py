@@ -32,7 +32,6 @@ class RunEvent(str, Enum):
 class RunResponseExtraData:
     references: Optional[List[MessageReferences]] = None
     add_messages: Optional[List[Message]] = None
-    history: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
 
@@ -40,8 +39,6 @@ class RunResponseExtraData:
         _dict = {}
         if self.add_messages is not None:
             _dict["add_messages"] = [m.to_dict() for m in self.add_messages]
-        if self.history is not None:
-            _dict["history"] = [m.to_dict() for m in self.history]
         if self.reasoning_messages is not None:
             _dict["reasoning_messages"] = [m.to_dict() for m in self.reasoning_messages]
         if self.reasoning_steps is not None:
@@ -71,7 +68,6 @@ class RunResponseExtraData:
 
         return cls(
             add_messages=add_messages,
-            history=history,
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references,
