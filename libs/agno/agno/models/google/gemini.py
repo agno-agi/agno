@@ -2,7 +2,6 @@ import json
 import time
 import traceback
 from dataclasses import dataclass
-from io import BytesIO
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -743,7 +742,9 @@ class Gemini(Model):
                         model_response.content = part.text
 
                     if hasattr(part, "inline_data") and part.inline_data is not None:
-                        model_response.image = ImageArtifact(id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type)
+                        model_response.image = ImageArtifact(
+                            id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                        )
 
                     # Extract function call if present
                     if hasattr(part, "function_call") and part.function_call is not None:
@@ -807,9 +808,10 @@ class Gemini(Model):
                 if hasattr(part, "text") and part.text is not None:
                     model_response.content = part.text
 
-
                 if hasattr(part, "inline_data") and part.inline_data is not None:
-                    model_response.image = ImageArtifact(id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type)
+                    model_response.image = ImageArtifact(
+                        id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                    )
 
                 # Extract function call if present
                 if hasattr(part, "function_call") and part.function_call is not None:

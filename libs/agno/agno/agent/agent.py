@@ -643,7 +643,7 @@ class Agent:
                         self.run_response.created_at = model_response_chunk.created_at
 
                         yield self.run_response
-                    
+
                     if model_response_chunk.image is not None:
                         self.add_image(model_response_chunk.image)
 

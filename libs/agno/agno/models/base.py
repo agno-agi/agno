@@ -24,7 +24,7 @@ class MessageData:
     response_redacted_thinking: Any = ""
     response_citations: Optional[Citations] = None
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    
+
     response_audio: Optional[AudioResponse] = None
     response_image: Optional[ImageArtifact] = None
 
@@ -723,7 +723,7 @@ class Model(ABC):
             stream_data.response_audio.channels = model_response.audio.channels
 
             should_yield = True
-        
+
         if model_response.image:
             if stream_data.response_image is None:
                 stream_data.response_image = model_response.image
