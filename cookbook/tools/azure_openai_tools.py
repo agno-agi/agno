@@ -16,8 +16,7 @@ Run `pip install agno` to install dependencies.
 """
 
 from pathlib import Path
-from os import getenv, environ
-from typing import Optional, Literal
+from os import getenv
 import sys
 
 from agno.agent import Agent
