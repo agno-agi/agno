@@ -92,8 +92,10 @@ class Agent:
     memory: Optional[AgentMemory] = None
     # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_messages: bool = False
-    # Number of historical responses to add to the messages.
-    num_history_responses: int = 3
+    # Deprecated in favor of num_history_runs: Number of historical responses to add to the messages
+    num_history_responses: Optional[int] = None
+    # Number of historical runs to include in the messages
+    num_history_runs: int = 3
 
     # --- Agent Knowledge ---
     knowledge: Optional[AgentKnowledge] = None
@@ -198,6 +200,8 @@ class Agent:
     delay_between_retries: int = 1
     # Exponential backoff: if True, the delay between retries is doubled each time
     exponential_backoff: bool = False
+
+    # --- Agent Response Model Settings ---
     # Provide a response model to get the response as a Pydantic model
     response_model: Optional[Type[BaseModel]] = None
     # If True, the response from the Model is converted into the response_model
@@ -262,7 +266,8 @@ class Agent:
         resolve_context: bool = True,
         memory: Optional[AgentMemory] = None,
         add_history_to_messages: bool = False,
-        num_history_responses: int = 3,
+        num_history_responses: Optional[int] = None,
+        num_history_runs: int = 3,
         knowledge: Optional[AgentKnowledge] = None,
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
@@ -336,6 +341,16 @@ class Agent:
         self.memory = memory
         self.add_history_to_messages = add_history_to_messages
         self.num_history_responses = num_history_responses
+        self.num_history_runs = num_history_runs
+
+        if num_history_responses is not None:
+            warnings.warn(
+                "num_history_responses is deprecated and will be removed in a future version. "
+                "Use num_history_runs instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.num_history_runs = num_history_responses
 
         self.knowledge = knowledge
         self.add_references = add_references
@@ -2471,7 +2486,7 @@ class Agent:
             from copy import deepcopy
 
             history: List[Message] = self.memory.get_messages_from_last_n_runs(
-                last_n=self.num_history_responses, skip_role=self.system_message_role
+                last_n=self.num_history_runs, skip_role=self.system_message_role
             )
             if len(history) > 0:
                 # Create a deep copy of the history messages to avoid modifying the original messages
@@ -2483,13 +2498,6 @@ class Agent:
 
                 log_debug(f"Adding {len(history_copy)} messages from history")
 
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData(history=history_copy)
-                else:
-                    if self.run_response.extra_data.history is None:
-                        self.run_response.extra_data.history = history_copy
-                    else:
-                        self.run_response.extra_data.history.extend(history_copy)
                 run_messages.messages += history_copy
 
         # 4.Add user message to run_messages
