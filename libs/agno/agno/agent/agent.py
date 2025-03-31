@@ -633,18 +633,20 @@ class Agent:
                         or model_response_chunk.redacted_thinking is not None
                         or model_response_chunk.citations is not None
                     ):
-                        # Only emit a message when it's a complete message
-                        if model_response_chunk.event == ModelResponseEvent.message_complete.value:
-                            # Create a message with the accumulated content
-                            if model_response.content is not None:
-                                chunk_message = Message(
-                                    role="assistant",
-                                    content=model_response.content,
-                                    thinking=model_response.thinking,
-                                    citations=model_response.citations,
-                                    add_to_agent_memory=True
-                                )
-                                self._emit_message(chunk_message)
+                        # Create a message with the accumulated content
+                        if model_response.content and model_response.content.strip() and "." in model_response.content:
+                            chunk_message = Message(
+                                role="assistant",
+                                content=model_response.content,
+                                thinking=model_response.thinking,
+                                citations=model_response.citations,
+                                add_to_agent_memory=True
+                            )
+                            self._emit_message(chunk_message)
+                            # Reset the accumulated content after emitting
+                            model_response.content = ""
+                            model_response.thinking = None
+                            model_response.citations = None
 
                         yield self.create_run_response(
                             content=model_response_chunk.content,
