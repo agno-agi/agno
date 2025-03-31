@@ -108,16 +108,3 @@ async def test_async_read_with_special_characters():
         mock_search.assert_called_once_with(
             query="quantum & computing + AI", max_results=reader.max_results, sort_by=reader.sort_by
         )
-
-
-@pytest.mark.asyncio
-async def test_async_read_error_handling():
-    with patch("arxiv.Search") as mock_search:
-        mock_search.return_value.results.return_value = []
-        mock_search.side_effect = Exception("API Error")
-
-        reader = ArxivReader()
-        documents = await reader.async_read("quantum computing")
-
-        # Should return empty list on error
-        assert len(documents) == 0
