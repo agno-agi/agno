@@ -11,7 +11,7 @@ vector_db = Qdrant(collection=COLLECTION_NAME, url="http://localhost:6333")
 
 # Initialize the TextKnowledgeBase
 knowledge_base = TextKnowledgeBase(
-    path=Path("data/docs"),  # Table name: ai.text_documents
+    path=Path("tmp/docs"),
     vector_db=vector_db,
     num_documents=5,
 )
@@ -28,6 +28,6 @@ if __name__ == "__main__":
 
     asyncio.run(
         agent.aprint_response(
-            "Ask me about something from the knowledge base", markdown=True
+            "What knowledge is available in my knowledge base?", markdown=True
         )
     )
