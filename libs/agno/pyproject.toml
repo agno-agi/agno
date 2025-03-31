@@ -86,6 +86,7 @@ qdrant = ["qdrant-client"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
+weaviate = ["weaviate-client"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -153,7 +154,8 @@ vectordbs = [
   "agno[qdrant]",
   "agno[cassandra]",
   "agno[mongodb]",
-  "agno[singlestore]"
+  "agno[singlestore]",
+  "agno[weaviate]"
 ]
 
 # All knowledge
