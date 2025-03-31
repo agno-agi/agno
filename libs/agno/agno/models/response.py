@@ -13,6 +13,7 @@ class ModelResponseEvent(str, Enum):
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     assistant_response = "AssistantResponse"
+    message_complete = "MessageComplete"
 
 
 @dataclass
