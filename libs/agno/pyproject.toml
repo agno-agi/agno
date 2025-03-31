@@ -324,5 +324,6 @@ module = [
   "wikipedia.*",
   "yfinance.*",
   "youtube_transcript_api.*",
+  "aiofiles.*",
 ]
 ignore_missing_imports = true
