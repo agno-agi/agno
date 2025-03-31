@@ -241,6 +241,8 @@ def test_distance_setting(mock_embedder, mock_milvus_client):
     # Test with cosine distance (default)
     with patch("pymilvus.MilvusClient", return_value=mock_milvus_client):
         db1 = Milvus(embedder=mock_embedder, collection="test_collection")
+        # Direct assignment to avoid real client creation
+        db1._client = mock_milvus_client
         with patch.object(db1, "exists", return_value=False):
             db1.create()
             args, kwargs = mock_milvus_client.create_collection.call_args
@@ -249,6 +251,8 @@ def test_distance_setting(mock_embedder, mock_milvus_client):
     # Test with L2 distance
     with patch("pymilvus.MilvusClient", return_value=mock_milvus_client):
         db2 = Milvus(embedder=mock_embedder, collection="test_collection", distance=Distance.l2)
+        # Direct assignment to avoid real client creation
+        db2._client = mock_milvus_client
         with patch.object(db2, "exists", return_value=False):
             db2.create()
             args, kwargs = mock_milvus_client.create_collection.call_args
@@ -257,6 +261,8 @@ def test_distance_setting(mock_embedder, mock_milvus_client):
     # Test with inner product distance
     with patch("pymilvus.MilvusClient", return_value=mock_milvus_client):
         db3 = Milvus(embedder=mock_embedder, collection="test_collection", distance=Distance.max_inner_product)
+        # Direct assignment to avoid real client creation
+        db3._client = mock_milvus_client
         with patch.object(db3, "exists", return_value=False):
             db3.create()
             args, kwargs = mock_milvus_client.create_collection.call_args
@@ -322,19 +328,21 @@ async def test_async_doc_exists(mock_embedder, mock_milvus_async_client):
     db = Milvus(embedder=mock_embedder, collection="test_collection")
     db._async_client = mock_milvus_async_client
 
-    mock_milvus_async_client.get.return_value = [Mock()]
-    with patch.object(Document, "content", "Test content"):
-        result = await db.async_doc_exists(Document(content="Test content"))
-        assert result is True
+    test_doc = Document(content="Test content")
 
+    # Test when document exists
+    mock_milvus_async_client.get.return_value = [Mock()]
+    result = await db.async_doc_exists(test_doc)
+    assert result is True
+
+    # Test when document doesn't exist
     mock_milvus_async_client.get.return_value = []
-    with patch.object(Document, "content", "Test content"):
-        result = await db.async_doc_exists(Document(content="Test content"))
-        assert result is False
+    result = await db.async_doc_exists(test_doc)
+    assert result is False
 
 
 @pytest.mark.asyncio
-async def test_async_insert(mock_embedder, mock_milvus_async_client):
+async def test_async_insert(mock_embedder, mock_milvus_async_client, sample_documents):
     """Test async insert"""
     db = Milvus(embedder=mock_embedder, collection="test_collection")
     db._async_client = mock_milvus_async_client
@@ -342,32 +350,34 @@ async def test_async_insert(mock_embedder, mock_milvus_async_client):
     with patch("asyncio.gather", return_value=[None, None, None]), patch.object(
         db.embedder, "get_embedding", return_value=[0.1] * 768
     ):
-        await db.async_insert(sample_documents())
+        await db.async_insert(sample_documents)
 
 
 @pytest.mark.asyncio
-async def test_async_upsert(mock_embedder, mock_milvus_async_client):
+async def test_async_upsert(mock_embedder, mock_milvus_async_client, sample_documents):
     """Test async upsert"""
     db = Milvus(embedder=mock_embedder, collection="test_collection")
     db._async_client = mock_milvus_async_client
 
+    # Patch asyncio.gather to avoid actually running concurrent tasks
     with patch("asyncio.gather", return_value=[None, None, None]), patch.object(
         db.embedder, "get_embedding", return_value=[0.1] * 768
     ):
-        await db.async_upsert(sample_documents())
+        await db.async_upsert(sample_documents)
 
 
 @pytest.mark.asyncio
 async def test_async_drop(mock_embedder, mock_milvus_async_client):
     """Test async drop collection"""
     db = Milvus(embedder=mock_embedder, collection="test_collection")
+    db._client = Mock()
+    db._client.has_collection.return_value = True
     db._async_client = mock_milvus_async_client
 
-    with patch.object(db.client, "has_collection", return_value=True):
-        await db.async_drop()
-        mock_milvus_async_client.drop_collection.assert_called_once_with("test_collection")
+    await db.async_drop()
+    mock_milvus_async_client.drop_collection.assert_called_once_with("test_collection")
 
     mock_milvus_async_client.drop_collection.reset_mock()
-    with patch.object(db.client, "has_collection", return_value=False):
-        await db.async_drop()
-        mock_milvus_async_client.drop_collection.assert_not_called()
+    db._client.has_collection.return_value = False
+    await db.async_drop()
+    mock_milvus_async_client.drop_collection.assert_not_called()
