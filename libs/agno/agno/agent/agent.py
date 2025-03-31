@@ -92,9 +92,9 @@ class Agent:
     memory: Optional[AgentMemory] = None
     # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_messages: bool = False
-    # Soon to be deprecated in favor of num_history_runs: Number of historical responses to add to the messages
-    num_history_responses: int = 3
-    # Number of historical runs to include
+    # Deprecated in favor of num_history_runs: Number of historical responses to add to the messages
+    num_history_responses: Optional[int] = None
+    # Number of historical runs to include in the messages
     num_history_runs: int = 3
 
     # --- Agent Knowledge ---
@@ -266,7 +266,7 @@ class Agent:
         resolve_context: bool = True,
         memory: Optional[AgentMemory] = None,
         add_history_to_messages: bool = False,
-        num_history_responses: int = 3,
+        num_history_responses: Optional[int] = None,
         num_history_runs: int = 3,
         knowledge: Optional[AgentKnowledge] = None,
         add_references: bool = False,
@@ -343,7 +343,7 @@ class Agent:
         self.num_history_responses = num_history_responses
         self.num_history_runs = num_history_runs
 
-        if num_history_responses != 3:
+        if num_history_responses is not None:
             warnings.warn(
                 "num_history_responses is deprecated and will be removed in a future version. "
                 "Use num_history_runs instead.",
