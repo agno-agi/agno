@@ -62,5 +62,4 @@ class JSONReader(Reader):
         Returns:
             List[Document]: List of documents from the JSON file
         """
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self.read, path)
+        return await asyncio.to_thread(self.read, path)

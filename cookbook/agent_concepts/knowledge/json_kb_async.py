@@ -27,5 +27,7 @@ if __name__ == "__main__":
 
     # Create and use the agent
     asyncio.run(
-        agent.aprint_response("What all languages are mentioned here?", markdown=True)
+        agent.aprint_response(
+            "Ask anything from the json knowledge base", markdown=True
+        )
     )
