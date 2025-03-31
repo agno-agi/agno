@@ -26,4 +26,4 @@ if __name__ == "__main__":
     asyncio.run(knowledge_base.aload(recreate=False))
 
     # Create and use the agent
-    asyncio.run(agent.aprint_response("How does agno work", markdown=True))
+    asyncio.run(agent.aprint_response("How does agno work?", markdown=True))
