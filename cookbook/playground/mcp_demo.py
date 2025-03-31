@@ -1,18 +1,20 @@
 import asyncio
-import nest_asyncio
 from os import getenv
 from textwrap import dedent
-from mcp import StdioServerParameters
+
+import nest_asyncio
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.tools.mcp import MCPTools
+from mcp import StdioServerParameters
 
 # Allow nested event loops
 nest_asyncio.apply()
 
 agent_storage_file: str = "tmp/agents.db"
+
 
 async def run_server() -> None:
     """Run the GitHub agent server."""
@@ -39,7 +41,9 @@ async def run_server() -> None:
             """),
             model=OpenAIChat(id="gpt-4o"),
             storage=SqliteAgentStorage(
-                table_name="basic_agent", db_file=agent_storage_file, auto_upgrade_schema=True
+                table_name="basic_agent",
+                db_file=agent_storage_file,
+                auto_upgrade_schema=True,
             ),
             add_history_to_messages=True,
             num_history_responses=3,
@@ -49,7 +53,7 @@ async def run_server() -> None:
 
         playground = Playground(agents=[agent])
         app = playground.get_app()
-        
+
         # Serve the app while keeping the MCPTools context manager alive
         serve_playground_app(app)
 

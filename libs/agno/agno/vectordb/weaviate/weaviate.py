@@ -714,3 +714,7 @@ class Weaviate(VectorDb):
             )
 
         return search_results
+
+    def upsert_available(self) -> bool:
+        """Indicate that upsert functionality is available."""
+        return True
