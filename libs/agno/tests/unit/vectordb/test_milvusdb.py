@@ -334,21 +334,15 @@ async def test_async_doc_exists(mock_embedder, mock_milvus_async_client):
     # Create a test document
     test_doc = Document(content="Test content")
 
-    mock_milvus_async_client.get.return_value = [Mock()]
+    db._async_client = mock_milvus_async_client
 
-    # Mock the async_client property to return our mock client
-    with patch.object(db, "async_client", mock_milvus_async_client):
-        # Mock the client.get method to return an awaitable
-        with patch.object(mock_milvus_async_client, "get", side_effect=lambda **kwargs: async_return([Mock()])):
-            result = await db.async_doc_exists(test_doc)
-            assert result is True
+    with patch.object(mock_milvus_async_client, "get", side_effect=lambda **kwargs: async_return([Mock()])):
+        result = await db.async_doc_exists(test_doc)
+        assert result is True
 
-    # For the second test, set up the mocked get method to return empty results
-    with patch.object(db, "async_client", mock_milvus_async_client):
-        # Mock the client.get method to return an awaitable
-        with patch.object(mock_milvus_async_client, "get", side_effect=lambda **kwargs: async_return([])):
-            result = await db.async_doc_exists(test_doc)
-            assert result is False
+    with patch.object(mock_milvus_async_client, "get", side_effect=lambda **kwargs: async_return([])):
+        result = await db.async_doc_exists(test_doc)
+        assert result is False
 
 
 @pytest.mark.asyncio
