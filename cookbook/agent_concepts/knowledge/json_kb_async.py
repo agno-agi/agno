@@ -9,9 +9,8 @@ COLLECTION_NAME = "json-reader"
 
 vector_db = Qdrant(collection=COLLECTION_NAME, url="http://localhost:6333")
 
-# Initialize the JSONKnowledgeBase
 knowledge_base = JSONKnowledgeBase(
-    path=Path("data/json"),
+    path=Path("tmp/docs"),
     vector_db=vector_db,
     num_documents=5,  # Number of documents to return on search
 )
