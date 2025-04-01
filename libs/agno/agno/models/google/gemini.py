@@ -205,11 +205,14 @@ class Gemini(Model):
     # Gemini client
     client: Optional[GeminiClient] = None
 
-    # The role to map the message role to.
+    # The role to map the Gemini response
     role_map = {
-        "system": "system",
-        "user": "user",
         "model": "assistant",
+    }
+
+    # The role to map the Message
+    reverse_role_map = {
+        "assistant": "model",
         "tool": "user",
     }
 
@@ -224,15 +227,18 @@ class Gemini(Model):
             return self.client
 
         client_params: Dict[str, Any] = {}
-        if not self.vertexai:
+        vertexai = self.vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
+
+        if not vertexai:
             self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
             if not self.api_key:
                 log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
             client_params["api_key"] = self.api_key
         else:
+            log_info("Using Vertex AI API")
             client_params["vertexai"] = True
             client_params["project"] = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
-            client_params["location"] = self.location
+            client_params["location"] = self.location or getenv("GOOGLE_CLOUD_LOCATION")
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
 
@@ -441,7 +447,8 @@ class Gemini(Model):
                 system_message = message.content
                 continue
 
-            role = self.role_map.get(role, role)
+            # Set the role for the message according to Gemini's requirements
+            role = self.reverse_role_map.get(role, role)
 
             # Add content to the message for the model
             content = message.content
@@ -449,7 +456,7 @@ class Gemini(Model):
             message_parts: List[Any] = []
 
             # Function calls
-            if (not content or role == "model") and message.tool_calls:
+            if (not content or role == "model") and message.tool_calls is not None and len(message.tool_calls) > 0:
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_call(
@@ -465,11 +472,12 @@ class Gemini(Model):
                             name=tool_call["tool_name"], response={"result": tool_call["content"]}
                         )
                     )
+            # Regular text content
             else:
                 if isinstance(content, str):
                     message_parts = [Part.from_text(text=content)]
 
-            if message.role == "user":
+            if role == "user" and message.tool_calls is None:
                 # Add images to the message for the model
                 if message.images is not None:
                     for image in message.images:
@@ -704,7 +712,7 @@ class Gemini(Model):
         if combined_content:
             messages.append(
                 Message(
-                    role="user", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
+                    role="tool", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
                 )
             )
 
