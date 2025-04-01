@@ -19,7 +19,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools
-from agno.utils.log import log_info, log_error, log_exception
+from agno.utils.log import log_error, log_exception, log_info
 
 try:
     from mcp import StdioServerParameters
@@ -54,7 +54,7 @@ async def run_agent(message: str) -> None:
             "@stripe/mcp",
             f"--tools={enabled_tools}",
             f"--api-key={stripe_api_key}",
-        ]
+        ],
     )
 
     try:
@@ -86,7 +86,9 @@ async def run_agent(message: str) -> None:
             await agent.aprint_response(message, stream=True)
 
     except ImportError as e:
-        log_error(f"Import Error: {e}. Please ensure 'mcp-sdk' is installed (`pip install mcp-sdk`).")
+        log_error(
+            f"Import Error: {e}. Please ensure 'mcp-sdk' is installed (`pip install mcp-sdk`)."
+        )
     except FileNotFoundError:
         error_msg = f"Error: '{npx_command}' command not found. Please ensure Node.js and npm/npx are installed and in your system's PATH."
         log_error(error_msg)
