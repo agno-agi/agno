@@ -1,9 +1,8 @@
 from io import BytesIO
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.google import Gemini
 from agno.media import Image
-
+from agno.models.google import Gemini
 from PIL import Image as PILImage
 
 # No system message should be provided
@@ -15,8 +14,10 @@ agent = Agent(
 )
 
 # Print the response in the terminal
-response = agent.run("Can you add a Llama in the background of this image?", 
-                     images=[Image(filepath="tmp/test_photo.png")])
+response = agent.run(
+    "Can you add a Llama in the background of this image?",
+    images=[Image(filepath="tmp/test_photo.png")],
+)
 
 images = agent.get_images()
 if images and isinstance(images, list):
