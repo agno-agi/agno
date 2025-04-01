@@ -35,7 +35,7 @@ from agno.models.message import Citations, Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
-from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
+from agno.run.response import RunEvent, RunResponse
 from agno.run.team import TeamRunResponse
 from agno.storage.base import Storage
 from agno.storage.session.team import TeamSession
@@ -3988,14 +3988,6 @@ class Team:
                     _msg.from_history = True
 
                 log_debug(f"Adding {len(history_copy)} messages from history")
-
-                if run_response.extra_data is None:
-                    run_response.extra_data = RunResponseExtraData(history=history_copy)
-                else:
-                    if run_response.extra_data.history is None:
-                        run_response.extra_data.history = history_copy
-                    else:
-                        run_response.extra_data.history.extend(history_copy)
 
                 # Extend the messages with the history
                 run_messages.messages += history_copy
