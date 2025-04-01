@@ -1,15 +1,15 @@
 from agno.agent import Agent
 from agno.tools.evm import EvmTools
 
-private_key= "0x<private-key>"
+private_key = "0x<private-key>"
 # Sepolia public rpc url
-rpc_url= "https://0xrpc.io/sep"
+rpc_url = "https://0xrpc.io/sep"
 
 agent = Agent(
     tools=[
         EvmTools(
-            private_key= private_key,
-            rpc_url= rpc_url,
+            private_key=private_key,
+            rpc_url=rpc_url,
         )
     ]
 )
