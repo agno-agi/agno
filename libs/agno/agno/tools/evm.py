@@ -58,12 +58,12 @@ class EvmTools(Toolkit):
             }
 
             transaction = self.w3.eth.account.sign_transaction(transaction_params, self.private_key)
-            transaction_hash = self.w3.eth.send_raw_transaction(transaction.rawTransaction)
-            logger.info(f"Transaction hash of the trx: {transaction_hash.hex()}")
+            transaction_hash = self.w3.eth.send_raw_transaction(transaction.raw_transaction)
+            logger.info(f"Ongoing Transaction hash: 0x{transaction_hash.hex()}")
             transaction_receipt = self.w3.eth.wait_for_transaction_receipt(transaction_hash)
 
             if transaction_receipt.status:
-                return transaction_hash.hex()
+                return f"0x{transaction_hash.hex()}"
             else:
                 raise  Exception("Transaction failed!")
 
