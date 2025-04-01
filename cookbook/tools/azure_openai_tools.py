@@ -27,7 +27,11 @@ from agno.utils.media import download_image
 
 # Check for base requirements first - needed for all examples
 # Exit early if base requirements aren't met
-if not bool(getenv("AZURE_OPENAI_API_KEY") and getenv("AZURE_OPENAI_ENDPOINT") and getenv("AZURE_OPENAI_IMAGE_DEPLOYMENT")):
+if not bool(
+    getenv("AZURE_OPENAI_API_KEY")
+    and getenv("AZURE_OPENAI_ENDPOINT")
+    and getenv("AZURE_OPENAI_IMAGE_DEPLOYMENT")
+):
     print("Error: Missing base Azure OpenAI requirements.")
     print("Required for all examples:")
     print("- AZURE_OPENAI_API_KEY")
@@ -38,17 +42,19 @@ if not bool(getenv("AZURE_OPENAI_API_KEY") and getenv("AZURE_OPENAI_ENDPOINT") a
 common_instructions = [
     "You are an AI artist specializing in creating images based on user descriptions.",
     "Use the generate_image tool to create detailed visualizations of user requests.",
-    "Provide creative suggestions to enhance the images if needed."
+    "Provide creative suggestions to enhance the images if needed.",
 ]
 
 # Example 1: Standard OpenAI model with Azure OpenAI Tools
 if bool(getenv("OPENAI_API_KEY")):
     print("Running Example 1: Standard OpenAI model with Azure OpenAI Tools")
-    print("This approach uses OpenAI for the agent's model but Azure for image generation.\n")
+    print(
+        "This approach uses OpenAI for the agent's model but Azure for image generation.\n"
+    )
 
     standard_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),  # Using standard OpenAI for the agent
-        tools=[AzureOpenAITools()],     # Using Azure OpenAI for image generation
+        tools=[AzureOpenAITools()],  # Using Azure OpenAI for image generation
         name="Mixed OpenAI Generator",
         description="An AI assistant that uses standard OpenAI for chat and Azure OpenAI for image generation",
         instructions=common_instructions,
@@ -69,7 +75,9 @@ else:
 
 if bool(getenv("AZURE_OPENAI_LLM_DEPLOYMENT")):
     print("\nRunning Example 2: Full Azure OpenAI setup")
-    print("This approach uses Azure OpenAI for both the agent's model and image generation.\n")
+    print(
+        "This approach uses Azure OpenAI for both the agent's model and image generation.\n"
+    )
 
     # Create an AzureOpenAI model using Azure credentials
     azure_endpoint = getenv("AZURE_OPENAI_ENDPOINT")
@@ -81,13 +89,13 @@ if bool(getenv("AZURE_OPENAI_LLM_DEPLOYMENT")):
         azure_endpoint=azure_endpoint,
         azure_deployment=azure_deployment,
         api_key=azure_api_key,
-        id=azure_deployment  # Using the deployment name as the model ID
+        id=azure_deployment,  # Using the deployment name as the model ID
     )
 
     # Create an agent with Azure OpenAI model and tools
     azure_agent = Agent(
-        model=azure_model,          # Using Azure OpenAI for the agent
-        tools=[AzureOpenAITools()], # Using Azure OpenAI for image generation
+        model=azure_model,  # Using Azure OpenAI for the agent
+        tools=[AzureOpenAITools()],  # Using Azure OpenAI for image generation
         name="Full Azure OpenAI Generator",
         description="An AI assistant that uses Azure OpenAI for both chat and image generation",
         instructions=common_instructions,
@@ -104,7 +112,9 @@ if bool(getenv("AZURE_OPENAI_LLM_DEPLOYMENT")):
         print(f"Error in Example 2: {e}")
 
     print("\nRunning Example 3: Automatic parameter enforcement demo")
-    print("This example demonstrates how invalid parameters are automatically corrected.\n")
+    print(
+        "This example demonstrates how invalid parameters are automatically corrected.\n"
+    )
 
     # Print available image properties for reference
     print("Valid image properties:")
@@ -112,10 +122,12 @@ if bool(getenv("AZURE_OPENAI_LLM_DEPLOYMENT")):
     print("- Sizes: 256x256, 512x512, 1024x1024, 1792x1024, 1024x1792")
     print("- Styles: vivid, natural\n")
 
-    # Create AzureOpenAITools - parameter enforcement is now always on
+    # Create AzureOpenAITools with explicit parameters
     azure_tools = AzureOpenAITools(
         api_key=getenv("AZURE_OPENAI_API_KEY"),
         azure_endpoint=getenv("AZURE_OPENAI_ENDPOINT"),
+        dalle_deployment=getenv("AZURE_OPENAI_IMAGE_DEPLOYMENT"),
+        dalle_model="dall-e-3",  # Explicitly set the model
     )
 
     # Create custom Azure OpenAI model
@@ -123,7 +135,7 @@ if bool(getenv("AZURE_OPENAI_LLM_DEPLOYMENT")):
         azure_endpoint=getenv("AZURE_OPENAI_ENDPOINT"),
         azure_deployment=getenv("AZURE_OPENAI_LLM_DEPLOYMENT"),
         api_key=getenv("AZURE_OPENAI_API_KEY"),
-        id=getenv("AZURE_OPENAI_LLM_DEPLOYMENT")
+        id=getenv("AZURE_OPENAI_LLM_DEPLOYMENT"),
     )
 
     custom_agent = Agent(

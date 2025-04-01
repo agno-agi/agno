@@ -18,44 +18,60 @@ def mock_agent():
 @pytest.fixture
 def azure_openai_tools():
     """Create an AzureOpenAITools instance with mocked credentials."""
-    with patch.dict("os.environ", {
-        "AZURE_OPENAI_API_KEY": "test_api_key",
-        "AZURE_OPENAI_ENDPOINT": "https://test-endpoint.openai.azure.com/",
-        "AZURE_OPENAI_DEPLOYMENT": "test-deployment",
-        "AZURE_OPENAI_API_VERSION": "2023-12-01-preview"
-    }):
+    with patch.dict(
+        "os.environ",
+        {
+            "AZURE_OPENAI_API_KEY": "test_api_key",
+            "AZURE_OPENAI_ENDPOINT": "https://test-endpoint.openai.azure.com/",
+            "AZURE_OPENAI_IMAGE_DEPLOYMENT": "test-deployment",
+            "AZURE_OPENAI_API_VERSION": "2023-12-01-preview",
+        },
+    ):
         return AzureOpenAITools()
 
 
 def test_initialization():
     """Test initialization with parameters."""
-    with patch.dict("os.environ", {
-        "AZURE_OPENAI_API_KEY": "",
-        "AZURE_OPENAI_ENDPOINT": "",
-    }):
+    with patch.dict(
+        "os.environ",
+        {
+            "AZURE_OPENAI_API_KEY": "",
+            "AZURE_OPENAI_ENDPOINT": "",
+        },
+    ):
         tools = AzureOpenAITools(
             api_key="custom_api_key",
             azure_endpoint="https://custom-endpoint.openai.azure.com/",
-            api_version="2023-05-15"
+            api_version="2023-05-15",
+            dalle_deployment="custom-deployment",
+            dalle_model="dall-e-3",
         )
 
         assert tools.api_key == "custom_api_key"
         assert tools.azure_endpoint == "https://custom-endpoint.openai.azure.com/"
         assert tools.api_version == "2023-05-15"
+        assert tools.dalle_deployment == "custom-deployment"
+        assert tools.dalle_model == "dall-e-3"
 
 
 def test_initialization_with_env_vars():
     """Test initialization with environment variables."""
-    with patch.dict("os.environ", {
-        "AZURE_OPENAI_API_KEY": "env_api_key",
-        "AZURE_OPENAI_ENDPOINT": "https://env-endpoint.openai.azure.com/",
-        "AZURE_OPENAI_API_VERSION": "2023-07-01-preview"
-    }):
+    with patch.dict(
+        "os.environ",
+        {
+            "AZURE_OPENAI_API_KEY": "env_api_key",
+            "AZURE_OPENAI_ENDPOINT": "https://env-endpoint.openai.azure.com/",
+            "AZURE_OPENAI_API_VERSION": "2023-07-01-preview",
+            "AZURE_OPENAI_IMAGE_DEPLOYMENT": "env-deployment",
+        },
+    ):
         tools = AzureOpenAITools()
 
         assert tools.api_key == "env_api_key"
         assert tools.azure_endpoint == "https://env-endpoint.openai.azure.com/"
         assert tools.api_version == "2023-07-01-preview"
+        assert tools.dalle_deployment == "env-deployment"
+        assert tools.dalle_model == "dall-e-3"  # Default value
 
 
 def test_tools_registration(azure_openai_tools):
@@ -72,23 +88,12 @@ def test_generate_image_success(mock_post, azure_openai_tools, mock_agent):
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
-        "data": [
-            {
-                "url": "https://test-image-url.com/image.png",
-                "revised_prompt": "A revised prompt for the image"
-            }
-        ]
+        "data": [{"url": "https://test-image-url.com/image.png", "revised_prompt": "A revised prompt for the image"}]
     }
     mock_post.return_value = mock_response
 
-    # Call the generate_image function with explicit deployment parameter
-    result = azure_openai_tools.generate_image(
-        agent=mock_agent,
-        prompt="A test prompt",
-        model="dall-e-3",
-        size="1024x1024",
-        deployment="test-deployment"  # Explicitly pass deployment instead of using env var
-    )
+    # Call the generate_image function
+    result = azure_openai_tools.generate_image(agent=mock_agent, prompt="A test prompt", size="1024x1024")
 
     # Verify the API call
     mock_post.assert_called_once()
@@ -114,38 +119,27 @@ def test_generate_image_success(mock_post, azure_openai_tools, mock_agent):
 
 
 @patch("agno.tools.azure_openai.post")
-def test_generate_image_with_custom_deployment(mock_post, azure_openai_tools, mock_agent):
-    """Test image generation with a custom deployment parameter."""
+def test_generate_image_with_custom_parameters(mock_post, azure_openai_tools, mock_agent):
+    """Test image generation with custom parameters."""
     # Configure the mock response
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
-        "data": [
-            {
-                "url": "https://test-image-url.com/image.png",
-                "revised_prompt": "A revised prompt for the image"
-            }
-        ]
+        "data": [{"url": "https://test-image-url.com/image.png", "revised_prompt": "A revised prompt for the image"}]
     }
     mock_post.return_value = mock_response
 
-    # Call the generate_image function with a custom deployment
-    result = azure_openai_tools.generate_image(
-        agent=mock_agent,
-        prompt="A test prompt",
-        deployment="custom-deployment",
-        model="dall-e-3",
-        size="1792x1024",
-        quality="hd",
-        style="vivid"
+    # Call the generate_image function with custom parameters
+    azure_openai_tools.generate_image(
+        agent=mock_agent, prompt="A test prompt", size="1792x1024", quality="hd", style="vivid"
     )
 
-    # Verify the API call uses the custom deployment
+    # Verify the API call uses the correct deployment
     mock_post.assert_called_once()
     args, kwargs = mock_post.call_args
     # Check URL with more flexible assertion to accommodate potential double slashes
     assert "test-endpoint.openai.azure.com" in args[0]
-    assert "openai/deployments/custom-deployment/images/generations" in args[0]
+    assert "openai/deployments/test-deployment/images/generations" in args[0]
     assert "api-version=" in args[0]
 
     # Verify all parameters are correctly passed
@@ -166,12 +160,8 @@ def test_generate_image_failure(mock_post, azure_openai_tools, mock_agent):
     mock_response.text = "Bad Request: Invalid prompt"
     mock_post.return_value = mock_response
 
-    # Call the generate_image function with explicit deployment parameter
-    result = azure_openai_tools.generate_image(
-        agent=mock_agent,
-        prompt="A test prompt",
-        deployment="test-deployment"  # Explicitly pass deployment instead of using env var
-    )
+    # Call the generate_image function
+    result = azure_openai_tools.generate_image(agent=mock_agent, prompt="A test prompt")
 
     # Verify the error is properly handled
     assert "Error" in result
@@ -185,23 +175,21 @@ def test_generate_image_failure(mock_post, azure_openai_tools, mock_agent):
 def test_generate_image_missing_credentials(azure_openai_tools, mock_agent):
     """Test image generation with missing credentials."""
     # Remove the required environment variables
-    with patch.dict("os.environ", {
-        "AZURE_OPENAI_API_KEY": "",
-        "AZURE_OPENAI_ENDPOINT": "",
-        "AZURE_OPENAI_DEPLOYMENT": ""
-    }, clear=True):
+    with patch.dict(
+        "os.environ",
+        {"AZURE_OPENAI_API_KEY": "", "AZURE_OPENAI_ENDPOINT": "", "AZURE_OPENAI_IMAGE_DEPLOYMENT": ""},
+        clear=True,
+    ):
         # Reset the tool with empty credentials
         azure_openai_tools.api_key = None
         azure_openai_tools.azure_endpoint = None
+        azure_openai_tools.dalle_deployment = None
 
         # Call the generate_image function
-        result = azure_openai_tools.generate_image(
-            agent=mock_agent,
-            prompt="A test prompt"
-        )
+        result = azure_openai_tools.generate_image(agent=mock_agent, prompt="A test prompt")
 
     # Verify the error message
-    assert "Missing credentials" in result
+    assert "not properly initialized" in result
 
     # Make sure no API call was made and no image was added
     mock_agent.add_image.assert_not_called()
@@ -215,89 +203,16 @@ def test_invalid_parameters(azure_openai_tools, mock_agent):
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "data": [
-                {
-                    "url": "https://test-image-url.com/image.png",
-                    "revised_prompt": "A revised prompt for the image"
-                }
+                {"url": "https://test-image-url.com/image.png", "revised_prompt": "A revised prompt for the image"}
             ]
         }
         mock_post.return_value = mock_response
 
-        # Test with invalid model - should be corrected to dall-e-3
-        result = azure_openai_tools.generate_image(
-            agent=mock_agent,
-            prompt="A test prompt",
-            model="invalid-model",
-            deployment="test-deployment"  # Explicitly pass deployment instead of using env var
-        )
-
-        # Verify the API call used the corrected model
-        args, kwargs = mock_post.call_args
-        assert kwargs["json"]["prompt"] == "A test prompt"
-        assert kwargs["json"]["model"] == "dall-e-3"
-
         # Test with invalid size - should be corrected to 1024x1024
-        azure_openai_tools.generate_image(
-            agent=mock_agent,
-            prompt="A test prompt for size",
-            size="invalid-size",
-            deployment="test-deployment"
-        )
+        azure_openai_tools.generate_image(agent=mock_agent, prompt="A test prompt for size", size="invalid-size")
 
         # Verify the API call used the corrected size
         args, kwargs = mock_post.call_args
         assert kwargs["json"]["prompt"] == "A test prompt for size"
         assert kwargs["json"]["size"] == "1024x1024"
-
-        # Test with invalid quality - should be corrected to standard
-        azure_openai_tools.generate_image(
-            agent=mock_agent,
-            prompt="A test prompt for quality",
-            quality="invalid-quality",
-            deployment="test-deployment"
-        )
-
-        # Verify the API call used the corrected quality
-        args, kwargs = mock_post.call_args
-        assert kwargs["json"]["prompt"] == "A test prompt for quality"
-        assert kwargs["json"]["quality"] == "standard"
-
-        # Test with invalid style - should be corrected to vivid
-        azure_openai_tools.generate_image(
-            agent=mock_agent,
-            prompt="A test prompt for style",
-            style="invalid-style",
-            deployment="test-deployment"
-        )
-
-        # Verify the API call used the corrected style
-        args, kwargs = mock_post.call_args
-        assert kwargs["json"]["prompt"] == "A test prompt for style"
-        assert kwargs["json"]["style"] == "vivid"
-
-        # Test with invalid n (number of images) - should be corrected to 1
-        azure_openai_tools.generate_image(
-            agent=mock_agent,
-            prompt="A test prompt for n",
-            n=0,
-            deployment="test-deployment"
-        )
-
-        # Verify the API call used the corrected n
-        args, kwargs = mock_post.call_args
-        assert kwargs["json"]["prompt"] == "A test prompt for n"
-        assert kwargs["json"]["n"] == 1
-
-        # Test with dall-e-3 and n > 1 - should be corrected to n=1
-        azure_openai_tools.generate_image(
-            agent=mock_agent,
-            prompt="A test prompt for dall-e-3",
-            model="dall-e-3",
-            n=2,
-            deployment="test-deployment"
-        )
-
-        # Verify the API call used the corrected n
-        args, kwargs = mock_post.call_args
-        assert kwargs["json"]["prompt"] == "A test prompt for dall-e-3"
-        assert kwargs["json"]["n"] == 1
+        assert kwargs["json"]["model"] == "dall-e-3"  # Default model

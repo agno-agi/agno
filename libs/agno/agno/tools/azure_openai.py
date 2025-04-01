@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Literal, Optional, Dict, Any
+from typing import Any, Dict, Literal, Optional
 from uuid import uuid4
 
 from requests import post
@@ -27,7 +27,9 @@ class AzureOpenAITools(Toolkit):
         self,
         api_key: Optional[str] = None,
         azure_endpoint: Optional[str] = None,
-        api_version: str = None,
+        api_version: Optional[str] = None,
+        dalle_deployment: Optional[str] = None,
+        dalle_model: str = "dall-e-3",
     ):
         super().__init__(name="azure_openai")
 
@@ -42,17 +44,23 @@ class AzureOpenAITools(Toolkit):
         if not self.azure_endpoint:
             logger.error("AZURE_OPENAI_ENDPOINT not set")
 
-        # Register available tools
-        self.register(self.generate_image)
+        # Initialize DALL-E parameters
+        self.dalle_deployment = dalle_deployment or getenv("AZURE_OPENAI_IMAGE_DEPLOYMENT")
+        self.dalle_model = dalle_model
 
-    def _enforce_valid_parameters(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        # Validate DALL-E parameters
+        if self.dalle_deployment and self.dalle_model in self.VALID_MODELS:
+            # Create and store the base URL
+            self.dalle_base_url = f"{self.azure_endpoint}/openai/deployments/{self.dalle_deployment}/images/generations?api-version={self.api_version}"
+            # Register the DALL-E tool
+            self.register(self.generate_image)
+            logger.info("DALL-E tool initialized successfully")
+        else:
+            logger.error("Missing required DALL-E parameters or invalid model")
+
+    def _enforce_valid_dalle_parameters(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Enforce valid parameters by replacing invalid ones with defaults."""
         enforced = params.copy()
-
-        # Validate model
-        if params.get("model") not in self.VALID_MODELS:
-            enforced["model"] = "dall-e-3"
-            log_debug(f"Enforcing valid model: '{params.get('model')}' -> 'dall-e-3'")
 
         # Validate size
         if params.get("size") not in self.VALID_SIZES:
@@ -85,8 +93,6 @@ class AzureOpenAITools(Toolkit):
         self,
         agent: Agent,
         prompt: str,
-        deployment: Optional[str] = None,
-        model: str = "dall-e-3",
         n: int = 1,
         size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = "1024x1024",
         quality: Literal["standard", "hd"] = "standard",
@@ -97,9 +103,6 @@ class AzureOpenAITools(Toolkit):
         Args:
             agent: The agent instance for adding images
             prompt: Text description of the desired image
-            deployment: Azure deployment name (defaults to AZURE_OPENAI_IMAGE_DEPLOYMENT)
-            model: Model to use for image generation.
-                Valid options: "dall-e-3" or "dall-e-2" (default: "dall-e-3")
             n: Number of images to generate (default: 1).
                 Note: dall-e-3 only supports n=1, while dall-e-2 supports multiple images.
             size: Image size.
@@ -117,36 +120,33 @@ class AzureOpenAITools(Toolkit):
 
         Note:
             Invalid parameters will be automatically corrected to valid values. For example:
-            - Invalid model names will be changed to "dall-e-3"
             - Invalid sizes will be changed to "1024x1024"
             - Invalid quality values will be changed to "standard"
             - Invalid style values will be changed to "vivid"
             - For dall-e-3, n will always be set to 1
         """
-        # Get deployment from parameter or environment
-        deployment = deployment or getenv("AZURE_OPENAI_IMAGE_DEPLOYMENT")
-
-        # Check for required credentials
-        if not (self.api_key and self.azure_endpoint and deployment):
-            return "Missing credentials: AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, or AZURE_OPENAI_IMAGE_DEPLOYMENT"
+        # Check if DALL-E is properly initialized
+        if not hasattr(self, "dalle_base_url"):
+            return "DALL-E tool not properly initialized. Please check your configuration."
 
         # Enforce valid parameters
-        params = self._enforce_valid_parameters({
-            "model": model,
-            "n": n,
-            "size": size,
-            "quality": quality,
-            "style": style,
-        })
+        params = self._enforce_valid_dalle_parameters(
+            {
+                "n": n,
+                "size": size,
+                "quality": quality,
+                "style": style,
+            }
+        )
 
-        # Add prompt to params - this wasn't included in enforcement because it doesn't need validation
+        # Add prompt and model to params - this wasn't included in enforcement because it doesn't need validation
         params["prompt"] = prompt
+        params["model"] = self.dalle_model
 
         try:
-            # Make API request
-            url = f"{self.azure_endpoint}/openai/deployments/{deployment}/images/generations?api-version={self.api_version}"
+            # Make API request using stored base URL
             headers = {"api-key": self.api_key, "Content-Type": "application/json"}
-            response = post(url, headers=headers, json=params)
+            response = post(self.dalle_base_url, headers=headers, json=params)
 
             if response.status_code != 200:
                 return f"Error {response.status_code}: {response.text}"
@@ -163,12 +163,7 @@ class AzureOpenAITools(Toolkit):
 
                 # Add image to agent
                 agent.add_image(
-                    ImageArtifact(
-                        id=str(uuid4()),
-                        url=image_url,
-                        original_prompt=prompt,
-                        revised_prompt=revised_prompt
-                    )
+                    ImageArtifact(id=str(uuid4()), url=image_url, original_prompt=prompt, revised_prompt=revised_prompt)
                 )
 
                 response_str += f"Image has been generated at the URL {image_url}\n"
