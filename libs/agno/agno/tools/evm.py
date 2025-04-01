@@ -33,11 +33,21 @@ class EvmTools(Toolkit):
         self.account = self.w3.eth.account.from_key(self.private_key)
         logger.info(f"Your wallet address is: {self.account.address} ")
 
-    def get_priority_fee_per_gas(self) -> int:
+    def get_max_priority_fee_per_gas(self) -> int:
+        """Get the max priority fee per gas for the transaction.
+        Returns:
+            int : The max priority fee per gas for the transaction
+        """
         max_priority_fee_per_gas = self.w3.to_wei(1, "gwei")
         return max_priority_fee_per_gas
 
     def get_max_fee_per_gas(self, max_priority_fee_per_gas: int) -> int:
+        """Get the max fee per gas for the transaction.
+        Args:
+            max_priority_fee_per_gas : The max priority fee per gas
+        Returns:
+            int : The max fee per gas for the transaction
+        """
         latest_block = self.w3.eth.get_block("latest")
         base_fee_per_gas = latest_block.get("baseFeePerGas")
         if base_fee_per_gas is None:
@@ -48,8 +58,15 @@ class EvmTools(Toolkit):
 
     def send_transaction(self, to_address: str, amount_in_wei: int) -> str:
         try:
-            """Sends a transaction to the address provided"""
-            max_priority_fee_per_gas = self.get_priority_fee_per_gas()
+            """Sends a transaction to the address provided
+                Args:
+                    to_address : The address to which you want to send eth
+                    amount_in_wei : The amount of eth to send in wei
+                Returns:
+                    str : The transaction hash of the transaction or error message
+
+            """
+            max_priority_fee_per_gas = self.get_max_priority_fee_per_gas()
             max_fee_per_gas = self.get_max_fee_per_gas(max_priority_fee_per_gas)
             transaction_params = {
                 "from": self.account.address,
