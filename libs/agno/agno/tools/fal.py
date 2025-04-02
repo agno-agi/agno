@@ -22,8 +22,9 @@ class FalTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         model: str = "fal-ai/hunyuan-video",
+        **kwargs,
     ):
-        super().__init__(name="fal")
+        super().__init__(name="fal", **kwargs)
 
         self.api_key = api_key or getenv("FAL_KEY")
         if not self.api_key:

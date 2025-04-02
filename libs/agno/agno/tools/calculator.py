@@ -17,8 +17,9 @@ class CalculatorTools(Toolkit):
         is_prime: bool = False,
         square_root: bool = False,
         enable_all: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="calculator")
+        super().__init__(name="calculator", **kwargs)
 
         # Register functions in the toolkit
         if add or enable_all:

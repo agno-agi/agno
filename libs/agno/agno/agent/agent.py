@@ -92,8 +92,10 @@ class Agent:
     memory: Optional[AgentMemory] = None
     # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_messages: bool = False
-    # Number of historical responses to add to the messages.
-    num_history_responses: int = 3
+    # Deprecated in favor of num_history_runs: Number of historical responses to add to the messages
+    num_history_responses: Optional[int] = None
+    # Number of historical runs to include in the messages
+    num_history_runs: int = 3
 
     # --- Agent Knowledge ---
     knowledge: Optional[AgentKnowledge] = None
@@ -198,6 +200,8 @@ class Agent:
     delay_between_retries: int = 1
     # Exponential backoff: if True, the delay between retries is doubled each time
     exponential_backoff: bool = False
+
+    # --- Agent Response Model Settings ---
     # Provide a response model to get the response as a Pydantic model
     response_model: Optional[Type[BaseModel]] = None
     # If True, the response from the Model is converted into the response_model
@@ -262,7 +266,8 @@ class Agent:
         resolve_context: bool = True,
         memory: Optional[AgentMemory] = None,
         add_history_to_messages: bool = False,
-        num_history_responses: int = 3,
+        num_history_responses: Optional[int] = None,
+        num_history_runs: int = 3,
         knowledge: Optional[AgentKnowledge] = None,
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
@@ -336,6 +341,16 @@ class Agent:
         self.memory = memory
         self.add_history_to_messages = add_history_to_messages
         self.num_history_responses = num_history_responses
+        self.num_history_runs = num_history_runs
+
+        if num_history_responses is not None:
+            warnings.warn(
+                "num_history_responses is deprecated and will be removed in a future version. "
+                "Use num_history_runs instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.num_history_runs = num_history_responses
 
         self.knowledge = knowledge
         self.add_references = add_references
@@ -644,6 +659,11 @@ class Agent:
 
                         yield self.run_response
 
+                    if model_response_chunk.image is not None:
+                        self.add_image(model_response_chunk.image)
+
+                        yield self.run_response
+
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                     # Add tool calls to the run_response
@@ -733,6 +753,9 @@ class Agent:
             # Update the run_response audio with the model response audio
             if model_response.audio is not None:
                 self.run_response.response_audio = model_response.audio
+
+            if model_response.image is not None:
+                self.add_image(model_response.image)
 
             # Update the run_response messages with the messages
             self.run_response.messages = run_messages.messages
@@ -1056,7 +1079,7 @@ class Agent:
         log_debug(f"Async Agent Run Start: {self.run_response.run_id}", center=True, symbol="*")
 
         # 2. Update the Model and resolve context
-        self.update_model()
+        self.update_model(async_mode=True)  # use async search for vector db
         self.run_response.model = self.model.id if self.model is not None else None
         if self.context is not None and self.resolve_context:
             self.resolve_run_context()
@@ -1164,6 +1187,11 @@ class Agent:
 
                         yield self.run_response
 
+                    if model_response_chunk.image is not None:
+                        self.add_image(model_response_chunk.image)
+
+                        yield self.run_response
+
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                     # Add tool calls to the run_response
@@ -1254,6 +1282,9 @@ class Agent:
             # Update the run_response audio with the model response audio
             if model_response.audio is not None:
                 self.run_response.response_audio = model_response.audio
+
+            if model_response.image is not None:
+                self.add_image(model_response.image)
 
             # Update the run_response messages with the messages
             self.run_response.messages = run_messages.messages
@@ -1532,7 +1563,7 @@ class Agent:
             rr.created_at = created_at
         return rr
 
-    def get_tools(self) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
+    def get_tools(self, async_mode: bool = False) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
         self.memory = cast(AgentMemory, self.memory)
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
@@ -1552,7 +1583,11 @@ class Agent:
         # Add tools for accessing knowledge
         if self.knowledge is not None or self.retriever is not None:
             if self.search_knowledge:
-                agent_tools.append(self.search_knowledge_base)
+                # Use async or sync search based on async_mode
+                if async_mode:
+                    agent_tools.append(self.async_search_knowledge_base)
+                else:
+                    agent_tools.append(self.search_knowledge_base)
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
@@ -1563,11 +1598,11 @@ class Agent:
 
         return agent_tools
 
-    def add_tools_to_model(self, model: Model) -> None:
+    def add_tools_to_model(self, model: Model, async_mode: bool = False) -> None:
         # Skip if functions_for_model is not None
         if self._functions_for_model is None or self._tools_for_model is None:
             # Get Agent tools
-            agent_tools = self.get_tools()
+            agent_tools = self.get_tools(async_mode=async_mode)
             if agent_tools is not None and len(agent_tools) > 0:
                 log_debug("Processing tools for model")
 
@@ -1632,7 +1667,7 @@ class Agent:
                 # Set functions on the model
                 model.set_functions(functions=self._functions_for_model)
 
-    def update_model(self) -> None:
+    def update_model(self, async_mode: bool = False) -> None:
         # Use the default Model (OpenAIChat) if no model is provided
         if self.model is None:
             try:
@@ -1683,7 +1718,7 @@ class Agent:
                 self.model.structured_outputs = False
 
         # Add tools to the Model
-        self.add_tools_to_model(model=self.model)
+        self.add_tools_to_model(model=self.model, async_mode=async_mode)
 
         # Set show_tool_calls on the Model
         if self.show_tool_calls is not None:
@@ -2471,7 +2506,7 @@ class Agent:
             from copy import deepcopy
 
             history: List[Message] = self.memory.get_messages_from_last_n_runs(
-                last_n=self.num_history_responses, skip_role=self.system_message_role
+                last_n=self.num_history_runs, skip_role=self.system_message_role
             )
             if len(history) > 0:
                 # Create a deep copy of the history messages to avoid modifying the original messages
@@ -2483,13 +2518,6 @@ class Agent:
 
                 log_debug(f"Adding {len(history_copy)} messages from history")
 
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData(history=history_copy)
-                else:
-                    if self.run_response.extra_data.history is None:
-                        self.run_response.extra_data.history = history_copy
-                    else:
-                        self.run_response.extra_data.history.extend(history_copy)
                 run_messages.messages += history_copy
 
         # 4.Add user message to run_messages
@@ -2754,8 +2782,37 @@ class Agent:
         if self.knowledge is None:
             return None
 
-        # TODO: add async support
         relevant_docs: List[Document] = self.knowledge.search(query=query, num_documents=num_documents, **kwargs)
+        if len(relevant_docs) == 0:
+            return None
+        return [doc.to_dict() for doc in relevant_docs]
+
+    async def aget_relevant_docs_from_knowledge(
+        self, query: str, num_documents: Optional[int] = None, **kwargs
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Get relevant documents from knowledge base asynchronously."""
+        from agno.document import Document
+
+        if self.retriever is not None and callable(self.retriever):
+            from inspect import signature
+
+            try:
+                sig = signature(self.retriever)
+                retriever_kwargs: Dict[str, Any] = {}
+                if "agent" in sig.parameters:
+                    retriever_kwargs = {"agent": self}
+                retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+                return self.retriever(**retriever_kwargs)
+            except Exception as e:
+                log_warning(f"Retriever failed: {e}")
+                return None
+
+        if self.knowledge is None or self.knowledge.vector_db is None:
+            return None
+
+        relevant_docs: List[Document] = await self.knowledge.async_search(
+            query=query, num_documents=num_documents, **kwargs
+        )
         if len(relevant_docs) == 0:
             return None
         return [doc.to_dict() for doc in relevant_docs]
@@ -3526,6 +3583,35 @@ class Agent:
             return "No documents found"
         return self.convert_documents_to_string(docs_from_knowledge)
 
+    async def async_search_knowledge_base(self, query: str) -> str:
+        """Use this function to search the knowledge base for information about a query asynchronously.
+
+        Args:
+            query: The query to search for.
+
+        Returns:
+            str: A string containing the response from the knowledge base.
+        """
+        self.run_response = cast(RunResponse, self.run_response)
+        retrieval_timer = Timer()
+        retrieval_timer.start()
+        docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query)
+        if docs_from_knowledge is not None:
+            references = MessageReferences(
+                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+            )
+            if self.run_response.extra_data is None:
+                self.run_response.extra_data = RunResponseExtraData()
+            if self.run_response.extra_data.references is None:
+                self.run_response.extra_data.references = []
+            self.run_response.extra_data.references.append(references)
+        retrieval_timer.stop()
+        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+        if docs_from_knowledge is None:
+            return "No documents found"
+        return self.convert_documents_to_string(docs_from_knowledge)
+
     def add_to_knowledge(self, query: str, result: str) -> str:
         """Use this function to add information to the knowledge base for future use.
 
@@ -3853,20 +3939,20 @@ class Agent:
                     if render:
                         live_log.update(Group(*panels))
 
-                if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
-                    md_content = "\n".join(
-                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
-                        for i, citation in enumerate(resp.citations.urls)
-                        if citation.url  # Only include citations with valid URLs
-                    )
-                    if md_content:  # Only create panel if there are citations
-                        citations_panel = create_panel(
-                            content=Markdown(md_content),
-                            title="Citations",
-                            border_style="green",
+                    if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                        md_content = "\n".join(
+                            f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                            for i, citation in enumerate(resp.citations.urls)
+                            if citation.url  # Only include citations with valid URLs
                         )
-                        panels.append(citations_panel)
-                        live_log.update(Group(*panels))
+                        if md_content:  # Only create panel if there are citations
+                            citations_panel = create_panel(
+                                content=Markdown(md_content),
+                                title="Citations",
+                                border_style="green",
+                            )
+                            panels.append(citations_panel)
+                            live_log.update(Group(*panels))
                 response_timer.stop()
 
                 # Final update to remove the "Thinking..." status
@@ -4194,20 +4280,20 @@ class Agent:
                     if render:
                         live_log.update(Group(*panels))
 
-                if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
-                    md_content = "\n".join(
-                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
-                        for i, citation in enumerate(resp.citations.urls)
-                        if citation.url  # Only include citations with valid URLs
-                    )
-                    if md_content:  # Only create panel if there are citations
-                        citations_panel = create_panel(
-                            content=Markdown(md_content),
-                            title="Citations",
-                            border_style="green",
+                    if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                        md_content = "\n".join(
+                            f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                            for i, citation in enumerate(resp.citations.urls)
+                            if citation.url  # Only include citations with valid URLs
                         )
-                        panels.append(citations_panel)
-                        live_log.update(Group(*panels))
+                        if md_content:  # Only create panel if there are citations
+                            citations_panel = create_panel(
+                                content=Markdown(md_content),
+                                title="Citations",
+                                border_style="green",
+                            )
+                            panels.append(citations_panel)
+                            live_log.update(Group(*panels))
                 response_timer.stop()
 
                 # Final update to remove the "Thinking..." status
