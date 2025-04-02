@@ -50,6 +50,4 @@ class ArxivReader(Reader):
         @param query: Search query string
         @return: List of documents
         """
-        task = asyncio.create_task(asyncio.to_thread(self.read, query))
-        result = await task
-        return result
+        return await asyncio.to_thread(self.read, query)
