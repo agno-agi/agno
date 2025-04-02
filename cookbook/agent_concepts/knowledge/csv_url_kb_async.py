@@ -1,5 +1,4 @@
 import asyncio
-from pathlib import Path
 
 from agno.agent import Agent
 from agno.knowledge.csv_url import CSVUrlKnowledgeBase
