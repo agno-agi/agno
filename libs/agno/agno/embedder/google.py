@@ -15,10 +15,10 @@ except ImportError:
 
 @dataclass
 class GeminiEmbedder(Embedder):
-    id: str = "text-embedding-004"
+    id: str = "gemini-embedding-exp-03-07"
     task_type: str = "RETRIEVAL_QUERY"
     title: Optional[str] = None
-    dimensions: Optional[int] = 768
+    dimensions: Optional[int] = 1536
     api_key: Optional[str] = None
     request_params: Optional[Dict[str, Any]] = None
     client_params: Optional[Dict[str, Any]] = None
@@ -49,7 +49,7 @@ class GeminiEmbedder(Embedder):
         _id = self.id
         if _id.startswith("models/"):
             _id = _id.split("/")[-1]
-
+            
         _request_params: Dict[str, Any] = {"contents": text, "model": _id, "config": {}}
         if self.dimensions:
             _request_params["config"]["output_dimensionality"] = self.dimensions
