@@ -342,14 +342,7 @@ class Agent:
         self.add_history_to_messages = add_history_to_messages
         self.num_history_responses = num_history_responses
         self.num_history_runs = num_history_runs
-
         if num_history_responses is not None:
-            warnings.warn(
-                "num_history_responses is deprecated and will be removed in a future version. "
-                "Use num_history_runs instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
             self.num_history_runs = num_history_responses
 
         self.knowledge = knowledge
