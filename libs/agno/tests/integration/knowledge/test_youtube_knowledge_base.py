@@ -1,181 +1,122 @@
-from unittest.mock import patch
+import os
 
 import pytest
 
 from agno.agent import Agent
-from agno.document import Document
 from agno.knowledge.youtube import YouTubeKnowledgeBase
-from agno.vectordb.lancedb.lance_db import LanceDb
-
-
-# Mock YouTube reader responses
-def mock_read(video_url):
-    if "video1" in video_url:
-        return [
-            Document(
-                name="Video 1 - Part 1",
-                content="This is a video about machine learning basics. We discuss neural networks and deep learning.",
-                meta_data={"video_id": "video1", "segment": 1, "source": "YouTube"},
-            ),
-            Document(
-                name="Video 1 - Part 2",
-                content="In this segment we talk about training neural networks and backpropagation.",
-                meta_data={"video_id": "video1", "segment": 2, "source": "YouTube"},
-            ),
-        ]
-    elif "video2" in video_url:
-        return [
-            Document(
-                name="Video 2 - Part 1",
-                content="This tutorial explains how to implement convolutional neural networks (CNNs) for image classification.",
-                meta_data={"video_id": "video2", "segment": 1, "source": "YouTube"},
-            ),
-            Document(
-                name="Video 2 - Part 2",
-                content="We demonstrate how to train the CNN on the MNIST dataset and evaluate its performance.",
-                meta_data={"video_id": "video2", "segment": 2, "source": "YouTube"},
-            ),
-            Document(
-                name="Video 2 - Part 3",
-                content="Finally, we discuss transfer learning and how to use pre-trained models.",
-                meta_data={"video_id": "video2", "segment": 3, "source": "YouTube"},
-            ),
-        ]
-    return []
-
-
-async def mock_async_read(video_url):
-    # Reuse the synchronous mock implementation
-    return mock_read(video_url)
+from agno.vectordb.lancedb import LanceDb
 
 
 @pytest.fixture
-def mock_youtube_reader():
-    with patch("agno.document.reader.youtube_reader.YouTubeReader.read", side_effect=mock_read), patch(
-        "agno.document.reader.youtube_reader.YouTubeReader.async_read", side_effect=mock_async_read
-    ):
-        yield
+def setup_vector_db():
+    """Setup a temporary vector DB for testing."""
+    table_name = f"youtube_test_{os.urandom(4).hex()}"
+    vector_db = LanceDb(table_name=table_name, uri="tmp/lancedb")
+    yield vector_db
+    vector_db.drop()
 
 
-def test_youtube_knowledge_base(mock_youtube_reader):
-    vector_db = LanceDb(
-        table_name="youtube_videos",
-        uri="tmp/lancedb",
-    )
+def test_youtube_knowledge_base_directory(setup_vector_db):
+    """Test loading multiple YouTube videos into the knowledge base."""
+    urls = ["https://www.youtube.com/watch?v=NwZ26lxl8wU", "https://www.youtube.com/watch?v=lrg8ZWI7MCg"]
 
-    # Create a knowledge base with mock YouTube URLs
-    knowledge_base = YouTubeKnowledgeBase(
-        urls=["https://www.youtube.com/watch?v=video1", "https://www.youtube.com/watch?v=video2"],
-        vector_db=vector_db,
-    )
+    kb = YouTubeKnowledgeBase(urls=urls, vector_db=setup_vector_db)
+    kb.load(recreate=True)
 
-    knowledge_base.load(recreate=True)
+    assert setup_vector_db.exists()
+    assert setup_vector_db.get_count() > 0
 
-    assert vector_db.exists()
-
-    # We have 2 videos with 2 and 3 segments respectively
-    expected_docs = 5
-    assert vector_db.get_count() == expected_docs
-
-    # Create and use the agent
-    agent = Agent(knowledge=knowledge_base)
-    response = agent.run("Tell me about neural networks", markdown=True)
+    agent = Agent(knowledge=kb)
+    response = agent.run("What is the video about?", markdown=True)
 
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
-    for call in tool_calls:
-        if call.get("type", "") == "function":
-            assert call["function"]["name"] == "search_knowledge_base"
 
-    # Clean up
-    vector_db.drop()
+    function_calls = [call for call in tool_calls if call.get("type") == "function"]
+    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
-def test_youtube_knowledge_base_single_video(mock_youtube_reader):
-    vector_db = LanceDb(
-        table_name="youtube_single",
-        uri="tmp/lancedb",
+def test_youtube_knowledge_base_single_url(setup_vector_db):
+    """Test loading a single YouTube video into the knowledge base."""
+    kb = YouTubeKnowledgeBase(
+        urls=["https://www.youtube.com/watch?v=NwZ26lxl8wU"],
+        vector_db=setup_vector_db,
     )
+    kb.load(recreate=True)
 
-    # Create a knowledge base with a single YouTube URL
-    knowledge_base = YouTubeKnowledgeBase(
-        urls=["https://www.youtube.com/watch?v=video1"],
-        vector_db=vector_db,
-    )
+    assert setup_vector_db.exists()
+    assert setup_vector_db.get_count() > 0
 
-    knowledge_base.load(recreate=True)
-
-    assert vector_db.exists()
-
-    # The first video has 2 segments
-    expected_docs = 2
-    assert vector_db.get_count() == expected_docs
-
-    # Clean up
-    vector_db.drop()
-
-
-@pytest.mark.asyncio
-async def test_youtube_knowledge_base_async(mock_youtube_reader):
-    vector_db = LanceDb(
-        table_name="youtube_async",
-        uri="tmp/lancedb",
-    )
-
-    # Create knowledge base
-    knowledge_base = YouTubeKnowledgeBase(
-        urls=["https://www.youtube.com/watch?v=video1", "https://www.youtube.com/watch?v=video2"],
-        vector_db=vector_db,
-    )
-
-    await knowledge_base.aload(recreate=True)
-
-    assert await vector_db.async_exists()
-
-    # We have 2 videos with 2 and 3 segments respectively
-    expected_docs = 5
-    assert await vector_db.async_get_count() == expected_docs
-
-    # Create and use the agent
-    agent = Agent(knowledge=knowledge_base)
-    response = await agent.arun("How do I implement CNNs for image classification?", markdown=True)
+    agent = Agent(knowledge=kb)
+    response = agent.run("What is the video about?", markdown=True)
 
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
-    for call in tool_calls:
-        if call.get("type", "") == "function":
-            assert call["function"]["name"] == "search_knowledge_base"
 
-    # Check for CNN-related content in the response
-    assert any(term in response.content.lower() for term in ["cnn", "convolutional", "classification"])
-
-    # Clean up
-    await vector_db.async_drop()
+    function_calls = [call for call in tool_calls if call.get("type") == "function"]
+    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
 @pytest.mark.asyncio
-async def test_youtube_knowledge_base_async_single_video(mock_youtube_reader):
-    vector_db = LanceDb(
-        table_name="youtube_async_single",
-        uri="tmp/lancedb",
+async def test_youtube_knowledge_base_async_directory(setup_vector_db):
+    """Test asynchronously loading multiple YouTube videos."""
+    urls = ["https://www.youtube.com/watch?v=NwZ26lxl8wU", "https://www.youtube.com/watch?v=lrg8ZWI7MCg"]
+
+    kb = YouTubeKnowledgeBase(urls=urls, vector_db=setup_vector_db)
+    await kb.aload(recreate=True)
+
+    assert await setup_vector_db.async_exists()
+    assert await setup_vector_db.async_get_count() > 0
+
+    agent = Agent(
+        knowledge=kb,
+        search_knowledge=True,
     )
+    response = await agent.arun("What is the video about?", markdown=True)
 
-    # Create knowledge base with a single YouTube URL
-    knowledge_base = YouTubeKnowledgeBase(
-        urls=["https://www.youtube.com/watch?v=video2"],
-        vector_db=vector_db,
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+
+    assert "async_search_knowledge_base" in [
+        call["function"]["name"] for call in tool_calls if call.get("type") == "function"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_youtube_knowledge_base_async_single_url(setup_vector_db):
+    """Test asynchronously loading a single YouTube video."""
+    kb = YouTubeKnowledgeBase(urls=["https://www.youtube.com/watch?v=lrg8ZWI7MCg"], vector_db=setup_vector_db)
+    await kb.aload(recreate=True)
+
+    assert await setup_vector_db.async_exists()
+    assert await setup_vector_db.async_get_count() > 0
+
+    agent = Agent(
+        knowledge=kb,
+        search_knowledge=True,  # Keep for async
     )
+    response = await agent.arun("What is the video about?", markdown=True)
 
-    await knowledge_base.aload(recreate=True)
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
 
-    assert await vector_db.async_exists()
+    assert "async_search_knowledge_base" in [
+        call["function"]["name"] for call in tool_calls if call.get("type") == "function"
+    ]
 
-    expected_docs = 3
-    assert await vector_db.async_get_count() == expected_docs
 
-    # Clean up
-    await vector_db.async_drop()
+def test_youtube_knowledge_base_empty_urls(setup_vector_db):
+    """Test loading with empty URL list."""
+    kb = YouTubeKnowledgeBase(urls=[], vector_db=setup_vector_db)
+    kb.load(recreate=True)
+
+    assert setup_vector_db.exists()
+    assert setup_vector_db.get_count() == 0

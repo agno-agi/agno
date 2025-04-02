@@ -39,7 +39,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
+dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
 
 # Dependencies for Models
 azure = ["azure-ai-inference", "aiohttp"]
@@ -86,11 +86,14 @@ qdrant = ["qdrant-client"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
+weaviate = ["weaviate-client"]
 milvusdb = ["pymilvus"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
+text = ["aiofiles"]
+csv = ["aiofiles"]
 
 # Dependencies for Performance
 performance = ["memory_profiler"]
@@ -155,6 +158,7 @@ vectordbs = [
   "agno[cassandra]",
   "agno[mongodb]",
   "agno[singlestore]",
+  "agno[weaviate]",
   "agno[milvusdb]"
 ]
 
@@ -162,6 +166,8 @@ vectordbs = [
 knowledge = [
   "agno[pdf]",
   "agno[docx]",
+  "agno[text]",
+  "agno[csv]"
 ]
 
 # All libraries for testing
@@ -324,5 +330,6 @@ module = [
   "wikipedia.*",
   "yfinance.*",
   "youtube_transcript_api.*",
+  "aiofiles.*",
 ]
 ignore_missing_imports = true

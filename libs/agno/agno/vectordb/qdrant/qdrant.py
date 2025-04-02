@@ -197,6 +197,27 @@ class Qdrant(VectorDb):
             return len(scroll_result[0]) > 0
         return False
 
+    async def async_name_exists(self, name: str) -> bool:
+        """
+        Asynchronously validates if a document with the given name exists in the collection.
+
+        Args:
+            name (str): The name of the document to check.
+
+        Returns:
+            bool: True if a document with the given name exists, False otherwise.
+        """
+        if self.async_client:
+            scroll_result = await self.async_client.scroll(
+                collection_name=self.collection,
+                scroll_filter=models.Filter(
+                    must=[models.FieldCondition(key="name", match=models.MatchValue(value=name))]
+                ),
+                limit=1,
+            )
+            return len(scroll_result[0]) > 0
+        return False
+
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, batch_size: int = 10) -> None:
         """
         Insert documents into the database.

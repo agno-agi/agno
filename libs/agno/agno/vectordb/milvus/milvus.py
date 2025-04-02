@@ -426,3 +426,6 @@ class Milvus(VectorDb):
         else:
             expr = ""
         return expr
+
+    def async_name_exists(self, name: str) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
