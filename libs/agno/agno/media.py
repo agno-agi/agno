@@ -17,7 +17,9 @@ class VideoArtifact(Media):
 
 
 class ImageArtifact(Media):
-    url: str  # Remote location for file
+    url: Optional[str] = None  # Remote location for file
+    content: Optional[bytes] = None  # Actual image bytes content
+    mime_type: Optional[str] = None
     alt_text: Optional[str] = None
 
 
