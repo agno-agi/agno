@@ -1693,7 +1693,7 @@ class Agent:
                     self.model.response_format = self.response_model
                     self.model.structured_outputs = True
                 else:
-                    log_debug("Model does not support native structured outputs")
+                    log_debug("Model supports native structured outputs but not enabled. Using JSON mode instead.")
                     self.model.response_format = json_response_format
                     self.model.structured_outputs = False
 
@@ -1711,7 +1711,8 @@ class Agent:
                     self.model.response_format = None
                 self.model.structured_outputs = False
 
-            else:  # Model does not support structured or JSON schema outputs
+            else:
+                log_debug("Model does not support structured or JSON schema outputs.")
                 self.model.response_format = (
                     json_response_format if (self.use_json_mode or not self.structured_outputs) else None
                 )
