@@ -49,7 +49,7 @@ class GeminiEmbedder(Embedder):
         _id = self.id
         if _id.startswith("models/"):
             _id = _id.split("/")[-1]
-            
+
         _request_params: Dict[str, Any] = {"contents": text, "model": _id, "config": {}}
         if self.dimensions:
             _request_params["config"]["output_dimensionality"] = self.dimensions

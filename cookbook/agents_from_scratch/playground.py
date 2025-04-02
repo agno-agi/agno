@@ -1,6 +1,6 @@
-"""Agno Assist - Your Assistant for Agno Framework!
+"""Your Agent Playground
 
-Run `pip install openai lancedb tantivy pypdf agno` to install dependencies.
+Install dependencies: `pip install openai duckduckgo-search lancedb tantivy elevenlabs sqlalchemy 'fastapi[standard]' agno`
 """
 
 from agent_with_knowledge import agent_with_knowledge

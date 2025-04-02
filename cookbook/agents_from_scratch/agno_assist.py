@@ -1,6 +1,6 @@
 """Agno Assist - Your Assistant for Agno Framework!
 
-Run `pip install openai lancedb tantivy elevenlabs sqlalchemy agno` to install dependencies.
+Install dependencies: `pip install openai lancedb tantivy elevenlabs sqlalchemy agno`
 """
 
 from pathlib import Path
@@ -101,8 +101,8 @@ agno_assist = Agent(
         - You have access to the extremely powerful DALL-E 3 model.
         - Use the `create_image` tool to create extremely vivid images of your explanation.
         - Don't display the image in your response, it will be shown to the user separately.
-        - The image will be shown to the user below your response.
-        - You do now need to display or include the image in your response, if needed, refer to it as 'the image shown below'.
+        - The image will be shown to the user automatically below your response.
+        - You DO NOT need to display or include the image in your response, if needed, refer to it as 'the image shown below'.
 
     Key topics to cover:
     - Agent levels and capabilities

@@ -1,6 +1,6 @@
 """Agent with Storage - An agent that can store sessions in a database
 
-Run `pip install openai lancedb tantivy sqlalchemy agno` to install dependencies.
+Install dependencies: `pip install openai lancedb tantivy sqlalchemy agno`
 """
 
 from pathlib import Path
@@ -98,7 +98,7 @@ agent_with_storage = Agent(
     # 2. Automatically add the chat history to the messages sent to the model
     add_history_to_messages=True,
     # Number of historical runs to add to the messages.
-    num_history_runs=3,
+    num_history_responses=3,
     markdown=True,
 )
 

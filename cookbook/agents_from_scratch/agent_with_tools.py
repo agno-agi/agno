@@ -1,6 +1,6 @@
 """Agent with Tools - An agent that can search the web
 
-Run `pip install openai duckduckgo-search agno` to install dependencies.
+Install dependencies: `pip install openai duckduckgo-search agno`
 """
 
 from textwrap import dedent

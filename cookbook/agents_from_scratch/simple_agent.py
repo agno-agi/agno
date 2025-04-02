@@ -1,6 +1,6 @@
 """Simple Agent - An agent that performs a simple inference task
 
-Run `pip install openai agno` to install dependencies.
+Install dependencies: `pip install openai agno`
 """
 
 from textwrap import dedent

@@ -1,6 +1,6 @@
 """Agent with Knowledge - An agent that can search a knowledge base
 
-Run `pip install openai lancedb tantivy agno` to install dependencies.
+Install dependencies: `pip install openai lancedb tantivy agno`
 """
 
 from pathlib import Path
