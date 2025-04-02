@@ -34,7 +34,7 @@ def test_route_team_multiple_response_models():
     company_info_agent = Agent(
         name="Company Info Searcher",
         model=OpenAIChat("gpt-4o"),
-        role="Searches for information about companies and recent news.",
+        role="Searches for general information about companies and recent news.",
         response_model=CompanyAnalysis,
         tools=[
             YFinanceTools(
