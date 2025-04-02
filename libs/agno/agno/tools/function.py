@@ -274,28 +274,28 @@ class Function(BaseModel):
         kwargs_str = str(sorted((call_args or {}).items()))
         key_str = f"{self.name}:{args_str}:{kwargs_str}"
         return md5(key_str.encode()).hexdigest()
-
     def _get_cache_file_path(self, cache_key: str) -> str:
         """Get the full path for the cache file."""
-        from os import makedirs, path
+        from pathlib import Path
         from tempfile import gettempdir
 
-        base_cache_dir = self.cache_dir or path.join(gettempdir(), "agno_cache")
-        func_cache_dir = path.join(base_cache_dir, "functions", self.name)
-        makedirs(func_cache_dir, exist_ok=True)
-        return path.join(func_cache_dir, f"{cache_key}.json")
+        base_cache_dir = self.cache_dir or Path(gettempdir()) / "agno_cache"
+        func_cache_dir = Path(base_cache_dir) / "functions" / self.name
+        func_cache_dir.mkdir(parents=True, exist_ok=True)
+        return func_cache_dir / f"{cache_key}.json"
 
     def _get_cached_result(self, cache_file: str) -> Optional[Any]:
         """Retrieve cached result if valid."""
         import json
-        from os import path, remove
+        from pathlib import Path
         from time import time
 
-        if not path.exists(cache_file):
+        cache_path = Path(cache_file)
+        if not cache_path.exists():
             return None
 
         try:
-            with open(cache_file, "r") as f:
+            with cache_path.open("r") as f:
                 cache_data = json.load(f)
 
             timestamp = cache_data.get("timestamp", 0)
@@ -305,7 +305,7 @@ class Function(BaseModel):
                 return result
 
             # Remove expired entry
-            remove(cache_file)
+            cache_path.unlink()
         except Exception as e:
             log_error(f"Error reading cache: {e}")
 
