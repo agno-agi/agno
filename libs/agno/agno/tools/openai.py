@@ -13,8 +13,8 @@ client = OpenAIClient()
 class OpenAITools(Toolkit):
     """Tools for interacting with OpenAIChat API"""
 
-    def __init__(self):
-        super().__init__(name="openai_tools")
+    def __init__(self, **kwargs):
+        super().__init__(name="openai_tools", **kwargs)
 
         self.register(self.transcribe_audio)
 

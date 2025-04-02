@@ -30,8 +30,9 @@ class LumaLabTools(Toolkit):
         wait_for_completion: bool = True,
         poll_interval: int = 3,
         max_wait_time: int = 300,  # 5 minutes
+        **kwargs,
     ):
-        super().__init__(name="luma_lab")
+        super().__init__(name="luma_lab", **kwargs)
 
         self.wait_for_completion = wait_for_completion
         self.poll_interval = poll_interval

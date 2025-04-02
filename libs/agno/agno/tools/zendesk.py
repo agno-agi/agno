@@ -23,6 +23,7 @@ class ZendeskTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         company_name: Optional[str] = None,
+        **kwargs,
     ):
         """
         Initializes the ZendeskTools class with necessary authentication details
@@ -33,7 +34,7 @@ class ZendeskTools(Toolkit):
         password (str): The password for Zendesk API authentication.
         company_name (str): The company name to form the base URL for API requests.
         """
-        super().__init__(name="zendesk_tools")
+        super().__init__(name="zendesk_tools", **kwargs)
         self.username = username or getenv("ZENDESK_USERNAME")
         self.password = password or getenv("ZENDESK_PW")
         self.company_name = company_name or getenv("ZENDESK_COMPANY_NAME")

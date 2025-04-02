@@ -32,8 +32,9 @@ class OpenWeatherTools(Toolkit):
         forecast: bool = True,
         air_pollution: bool = True,
         geocoding: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="openweather_tools")
+        super().__init__(name="openweather_tools", **kwargs)
 
         self.api_key = api_key or getenv("OPENWEATHER_API_KEY")
         if not self.api_key:
