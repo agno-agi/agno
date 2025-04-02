@@ -532,7 +532,7 @@ class FunctionCall(BaseModel):
 
     async def aexecute(self) -> bool:
         """Runs the function call asynchronously."""
-        from inspect import isasyncgen, iscoroutinefunction, isgenerator, isasyncgenfunction
+        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
 
         if self.function.entrypoint is None:
             return False

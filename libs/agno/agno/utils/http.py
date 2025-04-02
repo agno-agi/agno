@@ -33,9 +33,8 @@ def fetch_with_retry(
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
             raise
-    
-    raise httpx.RequestError(
-        f"Failed to fetch {url} after {max_retries} attempts")
+
+    raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")
 
 
 async def async_fetch_with_retry(
@@ -68,6 +67,5 @@ async def async_fetch_with_retry(
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
             raise
-        
-    raise httpx.RequestError(
-        f"Failed to fetch {url} after {max_retries} attempts")
+
+    raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")
