@@ -17,8 +17,10 @@ except ImportError:
 
 
 class ArxivTools(Toolkit):
-    def __init__(self, search_arxiv: bool = True, read_arxiv_papers: bool = True, download_dir: Optional[Path] = None):
-        super().__init__(name="arxiv_tools")
+    def __init__(
+        self, search_arxiv: bool = True, read_arxiv_papers: bool = True, download_dir: Optional[Path] = None, **kwargs
+    ):
+        super().__init__(name="arxiv_tools", **kwargs)
 
         self.client: arxiv.Client = arxiv.Client()
         self.download_dir: Path = download_dir or Path(__file__).parent.joinpath("arxiv_pdfs")

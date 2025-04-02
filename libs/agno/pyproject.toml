@@ -86,11 +86,13 @@ qdrant = ["qdrant-client"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
+milvusdb = ["pymilvus"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 text = ["aiofiles"]
+csv = ["aiofiles"]
 
 # Dependencies for Performance
 performance = ["memory_profiler"]
@@ -154,7 +156,8 @@ vectordbs = [
   "agno[qdrant]",
   "agno[cassandra]",
   "agno[mongodb]",
-  "agno[singlestore]"
+  "agno[singlestore]",
+  "agno[milvusdb]"
 ]
 
 # All knowledge
@@ -162,7 +165,7 @@ knowledge = [
   "agno[pdf]",
   "agno[docx]",
   "agno[text]",
-]
+  "agno[csv]"
 
 # All libraries for testing
 tests = [
