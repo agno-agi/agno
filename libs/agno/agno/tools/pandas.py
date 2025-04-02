@@ -10,8 +10,8 @@ except ImportError:
 
 
 class PandasTools(Toolkit):
-    def __init__(self):
-        super().__init__(name="pandas_tools")
+    def __init__(self, **kwargs):
+        super().__init__(name="pandas_tools", **kwargs)
 
         self.dataframes: Dict[str, pd.DataFrame] = {}
         self.register(self.create_pandas_dataframe)

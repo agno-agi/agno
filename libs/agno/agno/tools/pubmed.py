@@ -13,8 +13,9 @@ class PubmedTools(Toolkit):
         self,
         email: str = "your_email@example.com",
         max_results: Optional[int] = None,
+        **kwargs,
     ):
-        super().__init__(name="pubmed")
+        super().__init__(name="pubmed", **kwargs)
         self.max_results: Optional[int] = max_results
         self.email: str = email
 

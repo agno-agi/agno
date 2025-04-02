@@ -19,6 +19,7 @@ class FinancialDatasetsTools(Toolkit):
         enable_sec_filings: bool = True,
         enable_crypto: bool = True,
         enable_search: bool = True,
+        **kwargs,
     ):
         """
         Initialize the Financial Datasets Tools with feature flags.
@@ -34,7 +35,7 @@ class FinancialDatasetsTools(Toolkit):
             enable_crypto: Enable cryptocurrency related functions
             enable_search: Enable search related functions
         """
-        super().__init__(name="financial_datasets_tools")
+        super().__init__(name="financial_datasets_tools", **kwargs)
 
         self.api_key: Optional[str] = api_key or getenv("FINANCIAL_DATASETS_API_KEY")
         if not self.api_key:
