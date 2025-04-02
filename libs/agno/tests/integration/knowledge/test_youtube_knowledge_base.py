@@ -26,8 +26,8 @@ def test_youtube_knowledge_base_directory(setup_vector_db):
     assert setup_vector_db.exists()
     assert setup_vector_db.get_count() > 0
 
-    agent = Agent(knowledge=kb)
-    response = agent.run("What is the video about?", markdown=True)
+    agent = Agent(knowledge=kb, search_knowledge=True)
+    response = agent.run("What is the major focus of the knowledge provided in both the videos, explain briefly.", markdown=True)
 
     tool_calls = []
     for msg in response.messages:
@@ -35,6 +35,7 @@ def test_youtube_knowledge_base_directory(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
+    print(f"Function calls: {function_calls}")
     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
@@ -49,8 +50,15 @@ def test_youtube_knowledge_base_single_url(setup_vector_db):
     assert setup_vector_db.exists()
     assert setup_vector_db.get_count() > 0
 
-    agent = Agent(knowledge=kb)
-    response = agent.run("What is the video about?", markdown=True)
+    agent = Agent(
+        knowledge=kb,
+        search_knowledge=True,
+        instructions=[
+            "You are a helpful assistant that can answer questions about the video.",
+            "You can use the search_knowledge_base tool to search the knowledge base of videos for information.",
+        ],
+    )
+    response = agent.run("What is the major focus of the knowledge provided in the video?", markdown=True)
 
     tool_calls = []
     for msg in response.messages:
@@ -75,8 +83,12 @@ async def test_youtube_knowledge_base_async_directory(setup_vector_db):
     agent = Agent(
         knowledge=kb,
         search_knowledge=True,
+        instructions=[
+            "You are a helpful assistant that can answer questions about the video.",
+            "You can use the search_knowledge_base tool to search the knowledge base of videos for information.",
+        ],
     )
-    response = await agent.arun("What is the video about?", markdown=True)
+    response = await agent.arun("What is the major focus of the knowledge provided in both the videos, explain briefly.", markdown=True)
 
     tool_calls = []
     for msg in response.messages:
@@ -100,8 +112,12 @@ async def test_youtube_knowledge_base_async_single_url(setup_vector_db):
     agent = Agent(
         knowledge=kb,
         search_knowledge=True,  # Keep for async
+        instructions=[
+            "You are a helpful assistant that can answer questions about the video.",
+            "You can use the search_knowledge_base tool to search the knowledge base of videos for information.",
+        ],
     )
-    response = await agent.arun("What is the video about?", markdown=True)
+    response = await agent.arun("What is the major focus of the knowledge provided in the video?", markdown=True)
 
     tool_calls = []
     for msg in response.messages:
