@@ -532,7 +532,7 @@ class FunctionCall(BaseModel):
 
     async def aexecute(self) -> bool:
         """Runs the function call asynchronously."""
-        from inspect import isasyncgen, iscoroutinefunction, isgenerator
+        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
 
         if self.function.entrypoint is None:
             return False
@@ -565,13 +565,13 @@ class FunctionCall(BaseModel):
         try:
             if self.arguments == {} or self.arguments is None:
                 result = self.function.entrypoint(**entrypoint_args)
-                if isasyncgen(self.function.entrypoint):
+                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
                     self.result = result  # Store async generator directly
                 else:
                     self.result = await result
             else:
                 result = self.function.entrypoint(**entrypoint_args, **self.arguments)
-                if isasyncgen(self.function.entrypoint):
+                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
                     self.result = result  # Store async generator directly
                 else:
                     self.result = await result
