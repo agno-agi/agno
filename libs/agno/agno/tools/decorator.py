@@ -24,6 +24,9 @@ def tool(
     stop_after_tool_call: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
+    cache_results: bool = False,
+    cache_dir: Optional[str] = None,
+    cache_ttl: int = 3600,
 ) -> Callable[[F], Function]: ...
 
 
@@ -43,6 +46,9 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         stop_after_tool_call: Optional[bool] - If True, the agent will stop after the function call.
         pre_hook: Optional[Callable] - Hook that runs before the function is executed.
         post_hook: Optional[Callable] - Hook that runs after the function is executed.
+        cache_results: bool - If True, enable caching of function results
+        cache_dir: Optional[str] - Directory to store cache files
+        cache_ttl: int - Time-to-live for cached results in seconds
 
     Returns:
         Union[Function, Callable[[F], Function]]: Decorated function or decorator
@@ -71,6 +77,9 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "stop_after_tool_call",
             "pre_hook",
             "post_hook",
+            "cache_results",
+            "cache_dir",
+            "cache_ttl",
         }
     )
 
@@ -133,7 +142,14 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "name": kwargs.get("name", func.__name__),
             "description": kwargs.get("description", getdoc(func)),  # Get docstring if description not provided
             "entrypoint": wrapper,
-            **{k: v for k, v in kwargs.items() if k not in ["name", "description"] and v is not None},
+            "cache_results": kwargs.get("cache_results", False),
+            "cache_dir": kwargs.get("cache_dir"),
+            "cache_ttl": kwargs.get("cache_ttl", 3600),
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k not in ["name", "description", "cache_results", "cache_dir", "cache_ttl"] and v is not None
+            },
         }
         return Function(**tool_config)
 
