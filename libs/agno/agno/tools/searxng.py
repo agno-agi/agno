@@ -21,8 +21,9 @@ class Searxng(Toolkit):
         news: bool = False,
         science: bool = False,
         videos: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="searxng")
+        super().__init__(name="searxng", **kwargs)
 
         self.host = host
         self.engines = engines
