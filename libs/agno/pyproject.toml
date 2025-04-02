@@ -166,6 +166,7 @@ knowledge = [
   "agno[docx]",
   "agno[text]",
   "agno[csv]"
+]
 
 # All libraries for testing
 tests = [
