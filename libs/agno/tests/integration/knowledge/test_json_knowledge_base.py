@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import pytest
@@ -6,57 +5,6 @@ import pytest
 from agno.agent import Agent
 from agno.knowledge.json import JSONKnowledgeBase
 from agno.vectordb.lancedb.lance_db import LanceDb
-
-
-@pytest.fixture(scope="module", autouse=True)
-def setup_test_data():
-    # Create test data directory
-    test_dir = Path(__file__).parent / "data" / "json"
-    test_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create a single main test file
-    recipes = [
-        {
-            "name": "Tom Kha Gai",
-            "ingredients": ["chicken", "coconut milk", "galangal", "lemongrass", "lime", "fish sauce"],
-            "cuisine": "Thai",
-        },
-        {
-            "name": "Green Curry",
-            "ingredients": ["chicken", "coconut milk", "green curry paste", "thai basil", "fish sauce"],
-            "cuisine": "Thai",
-        },
-        {
-            "name": "Pad Thai",
-            "ingredients": ["rice noodles", "tofu", "bean sprouts", "peanuts", "egg", "tamarind paste"],
-            "cuisine": "Thai",
-        },
-    ]
-
-    with open(test_dir / "recipes.json", "w") as f:
-        json.dump(recipes, f)
-
-    # Create another test file
-    dishes = [
-        {
-            "name": "Massaman Curry",
-            "ingredients": ["beef", "potatoes", "coconut milk", "massaman curry paste", "peanuts"],
-            "cuisine": "Thai",
-        },
-        {
-            "name": "Panang Curry",
-            "ingredients": ["chicken", "coconut milk", "panang curry paste", "kaffir lime leaves"],
-            "cuisine": "Thai",
-        },
-    ]
-
-    with open(test_dir / "dishes.json", "w") as f:
-        json.dump(dishes, f)
-
-    yield
-
-    # Clean up (optional)
-    # We can leave these files for future test runs
 
 
 def test_json_knowledge_base():
