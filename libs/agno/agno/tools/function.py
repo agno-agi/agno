@@ -5,7 +5,7 @@ from docstring_parser import parse
 from pydantic import BaseModel, Field, validate_call
 
 from agno.exceptions import AgentRunException
-from agno.utils.log import log_debug, log_exception, log_warning
+from agno.utils.log import log_debug, log_error, log_exception, log_warning
 
 T = TypeVar("T")
 
@@ -64,6 +64,11 @@ class Function(BaseModel):
     # Hook that runs after the function is executed, regardless of success/failure.
     # If defined, can accept the FunctionCall instance as a parameter.
     post_hook: Optional[Callable] = None
+
+    # Caching configuration
+    cache_results: bool = False
+    cache_dir: Optional[str] = None
+    cache_ttl: int = 3600
 
     # --*-- FOR INTERNAL USE ONLY --*--
     # The agent that the function is associated with
@@ -256,6 +261,68 @@ class Function(BaseModel):
             return json.dumps(function_info, indent=2)
         return None
 
+    def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
+        """Generate a cache key based on function name and arguments."""
+        from hashlib import md5
+
+        copy_entrypoint_args = entrypoint_args.copy()
+        # Remove agent from entrypoint_args
+        if "agent" in copy_entrypoint_args:
+            del copy_entrypoint_args["agent"]
+        args_str = str(copy_entrypoint_args)
+
+        kwargs_str = str(sorted((call_args or {}).items()))
+        key_str = f"{self.name}:{args_str}:{kwargs_str}"
+        return md5(key_str.encode()).hexdigest()
+
+    def _get_cache_file_path(self, cache_key: str) -> str:
+        """Get the full path for the cache file."""
+        from pathlib import Path
+        from tempfile import gettempdir
+
+        base_cache_dir = self.cache_dir or Path(gettempdir()) / "agno_cache"
+        func_cache_dir = Path(base_cache_dir) / "functions" / self.name
+        func_cache_dir.mkdir(parents=True, exist_ok=True)
+        return str(func_cache_dir / f"{cache_key}.json")
+
+    def _get_cached_result(self, cache_file: str) -> Optional[Any]:
+        """Retrieve cached result if valid."""
+        import json
+        from pathlib import Path
+        from time import time
+
+        cache_path = Path(cache_file)
+        if not cache_path.exists():
+            return None
+
+        try:
+            with cache_path.open("r") as f:
+                cache_data = json.load(f)
+
+            timestamp = cache_data.get("timestamp", 0)
+            result = cache_data.get("result")
+
+            if time() - timestamp <= self.cache_ttl:
+                return result
+
+            # Remove expired entry
+            cache_path.unlink()
+        except Exception as e:
+            log_error(f"Error reading cache: {e}")
+
+        return None
+
+    def _save_to_cache(self, cache_file: str, result: Any):
+        """Save result to cache."""
+        import json
+        from time import time
+
+        try:
+            with open(cache_file, "w") as f:
+                json.dump({"timestamp": time(), "result": result}, f)
+        except Exception as e:
+            log_error(f"Error writing cache: {e}")
+
 
 class FunctionCall(BaseModel):
     """Model for Function Calls"""
@@ -356,11 +423,8 @@ class FunctionCall(BaseModel):
         return entrypoint_args
 
     def execute(self) -> bool:
-        """Runs the function call.
-
-        Returns True if the function call was successful, False otherwise.
-        The result of the function call is stored in self.result.
-        """
+        """Runs the function call."""
+        from inspect import isgenerator
 
         if self.function.entrypoint is None:
             return False
@@ -371,35 +435,49 @@ class FunctionCall(BaseModel):
         # Execute pre-hook if it exists
         self._handle_pre_hook()
 
-        # Call the function with no arguments if none are provided.
-        if self.arguments == {} or self.arguments is None:
-            try:
-                entrypoint_args = self._build_entrypoint_args()
-                self.result = self.function.entrypoint(**entrypoint_args)
+        entrypoint_args = self._build_entrypoint_args()
+
+        # Check cache if enabled and not a generator function
+        if self.function.cache_results and not isgenerator(self.function.entrypoint):
+            cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+            cache_file = self.function._get_cache_file_path(cache_key)
+            cached_result = self.function._get_cached_result(cache_file)
+
+            if cached_result is not None:
+                log_debug(f"Cache hit for: {self.get_call_str()}")
+                self.result = cached_result
                 function_call_success = True
-            except AgentRunException as e:
-                log_debug(f"{e.__class__.__name__}: {e}")
-                self.error = str(e)
-                raise
-            except Exception as e:
-                log_warning(f"Could not run function {self.get_call_str()}")
-                log_exception(e)
-                self.error = str(e)
                 return function_call_success
-        else:
-            try:
-                entrypoint_args = self._build_entrypoint_args()
-                self.result = self.function.entrypoint(**entrypoint_args, **self.arguments)
-                function_call_success = True
-            except AgentRunException as e:
-                log_debug(f"{e.__class__.__name__}: {e}")
-                self.error = str(e)
-                raise
-            except Exception as e:
-                log_warning(f"Could not run function {self.get_call_str()}")
-                log_exception(e)
-                self.error = str(e)
-                return function_call_success
+
+        # Execute function
+        try:
+            if self.arguments == {} or self.arguments is None:
+                result = self.function.entrypoint(**entrypoint_args)
+            else:
+                result = self.function.entrypoint(**entrypoint_args, **self.arguments)
+
+            # Handle generator case
+            if isgenerator(result):
+                self.result = result  # Store generator directly, can't cache
+            else:
+                self.result = result
+                # Only cache non-generator results
+                if self.function.cache_results:
+                    cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+                    cache_file = self.function._get_cache_file_path(cache_key)
+                    self.function._save_to_cache(cache_file, self.result)
+
+            function_call_success = True
+
+        except AgentRunException as e:
+            log_debug(f"{e.__class__.__name__}: {e}")
+            self.error = str(e)
+            raise
+        except Exception as e:
+            log_warning(f"Could not run function {self.get_call_str()}")
+            log_exception(e)
+            self.error = str(e)
+            return function_call_success
 
         # Execute post-hook if it exists
         self._handle_post_hook()
@@ -453,12 +531,8 @@ class FunctionCall(BaseModel):
                 log_exception(e)
 
     async def aexecute(self) -> bool:
-        """Runs the function call asynchronously.
-
-        Returns True if the function call was successful, False otherwise.
-        The result of the function call is stored in self.result.
-        """
-        from inspect import isasyncgenfunction, iscoroutinefunction
+        """Runs the function call asynchronously."""
+        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
 
         if self.function.entrypoint is None:
             return False
@@ -472,41 +546,53 @@ class FunctionCall(BaseModel):
         else:
             self._handle_pre_hook()
 
-        # Call the function with no arguments if none are provided.
-        if self.arguments == {} or self.arguments is None:
-            try:
-                entrypoint_args = self._build_entrypoint_args()
-                if isasyncgenfunction(self.function.entrypoint):
-                    self.result = self.function.entrypoint(**entrypoint_args)
-                else:
-                    self.result = await self.function.entrypoint(**entrypoint_args)
+        entrypoint_args = self._build_entrypoint_args()
+
+        # Check cache if enabled and not a generator function
+        if self.function.cache_results and not (
+            isasyncgen(self.function.entrypoint) or isgenerator(self.function.entrypoint)
+        ):
+            cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+            cache_file = self.function._get_cache_file_path(cache_key)
+            cached_result = self.function._get_cached_result(cache_file)
+            if cached_result is not None:
+                log_debug(f"Cache hit for: {self.get_call_str()}")
+                self.result = cached_result
                 function_call_success = True
-            except AgentRunException as e:
-                log_debug(f"{e.__class__.__name__}: {e}")
-                self.error = str(e)
-                raise
-            except Exception as e:
-                log_warning(f"Could not run function {self.get_call_str()}")
-                log_exception(e)
-                self.error = str(e)
                 return function_call_success
-        else:
-            try:
-                entrypoint_args = self._build_entrypoint_args()
-                if isasyncgenfunction(self.function.entrypoint):
-                    self.result = self.function.entrypoint(**entrypoint_args, **self.arguments)
+
+        # Execute function
+        try:
+            if self.arguments == {} or self.arguments is None:
+                result = self.function.entrypoint(**entrypoint_args)
+                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
+                    self.result = result  # Store async generator directly
                 else:
-                    self.result = await self.function.entrypoint(**entrypoint_args, **self.arguments)
-                function_call_success = True
-            except AgentRunException as e:
-                log_debug(f"{e.__class__.__name__}: {e}")
-                self.error = str(e)
-                raise
-            except Exception as e:
-                log_warning(f"Could not run function {self.get_call_str()}")
-                log_exception(e)
-                self.error = str(e)
-                return function_call_success
+                    self.result = await result
+            else:
+                result = self.function.entrypoint(**entrypoint_args, **self.arguments)
+                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
+                    self.result = result  # Store async generator directly
+                else:
+                    self.result = await result
+
+            # Only cache if not a generator
+            if self.function.cache_results and not (isgenerator(self.result) or isasyncgen(self.result)):
+                cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+                cache_file = self.function._get_cache_file_path(cache_key)
+                self.function._save_to_cache(cache_file, self.result)
+
+            function_call_success = True
+
+        except AgentRunException as e:
+            log_debug(f"{e.__class__.__name__}: {e}")
+            self.error = str(e)
+            raise
+        except Exception as e:
+            log_warning(f"Could not run function {self.get_call_str()}")
+            log_exception(e)
+            self.error = str(e)
+            return function_call_success
 
         # Execute post-hook if it exists
         if iscoroutinefunction(self.function.post_hook):

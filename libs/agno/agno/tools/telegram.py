@@ -10,8 +10,8 @@ from agno.utils.log import log_debug, logger
 class TelegramTools(Toolkit):
     base_url = "https://api.telegram.org"
 
-    def __init__(self, chat_id: Union[str, int], token: Optional[str] = None):
-        super().__init__(name="telegram")
+    def __init__(self, chat_id: Union[str, int], token: Optional[str] = None, **kwargs):
+        super().__init__(name="telegram", **kwargs)
 
         self.token = token or os.getenv("TELEGRAM_TOKEN")
         if not self.token:

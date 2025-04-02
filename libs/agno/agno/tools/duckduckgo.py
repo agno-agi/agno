@@ -2,7 +2,6 @@ import json
 from typing import Any, Optional
 
 from agno.tools import Toolkit
-from agno.utils.functions import cache_result
 from agno.utils.log import log_debug
 
 try:
@@ -23,9 +22,6 @@ class DuckDuckGoTools(Toolkit):
         proxy (Optional[str]): Proxy to be used in the search request.
         proxies (Optional[Any]): A list of proxies to be used in the search request.
         timeout (Optional[int]): The maximum number of seconds to wait for a response.
-        cache_results (bool): Enable in-memory caching of search results.
-        cache_ttl (int): Time-to-live for cached results in seconds.
-        cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
 
     """
 
@@ -40,11 +36,9 @@ class DuckDuckGoTools(Toolkit):
         proxies: Optional[Any] = None,
         timeout: Optional[int] = 10,
         verify_ssl: bool = True,
-        cache_results: bool = False,
-        cache_ttl: int = 3600,
-        cache_dir: Optional[str] = None,
+        **kwargs,
     ):
-        super().__init__(name="duckduckgo")
+        super().__init__(name="duckduckgo", **kwargs)
 
         self.headers: Optional[Any] = headers
         self.proxy: Optional[str] = proxy
@@ -53,16 +47,12 @@ class DuckDuckGoTools(Toolkit):
         self.fixed_max_results: Optional[int] = fixed_max_results
         self.modifier: Optional[str] = modifier
         self.verify_ssl: bool = verify_ssl
-        self.cache_results: bool = cache_results
-        self.cache_ttl: int = cache_ttl
-        self.cache_dir: Optional[str] = cache_dir
 
         if search:
             self.register(self.duckduckgo_search)
         if news:
             self.register(self.duckduckgo_news)
 
-    @cache_result()
     def duckduckgo_search(self, query: str, max_results: int = 5) -> str:
         """Use this function to search DuckDuckGo for a query.
 
@@ -83,7 +73,6 @@ class DuckDuckGoTools(Toolkit):
 
         return json.dumps(ddgs.text(keywords=search_query, max_results=actual_max_results), indent=2)
 
-    @cache_result()
     def duckduckgo_news(self, query: str, max_results: int = 5) -> str:
         """Use this function to get the latest news from DuckDuckGo.
 

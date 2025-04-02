@@ -31,6 +31,7 @@ class E2BTools(Toolkit):
         timeout: int = 300,  # 5 minutes default timeout
         sandbox_options: Optional[Dict[str, Any]] = None,
         command_execution: bool = False,
+        **kwargs,
     ):
         """Initialize E2B toolkit for code interpretation and running Python code in a sandbox.
 
@@ -45,7 +46,7 @@ class E2BTools(Toolkit):
             timeout: Timeout in seconds for the sandbox (default: 5 minutes)
             sandbox_options: Additional options to pass to the Sandbox constructor
         """
-        super().__init__(name="e2b_tools")
+        super().__init__(name="e2b_tools", **kwargs)
 
         self.api_key = api_key or getenv("E2B_API_KEY")
         if not self.api_key:

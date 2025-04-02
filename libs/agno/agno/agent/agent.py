@@ -659,6 +659,11 @@ class Agent:
 
                         yield self.run_response
 
+                    if model_response_chunk.image is not None:
+                        self.add_image(model_response_chunk.image)
+
+                        yield self.run_response
+
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                     # Add tool calls to the run_response
@@ -748,6 +753,9 @@ class Agent:
             # Update the run_response audio with the model response audio
             if model_response.audio is not None:
                 self.run_response.response_audio = model_response.audio
+
+            if model_response.image is not None:
+                self.add_image(model_response.image)
 
             # Update the run_response messages with the messages
             self.run_response.messages = run_messages.messages
@@ -1179,6 +1187,11 @@ class Agent:
 
                         yield self.run_response
 
+                    if model_response_chunk.image is not None:
+                        self.add_image(model_response_chunk.image)
+
+                        yield self.run_response
+
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                     # Add tool calls to the run_response
@@ -1269,6 +1282,9 @@ class Agent:
             # Update the run_response audio with the model response audio
             if model_response.audio is not None:
                 self.run_response.response_audio = model_response.audio
+
+            if model_response.image is not None:
+                self.add_image(model_response.image)
 
             # Update the run_response messages with the messages
             self.run_response.messages = run_messages.messages
@@ -1566,13 +1582,12 @@ class Agent:
 
         # Add tools for accessing knowledge
         if self.knowledge is not None or self.retriever is not None:
-            if self.knowledge is not None or self.retriever is not None:
-                if self.search_knowledge:
-                    # Use async or sync search based on async_mode
-                    if async_mode:
-                        agent_tools.append(self.async_search_knowledge_base)
-                    else:
-                        agent_tools.append(self.search_knowledge_base)
+            if self.search_knowledge:
+                # Use async or sync search based on async_mode
+                if async_mode:
+                    agent_tools.append(self.async_search_knowledge_base)
+                else:
+                    agent_tools.append(self.search_knowledge_base)
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
@@ -2776,10 +2791,28 @@ class Agent:
         self, query: str, num_documents: Optional[int] = None, **kwargs
     ) -> Optional[List[Dict[str, Any]]]:
         """Get relevant documents from knowledge base asynchronously."""
+        from agno.document import Document
+
+        if self.retriever is not None and callable(self.retriever):
+            from inspect import signature
+
+            try:
+                sig = signature(self.retriever)
+                retriever_kwargs: Dict[str, Any] = {}
+                if "agent" in sig.parameters:
+                    retriever_kwargs = {"agent": self}
+                retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+                return self.retriever(**retriever_kwargs)
+            except Exception as e:
+                log_warning(f"Retriever failed: {e}")
+                return None
+
         if self.knowledge is None or self.knowledge.vector_db is None:
             return None
 
-        relevant_docs = await self.knowledge.async_search(query=query, num_documents=num_documents, **kwargs)
+        relevant_docs: List[Document] = await self.knowledge.async_search(
+            query=query, num_documents=num_documents, **kwargs
+        )
         if len(relevant_docs) == 0:
             return None
         return [doc.to_dict() for doc in relevant_docs]
