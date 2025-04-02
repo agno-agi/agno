@@ -21,8 +21,9 @@ class ReplicateTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         model: str = "minimax/video-01",
+        **kwargs,
     ):
-        super().__init__(name="replicate_toolkit")
+        super().__init__(name="replicate_toolkit", **kwargs)
         self.api_key = api_key or getenv("REPLICATE_API_TOKEN")
         if not self.api_key:
             logger.error("REPLICATE_API_TOKEN not set. Please set the REPLICATE_API_TOKEN environment variable.")

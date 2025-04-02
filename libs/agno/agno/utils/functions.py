@@ -74,11 +74,12 @@ def get_function_call(
     return function_call
 
 
-def cache_result(cache_dir: Optional[str] = None, cache_ttl: int = 3600):
+def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cache_ttl: int = 3600):
     """
     Decorator factory that creates a file-based caching decorator for function results.
 
     Args:
+        enable_cache (bool): Enable caching of function results.
         cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
         cache_ttl (int): Time-to-live for cached results in seconds.
 
@@ -100,6 +101,9 @@ def cache_result(cache_dir: Optional[str] = None, cache_ttl: int = 3600):
 
             # Skip caching if cache_results is False (only for class methods)
             if instance and hasattr(instance, "cache_results") and not instance.cache_results:
+                return func(*args, **kwargs)
+
+            if not enable_cache:
                 return func(*args, **kwargs)
 
             # Get cache directory

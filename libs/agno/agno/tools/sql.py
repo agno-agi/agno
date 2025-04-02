@@ -28,8 +28,9 @@ class SQLTools(Toolkit):
         list_tables: bool = True,
         describe_table: bool = True,
         run_sql_query: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="sql_tools")
+        super().__init__(name="sql_tools", **kwargs)
 
         # Get the database engine
         _engine: Optional[Engine] = db_engine

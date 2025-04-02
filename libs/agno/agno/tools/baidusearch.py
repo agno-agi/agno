@@ -35,8 +35,9 @@ class BaiduSearchTools(Toolkit):
         proxy: Optional[str] = None,
         timeout: Optional[int] = 10,
         debug: Optional[bool] = False,
+        **kwargs,
     ):
-        super().__init__(name="baidusearch")
+        super().__init__(name="baidusearch", **kwargs)
         self.fixed_max_results = fixed_max_results
         self.fixed_language = fixed_language
         self.headers = headers
