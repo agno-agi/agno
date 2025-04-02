@@ -86,6 +86,7 @@ qdrant = ["qdrant-client"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
+weaviate = ["weaviate-client"]
 milvusdb = ["pymilvus"]
 
 # Dependencies for Knowledge
@@ -156,6 +157,7 @@ vectordbs = [
   "agno[cassandra]",
   "agno[mongodb]",
   "agno[singlestore]",
+  "agno[weaviate]",
   "agno[milvusdb]"
 ]
 
