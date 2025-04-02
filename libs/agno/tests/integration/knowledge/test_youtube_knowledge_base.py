@@ -16,6 +16,7 @@ def setup_vector_db():
     vector_db.drop()
 
 
+@pytest.mark.skip(reason="They block requests from CI")
 def test_youtube_knowledge_base_directory(setup_vector_db):
     """Test loading multiple YouTube videos into the knowledge base."""
     urls = ["https://www.youtube.com/watch?v=NwZ26lxl8wU", "https://www.youtube.com/watch?v=lrg8ZWI7MCg"]
@@ -39,6 +40,7 @@ def test_youtube_knowledge_base_directory(setup_vector_db):
     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
+@pytest.mark.skip(reason="They block requests from CI")
 def test_youtube_knowledge_base_single_url(setup_vector_db):
     """Test loading a single YouTube video into the knowledge base."""
     kb = YouTubeKnowledgeBase(
@@ -69,6 +71,7 @@ def test_youtube_knowledge_base_single_url(setup_vector_db):
     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
+@pytest.mark.skip(reason="They block requests from CI")
 @pytest.mark.asyncio
 async def test_youtube_knowledge_base_async_directory(setup_vector_db):
     """Test asynchronously loading multiple YouTube videos."""
@@ -100,6 +103,7 @@ async def test_youtube_knowledge_base_async_directory(setup_vector_db):
     ]
 
 
+@pytest.mark.skip(reason="They block requests from CI")
 @pytest.mark.asyncio
 async def test_youtube_knowledge_base_async_single_url(setup_vector_db):
     """Test asynchronously loading a single YouTube video."""
