@@ -659,6 +659,11 @@ class Agent:
 
                         yield self.run_response
 
+                    if model_response_chunk.image is not None:
+                        self.add_image(model_response_chunk.image)
+
+                        yield self.run_response
+
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                     # Add tool calls to the run_response
@@ -748,6 +753,9 @@ class Agent:
             # Update the run_response audio with the model response audio
             if model_response.audio is not None:
                 self.run_response.response_audio = model_response.audio
+
+            if model_response.image is not None:
+                self.add_image(model_response.image)
 
             # Update the run_response messages with the messages
             self.run_response.messages = run_messages.messages
@@ -1179,6 +1187,11 @@ class Agent:
 
                         yield self.run_response
 
+                    if model_response_chunk.image is not None:
+                        self.add_image(model_response_chunk.image)
+
+                        yield self.run_response
+
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                     # Add tool calls to the run_response
@@ -1269,6 +1282,9 @@ class Agent:
             # Update the run_response audio with the model response audio
             if model_response.audio is not None:
                 self.run_response.response_audio = model_response.audio
+
+            if model_response.image is not None:
+                self.add_image(model_response.image)
 
             # Update the run_response messages with the messages
             self.run_response.messages = run_messages.messages

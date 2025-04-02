@@ -1,19 +1,31 @@
 from collections import OrderedDict
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 from agno.tools.function import Function
 from agno.utils.log import log_debug, logger
 
 
 class Toolkit:
-    def __init__(self, name: str = "toolkit"):
+    def __init__(
+        self,
+        name: str = "toolkit",
+        cache_results: bool = False,
+        cache_ttl: int = 3600,
+        cache_dir: Optional[str] = None,
+    ):
         """Initialize a new Toolkit.
 
         Args:
             name: A descriptive name for the toolkit
+            cache_results (bool): Enable in-memory caching of function results.
+            cache_ttl (int): Time-to-live for cached results in seconds.
+            cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
         """
         self.name: str = name
         self.functions: Dict[str, Function] = OrderedDict()
+        self.cache_results: bool = cache_results
+        self.cache_ttl: int = cache_ttl
+        self.cache_dir: Optional[str] = cache_dir
 
     def register(self, function: Callable[..., Any], sanitize_arguments: bool = True):
         """Register a function with the toolkit.
@@ -29,6 +41,9 @@ class Toolkit:
                 name=function.__name__,
                 entrypoint=function,
                 sanitize_arguments=sanitize_arguments,
+                cache_results=self.cache_results,
+                cache_dir=self.cache_dir,
+                cache_ttl=self.cache_ttl,
             )
             self.functions[f.name] = f
             log_debug(f"Function: {f.name} registered with {self.name}")
