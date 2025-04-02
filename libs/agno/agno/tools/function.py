@@ -274,6 +274,7 @@ class Function(BaseModel):
         kwargs_str = str(sorted((call_args or {}).items()))
         key_str = f"{self.name}:{args_str}:{kwargs_str}"
         return md5(key_str.encode()).hexdigest()
+
     def _get_cache_file_path(self, cache_key: str) -> str:
         """Get the full path for the cache file."""
         from pathlib import Path
@@ -282,7 +283,7 @@ class Function(BaseModel):
         base_cache_dir = self.cache_dir or Path(gettempdir()) / "agno_cache"
         func_cache_dir = Path(base_cache_dir) / "functions" / self.name
         func_cache_dir.mkdir(parents=True, exist_ok=True)
-        return func_cache_dir / f"{cache_key}.json"
+        return str(func_cache_dir / f"{cache_key}.json")
 
     def _get_cached_result(self, cache_file: str) -> Optional[Any]:
         """Retrieve cached result if valid."""
