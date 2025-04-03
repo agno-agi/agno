@@ -30,7 +30,50 @@ class ApifyTools(Toolkit):
         Args:
             actors: Single Actor ID as string or list of Actor IDs to register as individual tools
             apify_api_token: Apify API token (defaults to APIFY_API_TOKEN env variable)
-            register_generic: Whether to register the generic run_actor method
+            
+        Examples:
+            Configuration Instructions:
+            1. Install required dependencies:
+            pip install agno langchain-apify apify-client
+
+            2. Set the APIFY_API_TOKEN environment variable:
+            Add a .env file with APIFY_API_TOKEN=your_apify_api_key
+   
+            Import necessary components:
+
+            from agno.agent import Agent
+            from agno.tools.apify import ApifyTools
+            
+            # Create an agent with ApifyTools
+            agent = Agent(
+                tools=[
+                    ApifyTools(["apify/rag-web-browser"])
+                ],
+                markdown=True
+            )
+            
+            # Ask the agent to process web content
+            agent.print_response("Summarize the content from https://docs.agno.com/introduction", markdown=True)
+            
+            # Using multiple actors with the agent
+            agent = Agent(
+                tools=[
+                    ApifyTools([
+                        "apify/rag-web-browser",
+                        "compass/crawler-google-places"
+                    ])
+                ],
+                show_tool_calls=True
+            )
+            agent.print_response(
+                '''
+                I'm traveling to Tokyo next month.
+                1. Research the best time to visit and major attractions
+                2. Find one good rated sushi restaurant near Shinjuku
+                Compile a comprehensive travel guide with this information.
+                ''',
+                markdown=True
+            )
         """
         super().__init__(name="ApifyTools")
         
@@ -59,7 +102,7 @@ class ApifyTools(Toolkit):
             tool_name = actor_tool.name
 
             # Create a wrapper function that calls the Actor tool
-            def actor_function(**kwargs):
+            def actor_function(**kwargs) -> str:
                 try: 
                     # Params are nested under 'kwargs' key
                     if len(kwargs) == 1 and "kwargs" in kwargs:
@@ -71,13 +114,12 @@ class ApifyTools(Toolkit):
                     else:
                         run_input = kwargs
 
-                    log_debug(f"Running Apify actor {actor_id} with parameters: {run_input}")
+                    log_debug(f"Running Apify Actor {actor_id} with parameters: {run_input}")
                     
                     # Run the Actor using langchain_apify's internal method
                     results = actor_tool.invoke({"run_input": run_input})
                     
-                    string_representation = json.dumps(results)
-                    return string_representation
+                    return json.dumps(results)
                     
                 except Exception as e:
                     error_msg = f"Error running Apify Actor {actor_id}: {str(e)}"
