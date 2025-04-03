@@ -1,7 +1,8 @@
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.pdf import PDFKnowledgeBase, PDFReader
 from agno.vectordb.qdrant import Qdrant
-import asyncio
 
 COLLECTION_NAME = "pdf-reader"
 
@@ -25,5 +26,4 @@ if __name__ == "__main__":
     asyncio.run(knowledge_base.aload(recreate=False))
 
     # Create and use the agent
-    asyncio.run(agent.aprint_response(
-        "How to make Thai curry?", markdown=True))
+    asyncio.run(agent.aprint_response("How to make Thai curry?", markdown=True))
