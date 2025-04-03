@@ -2594,7 +2594,7 @@ class Agent:
             return field_value.deep_copy()
 
         # For storage, model and reasoning_model, use a deep copy
-        elif field_name in ("storage", "model", "reasoning_model", "knowledge"):
+        elif field_name in ("storage", "model", "reasoning_model"):
             try:
                 return deepcopy(field_value)
             except Exception:
