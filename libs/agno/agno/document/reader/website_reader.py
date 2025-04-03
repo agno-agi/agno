@@ -1,3 +1,4 @@
+import asyncio
 import random
 import time
 from dataclasses import dataclass, field
@@ -38,6 +39,16 @@ class WebsiteReader(Reader):
         """
         sleep_time = random.uniform(min_seconds, max_seconds)
         time.sleep(sleep_time)
+
+    async def async_delay(self, min_seconds=1, max_seconds=3):
+        """
+        Introduce a random delay asynchronously.
+
+        :param min_seconds: Minimum number of seconds to delay. Default is 1.
+        :param max_seconds: Maximum number of seconds to delay. Default is 3.
+        """
+        sleep_time = random.uniform(min_seconds, max_seconds)
+        await asyncio.sleep(sleep_time)
 
     def _get_primary_domain(self, url: str) -> str:
         """
@@ -154,6 +165,81 @@ class WebsiteReader(Reader):
 
         return crawler_result
 
+    async def async_crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
+        """
+        Asynchronously crawls a website and returns a dictionary of URLs and their corresponding content.
+
+        Parameters:
+        - url (str): The starting URL to begin the crawl.
+        - starting_depth (int, optional): The starting depth level for the crawl. Defaults to 1.
+
+        Returns:
+        - Dict[str, str]: A dictionary where each key is a URL and the corresponding value is the main
+                        content extracted from that URL.
+        """
+        num_links = 0
+        crawler_result: Dict[str, str] = {}
+        primary_domain = self._get_primary_domain(url)
+
+        # Clear previously visited URLs and URLs to crawl
+        self._visited = set()
+        self._urls_to_crawl = [(url, starting_depth)]
+
+        async with httpx.AsyncClient() as client:
+            while self._urls_to_crawl and num_links < self.max_links:
+                current_url, current_depth = self._urls_to_crawl.pop(0)
+
+                if (
+                    current_url in self._visited
+                    or not urlparse(current_url).netloc.endswith(primary_domain)
+                    or current_depth > self.max_depth
+                    or num_links >= self.max_links
+                ):
+                    continue
+
+                self._visited.add(current_url)
+                await self.async_delay()
+
+                try:
+                    log_debug(f"Crawling asynchronously: {current_url}")
+                    response = await client.get(current_url, timeout=10, follow_redirects=True)
+                    response.raise_for_status()
+
+                    soup = BeautifulSoup(response.content, "html.parser")
+
+                    # Extract main content
+                    main_content = self._extract_main_content(soup)
+                    if main_content:
+                        crawler_result[current_url] = main_content
+                        num_links += 1
+
+                    # Add found URLs to the list, with incremented depth
+                    for link in soup.find_all("a", href=True):
+                        if not isinstance(link, Tag):
+                            continue
+
+                        href_str = str(link["href"])
+                        full_url = urljoin(current_url, href_str)
+
+                        if not isinstance(full_url, str):
+                            continue
+
+                        parsed_url = urlparse(full_url)
+                        if parsed_url.netloc.endswith(primary_domain) and not any(
+                            parsed_url.path.endswith(ext) for ext in [".pdf", ".jpg", ".png"]
+                        ):
+                            full_url_str = str(full_url)
+                            if (
+                                full_url_str not in self._visited
+                                and (full_url_str, current_depth + 1) not in self._urls_to_crawl
+                            ):
+                                self._urls_to_crawl.append((full_url_str, current_depth + 1))
+
+                except Exception as e:
+                    logger.warning(f"Failed to crawl asynchronously: {current_url}: {e}")
+
+        return crawler_result
+
     def read(self, url: str) -> List[Document]:
         """
         Reads a website and returns a list of documents.
@@ -186,4 +272,47 @@ class WebsiteReader(Reader):
                         content=crawled_content,
                     )
                 )
+        return documents
+
+    async def async_read(self, url: str) -> List[Document]:
+        """
+        Asynchronously reads a website and returns a list of documents.
+
+        This function first converts the website into a dictionary of URLs and their corresponding content.
+        Then iterates through the dictionary and returns chunks of content.
+
+        :param url: The URL of the website to read.
+        :return: A list of documents.
+        """
+        log_debug(f"Reading asynchronously: {url}")
+        crawler_result = await self.async_crawl(url)
+        documents = []
+
+        # Process documents in parallel
+        async def process_document(crawled_url, crawled_content):
+            if self.chunk:
+                doc = Document(
+                    name=url, id=str(crawled_url), meta_data={"url": str(crawled_url)}, content=crawled_content
+                )
+                return self.chunk_document(doc)
+            else:
+                return [
+                    Document(
+                        name=url,
+                        id=str(crawled_url),
+                        meta_data={"url": str(crawled_url)},
+                        content=crawled_content,
+                    )
+                ]
+
+        # Use asyncio.gather to process all documents in parallel
+        tasks = [
+            process_document(crawled_url, crawled_content) for crawled_url, crawled_content in crawler_result.items()
+        ]
+        results = await asyncio.gather(*tasks)
+
+        # Flatten the results
+        for doc_list in results:
+            documents.extend(doc_list)
+
         return documents
