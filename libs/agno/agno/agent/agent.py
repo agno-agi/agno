@@ -2619,8 +2619,7 @@ class Agent:
         elif isinstance(field_value, BaseModel):
             try:
                 return field_value.model_copy(deep=True)
-            except Exception as e:
-                log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+            except Exception:
                 try:
                     return field_value.model_copy(deep=False)
                 except Exception as e:
