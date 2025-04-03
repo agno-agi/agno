@@ -31,7 +31,14 @@ def test_csv_url_knowledge_base():
     assert doc_count < 100, f"Got {doc_count} documents, which seems too many"
 
     # Query the agent
-    agent = Agent(knowledge=knowledge_base)
+    agent = Agent(
+        knowledge=knowledge_base,
+        search_knowledge=True,
+        instructions=[
+            "You are a helpful assistant that can answer questions.",
+            "You can use the search_knowledge_base tool to search the knowledge base of CSVs for information.",
+        ],
+    )
     response = agent.run("Give me top rated movies", markdown=True)
 
     # Check that we got relevant content
@@ -69,7 +76,14 @@ async def test_csv_url_knowledge_base_async():
     assert doc_count < 100, f"Got {doc_count} documents, which seems too many"
 
     # Query the agent
-    agent = Agent(knowledge=knowledge_base)
+    agent = Agent(
+        knowledge=knowledge_base,
+        search_knowledge=True,
+        instructions=[
+            "You are a helpful assistant that can answer questions.",
+            "You can use the async_search_knowledge_base tool to search the knowledge base of CSVs for information.",
+        ],
+    )
     response = await agent.arun("Which employees have salaries above 50000?", markdown=True)
 
     assert "employees" in response.content.lower()
