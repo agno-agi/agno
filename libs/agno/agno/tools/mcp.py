@@ -106,11 +106,12 @@ class MCPTools(Toolkit):
             self.session = None
             self._session_context = None
 
-        if self._stdio_context is not None:
-            await self._stdio_context.__aexit__(exc_type, exc_val, exc_tb)
-            self._stdio_context = None
-
         print("HERE2", self.server_params.command)
+        # if self._stdio_context is not None:
+        #     await self._stdio_context.__aexit__(exc_type, exc_val, exc_tb)
+        #     self._stdio_context = None
+
+        print("HERE3", self.server_params.command)
         self._initialized = False
 
     async def initialize(self) -> None:
