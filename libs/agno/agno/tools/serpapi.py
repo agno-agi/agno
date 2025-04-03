@@ -16,8 +16,9 @@ class SerpApiTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         search_youtube: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="serpapi_tools")
+        super().__init__(name="serpapi_tools", **kwargs)
 
         self.api_key = api_key or getenv("SERP_API_KEY")
         if not self.api_key:

@@ -21,9 +21,12 @@ def tool(
     strict: Optional[bool] = None,
     sanitize_arguments: Optional[bool] = None,
     show_result: Optional[bool] = None,
-    stop_after_call: Optional[bool] = None,
+    stop_after_tool_call: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
+    cache_results: bool = False,
+    cache_dir: Optional[str] = None,
+    cache_ttl: int = 3600,
 ) -> Callable[[F], Function]: ...
 
 
@@ -40,9 +43,12 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         strict: Optional[bool] - Flag for strict parameter checking
         sanitize_arguments: Optional[bool] - If True, arguments are sanitized before passing to function
         show_result: Optional[bool] - If True, shows the result after function call
-        stop_after_call: Optional[bool] - If True, the agent will stop after the function call.
+        stop_after_tool_call: Optional[bool] - If True, the agent will stop after the function call.
         pre_hook: Optional[Callable] - Hook that runs before the function is executed.
         post_hook: Optional[Callable] - Hook that runs after the function is executed.
+        cache_results: bool - If True, enable caching of function results
+        cache_dir: Optional[str] - Directory to store cache files
+        cache_ttl: int - Time-to-live for cached results in seconds
 
     Returns:
         Union[Function, Callable[[F], Function]]: Decorated function or decorator
@@ -55,6 +61,10 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         @tool(name="custom_name", description="Custom description")
         def another_function():
             pass
+
+        @tool
+        async def my_async_function():
+            pass
     """
     # Move valid kwargs to a frozen set at module level
     VALID_KWARGS = frozenset(
@@ -64,9 +74,12 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "strict",
             "sanitize_arguments",
             "show_result",
-            "stop_after_call",
+            "stop_after_tool_call",
             "pre_hook",
             "post_hook",
+            "cache_results",
+            "cache_dir",
+            "cache_ttl",
         }
     )
 
@@ -78,25 +91,65 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         )
 
     def decorator(func: F) -> Function:
+        from inspect import getdoc, isasyncgenfunction, iscoroutine, iscoroutinefunction
+
         @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return func(*args, **kwargs)
             except Exception as e:
                 logger.error(
                     f"Error in tool {func.__name__!r}: {e!r}",
-                    exc_info=True,  # Include stack trace
+                    exc_info=True,
                 )
                 raise
 
-        # Preserve the original signature
+        @wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                logger.error(
+                    f"Error in async tool {func.__name__!r}: {e!r}",
+                    exc_info=True,
+                )
+                raise
+
+        @wraps(func)
+        async def async_gen_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                logger.error(
+                    f"Error in async generator tool {func.__name__!r}: {e!r}",
+                    exc_info=True,
+                )
+                raise
+
+        # Choose appropriate wrapper based on function type
+        if isasyncgenfunction(func):
+            wrapper = async_gen_wrapper
+        elif iscoroutinefunction(func) or iscoroutine(func):
+            wrapper = async_wrapper
+        else:
+            wrapper = sync_wrapper
+
+        # Preserve the original signature and metadata
         update_wrapper(wrapper, func)
 
         # Create Function instance with any provided kwargs
         tool_config = {
             "name": kwargs.get("name", func.__name__),
+            "description": kwargs.get("description", getdoc(func)),  # Get docstring if description not provided
             "entrypoint": wrapper,
-            **{k: v for k, v in kwargs.items() if k != "name" and v is not None},
+            "cache_results": kwargs.get("cache_results", False),
+            "cache_dir": kwargs.get("cache_dir"),
+            "cache_ttl": kwargs.get("cache_ttl", 3600),
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k not in ["name", "description", "cache_results", "cache_dir", "cache_ttl"] and v is not None
+            },
         }
         return Function(**tool_config)
 

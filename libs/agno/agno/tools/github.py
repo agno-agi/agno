@@ -27,8 +27,9 @@ class GithubTools(Toolkit):
         delete_repository: bool = False,
         get_repository_languages: bool = True,
         list_branches: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="github")
+        super().__init__(name="github", **kwargs)
 
         self.access_token = access_token or os.getenv("GITHUB_ACCESS_TOKEN")
         self.base_url = base_url

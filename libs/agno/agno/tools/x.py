@@ -19,6 +19,7 @@ class XTools(Toolkit):
         consumer_secret: Optional[str] = None,
         access_token: Optional[str] = None,
         access_token_secret: Optional[str] = None,
+        **kwargs,
     ):
         """
         Initialize the XTools.
@@ -30,7 +31,7 @@ class XTools(Toolkit):
             access_token Optional[str]: The access token for Twitter API.
             access_token_secret Optional[str]: The access token secret for Twitter API.
         """
-        super().__init__(name="x")
+        super().__init__(name="x", **kwargs)
 
         self.bearer_token = bearer_token or os.getenv("X_BEARER_TOKEN")
         self.consumer_key = consumer_key or os.getenv("X_CONSUMER_KEY")
