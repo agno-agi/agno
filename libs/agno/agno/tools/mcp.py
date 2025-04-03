@@ -31,6 +31,8 @@ class MCPTools(Toolkit):
         self,
         session: Optional[ClientSession] = None,
         server_params: Optional[StdioServerParameters] = None,
+        command: Optional[str] = None,
+        env: Optional[dict[str, str]] = None,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -42,22 +44,35 @@ class MCPTools(Toolkit):
         Args:
             session: An initialized MCP ClientSession connected to an MCP server
             server_params: StdioServerParameters for creating a new session
+            command: The command to run to start the server. Should be used in conjunction with env.
+            env: The environment variables to pass to the server. Should be used in conjunction with command.
             client: The underlying MCP client (optional, used to prevent garbage collection)
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
         """
         super().__init__(name="MCPToolkit", **kwargs)
 
-        if session is None and server_params is None:
-            raise ValueError("Either session or server_params must be provided")
+        if session is None and server_params is None and command is None:
+            raise ValueError("Either session or server_params or command must be provided")
 
         self.session: Optional[ClientSession] = session
         self.server_params: Optional[StdioServerParameters] = server_params
+
+        if command is not None:
+            from shlex import split
+            parts = split(command)
+            if not parts:
+                raise ValueError("Empty command string")
+            cmd = parts[0]
+            arguments = parts[1:] if len(parts) > 1 else []
+            self.server_params = StdioServerParameters(command=cmd, args=arguments, env=env)
+
         self.available_tools: Optional[ListToolsResult] = None
         self._client = client
         self._stdio_context = None
         self._session_context = None
         self._initialized = False
+        
         self.include_tools = include_tools
         self.exclude_tools = exclude_tools or []
 
@@ -85,6 +100,7 @@ class MCPTools(Toolkit):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit the async context manager."""
+        print("HERE", self.server_params.command)
         if self._session_context is not None:
             await self._session_context.__aexit__(exc_type, exc_val, exc_tb)
             self.session = None
@@ -94,6 +110,7 @@ class MCPTools(Toolkit):
             await self._stdio_context.__aexit__(exc_type, exc_val, exc_tb)
             self._stdio_context = None
 
+        print("HERE2", self.server_params.command)
         self._initialized = False
 
     async def initialize(self) -> None:

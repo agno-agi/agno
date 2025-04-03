@@ -16,7 +16,6 @@ import os
 
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools
-from mcp import StdioServerParameters
 
 
 async def run_agent(message: str) -> None:
@@ -27,18 +26,9 @@ async def run_agent(message: str) -> None:
         "GOOGLE_MAPS_API_KEY": os.getenv("GOOGLE_MAPS_API_KEY"),
     }
     # Initialize the MCP server
-    time_server_params = StdioServerParameters(
-        command="uvx",
-        args=["mcp-server-time", "--local-timezone=Europe/London"],
-    )
-
-    maps_server_params = StdioServerParameters(
-        command="npx", args=["-y", "@modelcontextprotocol/server-google-maps"], env=env
-    )
-
     async with (
-        MCPTools(server_params=time_server_params) as time_mcp_tools,
-        MCPTools(server_params=maps_server_params) as maps_mcp_tools,
+        MCPTools(command="uvx mcp-server-time --local-timezone=Europe/London") as time_mcp_tools,
+        MCPTools(command="npx -y @modelcontextprotocol/server-google-maps", env=env) as maps_mcp_tools
     ):
         agent = Agent(
             tools=[time_mcp_tools, maps_mcp_tools],
