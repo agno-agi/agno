@@ -4,7 +4,7 @@ from agno.tools.apify import ApifyTools
 # Apify Tools Demonstration Script
 """
 This script showcases the incredible power of web scraping and data extraction 
-using Apify's versatile tools. The Apify ecosystem has 4000+ pre-built actors 
+using Apify's versatile tools. The Apify ecosystem has 4000+ pre-built Actors 
 for almost any web data extraction need!
 
 ---
@@ -14,7 +14,7 @@ For example add a .env file with APIFY_TOKEN=your_apify_api_key
 ---
 
 🚀 Pro Tip: Explore the Apify Store (https://apify.com/store) to find tools 
-for virtually ANY web scraping or data extraction task you can imagine!
+Tip: Check out the Apify Store (https://apify.com/store) to find tools for almost any web scraping or data extraction task.
 """
 
 # Create an Apify Tools agent with versatile capabilities
@@ -58,7 +58,7 @@ if __name__ == "__main__":
 """
 Want to add a new tool? It's easy!
 - Browse Apify Store
-- Find an actor that matches your needs
+- Find an Actor that matches your needs
 - Add a new method to ApifyTools following the existing pattern
 - Register the method in the __init__
 

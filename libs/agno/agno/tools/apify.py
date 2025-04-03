@@ -25,10 +25,10 @@ class ApifyTools(Toolkit):
         apify_api_token: Optional[str] = None
     ):
         """
-        Initialize ApifyTools with specific actors.
+        Initialize ApifyTools with specific Actors.
 
         Args:
-            actors: Single actor ID as string or list of actor IDs to register as individual tools
+            actors: Single Actor ID as string or list of Actor IDs to register as individual tools
             apify_api_token: Apify API token (defaults to APIFY_API_TOKEN env variable)
             register_generic: Whether to register the generic run_actor method
         """
@@ -41,7 +41,7 @@ class ApifyTools(Toolkit):
         
         self.client = ApifyClient(self.apify_api_token)
         
-        # Register specific actors if provided
+        # Register specific Actors if provided
         if actors:
             actor_list = [actors] if isinstance(actors, str) else actors
             for actor_id in actor_list:
@@ -49,16 +49,16 @@ class ApifyTools(Toolkit):
     
     def register_actor(self, actor_id: str) -> None:
         """
-        Register an Apify actor as a function in the toolkit.
+        Register an Apify Actor as a function in the toolkit.
         
         Args:
-            actor_id: ID of the Apify actor to register (e.g., 'apify/web-scraper')
+            actor_id: ID of the Apify Actor to register (e.g., 'apify/web-scraper')
         """
         try:
             actor_tool = ApifyActorsTool(actor_id=actor_id, apify_api_token=self.apify_api_token)
             tool_name = actor_tool.name
 
-            # Create a wrapper function that calls the actor tool
+            # Create a wrapper function that calls the Actor tool
             def actor_function(**kwargs):
                 try: 
                     # Params are nested under 'kwargs' key
@@ -73,14 +73,14 @@ class ApifyTools(Toolkit):
 
                     log_debug(f"Running Apify actor {actor_id} with parameters: {run_input}")
                     
-                    # Run the actor using langchain_apify's internal method
+                    # Run the Actor using langchain_apify's internal method
                     results = actor_tool.invoke({"run_input": run_input})
                     
                     string_representation = json.dumps(results)
                     return string_representation
                     
                 except Exception as e:
-                    error_msg = f"Error running Apify actor {actor_id}: {str(e)}"
+                    error_msg = f"Error running Apify Actor {actor_id}: {str(e)}"
                     logger.error(error_msg)
                     return json.dumps([{"error": error_msg}])
             
@@ -101,12 +101,12 @@ class ApifyTools(Toolkit):
             Fill in required, no need to fill in all inputs if it is not needed for any particular reason. 
                        
             Returns:
-                String: JSON string containing the actor's output dataset
+                String: JSON string containing the Actor's output dataset
             """
             
             # Register the function with the toolkit
             self.register(actor_function, sanitize_arguments=False)
-            log_info(f"Registered Apify actor '{actor_id}' as function '{tool_name}'")
+            log_info(f"Registered Apify Actor '{actor_id}' as function '{tool_name}'")
             
         except Exception as e:
-            logger.error(f"Failed to register Apify actor '{actor_id}': {str(e)}")
+            logger.error(f"Failed to register Apify Actor '{actor_id}': {str(e)}")
