@@ -2,7 +2,7 @@ import json
 import time
 from typing import Any, List, Literal, Optional
 
-from agno.storage.json import JsonStorage
+from agno.storage.json import JsonStorage, Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
@@ -24,26 +24,30 @@ class GCSJsonStorage(JsonStorage):
 
     Parameters:
       - bucket_name: The GCS bucket name (must be provided).
-      - project: The GCP project ID (must be provided).
-      - credentials: Optional credentials object; if not provided, defaults will be used.
+      - prefix: The GCS folder path prefix). See (Flat Namespace)[https://cloud.google.com/storage/docs/objects#flat-namespace] in GCS docs for details.
       - mode: One of "agent", "team", or "workflow". Defaults to "agent".
+      - project: Optional; the GCP project ID. Defaults to current Google Cloud's project (set with `gcloud init`).
+      - location: Optional; the GCP location for the bucket. Default's to current project's location.
+      - credentials: Optional credentials object; if not provided, defaults will be used.
     """
 
     def __init__(
         self,
         bucket_name: str,
-        project: str,
-        credentials: Optional[Any] = None,
+        prefix: Optional[str] = "",
         mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
+        project: Optional[str] = None,
+        location: Optional[str] = None,
+        credentials: Optional[Any] = None,
     ):
-        # Pass a dummy directory to the parent's constructor, as it's not used.
-        super().__init__(dir_path="dummy", mode=mode)
-        if not bucket_name:
-            raise ValueError("bucket_name must be provided")
-        if not project:
-            raise ValueError("project must be provided")
+        # Call Storage's __init__ directly to bypass the folder creation logic in JsonStorage.
+        Storage.__init__(self, mode=mode)
         self.bucket_name = bucket_name
+        if prefix is not None and prefix != "" and not prefix.endswith("/"):
+            prefix += "/"
+        self.prefix = prefix
         self.project = project
+        self.location = location
 
         # Initialize the GCS client once; if STORAGE_EMULATOR_HOST is set, it will be used automatically.
         self.client = gcs.Client(project=self.project, credentials=credentials)
@@ -51,7 +55,7 @@ class GCSJsonStorage(JsonStorage):
 
     def _get_blob_path(self, session_id: str) -> str:
         """Returns the blob path for a given session."""
-        return f"{session_id}.json"
+        return f"{self.prefix}{session_id}.json"
 
     def create(self) -> None:
         """
@@ -59,7 +63,7 @@ class GCSJsonStorage(JsonStorage):
         The client and bucket are already stored in self.
         """
         try:
-            self.bucket = self.client.create_bucket(self.bucket_name)
+            self.bucket = self.client.create_bucket(self.bucket_name, self.location, self.project)
             logger.info(f"Bucket {self.bucket_name} created successfully.")
         except Exception as e:
             # If the bucket already exists, check for conflict (HTTP 409) and continue.
@@ -107,8 +111,7 @@ class GCSJsonStorage(JsonStorage):
         Lists all session IDs stored in the bucket.
         """
         session_ids = []
-        prefix = ""
-        for blob in self.client.list_blobs(self.bucket, prefix=prefix):
+        for blob in self.client.list_blobs(self.bucket, prefix=self.prefix):
             if blob.name.endswith(".json"):
                 session_ids.append(blob.name.replace(".json", ""))
         return session_ids
@@ -118,8 +121,7 @@ class GCSJsonStorage(JsonStorage):
         Retrieves all sessions stored in the bucket.
         """
         sessions: List[Session] = []
-        prefix = ""
-        for blob in self.client.list_blobs(self.bucket, prefix=prefix):
+        for blob in self.client.list_blobs(self.bucket, prefix=self.prefix):
             if blob.name.endswith(".json"):
                 try:
                     data_str = blob.download_as_bytes().decode("utf-8")

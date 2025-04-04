@@ -11,14 +11,15 @@ credentials, project_id = google.auth.default()
 
 # Generate a unique bucket name using a base name and a UUID4 suffix.
 base_bucket_name = "example-gcs-bucket"
-unique_bucket_name = f"{base_bucket_name}-{uuid.uuid4().hex[:12]}"  # 12 hex digits for brevity
+unique_bucket_name = f"{base_bucket_name}-{uuid.uuid4().hex[:12]}"
 print(f"Using bucket: {unique_bucket_name}")
 
 # Initialize GCSJsonStorage with explicit credentials, unique bucket name, and project.
 storage = GCSJsonStorage(
-    credentials=credentials,
     bucket_name=unique_bucket_name,
+    prefix="agent/",
     project=project_id,
+    credentials=credentials,
 )
 
 # Create the bucket (if it doesn't exist, it will be created).
@@ -51,13 +52,8 @@ agent2.print_response("What is that country's national sport?")
 
 # After running the agent1, print the content of the bucket: blob names and JSON content.
 if DEBUG_MODE:
-    print("\nBucket contents:")
-    for blob in storage.client.list_blobs(storage.bucket, prefix=""):
-        print(f"Blob name: {blob.name}")
-        try:
-            content = blob.download_as_string().decode("utf-8")
-            print("Content:")
-            print(content)
-        except Exception as e:
-            print(f"Error reading blob {blob.name}: {e}")
+    print(f"\nBucket {storage.bucket_name} contents:")
+    sessions = storage.get_all_sessions()
+    for session in sessions:
+        print(f"Session {session.session_id}:\n\t{session.memory}")
         print("-" * 40)

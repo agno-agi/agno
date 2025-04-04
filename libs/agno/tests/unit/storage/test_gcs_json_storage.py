@@ -1,8 +1,8 @@
 import json
 import time
-import uuid
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from agno.storage.gcs_json import GCSJsonStorage
 from agno.storage.session.agent import AgentSession
@@ -31,9 +31,11 @@ def gcs_storage(mock_gcs_client):
     # Use dummy bucket name and project
     storage = GCSJsonStorage(
         bucket_name="dummy-bucket",
+        dir_path="agent/",
         project="dummy-project",
+        location="dummy-location",
         credentials=None,  # Pass None to avoid real authentication
-        mode="agent"
+        mode="agent",
     )
     # Inject our mocked client and bucket into the instance
     storage.client = client_instance

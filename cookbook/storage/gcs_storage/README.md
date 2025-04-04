@@ -2,7 +2,7 @@
 
 This repository provides an example of how to use the `GCSJsonStorage` class as a storage backend for an Agno agent. The storage backend stores session data as JSON blobs in a Google Cloud Storage (GCS) bucket.
 
-> **Note:** The bucket name and project must be provided explicitly when initializing the storage class. Credentials are optional; if not provided, the default credentials (from `GOOGLE_APPLICATION_CREDENTIALS` or the current gcloud CLI session) will be used.
+> **Note:** The bucket name must be provided explicitly when initializing the storage class. Location and credentials are optional; if not provided, the default credentials (from `GOOGLE_APPLICATION_CREDENTIALS` or the current gcloud CLI project) will be used.
 
 ## Prerequisites
 
