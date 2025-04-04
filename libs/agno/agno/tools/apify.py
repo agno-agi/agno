@@ -16,8 +16,9 @@ class ApifyTools(Toolkit):
         api_key: Optional[str] = None,
         website_content_crawler: bool = True,
         web_scraper: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="apify_tools")
+        super().__init__(name="apify_tools", **kwargs)
 
         self.api_key = api_key or getenv("MY_APIFY_TOKEN")
         if not self.api_key:

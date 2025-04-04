@@ -3775,6 +3775,8 @@ class Team:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
+                if member.description is not None:
+                    system_message_content += f"{indent * ' '}   - Description: {member.description}\n"
                 if member.tools is not None:
                     system_message_content += f"{indent * ' '}   - Available tools:\n"
                     tool_name_and_description = []

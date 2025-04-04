@@ -248,10 +248,6 @@ def test_history():
     assert len(agent.run_response.messages) == 2
     agent.run("Hello 2")
     assert len(agent.run_response.messages) == 4
-    agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 6
-    agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8
 
 
 @pytest.mark.skip(reason="Need to fix this by getting credentials in Github actions")

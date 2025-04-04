@@ -1,3 +1,4 @@
+import asyncio
 import json
 from io import BytesIO
 from pathlib import Path
@@ -51,3 +52,14 @@ class JSONReader(Reader):
             return documents
         except Exception:
             raise
+
+    async def async_read(self, path: Union[Path, IO[Any]]) -> List[Document]:
+        """Asynchronously read JSON files.
+
+        Args:
+            path (Union[Path, IO[Any]]): Path to a JSON file or a file-like object
+
+        Returns:
+            List[Document]: List of documents from the JSON file
+        """
+        return await asyncio.to_thread(self.read, path)

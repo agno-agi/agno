@@ -109,7 +109,9 @@ class RunResponse:
             _dict["messages"] = [m.to_dict() for m in self.messages]
 
         if self.extra_data is not None:
-            _dict["extra_data"] = self.extra_data.to_dict()
+            _dict["extra_data"] = (
+                self.extra_data.to_dict() if isinstance(self.extra_data, RunResponseExtraData) else self.extra_data
+            )
 
         if self.images is not None:
             _dict["images"] = [img.model_dump(exclude_none=True) for img in self.images]
@@ -121,7 +123,9 @@ class RunResponse:
             _dict["audio"] = [aud.model_dump(exclude_none=True) for aud in self.audio]
 
         if self.response_audio is not None:
-            _dict["response_audio"] = self.response_audio.to_dict()
+            _dict["response_audio"] = (
+                self.response_audio.to_dict() if isinstance(self.response_audio, AudioResponse) else self.response_audio
+            )
 
         if isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)

@@ -17,8 +17,9 @@ class MoviePyVideoTools(Toolkit):
         process_video: bool = True,
         generate_captions: bool = True,
         embed_captions: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="video_tools")
+        super().__init__(name="video_tools", **kwargs)
 
         if process_video:
             self.register(self.extract_audio)

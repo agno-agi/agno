@@ -24,8 +24,9 @@ class PythonTools(Toolkit):
         read_files: bool = False,
         safe_globals: Optional[dict] = None,
         safe_locals: Optional[dict] = None,
+        **kwargs,
     ):
-        super().__init__(name="python_tools")
+        super().__init__(name="python_tools", **kwargs)
 
         self.base_dir: Path = base_dir or Path.cwd()
 

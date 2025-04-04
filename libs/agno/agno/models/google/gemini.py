@@ -5,11 +5,12 @@ from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+from uuid import uuid4
 
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.media import Audio, File, Image, Video
+from agno.media import Audio, File, Image, ImageArtifact, Video
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, UrlCitation
 from agno.models.response import ModelResponse
@@ -191,7 +192,7 @@ class Gemini(Model):
     presence_penalty: Optional[float] = None
     frequency_penalty: Optional[float] = None
     seed: Optional[int] = None
-    response_modalities: Optional[list[str]] = None
+    response_modalities: Optional[list[str]] = None  # "Text" and/or "Image"
     speech_config: Optional[dict[str, Any]] = None
     request_params: Optional[Dict[str, Any]] = None
 
@@ -743,6 +744,11 @@ class Gemini(Model):
                     if hasattr(part, "text") and part.text is not None:
                         model_response.content = part.text
 
+                    if hasattr(part, "inline_data") and part.inline_data is not None:
+                        model_response.image = ImageArtifact(
+                            id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                        )
+
                     # Extract function call if present
                     if hasattr(part, "function_call") and part.function_call is not None:
                         tool_call = {
@@ -804,6 +810,11 @@ class Gemini(Model):
                 # Extract text if present
                 if hasattr(part, "text") and part.text is not None:
                     model_response.content = part.text
+
+                if hasattr(part, "inline_data") and part.inline_data is not None:
+                    model_response.image = ImageArtifact(
+                        id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                    )
 
                 # Extract function call if present
                 if hasattr(part, "function_call") and part.function_call is not None:
