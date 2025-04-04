@@ -1,12 +1,11 @@
 from agno.agent import Agent
 from agno.models.google import Gemini
-
-from agno.tools.webbrowsertool import WebBrowserTools
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.webbrowsertool import WebBrowserTools
 
 agent = Agent(
     model=Gemini("gemini-2.0-flash"),
-    tools=[WebBrowserTools(),DuckDuckGoTools()],
+    tools=[WebBrowserTools(), DuckDuckGoTools()],
     instructions=[
         "Find related websites and pages using DuckDuckGo"
         "Use web browser to open the site"
