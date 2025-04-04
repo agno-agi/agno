@@ -343,7 +343,10 @@ class OpenAIChat(Model):
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             log_error(f"API status error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            try:
+                error_message = e.response.json().get("error", {})
+            except Exception:
+                error_message = e.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -404,7 +407,10 @@ class OpenAIChat(Model):
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             log_error(f"API status error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            try:
+                error_message = e.response.json().get("error", {})
+            except Exception:
+                error_message = e.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -458,7 +464,10 @@ class OpenAIChat(Model):
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             log_error(f"API status error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            try:
+                error_message = e.response.json().get("error", {})
+            except Exception:
+                error_message = e.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -514,7 +523,10 @@ class OpenAIChat(Model):
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
             log_error(f"API status error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            try:
+                error_message = e.response.json().get("error", {})
+            except Exception:
+                error_message = e.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)

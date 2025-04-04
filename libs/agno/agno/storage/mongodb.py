@@ -205,7 +205,7 @@ class MongoDbStorage(Storage):
             return None
 
         except PyMongoError as e:
-            logger.error(f"Error upserting session: {e}")
+            logger.warning(f"Error upserting session: {e}")
             return None
 
     def delete_session(self, session_id: Optional[str] = None) -> None:

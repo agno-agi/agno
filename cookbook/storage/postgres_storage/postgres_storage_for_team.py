@@ -44,7 +44,7 @@ hn_team = Team(
     model=OpenAIChat("gpt-4o"),
     members=[hn_researcher, web_searcher],
     storage=PostgresStorage(
-        table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
+        table_name="team_sessions", db_url=db_url, auto_upgrade_schema=True
     ),
     instructions=[
         "First, search hackernews for what the user is asking about.",

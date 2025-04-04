@@ -40,7 +40,9 @@ file_agent = Agent(
     agent_id="file-upload-agent",
     role="Answer questions about the uploaded files",
     model=OpenAIChat(id="gpt-4o-mini"),
-    storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
+    storage=PostgresStorage(
+        table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
+    ),
     knowledge=knowledge_base,
     show_tool_calls=True,
     markdown=True,
@@ -52,7 +54,9 @@ audio_agent = Agent(
     agent_id="audio-understanding-agent",
     role="Answer questions about audio files",
     model=OpenAIChat(id="gpt-4o-audio-preview"),
-    storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
+    storage=PostgresStorage(
+        table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
+    ),
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     show_tool_calls=True,
@@ -64,7 +68,9 @@ video_agent = Agent(
     model=Gemini(id="gemini-2.0-flash"),
     agent_id="video-understanding-agent",
     role="Answer questions about video files",
-    storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
+    storage=PostgresStorage(
+        table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
+    ),
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     show_tool_calls=True,
