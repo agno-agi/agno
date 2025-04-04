@@ -54,7 +54,8 @@ ibm = ["ibm-watsonx-ai"]
 lmstudio = ["lmstudio"]
 litellm = ["litellm"]
 
-# Dependencies for Tools
+# Dependencies for 
+apify = ["apify-client", "langchain-apify"]
 exa = ["exa_py"]
 yfinance = ["yfinance"]
 ddg = ["duckduckgo-search"]
@@ -123,6 +124,7 @@ models = [
 
 # All tools
 tools = [
+  "agno[apify]",
   "agno[exa]",
   "agno[ddg]",
   "agno[duckdb]",
