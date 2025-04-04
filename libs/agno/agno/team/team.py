@@ -327,7 +327,7 @@ class Team:
         return self.session_id
 
     def _set_debug(self) -> None:
-        if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
+        if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true" or self.show_members_responses:
             self.debug_mode = True
             set_log_level_to_debug(source_type="team")
         else:
@@ -351,7 +351,7 @@ class Team:
 
     def _initialize_member(self, member: Union["Team", Agent]):
         # Set debug mode for all members
-        if self.debug_mode:
+        if self.debug_mode or self.show_members_responses:
             member.debug_mode = True
         if self.show_tool_calls:
             member.show_tool_calls = True
@@ -391,6 +391,7 @@ class Team:
 
         for member in self.members:
             self._initialize_member(member)
+
 
     @overload
     def run(
