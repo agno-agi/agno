@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, List
 
@@ -23,3 +24,22 @@ class Reader:
 
     def chunk_document(self, document: Document) -> List[Document]:
         return self.chunking_strategy.chunk(document)
+
+    async def chunk_documents_async(self, documents: List[Document]) -> List[Document]:
+        """
+        Asynchronously chunk a list of documents using the instance's chunk_document method.
+
+        Args:
+            documents: List of documents to be chunked.
+
+        Returns:
+            A flattened list of chunked documents.
+        """
+
+        async def _chunk_document_async(doc: Document) -> List[Document]:
+            return await asyncio.to_thread(self.chunk_document, doc)
+
+        # Process chunking in parallel for all documents
+        chunked_lists = await asyncio.gather(*[_chunk_document_async(doc) for doc in documents])
+        # Flatten the result
+        return [chunk for sublist in chunked_lists for chunk in sublist]

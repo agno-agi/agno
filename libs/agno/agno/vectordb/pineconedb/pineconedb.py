@@ -404,3 +404,6 @@ class PineconeDb(VectorDb):
 
     async def async_exists(self) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_name_exists(self, name: str) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
