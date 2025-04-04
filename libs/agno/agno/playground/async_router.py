@@ -2,13 +2,15 @@ import json
 from dataclasses import asdict
 from io import BytesIO
 from typing import AsyncGenerator, List, Optional, cast
-
+from uuid import uuid4
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.memory.agent import AgentMemory
+from agno.memory_v2.memory import Memory
 from agno.playground.operator import (
     format_tools,
     get_agent_by_id,
@@ -23,6 +25,7 @@ from agno.playground.schemas import (
     AgentModel,
     AgentRenameRequest,
     AgentSessionsResponse,
+    MemoryResponse,
     TeamGetResponse,
     TeamRenameRequest,
     TeamSessionResponse,
@@ -41,6 +44,71 @@ from agno.team.team import Team
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
+from agno.playground.utils import process_image, process_audio, process_video, process_document
+
+async def chat_response_streamer(
+    agent: Agent,
+    message: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    images: Optional[List[Image]] = None,
+    audio: Optional[List[Audio]] = None,
+    videos: Optional[List[Video]] = None,
+) -> AsyncGenerator:
+    try:
+        run_response = await agent.arun(
+            message,
+            session_id=session_id,
+            user_id=user_id,
+            images=images,
+            audio=audio,
+            videos=videos,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+        async for run_response_chunk in run_response:
+            run_response_chunk = cast(RunResponse, run_response_chunk)
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        error_response = RunResponse(
+            content=str(e),
+            event=RunEvent.run_error,
+        )
+        yield error_response.to_json()
+        return
+
+async def team_chat_response_streamer(
+    team: Team,
+    message: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    images: Optional[List[Image]] = None,
+    audio: Optional[List[Audio]] = None,
+    videos: Optional[List[Video]] = None,
+    files: Optional[List[FileMedia]] = None,
+) -> AsyncGenerator:
+    try:
+        run_response = await team.arun(
+            message,
+            session_id=session_id,
+            user_id=user_id,
+            images=images,
+            audio=audio,
+            videos=videos,
+            files=files,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+        async for run_response_chunk in run_response:
+            run_response_chunk = cast(TeamRunResponse, run_response_chunk)
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        error_response = TeamRunResponse(
+            content=str(e),
+            event=RunEvent.run_error,
+        )
+        yield error_response.to_json()
+        return
 
 def get_async_playground_router(
     agents: Optional[List[Agent]] = None, workflows: Optional[List[Workflow]] = None, teams: Optional[List[Team]] = None
@@ -49,6 +117,20 @@ def get_async_playground_router(
 
     if agents is None and workflows is None and teams is None:
         raise ValueError("Either agents, teams or workflows must be provided.")
+
+    # Generate IDs if they were not explicitly set on agents/teams/workflows
+    if agents:
+        for agent in agents:
+            if agent.agent_id is None:
+                agent.agent_id = str(uuid4())
+    if teams:
+        for team in teams:
+            if team.team_id is None:
+                team.team_id = str(uuid4())
+    if workflows:
+        for workflow in workflows:
+            if workflow.workflow_id is None:
+                workflow.workflow_id = str(uuid4())
 
     @playground_router.get("/status")
     async def playground_status():
@@ -81,6 +163,27 @@ def get_async_playground_router(
             else:
                 provider = ""
 
+            if agent.memory:
+                if isinstance(agent.memory, AgentMemory) and agent.memory.db:
+                    memory_dict = {"name": agent.memory.db.__class__.__name__}
+                elif isinstance(agent.memory, Memory) and agent.memory.memory_db:
+                    memory_dict = {"name": "Memory"}
+                    if agent.memory.model is not None:
+                        memory_dict["model"] = AgentModel(
+                            name=agent.memory.model.name,
+                            model=agent.memory.model.id,
+                            provider=agent.memory.model.provider,
+                        )
+                    if agent.memory.memory_db is not None:
+                        memory_dict["memory_db"] = str(agent.memory.memory_db)
+                    if agent.memory.summary_db is not None:
+                        memory_dict["summary_db"] = str(agent.memory.summary_db)
+
+                else:
+                    memory_dict = None
+            else:
+                memory_dict = None
+
             agent_list.append(
                 AgentGetResponse(
                     agent_id=agent.agent_id,
@@ -92,7 +195,7 @@ def get_async_playground_router(
                     ),
                     add_context=agent.add_context,
                     tools=formatted_tools,
-                    memory={"name": agent.memory.db.__class__.__name__} if agent.memory and agent.memory.db else None,
+                    memory=memory_dict,
                     storage={"name": agent.storage.__class__.__name__} if agent.storage else None,
                     knowledge={"name": agent.knowledge.__class__.__name__} if agent.knowledge else None,
                     description=agent.description,
@@ -102,95 +205,6 @@ def get_async_playground_router(
 
         return agent_list
 
-    async def chat_response_streamer(
-        agent: Agent,
-        message: str,
-        images: Optional[List[Image]] = None,
-        audio: Optional[List[Audio]] = None,
-        videos: Optional[List[Video]] = None,
-    ) -> AsyncGenerator:
-        try:
-            run_response = await agent.arun(
-                message,
-                images=images,
-                audio=audio,
-                videos=videos,
-                stream=True,
-                stream_intermediate_steps=True,
-            )
-            async for run_response_chunk in run_response:
-                run_response_chunk = cast(RunResponse, run_response_chunk)
-                yield run_response_chunk.to_json()
-        except Exception as e:
-            error_response = RunResponse(
-                content=str(e),
-                event=RunEvent.run_error,
-            )
-            yield error_response.to_json()
-            return
-
-    async def team_chat_response_streamer(
-        team: Team,
-        message: str,
-        images: Optional[List[Image]] = None,
-        audio: Optional[List[Audio]] = None,
-        videos: Optional[List[Video]] = None,
-        files: Optional[List[FileMedia]] = None,
-    ) -> AsyncGenerator:
-        try:
-            run_response = await team.arun(
-                message,
-                images=images,
-                audio=audio,
-                videos=videos,
-                files=files,
-                stream=True,
-                stream_intermediate_steps=True,
-            )
-            async for run_response_chunk in run_response:
-                run_response_chunk = cast(TeamRunResponse, run_response_chunk)
-                yield run_response_chunk.to_json()
-        except Exception as e:
-            error_response = TeamRunResponse(
-                content=str(e),
-                event=RunEvent.run_error,
-            )
-            yield error_response.to_json()
-            return
-
-    async def process_image(file: UploadFile) -> Image:
-        content = file.file.read()
-
-        return Image(content=content)
-
-    async def process_audio(file: UploadFile) -> Audio:
-        content = file.file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty file")
-        format = None
-        if file.filename and "." in file.filename:
-            format = file.filename.split(".")[-1].lower()
-        elif file.content_type:
-            format = file.content_type.split("/")[-1]
-
-        return Audio(content=content, format=format)
-
-    async def process_video(file: UploadFile) -> Video:
-        content = file.file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty file")
-        return Video(content=content, format=file.content_type)
-
-    async def process_document(file: UploadFile) -> Optional[FileMedia]:
-        try:
-            content = await file.read()
-            if not content:
-                raise HTTPException(status_code=400, detail="Empty file")
-
-            return FileMedia(content=content, mime_type=file.content_type)
-        except Exception as e:
-            logger.error(f"Error processing document {file.filename}: {e}")
-            return None
 
     @playground_router.post("/agents/{agent_id}/runs")
     async def create_agent_run(
@@ -212,16 +226,10 @@ def get_async_playground_router(
         else:
             logger.debug("Creating new session")
 
-        # Create a new instance of this agent
-        new_agent_instance = agent.deep_copy(update={"session_id": session_id})
-        new_agent_instance.session_name = None
-        if user_id is not None:
-            new_agent_instance.user_id = user_id
-
         if monitor:
-            new_agent_instance.monitoring = True
+            agent.monitoring = True
         else:
-            new_agent_instance.monitoring = False
+            agent.monitoring = False
 
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
@@ -265,7 +273,7 @@ def get_async_playground_router(
                         continue
                 else:
                     # Check for knowledge base before processing documents
-                    if new_agent_instance.knowledge is None:
+                    if agent.knowledge is None:
                         raise HTTPException(status_code=404, detail="KnowledgeBase not found")
 
                     if file.content_type == "application/pdf":
@@ -275,8 +283,8 @@ def get_async_playground_router(
                         pdf_file = BytesIO(contents)
                         pdf_file.name = file.filename
                         file_content = PDFReader().read(pdf_file)
-                        if new_agent_instance.knowledge is not None:
-                            new_agent_instance.knowledge.load_documents(file_content)
+                        if agent.knowledge is not None:
+                            agent.knowledge.load_documents(file_content)
                     elif file.content_type == "text/csv":
                         from agno.document.reader.csv_reader import CSVReader
 
@@ -284,8 +292,8 @@ def get_async_playground_router(
                         csv_file = BytesIO(contents)
                         csv_file.name = file.filename
                         file_content = CSVReader().read(csv_file)
-                        if new_agent_instance.knowledge is not None:
-                            new_agent_instance.knowledge.load_documents(file_content)
+                        if agent.knowledge is not None:
+                            agent.knowledge.load_documents(file_content)
                     elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
                         from agno.document.reader.docx_reader import DocxReader
 
@@ -293,8 +301,8 @@ def get_async_playground_router(
                         docx_file = BytesIO(contents)
                         docx_file.name = file.filename
                         file_content = DocxReader().read(docx_file)
-                        if new_agent_instance.knowledge is not None:
-                            new_agent_instance.knowledge.load_documents(file_content)
+                        if agent.knowledge is not None:
+                            agent.knowledge.load_documents(file_content)
                     elif file.content_type == "text/plain":
                         from agno.document.reader.text_reader import TextReader
 
@@ -302,8 +310,8 @@ def get_async_playground_router(
                         text_file = BytesIO(contents)
                         text_file.name = file.filename
                         file_content = TextReader().read(text_file)
-                        if new_agent_instance.knowledge is not None:
-                            new_agent_instance.knowledge.load_documents(file_content)
+                        if agent.knowledge is not None:
+                            agent.knowledge.load_documents(file_content)
 
                     elif file.content_type == "application/json":
                         from agno.document.reader.json_reader import JSONReader
@@ -312,16 +320,18 @@ def get_async_playground_router(
                         json_file = BytesIO(contents)
                         json_file.name = file.filename
                         file_content = JSONReader().read(json_file)
-                        if new_agent_instance.knowledge is not None:
-                            new_agent_instance.knowledge.load_documents(file_content)
+                        if agent.knowledge is not None:
+                            agent.knowledge.load_documents(file_content)
                     else:
                         raise HTTPException(status_code=400, detail="Unsupported file type")
 
         if stream:
             return StreamingResponse(
                 chat_response_streamer(
-                    new_agent_instance,
+                    agent,
                     message,
+                    session_id=session_id,
+                    user_id=user_id,
                     images=base64_images if base64_images else None,
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
@@ -331,8 +341,10 @@ def get_async_playground_router(
         else:
             run_response = cast(
                 RunResponse,
-                await new_agent_instance.arun(
+                await agent.arun(
                     message=message,
+                    session_id=session_id,
+                    user_id=user_id,
                     images=base64_images if base64_images else None,
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
@@ -415,6 +427,21 @@ def get_async_playground_router(
                 return JSONResponse(content={"message": f"successfully deleted session {session_id}"})
 
         return JSONResponse(status_code=404, content="Session not found.")
+
+    @playground_router.get("/agents/{agent_id}/memories")
+    async def get_agent_memories(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+        agent = get_agent_by_id(agent_id, agents)
+        if agent is None:
+            return JSONResponse(status_code=404, content="Agent not found.")
+
+        if agent.memory is None:
+            return JSONResponse(status_code=404, content="Agent does not have memory enabled.")
+
+        if isinstance(agent.memory, Memory):
+            memories = agent.memory.get_user_memories(user_id=user_id)
+            return [MemoryResponse(memory=memory.memory, topics=memory.topics, last_updated=memory.last_updated) for memory in memories]
+        else:
+            return []
 
     @playground_router.get("/workflows", response_model=List[WorkflowsGetResponse])
     async def get_workflows():
@@ -584,16 +611,10 @@ def get_async_playground_router(
         else:
             logger.debug("Creating new session")
 
-        new_team_instance = team.deep_copy(update={"team_id": team_id, "session_id": session_id})
-        new_team_instance.session_name = None
-
-        if user_id is not None:
-            team.user_id = user_id
-
         if monitor:
-            new_team_instance.monitoring = True
+            team.monitoring = True
         else:
-            new_team_instance.monitoring = False
+            team.monitoring = False
 
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
@@ -651,8 +672,10 @@ def get_async_playground_router(
         if stream:
             return StreamingResponse(
                 team_chat_response_streamer(
-                    new_team_instance,
+                    team,
                     message,
+                    session_id=session_id,
+                    user_id=user_id,
                     images=base64_images if base64_images else None,
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
@@ -663,6 +686,8 @@ def get_async_playground_router(
         else:
             run_response = await team.arun(
                 message=message,
+                session_id=session_id,
+                user_id=user_id,
                 images=base64_images if base64_images else None,
                 audio=base64_audios if base64_audios else None,
                 videos=base64_videos if base64_videos else None,
@@ -751,5 +776,20 @@ def get_async_playground_router(
                 return JSONResponse(content={"message": f"successfully deleted team session {session_id}"})
 
         raise HTTPException(status_code=404, detail="Session not found")
+
+    @playground_router.get("/team/{team_id}/memories")
+    async def get_team_memories(team_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+        team = get_team_by_id(team_id, teams)
+        if team is None:
+            return JSONResponse(status_code=404, content="Teem not found.")
+
+        if team.memory is None:
+            return JSONResponse(status_code=404, content="Team does not have memory enabled.")
+
+        if isinstance(team.memory, Memory):
+            memories = team.memory.get_user_memories(user_id=user_id)
+            return [MemoryResponse(memory=memory.memory, topics=memory.topics, last_updated=memory.last_updated) for memory in memories]
+        else:
+            return []
 
     return playground_router

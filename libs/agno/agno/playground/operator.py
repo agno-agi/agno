@@ -1,6 +1,11 @@
-from typing import Any, List, Optional, Union, cast
+from typing import Any, List, Optional, Union, cast, Dict
 
 from agno.agent.agent import Agent, AgentRun, Function, Toolkit
+from agno.memory.agent import AgentMemory
+from agno.memory.team import TeamMemory
+from agno.memory_v2.memory import Memory
+from agno.run.response import RunResponse
+from agno.run.team import TeamRunResponse
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
@@ -46,11 +51,20 @@ def get_session_title(session: Union[AgentSession, TeamSession]) -> str:
         return session_name
     memory = session.memory
     if memory is not None:
+        # Proxy for knowing it is legacy memory implementation
         runs = memory.get("runs") or memory.get("chats")
         runs = cast(List[Any], runs)
         for _run in runs:
             try:
-                run_parsed = AgentRun.model_validate(_run)
+                print(type(_run))
+                print("HERE", _run)
+                if "response" in _run:
+                    run_parsed = AgentRun.model_validate(_run)
+                else:
+                    if "agent_id" in _run:
+                        run_parsed = RunResponse.from_dict(_run)
+                    else:
+                        run_parsed = TeamRunResponse.from_dict(_run)
                 if run_parsed.message is not None and run_parsed.message.role == "user":
                     content = run_parsed.message.get_content_string()
                     if content:
@@ -59,6 +73,7 @@ def get_session_title(session: Union[AgentSession, TeamSession]) -> str:
                         return "No title"
             except Exception as e:
                 logger.error(f"Error parsing chat: {e}")
+
     return "Unnamed session"
 
 

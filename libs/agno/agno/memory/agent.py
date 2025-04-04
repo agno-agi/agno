@@ -272,7 +272,15 @@ class AgentMemory(BaseModel):
         return False
 
     def update_memory(self, input: str, force: bool = False) -> Optional[str]:
-        """Creates a memory from a message and adds it to the memory db."""
+        """Creates a memory from a message and adds it to the memory db.
+
+        Args:
+            input: The input message to create a memory from.
+            force: If True, the memory will be created even if the classifier returns False.
+
+        Returns:
+            The response from the memory manager.
+        """
         from agno.memory.manager import MemoryManager
 
         if input is None or not isinstance(input, str):
@@ -305,9 +313,15 @@ class AgentMemory(BaseModel):
         return response
 
     async def aupdate_memory(self, input: str, force: bool = False) -> Optional[str]:
-        """Creates a memory from a message and adds it to the memory db."""
-        from agno.memory.manager import MemoryManager
+        """Creates a memory from a message and adds it to the memory db.
 
+        Args:
+            input: The input message to create a memory from.
+            force: If True, the memory will be created even if the classifier returns False.
+
+        Returns:
+            The response from the memory manager.
+        """
         if input is None or not isinstance(input, str):
             return "Invalid message content"
 
