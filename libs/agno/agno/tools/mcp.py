@@ -1,5 +1,5 @@
-from os import environ
 from contextlib import AsyncExitStack
+from os import environ
 from types import TracebackType
 from typing import List, Optional
 
@@ -66,9 +66,10 @@ class MCPTools(Toolkit):
             }
         else:
             env = environ
-            
+
         if command is not None:
             from shlex import split
+
             parts = split(command)
             if not parts:
                 raise ValueError("Empty command string")
@@ -86,7 +87,6 @@ class MCPTools(Toolkit):
 
     async def __aenter__(self) -> "MCPTools":
         """Enter the async context manager."""
-
 
         if self.session is not None:
             # Already has a session, just initialize
@@ -224,6 +224,7 @@ class MultiMCPTools(Toolkit):
 
         if commands is not None:
             from shlex import split
+
             for command in commands:
                 parts = split(command)
                 if not parts:
@@ -251,10 +252,9 @@ class MultiMCPTools(Toolkit):
 
         return self
 
-    async def __aexit__(self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None):
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
+    ):
         """Exit the async context manager."""
         await self._async_exit_stack.aclose()
 

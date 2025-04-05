@@ -24,7 +24,9 @@ async def run_agent(message: str) -> None:
     """Run the GitHub agent with the given message."""
 
     async with (
-        MCPTools(command="npx -y @modelcontextprotocol/server-sequential-thinking") as sequential_thinking_mcp_tools,
+        MCPTools(
+            command="npx -y @modelcontextprotocol/server-sequential-thinking"
+        ) as sequential_thinking_mcp_tools,
     ):
         agent = Agent(
             tools=[

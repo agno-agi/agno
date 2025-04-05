@@ -19,15 +19,19 @@ from agno.tools.mcp import MultiMCPTools
 
 async def run_agent(message: str) -> None:
     """Run the GitHub agent with the given message.
-    
+
     Remember to set the environment variable `GOOGLE_MAPS_API_KEY` with your Google Maps API key.
     """
 
     # Initialize the MCP server
-    async with MultiMCPTools(["npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt", 
-                              "npx -y @modelcontextprotocol/server-google-maps"], 
-                             include_tools=["maps_search_places", "airbnb_search"],
-                             exclude_tools=["maps_place_details"]) as mcp_tools:
+    async with MultiMCPTools(
+        [
+            "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
+            "npx -y @modelcontextprotocol/server-google-maps",
+        ],
+        include_tools=["maps_search_places", "airbnb_search"],
+        exclude_tools=["maps_place_details"],
+    ) as mcp_tools:
         agent = Agent(
             tools=[mcp_tools],
             markdown=True,
@@ -44,10 +48,5 @@ if __name__ == "__main__":
             "What listings are available in Cape Town for 2 people for 3 nights from 1 to 4 August 2025?"
         )
     )
-    
-    asyncio.run(
-        run_agent(
-            "What restaurants are open right now in Cape Town?"
-        )
-    )
 
+    asyncio.run(run_agent("What restaurants are open right now in Cape Town?"))
