@@ -1,3 +1,10 @@
+"""🏠 MCP Airbnb Agent - Search for Airbnb listings!
+
+This example shows how to create an agent that uses MCP and Gemini 2.5 Pro to search for Airbnb listings.
+
+Run: `pip install google-genai mcp agno` to install the dependencies
+"""
+
 import asyncio
 from agno.agent import Agent
 from agno.models.google import Gemini

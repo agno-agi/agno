@@ -12,23 +12,21 @@ Prerequisites:
 """
 
 import asyncio
-import os
 
 from agno.agent import Agent
 from agno.tools.mcp import MultiMCPTools
 
 
 async def run_agent(message: str) -> None:
-    """Run the GitHub agent with the given message."""
+    """Run the GitHub agent with the given message.
+    
+    Remember to set the environment variable `GOOGLE_MAPS_API_KEY` with your Google Maps API key.
+    """
 
-    env = {
-        **os.environ,
-        "GOOGLE_MAPS_API_KEY": os.getenv("GOOGLE_MAPS_API_KEY"),
-    }
     # Initialize the MCP server
     async with MultiMCPTools(["npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt", 
                               "npx -y @modelcontextprotocol/server-google-maps"], 
-                             env=env) as mcp_tools:
+                             ) as mcp_tools:
         agent = Agent(
             tools=[mcp_tools],
             markdown=True,

@@ -1,3 +1,4 @@
+from os import environ
 from contextlib import AsyncExitStack
 from types import TracebackType
 from typing import List, Optional
@@ -57,6 +58,15 @@ class MCPTools(Toolkit):
         self.session: Optional[ClientSession] = session
         self.server_params: Optional[StdioServerParameters] = server_params
 
+        # Merge provided env with system env
+        if env is not None:
+            env = {
+                **environ,
+                **env,
+            }
+        else:
+            env = environ
+            
         if command is not None:
             from shlex import split
             parts = split(command)
@@ -202,6 +212,15 @@ class MultiMCPTools(Toolkit):
 
         self.server_params_list: List[StdioServerParameters] = server_params_list or []
         self.commands: Optional[List[str]] = commands
+
+        # Merge provided env with system env
+        if env is not None:
+            env = {
+                **environ,
+                **env,
+            }
+        else:
+            env = environ
 
         if commands is not None:
             from shlex import split

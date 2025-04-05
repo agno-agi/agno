@@ -30,7 +30,7 @@ async def run_agent(message: str) -> None:
     file_path = str(Path(__file__).parent.parent.parent.parent)
 
     # Create a client session to connect to the MCP server
-    async with MCPTools(command=f"npx -y @modelcontextprotocol/server-filesystem {file_path}") as mcp_tools:
+    async with MCPTools(f"npx -y @modelcontextprotocol/server-filesystem {file_path}") as mcp_tools:
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
             tools=[mcp_tools],
