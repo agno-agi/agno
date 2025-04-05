@@ -322,6 +322,7 @@ class Agent:
         debug_mode: bool = False,
         monitoring: bool = False,
         telemetry: bool = True,
+        workflow = None,
     ):
         self.model = model
         self.name = name
@@ -437,6 +438,8 @@ class Agent:
         self.videos: Optional[List[VideoArtifact]] = None
         # Agent session
         self.agent_session: Optional[AgentSession] = None
+        # Reference to the parent workflow
+        self.workflow = workflow
 
         self._tools_for_model: Optional[List[Dict]] = None
         self._functions_for_model: Optional[Dict[str, Function]] = None
@@ -538,7 +541,11 @@ class Agent:
         self.stream = self.stream or (stream and self.is_streamable)
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
         # 1.3 Create a run_id and RunResponse
-        self.run_id = str(uuid4())
+        # Use workflow's run_id if available, otherwise generate new one
+        if hasattr(self, 'workflow') and self.workflow and self.workflow.run_id:
+            self.run_id = self.workflow.run_id
+        else:
+            self.run_id = str(uuid4())
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
         log_debug(f"Agent Run Start: {self.run_response.run_id}", center=True)
@@ -1067,7 +1074,11 @@ class Agent:
         self.stream = self.stream or (stream and self.is_streamable)
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
         # 1.3 Create a run_id and RunResponse
-        self.run_id = str(uuid4())
+        # Use workflow's run_id if available, otherwise generate new one
+        if hasattr(self, 'workflow') and self.workflow and self.workflow.run_id:
+            self.run_id = self.workflow.run_id
+        else:
+            self.run_id = str(uuid4())
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
         log_debug(f"Async Agent Run Start: {self.run_response.run_id}", center=True, symbol="*")
