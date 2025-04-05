@@ -26,8 +26,8 @@ async def run_agent(message: str) -> None:
         "GOOGLE_MAPS_API_KEY": os.getenv("GOOGLE_MAPS_API_KEY"),
     }
     # Initialize the MCP server
-    async with MultiMCPTools(commands=["npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt", 
-                                       "npx -y @modelcontextprotocol/server-google-maps"], 
+    async with MultiMCPTools(["npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt", 
+                              "npx -y @modelcontextprotocol/server-google-maps"], 
                              env=env) as mcp_tools:
         agent = Agent(
             tools=[mcp_tools],

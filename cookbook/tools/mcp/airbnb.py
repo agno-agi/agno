@@ -5,7 +5,7 @@ from agno.tools.mcp import MCPTools
 
 
 async def run_agent(message: str) -> None:
-    async with MCPTools(command=f"npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt") as mcp_tools:
+    async with MCPTools(f"npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt") as mcp_tools:
         agent = Agent(
             model=Gemini(id="gemini-2.5-pro-exp-03-25"),
             tools=[mcp_tools],

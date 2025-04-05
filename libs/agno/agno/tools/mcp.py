@@ -27,10 +27,11 @@ class MCPTools(Toolkit):
 
     def __init__(
         self,
-        session: Optional[ClientSession] = None,
-        server_params: Optional[StdioServerParameters] = None,
         command: Optional[str] = None,
+        *,
         env: Optional[dict[str, str]] = None,
+        server_params: Optional[StdioServerParameters] = None,
+        session: Optional[ClientSession] = None,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -174,9 +175,10 @@ class MultiMCPTools(Toolkit):
 
     def __init__(
         self,
-        server_params_list: Optional[List[StdioServerParameters]] = None,
         commands: Optional[List[str]] = None,
+        *,
         env: Optional[dict[str, str]] = None,
+        server_params_list: Optional[List[StdioServerParameters]] = None,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
