@@ -15,8 +15,9 @@ class GiphyTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         limit: int = 1,
+        **kwargs,
     ):
-        super().__init__(name="giphy_tools")
+        super().__init__(name="giphy_tools", **kwargs)
 
         self.api_key = api_key or os.getenv("GIPHY_API_KEY")
         if not self.api_key:

@@ -16,8 +16,9 @@ class ScrapeGraphTools(Toolkit):
         api_key: Optional[str] = None,
         smartscraper: bool = True,
         markdownify: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="scrapegraph_tools")
+        super().__init__(name="scrapegraph_tools", **kwargs)
 
         self.api_key: Optional[str] = api_key or os.getenv("SGAI_API_KEY")
         self.client = Client(api_key=self.api_key)

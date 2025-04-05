@@ -23,8 +23,9 @@ class DalleTools(Toolkit):
         quality: Literal["standard", "hd"] = "standard",
         style: Literal["vivid", "natural"] = "vivid",
         api_key: Optional[str] = None,
+        **kwargs,
     ):
-        super().__init__(name="dalle")
+        super().__init__(name="dalle", **kwargs)
 
         self.model = model
         self.n = n

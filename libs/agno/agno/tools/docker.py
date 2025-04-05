@@ -62,9 +62,10 @@ class DockerTools(Toolkit):
         enable_image_management: bool = True,
         enable_volume_management: bool = False,
         enable_network_management: bool = False,
+        **kwargs,
     ):
         """Initialize Docker tools."""
-        super().__init__(name="docker_tools")
+        super().__init__(name="docker_tools", **kwargs)
 
         self._check_docker_availability()
 
