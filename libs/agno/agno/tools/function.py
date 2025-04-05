@@ -109,8 +109,10 @@ class Function(BaseModel):
                     for param in param_docs:
                         param_name = param.arg_name
                         param_type = param.type_name
-
-                        param_descriptions[param_name] = f"({param_type}) {param.description}"
+                        if param_type is None:
+                            param_descriptions[param_name] = param.description
+                        else:
+                            param_descriptions[param_name] = f"({param_type}) {param.description}"
 
             # Get JSON schema for parameters only
             parameters = get_json_schema(

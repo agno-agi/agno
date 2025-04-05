@@ -31,6 +31,7 @@ try:
         GoogleSearchRetrieval,
         Part,
         Schema,
+        Type,
         Tool,
     )
     from google.genai.types import (
@@ -102,31 +103,75 @@ def _convert_schema(schema_dict) -> Optional[Schema]:
     Returns:
         types.Schema: The converted schema.
     """
-    schema_type = schema_dict.get("type", "")
-    if isinstance(schema_type, list):
-        schema_type = schema_type[0]
-    schema_type = schema_type.upper()
-    description = schema_dict.get("description", "")
 
-    if schema_type == "OBJECT" and "properties" in schema_dict:
-        properties = {key: _convert_schema(prop_def) for key, prop_def in schema_dict["properties"].items()}
+    schema_type = schema_dict.get("type", "")
+    if schema_type is None or schema_type == "null":
+        return None
+    description = schema_dict.get("description", None)
+    default = schema_dict.get("default", None)
+
+    if schema_type == "object" and "properties" in schema_dict:
+        properties = {}
+        for key, prop_def in schema_dict["properties"].items():
+            # Process nullable types
+            prop_type = prop_def.get("type", "")
+            is_nullable = False
+            if isinstance(prop_type, list) and 'null' in prop_type:
+                prop_def["type"] = prop_type[0]
+                is_nullable = True
+
+            # Process property schema
+            converted_schema = _convert_schema(prop_def)
+            if converted_schema is not None:
+                if is_nullable:
+                    converted_schema.nullable = True
+                properties[key] = converted_schema
+
         required = schema_dict.get("required", [])
 
         if properties:
             return Schema(
-                type=schema_type,
+                type=Type.OBJECT,
                 properties=properties,
                 required=required,
                 description=description,
+                default=default,
             )
         else:
-            return None
+            return Schema(type=Type.OBJECT, description=description, default=default)
 
-    if schema_type == "ARRAY" and "items" in schema_dict:
+    elif schema_type == "array" and "items" in schema_dict:
         items = _convert_schema(schema_dict["items"])
-        return Schema(type=schema_type, description=description, items=items)
+        return Schema(type=Type.ARRAY, description=description, items=items)
+
+    elif schema_type == "" and "anyOf" in schema_dict:
+        any_of = []
+        for sub_schema in schema_dict["anyOf"]:
+            sub_schema_converted = _convert_schema(sub_schema)
+            any_of.append(sub_schema_converted)
+
+        is_nullable = False
+        filtered_any_of = []
+
+        for schema in any_of:
+            if schema is None:
+                is_nullable = True
+            else:
+                filtered_any_of.append(schema)
+
+        any_of = filtered_any_of
+        if len(any_of) == 1:
+            any_of[0].nullable = is_nullable
+            return any_of[0]
+        else:
+            return Schema(
+                any_of=any_of,
+                description=description,
+                default=default,
+            )
     else:
-        return Schema(type=schema_type, description=description)
+        schema_type = schema_type.upper()
+        return Schema(type=schema_type, description=description, default=default)
 
 
 def _format_function_definitions(tools_list):
@@ -289,7 +334,6 @@ class Gemini(Model):
         if system_message is not None:
             config["system_instruction"] = system_message  # type: ignore
 
-
         if self.grounding and self.search:
             log_info("Both grounding and search are enabled. Grounding will take precedence.")
             self.search = False
@@ -313,7 +357,6 @@ class Gemini(Model):
         elif self._tools:
             config["tools"] = [_format_function_definitions(self._tools)]
 
-
         if (
             self.response_format is not None
             and isinstance(self.response_format, type)
@@ -323,7 +366,9 @@ class Gemini(Model):
             config["response_schema"] = self.response_format
 
             if config.get("tool") is not None and len(config["tools"]) > 0:
-                log_warning("The current google-genai version does not support structured outputs with tools. Use `use_json_mode=True` to force JSON mode.")
+                log_warning(
+                    "The current google-genai version does not support structured outputs with tools. Use `use_json_mode=True` to force JSON mode."
+                )
 
         config = {k: v for k, v in config.items() if v is not None}
 
@@ -733,6 +778,7 @@ class Gemini(Model):
             ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
+        
 
         # Get response message
         if response.candidates is not None:
@@ -744,7 +790,9 @@ class Gemini(Model):
 
             # Add content
             if response_message.parts is not None:
+                
                 for part in response_message.parts:
+                    
                     # Extract text if present
                     if hasattr(part, "text") and part.text is not None:
                         model_response.content = part.text

@@ -746,7 +746,9 @@ class Team:
                     log_warning(f"Failed to convert response to output model: {e}")
             else:
                 log_warning("Something went wrong. Team run response content is not a string")
-        elif self._member_response_model is not None and not isinstance(run_response.content, self._member_response_model):
+        elif self._member_response_model is not None and not isinstance(
+            run_response.content, self._member_response_model
+        ):
             if isinstance(run_response.content, str):
                 try:
                     parsed_response_content = parse_response_model_str(
@@ -1335,7 +1337,9 @@ class Team:
                     log_warning(f"Failed to convert response to output model: {e}")
             else:
                 log_warning("Something went wrong. Team run response content is not a string")
-        elif self._member_response_model is not None and not isinstance(run_response.content, self._member_response_model):
+        elif self._member_response_model is not None and not isinstance(
+            run_response.content, self._member_response_model
+        ):
             if isinstance(run_response.content, str):
                 try:
                     parsed_response_content = parse_response_model_str(
