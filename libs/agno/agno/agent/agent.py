@@ -440,6 +440,7 @@ class Agent:
 
         self._tools_for_model: Optional[List[Dict]] = None
         self._functions_for_model: Optional[Dict[str, Function]] = None
+        self._tool_instructions: Optional[List[str]] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
@@ -1562,8 +1563,7 @@ class Agent:
 
         # Add provided tools
         if self.tools is not None:
-            for tool in self.tools:
-                agent_tools.append(tool)
+            agent_tools.extend(self.tools)
 
         # Add tools for accessing memory
         if self.read_chat_history:
@@ -1630,6 +1630,12 @@ class Agent:
                                 self._functions_for_model[name] = func
                                 self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Included function {name} from {tool.name}")
+
+                        # Add instructions from the toolkit
+                        if tool.add_instructions and tool.instructions is not None:
+                            if self._tool_instructions is None:
+                                self._tool_instructions = []
+                            self._tool_instructions.append(tool.instructions)
 
                     elif isinstance(tool, Function):
                         if tool.name not in self._functions_for_model:
@@ -2230,6 +2236,12 @@ class Agent:
             for _ai in additional_information:
                 system_message_content += f"\n- {_ai}"
             system_message_content += "\n</additional_information>\n\n"
+        # 3.3.7 Then add instructions for the tools
+        if self._tool_instructions is not None:
+            system_message_content += "<tool_instructions>"
+            for _ti in self._tool_instructions:
+                system_message_content += f"\n{_ti}"
+            system_message_content += "\n</tool_instructions>\n\n"
 
         # Format the system message with the session state variables
         if self.add_state_in_messages:
