@@ -175,6 +175,8 @@ class Agent:
     # If True, add the current datetime to the instructions to give the agent a sense of time
     # This allows for relative times like "tomorrow" to be used in the prompt
     add_datetime_to_instructions: bool = False
+    # Allows for custom timezone for datetime instructions following the TZ Database format
+    timezone_identifier: Optional[str] = None
     # If True, add the session state variables in the user and system messages
     add_state_in_messages: bool = False
 
@@ -298,6 +300,7 @@ class Agent:
         markdown: bool = False,
         add_name_to_instructions: bool = False,
         add_datetime_to_instructions: bool = False,
+        timezone_identifier: Optional[str] = None,
         add_state_in_messages: bool = False,
         add_messages: Optional[List[Union[Dict, Message]]] = None,
         user_message: Optional[Union[List, Dict, str, Callable, Message]] = None,
@@ -381,6 +384,7 @@ class Agent:
         self.markdown = markdown
         self.add_name_to_instructions = add_name_to_instructions
         self.add_datetime_to_instructions = add_datetime_to_instructions
+        self.timezone_identifier = timezone_identifier
         self.add_state_in_messages = add_state_in_messages
         self.add_messages = add_messages
 
@@ -2191,7 +2195,15 @@ class Agent:
         if self.add_datetime_to_instructions:
             from datetime import datetime
 
-            additional_information.append(f"The current time is {datetime.now()}")
+            from zoneinfo import ZoneInfo, available_timezones
+
+            if self.timezone_identifier and self.timezone_identifier in available_timezones():
+                tz = ZoneInfo(self.timezone_identifier)
+                time = datetime.now(tz)
+            else:
+                time = datetime.now()
+                
+            additional_information.append(f"The current time is {time}.")
         # 3.2.3 Add agent name if provided
         if self.name is not None and self.add_name_to_instructions:
             additional_information.append(f"Your name is: {self.name}.")
