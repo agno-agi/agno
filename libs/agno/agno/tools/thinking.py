@@ -1,4 +1,5 @@
 from textwrap import dedent
+from typing import Optional
 
 from agno.agent import Agent
 from agno.tools import Toolkit
@@ -6,8 +7,32 @@ from agno.utils.log import log_debug, logger
 
 
 class ThinkingTools(Toolkit):
-    def __init__(self, think: bool = True, **kwargs):
-        super().__init__(name="thinking_tools", **kwargs)
+    def __init__(
+        self,
+        think: bool = True,
+        instructions: Optional[str] = None,
+        add_instructions: bool = False,
+        **kwargs,
+    ):
+        super().__init__(
+            name="thinking_tools",
+            instructions=instructions,
+            add_instructions=add_instructions,
+            **kwargs,
+        )
+
+        if instructions is None:
+            self.instructions = dedent("""\
+            ## Using the think tool
+            Before taking any action or responding to the user after receiving tool results, use the think tool as a scratchpad to:
+            - List the specific rules that apply to the current request
+            - Check if all required information is collected
+            - Verify that the planned action complies with all policies
+            - Iterate over tool results for correctness
+
+            ## Rules
+            - Use the think tool generously to jot down thoughts and ideas.\
+            """)
 
         if think:
             # Register the think tool

@@ -9,6 +9,8 @@ class Toolkit:
     def __init__(
         self,
         name: str = "toolkit",
+        instructions: Optional[str] = None,
+        add_instructions: bool = False,
         cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
@@ -17,12 +19,16 @@ class Toolkit:
 
         Args:
             name: A descriptive name for the toolkit
+            instructions: Instructions for the toolkit
+            add_instructions: Whether to add instructions to the toolkit
             cache_results (bool): Enable in-memory caching of function results.
             cache_ttl (int): Time-to-live for cached results in seconds.
             cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
         """
         self.name: str = name
         self.functions: Dict[str, Function] = OrderedDict()
+        self.instructions: Optional[str] = instructions
+        self.add_instructions: bool = add_instructions
         self.cache_results: bool = cache_results
         self.cache_ttl: int = cache_ttl
         self.cache_dir: Optional[str] = cache_dir
@@ -50,9 +56,6 @@ class Toolkit:
         except Exception as e:
             logger.warning(f"Failed to create Function for: {function.__name__}")
             raise e
-
-    def instructions(self) -> str:
-        return ""
 
     def __repr__(self):
         return f"<{self.__class__.__name__} name={self.name} functions={list(self.functions.keys())}>"
