@@ -253,7 +253,10 @@ class MultiMCPTools(Toolkit):
         return self
 
     async def __aexit__(
-        self, exc_type: Union[type[BaseException], None], exc_val: Union[BaseException, None], exc_tb: Union[TracebackType, None]
+        self,
+        exc_type: Union[type[BaseException], None],
+        exc_val: Union[BaseException, None],
+        exc_tb: Union[TracebackType, None],
     ):
         """Exit the async context manager."""
         await self._async_exit_stack.aclose()

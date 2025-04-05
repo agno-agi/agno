@@ -128,6 +128,7 @@ def test_tool_use_with_native_structured_outputs():
     assert response.content.price is not None
     assert response.content.currency is not None
 
+
 def test_tool_use_with_json_structured_outputs():
     class StockPrice(BaseModel):
         price: float = Field(..., description="The price of the stock")

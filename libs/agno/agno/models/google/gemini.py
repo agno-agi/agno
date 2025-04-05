@@ -289,7 +289,6 @@ class Gemini(Model):
         if system_message is not None:
             config["system_instruction"] = system_message  # type: ignore
 
-
         if self.grounding and self.search:
             log_info("Both grounding and search are enabled. Grounding will take precedence.")
             self.search = False
@@ -313,7 +312,6 @@ class Gemini(Model):
         elif self._tools:
             config["tools"] = [_format_function_definitions(self._tools)]
 
-
         if (
             self.response_format is not None
             and isinstance(self.response_format, type)
@@ -323,7 +321,9 @@ class Gemini(Model):
             config["response_schema"] = self.response_format
 
             if config.get("tool") is not None and len(config["tools"]) > 0:
-                log_warning("The current google-genai version does not support structured outputs with tools. Use `use_json_mode=True` to force JSON mode.")
+                log_warning(
+                    "The current google-genai version does not support structured outputs with tools. Use `use_json_mode=True` to force JSON mode."
+                )
 
         config = {k: v for k, v in config.items() if v is not None}
 
