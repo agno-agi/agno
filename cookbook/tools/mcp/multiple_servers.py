@@ -26,7 +26,7 @@ async def run_agent(message: str) -> None:
         "GOOGLE_MAPS_API_KEY": os.getenv("GOOGLE_MAPS_API_KEY"),
     }
     # Initialize the MCP server
-    async with MultiMCPTools(commands=["uvx mcp-server-time --local-timezone=Europe/London", 
+    async with MultiMCPTools(commands=["npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt", 
                                        "npx -y @modelcontextprotocol/server-google-maps"], 
                              env=env) as mcp_tools:
         agent = Agent(
@@ -42,12 +42,12 @@ async def run_agent(message: str) -> None:
 if __name__ == "__main__":
     asyncio.run(
         run_agent(
-            "What is the current time in Cape Town? What restaurants are open right now?"
+            "What listings are available in Cape Town for 2 people for 3 nights from 1 to 4 August 2025?"
         )
     )
     
     asyncio.run(
         run_agent(
-            "What is the current time in New York?"
+            "What restaurants are open right now in Cape Town?"
         )
     )
