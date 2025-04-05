@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
+import httpx
+
 from agno.document.base import Document
 from agno.document.reader.base import Reader
 from agno.utils.log import log_debug, logger
@@ -13,11 +15,6 @@ try:
     from bs4 import BeautifulSoup, Tag  # noqa: F401
 except ImportError:
     raise ImportError("The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`.")
-
-try:
-    import httpx
-except ImportError:
-    raise ImportError("`httpx` not installed. Please install it via `pip install httpx`.")
 
 
 @dataclass
