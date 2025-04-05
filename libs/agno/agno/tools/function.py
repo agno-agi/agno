@@ -211,7 +211,7 @@ class Function(BaseModel):
                 ]
 
             if params_set_by_user:
-                self.parameters['additionalProperties'] = False
+                self.parameters["additionalProperties"] = False
                 if strict:
                     self.parameters["required"] = [name for name in self.parameters["properties"] if name != "agent"]
                 else:
