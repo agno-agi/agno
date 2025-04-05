@@ -15,7 +15,7 @@ import asyncio
 import os
 
 from agno.agent import Agent
-from agno.tools.mcp import MCPTools
+from agno.tools.mcp import MultiMCPTools
 
 
 async def run_agent(message: str) -> None:
@@ -26,12 +26,11 @@ async def run_agent(message: str) -> None:
         "GOOGLE_MAPS_API_KEY": os.getenv("GOOGLE_MAPS_API_KEY"),
     }
     # Initialize the MCP server
-    async with (
-        MCPTools(command="uvx mcp-server-time --local-timezone=Europe/London") as time_mcp_tools,
-        MCPTools(command="npx -y @modelcontextprotocol/server-google-maps", env=env) as maps_mcp_tools
-    ):
+    async with MultiMCPTools(commands=["uvx mcp-server-time --local-timezone=Europe/London", 
+                                       "npx -y @modelcontextprotocol/server-google-maps"], 
+                             env=env) as mcp_tools:
         agent = Agent(
-            tools=[time_mcp_tools, maps_mcp_tools],
+            tools=[mcp_tools],
             markdown=True,
             show_tool_calls=True,
         )
