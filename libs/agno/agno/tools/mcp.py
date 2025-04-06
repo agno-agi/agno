@@ -1,7 +1,7 @@
 from contextlib import AsyncExitStack
 from os import environ
 from types import TracebackType
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -65,7 +65,7 @@ class MCPTools(Toolkit):
                 **env,
             }
         else:
-            env = environ
+            env = {**environ}
 
         if command is not None:
             from shlex import split
@@ -220,7 +220,7 @@ class MultiMCPTools(Toolkit):
                 **env,
             }
         else:
-            env = environ
+            env = {**environ}
 
         if commands is not None:
             from shlex import split
@@ -253,7 +253,10 @@ class MultiMCPTools(Toolkit):
         return self
 
     async def __aexit__(
-        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
+        self,
+        exc_type: Union[type[BaseException], None],
+        exc_val: Union[BaseException, None],
+        exc_tb: Union[TracebackType, None],
     ):
         """Exit the async context manager."""
         await self._async_exit_stack.aclose()
