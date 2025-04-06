@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -208,7 +207,7 @@ class Agent:
     # Otherwise, the response is returned as a JSON string
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
-    structured_outputs: bool = False
+    structured_outputs: Optional[bool] = None
     # If `response_model` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
     use_json_mode: bool = False
     # Save the response to a file
@@ -394,15 +393,7 @@ class Agent:
         self.response_model = response_model
         self.parse_response = parse_response
 
-        if structured_outputs is not None:
-            warnings.warn(
-                "The 'structured_outputs' parameter is deprecated and will be removed in a future version. "
-                "Please use the new 'response_format' parameter instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.structured_outputs = structured_outputs
-
+        self.structured_outputs = structured_outputs
         self.use_json_mode = use_json_mode
         self.save_response_to_file = save_response_to_file
 
