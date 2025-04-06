@@ -1,9 +1,7 @@
-from typing import List, Optional
+from typing import List
 
 from agno.document.base import Document
 from agno.document.chunking.strategy import ChunkingStrategy
-from agno.models.base import Model
-from agno.models.message import Message
 
 
 class RowChunking(ChunkingStrategy):
