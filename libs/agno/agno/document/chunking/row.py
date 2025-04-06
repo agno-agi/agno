@@ -5,6 +5,7 @@ from agno.document.chunking.strategy import ChunkingStrategy
 from agno.models.base import Model
 from agno.models.message import Message
 
+
 class RowChunking(ChunkingStrategy):
     """Chunking strategy that treats each row in a CSV file as a separate chunk."""
 
@@ -21,10 +22,5 @@ class RowChunking(ChunkingStrategy):
                 meta_data = document.meta_data.copy()
                 meta_data["row_number"] = i + 1  # 1-based index
                 chunk_id = f"{document.id}_row_{i + 1}" if document.id else None
-                chunks.append(Document(
-                    id=chunk_id,
-                    name=document.name,
-                    meta_data=meta_data,
-                    content=chunk_content
-                ))
+                chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk_content))
         return chunks
