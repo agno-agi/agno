@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
+from bs4 import BeautifulSoup, Tag
+
 from agno.document.base import Document
 from agno.document.reader.base import Reader
 from agno.utils.log import log_debug, logger
@@ -68,16 +70,21 @@ class WebsiteReader(Reader):
         :param soup: The BeautifulSoup object to extract the main content from.
         :return: The main content.
         """
-        # Try to find main content by specific tags or class names
-        for tag in ["article", "main"]:
-            element = soup.find(tag)
-            if element:
-                return element.get_text(strip=True, separator=" ")
 
-        for class_name in ["content", "main-content", "post-content"]:
-            element = soup.find(class_=class_name)
-            if element:
-                return element.get_text(strip=True, separator=" ")
+        def match(tag: Tag) -> bool:
+            """
+            Check if the tag matches any of the relevant tags or class names
+            """
+            if tag.name in ["article", "main"]:
+                return True
+            if any(cls in ["content", "main-content", "post-content"] for cls in tag.get("class", [])):
+                return True
+            return False
+
+        # Use a single call to 'find' with a custom function to match tags or classes
+        element = soup.find(match)
+        if element:
+            return element.get_text(strip=True, separator=" ")
 
         return ""
 
