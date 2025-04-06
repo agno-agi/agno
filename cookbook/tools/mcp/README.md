@@ -28,6 +28,10 @@ This example shows how to use multiple MCP servers in the same agent.
 
 This example shows how to use the MCP agent to perform sequential thinking.
 
+7. Airbnb Agent (`airbnb.py`)
+
+This example shows how to create an agent that uses MCP and Gemini 2.5 Pro to search for Airbnb listings.
+
 
 ## Getting Started
 

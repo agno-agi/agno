@@ -286,12 +286,12 @@ def test_custom_client_params():
     agent = Agent(
         model=Gemini(
             id="gemini-1.5-flash",
-            exponential_backoff=True,
             vertexai=True,
             location="us-central1",
             generation_config=generation_config,
             safety_settings=safety_settings,
         ),
+        exponential_backoff=True,
         telemetry=False,
         monitoring=False,
     )
