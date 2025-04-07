@@ -18,7 +18,7 @@ tmp_dir.mkdir(parents=True, exist_ok=True)
 
 # Initialize knowledge base
 agent_knowledge = UrlKnowledge(
-    urls=["https://docs.agno.com/teams/introduction"],
+    urls=["https://docs.agno.com/introduction"],
     vector_db=LanceDb(
         uri=str(tmp_dir.joinpath("lancedb")),
         table_name="agno_assist_knowledge",
