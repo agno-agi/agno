@@ -29,5 +29,6 @@ thinking_agent = Agent(
     show_tool_calls=True,
     markdown=True,
 )
-thinking_agent.print_response("Write a report comparing NVDA to TSLA in detail", stream=True)
-
+thinking_agent.print_response(
+    "Write a report comparing NVDA to TSLA in detail", stream=True
+)
