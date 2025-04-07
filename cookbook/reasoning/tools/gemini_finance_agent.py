@@ -14,10 +14,8 @@ from agno.models.google import Gemini
 from agno.tools.thinking import ThinkingTools
 from agno.tools.yfinance import YFinanceTools
 
-api_key="gemini api key"
-
 thinking_agent = Agent(
-    model=Gemini(id="gemini-2.0-flash",api_key=api_key),
+    model=Gemini(id="gemini-2.0-flash"),
     tools=[
         ThinkingTools(add_instructions=True),
         YFinanceTools(
