@@ -1642,26 +1642,13 @@ class Agent:
                             self._functions_for_model[tool.name] = tool
                             self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
                             log_debug(f"Included function {tool.name}")
+                            
+                        # Add instructions from the Function
+                        if tool.add_instructions and tool.instructions is not None:
+                            if self._tool_instructions is None:
+                                self._tool_instructions = []
+                            self._tool_instructions.append(tool.instructions)
 
-                            if tool.add_instructions and tool.instructions is not None:
-                                from agno.tools.thinking import ThinkingTools
-
-                                thinking_tools = ThinkingTools(add_instructions=True)
-                                for name, func in thinking_tools.functions.items():
-                                    if name not in self._functions_for_model:
-                                        func._agent = self
-                                        func.process_entrypoint(strict=strict)
-                                        if strict:
-                                            func.strict = True
-                                        self._functions_for_model[name] = func
-                                        self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                        log_debug(f"Included thinking function {name}")
-
-                                # Add instructions from ThinkingTools
-                                if thinking_tools.add_instructions and thinking_tools.instructions is not None:
-                                    if self._tool_instructions is None:
-                                        self._tool_instructions = []
-                                    self._tool_instructions.append(thinking_tools.instructions)
 
                     elif callable(tool):
                         try:
