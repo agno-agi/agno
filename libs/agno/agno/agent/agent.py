@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -207,7 +208,7 @@ class Agent:
     # Otherwise, the response is returned as a JSON string
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
-    structured_outputs: Optional[bool] = None
+    structured_outputs: bool = False
     # If `response_model` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
     use_json_mode: bool = False
     # Save the response to a file
@@ -393,7 +394,15 @@ class Agent:
         self.response_model = response_model
         self.parse_response = parse_response
 
-        self.structured_outputs = structured_outputs
+        if structured_outputs is not None:
+            warnings.warn(
+                "The 'structured_outputs' parameter is deprecated and will be removed in a future version. "
+                "Please use the new 'response_format' parameter instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.structured_outputs = structured_outputs
+
         self.use_json_mode = use_json_mode
         self.save_response_to_file = save_response_to_file
 
@@ -1602,8 +1611,6 @@ class Agent:
                 self._tools_for_model = []
                 self._functions_for_model = {}
 
-                add_thinking_tools = False
-
                 for tool in agent_tools:
                     if isinstance(tool, Dict):
                         # If a dict is passed, it is a builtin tool
@@ -1641,13 +1648,24 @@ class Agent:
                             log_debug(f"Included function {tool.name}")
 
                             if tool.add_instructions and tool.instructions is not None:
-                                if self._tool_instructions is None:
-                                    self._tool_instructions = []
-                                self._tool_instructions.append(tool.instructions)
+                                from agno.tools.thinking import ThinkingTools
 
-                            # Check if thinking is enabled for this function
-                            if hasattr(tool, "think") and tool.think:
-                                add_thinking_tools = True
+                                thinking_tools = ThinkingTools(add_instructions=True)
+                                for name, func in thinking_tools.functions.items():
+                                    if name not in self._functions_for_model:
+                                        func._agent = self
+                                        func.process_entrypoint(strict=strict)
+                                        if strict:
+                                            func.strict = True
+                                        self._functions_for_model[name] = func
+                                        self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                        log_debug(f"Included thinking function {name}")
+
+                                # Add instructions from ThinkingTools
+                                if thinking_tools.add_instructions and thinking_tools.instructions is not None:
+                                    if self._tool_instructions is None:
+                                        self._tool_instructions = []
+                                    self._tool_instructions.append(thinking_tools.instructions)
 
                     elif callable(tool):
                         try:
@@ -1662,27 +1680,6 @@ class Agent:
                                 log_debug(f"Included function {func.name}")
                         except Exception as e:
                             log_warning(f"Could not add function {tool}: {e}")
-
-                # Add ThinkingTools if needed by any function
-                if add_thinking_tools:
-                    from agno.tools.thinking import ThinkingTools
-
-                    thinking_tools = ThinkingTools(add_instructions=True)
-                    for name, func in thinking_tools.functions.items():
-                        if name not in self._functions_for_model:
-                            func._agent = self
-                            func.process_entrypoint(strict=strict)
-                            if strict:
-                                func.strict = True
-                            self._functions_for_model[name] = func
-                            self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                            log_debug(f"Included thinking function {name}")
-
-                    # Add instructions from ThinkingTools
-                    if thinking_tools.add_instructions and thinking_tools.instructions is not None:
-                        if self._tool_instructions is None:
-                            self._tool_instructions = []
-                        self._tool_instructions.append(thinking_tools.instructions)
 
                 # Set tools on the model
                 model.set_tools(tools=self._tools_for_model)

@@ -20,8 +20,7 @@ def tool(
     description: Optional[str] = None,
     strict: Optional[bool] = None,
     instructions: Optional[str] = None,
-    add_instructions: bool = False,
-    think: bool = False,
+    add_instructions: bool = True,
     sanitize_arguments: Optional[bool] = None,
     show_result: Optional[bool] = None,
     stop_after_tool_call: Optional[bool] = None,
@@ -45,7 +44,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         description: Optional[str] - Override for the function description
         strict: Optional[bool] - Flag for strict parameter checking
         sanitize_arguments: Optional[bool] - If True, arguments are sanitized before passing to function
-        think: Optional[bool] - If True, add thinking capabilities to the agent (default: False)
         instructions: Optional[str] - Instructions for using the tool
         add_instructions: bool - If True, add instructions to the system message
         show_result: Optional[bool] - If True, shows the result after function call
@@ -80,7 +78,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "strict",
             "instructions",
             "add_instructions",
-            "think",
             "sanitize_arguments",
             "show_result",
             "stop_after_tool_call",
@@ -151,8 +148,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "name": kwargs.get("name", func.__name__),
             "description": kwargs.get("description", getdoc(func)),  # Get docstring if description not provided
             "instructions": kwargs.get("instructions"),
-            "add_instructions": kwargs.get("add_instructions", False),
-            "think": kwargs.get("think", False),
+            "add_instructions": kwargs.get("add_instructions", True),
             "entrypoint": wrapper,
             "cache_results": kwargs.get("cache_results", False),
             "cache_dir": kwargs.get("cache_dir"),
@@ -167,7 +163,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
                     "cache_results",
                     "instructions",
                     "add_instructions",
-                    "think",
                     "cache_dir",
                     "cache_ttl",
                 ]

@@ -50,9 +50,7 @@ class Function(BaseModel):
 
     instructions: Optional[str] = None
     # If True, add instructions to the Agent's system message
-    add_instructions: bool = False
-    # If True, add thinking capabilities to the agent
-    think: bool = False
+    add_instructions: bool = True
 
     # The function to be called.
     entrypoint: Optional[Callable] = None
