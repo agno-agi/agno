@@ -215,6 +215,7 @@ class PDFUrlReader(BasePDFReader):
             raise ValueError("No url provided")
 
         from io import BytesIO
+
         import httpx
 
         log_info(f"Reading: {url}")

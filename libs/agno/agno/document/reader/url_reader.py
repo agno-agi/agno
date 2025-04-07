@@ -81,7 +81,7 @@ class URLReader(Reader):
 
             document = self._create_document(url, response.text)
             if self.chunk:
-                return self.chunk_document(document)
+                return await self.chunk_documents_async([document])
             return [document]
 
     def _create_document(self, url: str, content: str) -> Document:
