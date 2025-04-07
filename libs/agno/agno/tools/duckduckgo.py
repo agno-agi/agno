@@ -2,7 +2,7 @@ import json
 from typing import Any, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug
 
 try:
     from duckduckgo_search import DDGS
@@ -16,11 +16,13 @@ class DuckDuckGoTools(Toolkit):
     Args:
         search (bool): Enable DuckDuckGo search function.
         news (bool): Enable DuckDuckGo news function.
+        modifier (Optional[str]): A modifier to be used in the search request.
         fixed_max_results (Optional[int]): A fixed number of maximum results.
         headers (Optional[Any]): Headers to be used in the search request.
         proxy (Optional[str]): Proxy to be used in the search request.
         proxies (Optional[Any]): A list of proxies to be used in the search request.
         timeout (Optional[int]): The maximum number of seconds to wait for a response.
+
     """
 
     def __init__(
@@ -34,8 +36,9 @@ class DuckDuckGoTools(Toolkit):
         proxies: Optional[Any] = None,
         timeout: Optional[int] = 10,
         verify_ssl: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="duckduckgo")
+        super().__init__(name="duckduckgo", **kwargs)
 
         self.headers: Optional[Any] = headers
         self.proxy: Optional[str] = proxy
@@ -60,16 +63,15 @@ class DuckDuckGoTools(Toolkit):
         Returns:
             The result from DuckDuckGo.
         """
-        logger.debug(f"Searching DDG for: {query}")
+        actual_max_results = self.fixed_max_results or max_results
+        search_query = f"{self.modifier} {query}" if self.modifier else query
+
+        log_debug(f"Searching DDG for: {search_query}")
         ddgs = DDGS(
             headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl
         )
-        if not self.modifier:
-            return json.dumps(ddgs.text(keywords=query, max_results=(self.fixed_max_results or max_results)), indent=2)
-        return json.dumps(
-            ddgs.text(keywords=self.modifier + " " + query, max_results=(self.fixed_max_results or max_results)),
-            indent=2,
-        )
+
+        return json.dumps(ddgs.text(keywords=search_query, max_results=actual_max_results), indent=2)
 
     def duckduckgo_news(self, query: str, max_results: int = 5) -> str:
         """Use this function to get the latest news from DuckDuckGo.
@@ -81,8 +83,11 @@ class DuckDuckGoTools(Toolkit):
         Returns:
             The latest news from DuckDuckGo.
         """
-        logger.debug(f"Searching DDG news for: {query}")
+        actual_max_results = self.fixed_max_results or max_results
+
+        log_debug(f"Searching DDG news for: {query}")
         ddgs = DDGS(
             headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl
         )
-        return json.dumps(ddgs.news(keywords=query, max_results=(self.fixed_max_results or max_results)), indent=2)
+
+        return json.dumps(ddgs.news(keywords=query, max_results=actual_max_results), indent=2)

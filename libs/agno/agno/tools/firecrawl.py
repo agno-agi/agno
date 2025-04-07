@@ -1,7 +1,9 @@
 import json
+from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
+from agno.utils.log import logger
 
 try:
     from firecrawl import FirecrawlApp
@@ -10,6 +12,17 @@ except ImportError:
 
 
 class FirecrawlTools(Toolkit):
+    """
+    Firecrawl is a tool for scraping and crawling websites.
+    Args:
+        api_key (Optional[str]): The API key to use for the Firecrawl app.
+        formats (Optional[List[str]]): The formats to use for the Firecrawl app.
+        limit (int): The maximum number of pages to crawl.
+        scrape (bool): Whether to scrape the website.
+        crawl (bool): Whether to crawl the website.
+        api_url (Optional[str]): The API URL to use for the Firecrawl app.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -17,13 +30,18 @@ class FirecrawlTools(Toolkit):
         limit: int = 10,
         scrape: bool = True,
         crawl: bool = False,
+        api_url: Optional[str] = "https://api.firecrawl.dev",
+        **kwargs,
     ):
-        super().__init__(name="firecrawl_tools")
+        super().__init__(name="firecrawl_tools", **kwargs)
 
-        self.api_key: Optional[str] = api_key
+        self.api_key: Optional[str] = api_key or getenv("FIRECRAWL_API_KEY")
+        if not self.api_key:
+            logger.error("FIRECRAWL_API_KEY not set. Please set the FIRECRAWL_API_KEY environment variable.")
+
         self.formats: Optional[List[str]] = formats
         self.limit: int = limit
-        self.app: FirecrawlApp = FirecrawlApp(api_key=self.api_key)
+        self.app: FirecrawlApp = FirecrawlApp(api_key=self.api_key, api_url=api_url)
 
         # Start with scrape by default. But if crawl is set, then set scrape to False.
         if crawl:

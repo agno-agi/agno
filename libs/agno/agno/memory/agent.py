@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict
@@ -8,12 +7,12 @@ from pydantic import BaseModel, ConfigDict
 from agno.memory.classifier import MemoryClassifier
 from agno.memory.db import MemoryDb
 from agno.memory.manager import MemoryManager
-from agno.memory.memory import Memory
+from agno.memory.memory import Memory, MemoryRetrieval
 from agno.memory.summarizer import MemorySummarizer
 from agno.memory.summary import SessionSummary
 from agno.models.message import Message
 from agno.run.response import RunResponse
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 
 class AgentRun(BaseModel):
@@ -23,11 +22,13 @@ class AgentRun(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-
-class MemoryRetrieval(str, Enum):
-    last_n = "last_n"
-    first_n = "first_n"
-    semantic = "semantic"
+    def to_dict(self) -> Dict[str, Any]:
+        response = {
+            "message": self.message.to_dict() if self.message else None,
+            "messages": [message.to_dict() for message in self.messages] if self.messages else None,
+            "response": self.response.to_dict() if self.response else None,
+        }
+        return {k: v for k, v in response.items() if v is not None}
 
 
 class AgentMemory(BaseModel):
@@ -70,8 +71,6 @@ class AgentMemory(BaseModel):
         _memory_dict = self.model_dump(
             exclude_none=True,
             include={
-                "runs",
-                "messages",
                 "update_system_message_on_change",
                 "create_session_summary",
                 "update_session_summary_after_run",
@@ -87,12 +86,18 @@ class AgentMemory(BaseModel):
         # Add memories if they exist
         if self.memories is not None:
             _memory_dict["memories"] = [memory.to_dict() for memory in self.memories]
+        # Add messages if they exist
+        if self.messages is not None:
+            _memory_dict["messages"] = [message.to_dict() for message in self.messages]
+        # Add runs if they exist
+        if self.runs is not None:
+            _memory_dict["runs"] = [run.to_dict() for run in self.runs]
         return _memory_dict
 
     def add_run(self, agent_run: AgentRun) -> None:
         """Adds an AgentRun to the runs list."""
         self.runs.append(agent_run)
-        logger.debug("Added AgentRun to AgentMemory")
+        log_debug("Added AgentRun to AgentMemory")
 
     def add_system_message(self, message: Message, system_message_role: str = "system") -> None:
         """Add the system messages to the messages list"""
@@ -111,21 +116,16 @@ class AgentMemory(BaseModel):
                     self.messages[system_message_index].content != message.content
                     and self.update_system_message_on_change
                 ):
-                    logger.info("Updating system message in memory with new content")
+                    log_info("Updating system message in memory with new content")
                     self.messages[system_message_index] = message
             else:
                 # Add the system message to the messages list
                 self.messages.insert(0, message)
 
-    def add_message(self, message: Message) -> None:
-        """Add a Message to the messages list."""
-        self.messages.append(message)
-        logger.debug("Added Message to AgentMemory")
-
     def add_messages(self, messages: List[Message]) -> None:
         """Add a list of messages to the messages list."""
         self.messages.extend(messages)
-        logger.debug(f"Added {len(messages)} Messages to AgentMemory")
+        log_debug(f"Added {len(messages)} Messages to AgentMemory")
 
     def get_messages(self) -> List[Dict[str, Any]]:
         """Returns the messages list as a list of dictionaries."""
@@ -134,39 +134,37 @@ class AgentMemory(BaseModel):
     def get_messages_from_last_n_runs(
         self, last_n: Optional[int] = None, skip_role: Optional[str] = None
     ) -> List[Message]:
-        """Returns the messages from the last_n runs
+        """Returns the messages from the last_n runs, excluding previously tagged history messages.
 
         Args:
             last_n: The number of runs to return from the end of the conversation.
             skip_role: Skip messages with this role.
 
         Returns:
-            A list of Messages in the last_n runs.
+            A list of Messages from the specified runs, excluding history messages.
         """
-        if last_n is None:
-            logger.debug("Getting messages from all previous runs")
-            messages_from_all_history = []
-            for prev_run in self.runs:
-                if prev_run.response and prev_run.response.messages:
-                    if skip_role:
-                        prev_run_messages = [m for m in prev_run.response.messages if m.role != skip_role]
-                    else:
-                        prev_run_messages = prev_run.response.messages
-                    messages_from_all_history.extend(prev_run_messages)
-            logger.debug(f"Messages from previous runs: {len(messages_from_all_history)}")
-            return messages_from_all_history
+        if not self.runs:
+            return []
 
-        logger.debug(f"Getting messages from last {last_n} runs")
-        messages_from_last_n_history = []
-        for prev_run in self.runs[-last_n:]:
-            if prev_run.response and prev_run.response.messages:
-                if skip_role:
-                    prev_run_messages = [m for m in prev_run.response.messages if m.role != skip_role]
-                else:
-                    prev_run_messages = prev_run.response.messages
-                messages_from_last_n_history.extend(prev_run_messages)
-        logger.debug(f"Messages from last {last_n} runs: {len(messages_from_last_n_history)}")
-        return messages_from_last_n_history
+        runs_to_process = self.runs if last_n is None else self.runs[-last_n:]
+        messages_from_history = []
+
+        for run in runs_to_process:
+            if not (run.response and run.response.messages):
+                continue
+
+            for message in run.response.messages:
+                # Skip messages with specified role
+                if skip_role and message.role == skip_role:
+                    continue
+                # Skip messages that were tagged as history in previous runs
+                if hasattr(message, "from_history") and message.from_history:
+                    continue
+
+                messages_from_history.append(message)
+
+        log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
+        return messages_from_history
 
     def get_message_pairs(
         self, user_role: str = "user", assistant_role: Optional[List[str]] = None
@@ -184,12 +182,16 @@ class AgentMemory(BaseModel):
 
                 # Start from the beginning to look for the user message
                 for message in run.response.messages:
+                    if hasattr(message, "from_history") and message.from_history:
+                        continue
                     if message.role == user_role:
                         user_messages_from_run = message
                         break
 
                 # Start from the end to look for the assistant response
                 for message in run.response.messages[::-1]:
+                    if hasattr(message, "from_history") and message.from_history:
+                        continue
                     if message.role in assistant_role:
                         assistant_messages_from_run = message
                         break
@@ -226,7 +228,7 @@ class AgentMemory(BaseModel):
             else:
                 raise NotImplementedError("Semantic retrieval not yet supported.")
         except Exception as e:
-            logger.debug(f"Error reading memory: {e}")
+            log_debug(f"Error reading memory: {e}")
             return
 
         # Clear the existing memories
@@ -284,10 +286,10 @@ class AgentMemory(BaseModel):
 
         # Check if this user message should be added to long term memory
         should_update_memory = force or self.should_update_memory(input=input)
-        logger.debug(f"Update memory: {should_update_memory}")
+        log_debug(f"Update memory: {should_update_memory}")
 
         if not should_update_memory:
-            logger.debug("Memory update not required")
+            log_debug("Memory update not required")
             return "Memory update not required"
 
         if self.manager is None:
@@ -317,10 +319,10 @@ class AgentMemory(BaseModel):
 
         # Check if this user message should be added to long term memory
         should_update_memory = force or await self.ashould_update_memory(input=input)
-        logger.debug(f"Async update memory: {should_update_memory}")
+        log_debug(f"Async update memory: {should_update_memory}")
 
         if not should_update_memory:
-            logger.debug("Memory update not required")
+            log_debug("Memory update not required")
             return "Memory update not required"
 
         if self.manager is None:

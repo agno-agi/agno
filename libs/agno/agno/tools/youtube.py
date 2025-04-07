@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
 
 from agno.tools import Toolkit
+from agno.utils.log import log_debug
 
 try:
     from youtube_transcript_api import YouTubeTranscriptApi
@@ -21,8 +22,9 @@ class YouTubeTools(Toolkit):
         get_video_timestamps: bool = True,
         languages: Optional[List[str]] = None,
         proxies: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ):
-        super().__init__(name="youtube_tools")
+        super().__init__(name="youtube_tools", **kwargs)
 
         self.languages: Optional[List[str]] = languages
         self.proxies: Optional[Dict[str, Any]] = proxies
@@ -70,6 +72,8 @@ class YouTubeTools(Toolkit):
         if not url:
             return "No URL provided"
 
+        log_debug(f"Getting video data for youtube video: {url}")
+
         try:
             video_id = self.get_youtube_video_id(url)
         except Exception:
@@ -112,6 +116,8 @@ class YouTubeTools(Toolkit):
         if not url:
             return "No URL provided"
 
+        log_debug(f"Getting captions for youtube video: {url}")
+
         try:
             video_id = self.get_youtube_video_id(url)
         except Exception:
@@ -125,7 +131,7 @@ class YouTubeTools(Toolkit):
             if self.proxies:
                 kwargs["proxies"] = self.proxies
             captions = YouTubeTranscriptApi.get_transcript(video_id, **kwargs)
-            # logger.debug(f"Captions for video {video_id}: {captions}")
+            # log_debug(f"Captions for video {video_id}: {captions}")
             if captions:
                 return " ".join(line["text"] for line in captions)
             return "No captions found for video"
@@ -143,6 +149,8 @@ class YouTubeTools(Toolkit):
         """
         if not url:
             return "No URL provided"
+
+        log_debug(f"Getting timestamps for youtube video: {url}")
 
         try:
             video_id = self.get_youtube_video_id(url)

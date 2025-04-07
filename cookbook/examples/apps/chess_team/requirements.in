@@ -1,0 +1,14 @@
+agno
+anthropic
+groq
+google-genai
+nest-asyncio
+openai
+pathlib
+Pillow
+rich
+streamlit
+pydantic
+typing-extensions
+python-dotenv
+python-chess

@@ -3,7 +3,7 @@
 from agno.agent import Agent
 from agno.models.ollama import Ollama
 from agno.playground import Playground, serve_playground_app
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.storage.sqlite import SqliteStorage
 
 local_agent_storage_file: str = "tmp/local_agents.db"
 common_instructions = [
@@ -19,8 +19,10 @@ coding_agent = Agent(
     add_history_to_messages=True,
     description="You are a coding agent",
     add_datetime_to_instructions=True,
-    storage=SqliteAgentStorage(
-        table_name="coding_agent", db_file=local_agent_storage_file
+    storage=SqliteStorage(
+        table_name="coding_agent",
+        db_file=local_agent_storage_file,
+        auto_upgrade_schema=True,
     ),
 )
 

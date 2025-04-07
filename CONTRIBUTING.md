@@ -12,6 +12,7 @@ Please follow the [fork and pull request](https://docs.github.com/en/get-started
 - Send a pull request.
 - We appreciate your support & input!
 
+
 ## Development setup
 
 1. Clone the repository.
@@ -44,6 +45,18 @@ Ensure your code meets our quality standards by running the appropriate formatti
 
 These scripts will perform code formatting with `ruff` and static type checks with `mypy`.
 
+## Local testing
+
+Before submitting a pull request, ensure all tests pass locally:
+
+1. Do the development setup above.
+
+2. Run the test suite `./scripts/test.sh`
+
+3. Run specific test files or test cases: `pytest ./libs/agno/tests/unit/utils/test_string.py` or whatever file you want to test.
+
+Make sure all tests pass before submitting your pull request. If you add new features, include appropriate test coverage.
+
 ## Adding a new Vector Database
 
 1. Setup your local environment by following the [Development setup](#development-setup).
@@ -70,8 +83,8 @@ These scripts will perform code formatting with `ruff` and static type checks wi
 4. If the Model provider does not support the OpenAI API spec:
    - Reach out to us on [Discord](https://discord.gg/4MtYHHrgA8) or open an issue to discuss the best way to integrate your LLM provider.
    - Checkout [`agno/models/anthropic/claude.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/anthropic/claude.py) or [`agno/models/cohere/chat.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/cohere/chat.py) for inspiration.
-5. Add a recipe for using your Model provider under `cookbook/providers/<your_model>`.
-   - Checkout [`agno/cookbook/provider/claude`](https://github.com/agno-agi/agno/tree/main/cookbook/providers/claude) for an example.
+5. Add a recipe for using your Model provider under `cookbook/models/<your_model>`.
+   - Checkout [`agno/cookbook/models/aws/claude`](https://github.com/agno-agi/agno/tree/main/cookbook/models/aws/claude) for an example.
 6. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
 7. Submit a pull request.
 

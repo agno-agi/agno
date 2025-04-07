@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from sqlalchemy import Engine, create_engine
@@ -28,8 +28,9 @@ class SQLTools(Toolkit):
         list_tables: bool = True,
         describe_table: bool = True,
         run_sql_query: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="sql_tools")
+        super().__init__(name="sql_tools", **kwargs)
 
         # Get the database engine
         _engine: Optional[Engine] = db_engine
@@ -69,8 +70,9 @@ class SQLTools(Toolkit):
             return json.dumps(self.tables)
 
         try:
+            log_debug("listing tables in the database")
             table_names = inspect(self.db_engine).get_table_names()
-            logger.debug(f"table_names: {table_names}")
+            log_debug(f"table_names: {table_names}")
             return json.dumps(table_names)
         except Exception as e:
             logger.error(f"Error getting tables: {e}")
@@ -87,6 +89,7 @@ class SQLTools(Toolkit):
         """
 
         try:
+            log_debug(f"Describing table: {table_name}")
             table_names = inspect(self.db_engine)
             table_schema = table_names.get_columns(table_name)
             return json.dumps([str(column) for column in table_schema])
@@ -122,7 +125,7 @@ class SQLTools(Toolkit):
         Returns:
             List[dict]: The result of the query.
         """
-        logger.debug(f"Running sql |\n{sql}")
+        log_debug(f"Running sql |\n{sql}")
 
         with self.Session() as sess, sess.begin():
             result = sess.execute(text(sql))

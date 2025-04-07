@@ -1,39 +1,42 @@
 """
-1. Run: `pip install openai lancedb tantivy pypdf sqlalchemy agno cohere` to install the dependencies
-2. Run: `python cookbook/rag/03_traditional_rag_lancedb.py` to run the agent
+1. Run: `pip install openai agno cohere lancedb tantivy sqlalchemy` to install the dependencies
+2. Export your OPENAI_API_KEY and CO_API_KEY
+3. Run: `python cookbook/agent_concepts/rag/agentic_rag_with_reranking.py` to run the agent
 """
 
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.url import UrlKnowledge
 from agno.models.openai import OpenAIChat
 from agno.reranker.cohere import CohereReranker
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-# Create a knowledge base of PDFs from URLs
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
-    # Use LanceDB as the vector database and store embeddings in the `recipes` table
+# Create a knowledge base containing information from a URL
+knowledge_base = UrlKnowledge(
+    urls=["https://docs.agno.com/llms-full.txt"],
+    # Use LanceDB as the vector database and store embeddings in the `agno_docs` table
     vector_db=LanceDb(
-        table_name="recipes",
         uri="tmp/lancedb",
-        search_type=SearchType.vector,
-        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-        reranker=CohereReranker(model="rerank-multilingual-v3.0"),  # Add a reranker
+        table_name="agno_docs",
+        search_type=SearchType.hybrid,
+        embedder=OpenAIEmbedder(
+            id="text-embedding-3-small"
+        ),  # Use OpenAI for embeddings
+        reranker=CohereReranker(
+            model="rerank-multilingual-v3.0"
+        ),  # Use Cohere for reranking
     ),
 )
-# Load the knowledge base: Comment after first run as the knowledge base is already loaded
-knowledge_base.load()
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
+    # Agentic RAG is enabled by default when `knowledge` is provided to the Agent.
     knowledge=knowledge_base,
-    # Add a tool to search the knowledge base which enables agentic RAG.
-    # This is enabled by default when `knowledge` is provided to the Agent.
-    search_knowledge=True,
     show_tool_calls=True,
     markdown=True,
 )
-agent.print_response(
-    "How do I make chicken and galangal in coconut milk soup", stream=True
-)
+
+if __name__ == "__main__":
+    # Load the knowledge base, comment after first run
+    # agent.knowledge.load(recreate=True)
+    agent.print_response("What are Agno's key features?")

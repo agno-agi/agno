@@ -20,7 +20,9 @@ class Nvidia(OpenAILike):
 
     id: str = "meta/llama-3.3-70b-instruct"
     name: str = "Nvidia"
-    provider: str = "Nvidia " + id
+    provider: str = "Nvidia"
 
     api_key: Optional[str] = getenv("NVIDIA_API_KEY", None)
     base_url: str = "https://integrate.api.nvidia.com/v1"
+
+    supports_native_structured_outputs: bool = False

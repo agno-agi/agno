@@ -1,31 +1,208 @@
+import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from os import getenv
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
-from agno.models.aws.bedrock import AwsBedrock
+from agno.exceptions import ModelProviderError, ModelRateLimitError
+from agno.media import Image
+from agno.models.anthropic import Claude as AnthropicClaude
 from agno.models.message import Message
+from agno.utils.log import log_error, log_warning
+
+try:
+    from anthropic import AnthropicBedrock, APIConnectionError, APIStatusError, AsyncAnthropicBedrock, RateLimitError
+    from anthropic.types import Message as AnthropicMessage
+    from anthropic.types import (
+        TextBlock,
+        ToolUseBlock,
+    )
+except ImportError:
+    log_error("`anthropic[bedrock]` not installed. Please install it via `pip install anthropic[bedrock]`.")
+    raise
+
+try:
+    from boto3.session import Session
+except ImportError:
+    log_error("`boto3` not installed. Please install it via `pip install boto3`.")
+    raise
+
+
+ROLE_MAP = {
+    "system": "system",
+    "user": "user",
+    "assistant": "assistant",
+    "tool": "user",
+}
+
+
+def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
+    """
+    Add an image to a message by converting it to base64 encoded format.
+    """
+    using_filetype = False
+
+    import base64
+
+    # 'imghdr' was deprecated in Python 3.11: https://docs.python.org/3/library/imghdr.html
+    # 'filetype' used as a fallback
+    try:
+        import imghdr
+    except (ModuleNotFoundError, ImportError):
+        try:
+            import filetype
+
+            using_filetype = True
+        except (ModuleNotFoundError, ImportError):
+            raise ImportError("`filetype` not installed. Please install using `pip install filetype`")
+
+    type_mapping = {
+        "jpeg": "image/jpeg",
+        "jpg": "image/jpeg",
+        "png": "image/png",
+        "gif": "image/gif",
+        "webp": "image/webp",
+    }
+
+    try:
+        # Case 1: Image is a URL
+        if image.url is not None:
+            content_bytes = image.image_url_content
+
+        # Case 2: Image is a local file path
+        elif image.filepath is not None:
+            from pathlib import Path
+
+            path = Path(image.filepath) if isinstance(image.filepath, str) else image.filepath
+            if path.exists() and path.is_file():
+                with open(image.filepath, "rb") as f:
+                    content_bytes = f.read()
+            else:
+                log_error(f"Image file not found: {image}")
+                return None
+
+        # Case 3: Image is a bytes object
+        elif image.content is not None:
+            content_bytes = image.content
+
+        else:
+            log_error(f"Unsupported image type: {type(image)}")
+            return None
+
+        if using_filetype:
+            kind = filetype.guess(content_bytes)
+            if not kind:
+                log_error("Unable to determine image type")
+                return None
+
+            img_type = kind.extension
+        else:
+            img_type = imghdr.what(None, h=content_bytes)  # type: ignore
+
+        if not img_type:
+            log_error("Unable to determine image type")
+            return None
+
+        media_type = type_mapping.get(img_type)
+        if not media_type:
+            log_error(f"Unsupported image type: {img_type}")
+            return None
+
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": base64.b64encode(content_bytes).decode("utf-8"),  # type: ignore
+            },
+        }
+
+    except Exception as e:
+        log_error(f"Error processing image: {e}")
+        return None
+
+
+def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]:
+    """
+    Process the list of messages and separate them into API messages and system messages.
+
+    Args:
+        messages (List[Message]): The list of messages to process.
+
+    Returns:
+        Tuple[List[Dict[str, str]], str]: A tuple containing the list of API messages and the concatenated system messages.
+    """
+
+    chat_messages: List[Dict[str, str]] = []
+    system_messages: List[str] = []
+
+    for message in messages:
+        content = message.content or ""
+        if message.role == "system":
+            if content is not None:
+                system_messages.append(content)  # type: ignore
+            continue
+        elif message.role == "user":
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content}]
+
+            if message.images is not None:
+                for image in message.images:
+                    image_content = _format_image_for_message(image)
+                    if image_content:
+                        content.append(image_content)
+
+            if message.files is not None and len(message.files) > 0:
+                log_warning("Files are not supported for AWS Bedrock Claude")
+
+            if message.audio is not None and len(message.audio) > 0:
+                log_warning("Audio is not supported for AWS Bedrock Claude")
+
+            if message.videos is not None and len(message.videos) > 0:
+                log_warning("Video is not supported for AWS Bedrock Claude")
+
+        # Handle tool calls from history
+        elif message.role == "assistant":
+            content = []
+
+            if isinstance(message.content, str) and message.content:
+                content.append(TextBlock(text=message.content, type="text"))
+
+            if message.tool_calls:
+                for tool_call in message.tool_calls:
+                    content.append(
+                        ToolUseBlock(
+                            id=tool_call["id"],
+                            input=json.loads(tool_call["function"]["arguments"])
+                            if "arguments" in tool_call["function"]
+                            else {},
+                            name=tool_call["function"]["name"],
+                            type="tool_use",
+                        )
+                    )
+        chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
+    return chat_messages, " ".join(system_messages)
 
 
 @dataclass
-class Claude(AwsBedrock):
+class Claude(AnthropicClaude):
     """
     AWS Bedrock Claude model.
 
     Args:
-        id (str): The model to use.
-        max_tokens (int): The maximum number of tokens to generate.
-        temperature (Optional[float]): The temperature to use.
-        top_p (Optional[float]): The top p to use.
-        top_k (Optional[int]): The top k to use.
-        stop_sequences (Optional[List[str]]): The stop sequences to use.
-        anthropic_version (str): The anthropic version to use.
-        request_params (Optional[Dict[str, Any]]): The request parameters to use.
-        client_params (Optional[Dict[str, Any]]): The client parameters to use.
-
+        aws_region (Optional[str]): The AWS region to use.
+        aws_access_key (Optional[str]): The AWS access key to use.
+        aws_secret_key (Optional[str]): The AWS secret key to use.
+        session (Optional[Session]): A boto3 Session object to use for authentication.
     """
 
     id: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
     name: str = "AwsBedrockAnthropicClaude"
     provider: str = "AwsBedrock"
+
+    aws_access_key: Optional[str] = None
+    aws_secret_key: Optional[str] = None
+    aws_region: Optional[str] = None
+    session: Optional[Session] = None
 
     # -*- Request parameters
     max_tokens: int = 4096
@@ -33,7 +210,6 @@ class Claude(AwsBedrock):
     top_p: Optional[float] = None
     top_k: Optional[int] = None
     stop_sequences: Optional[List[str]] = None
-    anthropic_version: str = "bedrock-2023-05-31"
 
     # -*- Request parameters
     request_params: Optional[Dict[str, Any]] = None
@@ -49,180 +225,240 @@ class Claude(AwsBedrock):
         _dict["stop_sequences"] = self.stop_sequences
         return _dict
 
+    client: Optional[AnthropicBedrock] = None  # type: ignore
+    async_client: Optional[AsyncAnthropicBedrock] = None  # type: ignore
+
+    def get_client(self):
+        if self.client is not None:
+            return self.client
+
+        client_params = {}
+
+        if self.session:
+            credentials = self.session.get_credentials()
+            client_params = {
+                "aws_access_key": credentials.access_key,
+                "aws_secret_key": credentials.secret_key,
+                "aws_region": self.session.region_name,
+            }
+        else:
+            self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY")
+            self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_KEY")
+            self.aws_region = self.aws_region or getenv("AWS_REGION")
+
+            client_params = {
+                "aws_secret_key": self.aws_secret_key,
+                "aws_access_key": self.aws_access_key,
+                "aws_region": self.aws_region,
+            }
+
+        if self.client_params:
+            client_params.update(self.client_params)
+
+        self.client = AnthropicBedrock(
+            **client_params,  # type: ignore
+        )
+        return self.client
+
+    def get_async_client(self):
+        if self.async_client is not None:
+            return self.async_client
+
+        client_params = {}
+
+        if self.session:
+            credentials = self.session.get_credentials()
+            client_params = {
+                "aws_access_key": credentials.access_key,
+                "aws_secret_key": credentials.secret_key,
+                "aws_region": self.session.region_name,
+            }
+        else:
+            client_params = {
+                "aws_secret_key": self.aws_secret_key,
+                "aws_access_key": self.aws_access_key,
+                "aws_region": self.aws_region,
+            }
+
+        if self.client_params:
+            client_params.update(self.client_params)
+
+        self.async_client = AsyncAnthropicBedrock(
+            **client_params,  # type: ignore
+        )
+        return self.async_client
+
     @property
-    def api_kwargs(self) -> Dict[str, Any]:
-        _request_params: Dict[str, Any] = {
-            "max_tokens": self.max_tokens,
-            "anthropic_version": self.anthropic_version,
-        }
+    def request_kwargs(self) -> Dict[str, Any]:
+        """
+        Generate keyword arguments for API requests.
+        """
+        _request_params: Dict[str, Any] = {}
+        if self.max_tokens:
+            _request_params["max_tokens"] = self.max_tokens
         if self.temperature:
             _request_params["temperature"] = self.temperature
+        if self.stop_sequences:
+            _request_params["stop_sequences"] = self.stop_sequences
         if self.top_p:
             _request_params["top_p"] = self.top_p
         if self.top_k:
             _request_params["top_k"] = self.top_k
-        if self.stop_sequences:
-            _request_params["stop_sequences"] = self.stop_sequences
         if self.request_params:
             _request_params.update(self.request_params)
         return _request_params
 
-    def get_tools(self) -> Optional[Dict[str, Any]]:
+    def invoke(self, messages: List[Message]) -> AnthropicMessage:
         """
-        Refactors the tools in a format accepted by the Bedrock API.
+        Send a request to the Anthropic API to generate a response.
+
+        Args:
+            messages (List[Message]): A list of messages to send to the model.
+
+        Returns:
+            AnthropicMessage: The response from the model.
+
+        Raises:
+            APIConnectionError: If there are network connectivity issues
+            RateLimitError: If the API rate limit is exceeded
+            APIStatusError: For other API-related errors
         """
-        if not self._functions:
-            return None
 
-        tools = []
-        for f_name, function in self._functions.items():
-            properties = {}
-            required = []
+        try:
+            chat_messages, system_message = _format_messages(messages)
+            request_kwargs = self._prepare_request_kwargs(system_message)
 
-            for param_name, param_info in function.parameters.get("properties", {}).items():
-                param_type = param_info.get("type")
-                if isinstance(param_type, list):
-                    param_type = [t for t in param_type if t != "null"][0]
-
-                properties[param_name] = {
-                    "type": param_type or "string",
-                    "description": param_info.get("description") or "",
-                }
-
-                if "null" not in (
-                    param_info.get("type") if isinstance(param_info.get("type"), list) else [param_info.get("type")]
-                ):
-                    required.append(param_name)
-
-            tools.append(
-                {
-                    "toolSpec": {
-                        "name": f_name,
-                        "description": function.description or "",
-                        "inputSchema": {"json": {"type": "object", "properties": properties, "required": required}},
-                    }
-                }
+            return self.get_client().messages.create(
+                model=self.id,
+                messages=chat_messages,  # type: ignore
+                **request_kwargs,
             )
+        except APIConnectionError as e:
+            log_error(f"Connection error while calling Claude API: {str(e)}")
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except RateLimitError as e:
+            log_warning(f"Rate limit exceeded: {str(e)}")
+            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except APIStatusError as e:
+            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            raise ModelProviderError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Claude API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-        return {"tools": tools}
-
-    def get_request_body(self, messages: List[Message]) -> Dict[str, Any]:
+    def invoke_stream(self, messages: List[Message]) -> Any:
         """
-        Get the request body for the Bedrock API.
+        Stream a response from the Anthropic API.
 
         Args:
-            messages (List[Message]): The messages to include in the request.
+            messages (List[Message]): A list of messages to send to the model.
 
         Returns:
-            Dict[str, Any]: The request body for the Bedrock API.
+            Any: The streamed response from the model.
         """
-        system_prompt = None
-        messages_for_api = []
-        for m in messages:
-            if m.role == "system":
-                system_prompt = m.content
-            else:
-                messages_for_api.append({"role": m.role, "content": [{"text": m.content}]})
 
-        request_body = {
-            "messages": messages_for_api,
-            "modelId": self.id,
-        }
+        chat_messages, system_message = _format_messages(messages)
+        request_kwargs = self._prepare_request_kwargs(system_message)
 
-        if system_prompt:
-            request_body["system"] = [{"text": system_prompt}]
+        try:
+            return (
+                self.get_client()
+                .messages.stream(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
+                )
+                .__enter__()
+            )
+        except APIConnectionError as e:
+            log_error(f"Connection error while calling Claude API: {str(e)}")
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except RateLimitError as e:
+            log_warning(f"Rate limit exceeded: {str(e)}")
+            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except APIStatusError as e:
+            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            raise ModelProviderError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Claude API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-        # Add inferenceConfig
-        inference_config: Dict[str, Any] = {}
-        rename_map = {"max_tokens": "maxTokens", "top_p": "topP", "top_k": "topK", "stop_sequences": "stopSequences"}
-
-        for k, v in self.api_kwargs.items():
-            if k in rename_map:
-                inference_config[rename_map[k]] = v
-            elif k in ["temperature"]:
-                inference_config[k] = v
-
-        if inference_config:
-            request_body["inferenceConfig"] = inference_config  # type: ignore
-
-        if self.tools:
-            tools = self.get_tools()
-            request_body["toolConfig"] = tools  # type: ignore
-
-        return request_body
-
-    def parse_response_message(self, response: Dict[str, Any]) -> Dict[str, Any]:
+    async def ainvoke(self, messages: List[Message]) -> AnthropicMessage:
         """
-        Parse the response from the Bedrock API.
+        Send an asynchronous request to the Anthropic API to generate a response.
 
         Args:
-            response (Dict[str, Any]): The response from the Bedrock API.
+            messages (List[Message]): A list of messages to send to the model.
 
         Returns:
-            Dict[str, Any]: The parsed response.
+            AnthropicMessage: The response from the model.
+
+        Raises:
+            APIConnectionError: If there are network connectivity issues
+            RateLimitError: If the API rate limit is exceeded
+            APIStatusError: For other API-related errors
         """
-        res = {}
-        if "output" in response and "message" in response["output"]:
-            message = response["output"]["message"]
-            role = message.get("role")
-            content = message.get("content", [])
 
-            # Extract text content if it's a list of dictionaries
-            if isinstance(content, list) and content and isinstance(content[0], dict):
-                content = [item.get("text", "") for item in content if "text" in item]
-                content = "\n".join(content)  # Join multiple text items if present
+        try:
+            chat_messages, system_message = _format_messages(messages)
+            request_kwargs = self._prepare_request_kwargs(system_message)
 
-            res = {
-                "content": content,
-                "usage": {
-                    "inputTokens": response.get("usage", {}).get("inputTokens"),
-                    "outputTokens": response.get("usage", {}).get("outputTokens"),
-                    "totalTokens": response.get("usage", {}).get("totalTokens"),
-                },
-                "metrics": {"latencyMs": response.get("metrics", {}).get("latencyMs")},
-                "role": role,
-            }
+            return await self.get_async_client().messages.create(
+                model=self.id,
+                messages=chat_messages,  # type: ignore
+                **request_kwargs,
+            )
+        except APIConnectionError as e:
+            log_error(f"Connection error while calling Claude API: {str(e)}")
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except RateLimitError as e:
+            log_warning(f"Rate limit exceeded: {str(e)}")
+            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except APIStatusError as e:
+            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            raise ModelProviderError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Claude API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-        stop_reason = None
-        if "stopReason" in response:
-            stop_reason = response["stopReason"]
-
-        res["stop_reason"] = stop_reason if stop_reason else None
-        res["tool_requests"] = None
-
-        if stop_reason == "tool_use":
-            tool_requests = response["output"]["message"]["content"]
-            res["tool_requests"] = tool_requests
-
-        return res
-
-    def create_assistant_message(self, parsed_response: Dict[str, Any]) -> Message:
+    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """
-        Create an assistant message from the parsed response.
+        Stream an asynchronous response from the Anthropic API.
 
         Args:
-            parsed_response (Dict[str, Any]): The parsed response from the Bedrock API.
+            messages (List[Message]): A list of messages to send to the model.
 
         Returns:
-            Message: The assistant message.
+            Any: The streamed response from the model.
         """
 
-        return Message(
-            role=parsed_response["role"],
-            content=parsed_response["content"],
-            metrics=parsed_response["metrics"],
-        )
-
-    def parse_response_delta(self, response: Dict[str, Any]) -> Optional[str]:
-        """
-        Parse the response delta from the Bedrock API.
-
-        Args:
-            response (Dict[str, Any]): The response from the Bedrock API.
-
-        Returns:
-            Optional[str]: The response delta.
-        """
-        if "delta" in response:
-            return response.get("delta", {}).get("text")
-        return response.get("completion")
+        try:
+            chat_messages, system_message = _format_messages(messages)
+            request_kwargs = self._prepare_request_kwargs(system_message)
+            async with self.get_async_client().messages.stream(
+                model=self.id,
+                messages=chat_messages,  # type: ignore
+                **request_kwargs,
+            ) as stream:
+                async for chunk in stream:
+                    yield chunk
+        except APIConnectionError as e:
+            log_error(f"Connection error while calling Claude API: {str(e)}")
+            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except RateLimitError as e:
+            log_warning(f"Rate limit exceeded: {str(e)}")
+            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+        except APIStatusError as e:
+            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            raise ModelProviderError(
+                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+            ) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Claude API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e

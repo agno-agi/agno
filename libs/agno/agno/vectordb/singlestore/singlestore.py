@@ -15,11 +15,10 @@ except ImportError:
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.embedder.openai import OpenAIEmbedder
 from agno.reranker.base import Reranker
 
 # from agno.vectordb.singlestore.index import Ivfflat, HNSWFlat
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -31,7 +30,7 @@ class SingleStore(VectorDb):
         schema: Optional[str] = "ai",
         db_url: Optional[str] = None,
         db_engine: Optional[Engine] = None,
-        embedder: Embedder = OpenAIEmbedder(),
+        embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         reranker: Optional[Reranker] = None,
         # index: Optional[Union[Ivfflat, HNSW]] = HNSW(),
@@ -48,8 +47,15 @@ class SingleStore(VectorDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = _engine
         self.metadata: MetaData = MetaData(schema=self.schema)
+
+        if embedder is None:
+            from agno.embedder.openai import OpenAIEmbedder
+
+            embedder = OpenAIEmbedder()
+            log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
+
         self.distance: Distance = distance
         # self.index: Optional[Union[Ivfflat, HNSW]] = index
         self.Session: sessionmaker[Session] = sessionmaker(bind=self.db_engine)
@@ -83,20 +89,7 @@ class SingleStore(VectorDb):
         Create the table if it does not exist.
         """
         if not self.table_exists():
-            logger.info(f"Creating table: {self.collection}")
-            logger.info(f"""
-                    CREATE TABLE IF NOT EXISTS {self.schema}.{self.collection} (
-                        id TEXT,
-                        name TEXT,
-                        meta_data TEXT,
-                        content TEXT,
-                        embedding VECTOR({self.dimensions}) NOT NULL,
-                        `usage` TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                        content_hash TEXT
-                    );
-                    """)
+            log_info(f"Creating table: {self.collection}")
             with self.db_engine.connect() as connection:
                 connection.execute(
                     text(f"""
@@ -123,7 +116,7 @@ class SingleStore(VectorDb):
         Returns:
             bool: True if the table exists, False otherwise.
         """
-        logger.debug(f"Checking if table exists: {self.table.name}")
+        log_debug(f"Checking if table exists: {self.table.name}")
         try:
             return inspect(self.db_engine).has_table(self.table.name, schema=self.schema)
         except Exception as e:
@@ -188,24 +181,28 @@ class SingleStore(VectorDb):
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
 
-                # Convert embedding to a JSON array string
-                embedding_json = json.dumps(document.embedding)
+                # Convert embedding list to SingleStore VECTOR format
+                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
 
                 stmt = mysql.insert(self.table).values(
                     id=_id,
                     name=document.name,
                     meta_data=meta_data_json,
                     content=cleaned_content,
-                    embedding=embedding_json,  # Properly formatted embedding as a JSON array string
+                    embedding=embeddings,
                     usage=usage_json,
                     content_hash=content_hash,
                 )
                 sess.execute(stmt)
                 counter += 1
-                logger.debug(f"Inserted document: {document.name} ({document.meta_data})")
+                log_debug(f"Inserted document: {document.name} ({document.meta_data})")
 
             sess.commit()
-            logger.debug(f"Committed {counter} documents")
+            log_debug(f"Committed {counter} documents")
+
+    def upsert_available(self) -> bool:
+        """Indicate that upsert functionality is available."""
+        return True
 
     def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, batch_size: int = 20) -> None:
         """
@@ -227,9 +224,8 @@ class SingleStore(VectorDb):
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
 
-                # Convert embedding to a JSON array string
-                embedding_json = json.dumps(document.embedding)
-
+                # Convert embedding list to SingleStore VECTOR format
+                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
                 stmt = (
                     mysql.insert(self.table)
                     .values(
@@ -237,7 +233,7 @@ class SingleStore(VectorDb):
                         name=document.name,
                         meta_data=meta_data_json,
                         content=cleaned_content,
-                        embedding=embedding_json,
+                        embedding=embeddings,
                         usage=usage_json,
                         content_hash=content_hash,
                     )
@@ -245,17 +241,17 @@ class SingleStore(VectorDb):
                         name=document.name,
                         meta_data=meta_data_json,
                         content=cleaned_content,
-                        embedding=embedding_json,
+                        embedding=embeddings,
                         usage=usage_json,
                         content_hash=content_hash,
                     )
                 )
                 sess.execute(stmt)
                 counter += 1
-                logger.debug(f"Upserted document: {document.name} ({document.meta_data})")
+                log_debug(f"Upserted document: {document.name} ({document.meta_data})")
 
             sess.commit()
-            logger.debug(f"Committed {counter} documents")
+            log_debug(f"Committed {counter} documents")
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
@@ -292,20 +288,21 @@ class SingleStore(VectorDb):
         if self.distance == Distance.l2:
             stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
         if self.distance == Distance.cosine:
-            embedding_json = json.dumps(query_embedding)
+            embeddings = json.dumps(query_embedding)
             dot_product_expr = func.dot_product(self.table.c.embedding, text(":embedding"))
             stmt = stmt.order_by(dot_product_expr.desc())
-            stmt = stmt.params(embedding=embedding_json)
+            stmt = stmt.params(embedding=embeddings)
             # stmt = stmt.order_by(self.table.c.embedding.cosine_distance(query_embedding))
         if self.distance == Distance.max_inner_product:
             stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
 
         stmt = stmt.limit(limit=limit)
-        logger.debug(f"Query: {stmt}")
+        log_debug(f"Query: {stmt}")
 
         # Get neighbors
         # This will only work if embedding column is created with `vector` data type.
         with self.Session.begin() as sess:
+            sess.execute(text("SET vector_type_project_format = JSON"))
             neighbors = sess.execute(stmt).fetchall() or []
             #         if self.index is not None:
             #             if isinstance(self.index, Ivfflat):
@@ -322,8 +319,15 @@ class SingleStore(VectorDb):
         for neighbor in neighbors:
             meta_data_dict = json.loads(neighbor.meta_data) if neighbor.meta_data else {}
             usage_dict = json.loads(neighbor.usage) if neighbor.usage else {}
-            # Convert the embedding mysql.TEXT back into a list
-            embedding_list = json.loads(neighbor.embedding) if neighbor.embedding else []
+
+            # Convert SingleStore VECTOR type to list
+            embedding_list = []
+            if neighbor.embedding:
+                try:
+                    embedding_list = json.loads(neighbor.embedding)
+                except Exception as e:
+                    logger.error(f"Error extracting vector: {e}")
+                    embedding_list = []
 
             search_results.append(
                 Document(
@@ -346,7 +350,7 @@ class SingleStore(VectorDb):
         Delete the table.
         """
         if self.table_exists():
-            logger.debug(f"Deleting table: {self.collection}")
+            log_debug(f"Deleting table: {self.collection}")
             self.table.drop(self.db_engine)
 
     def exists(self) -> bool:
@@ -388,3 +392,29 @@ class SingleStore(VectorDb):
             stmt = delete(self.table)
             sess.execute(stmt)
             return True
+
+    async def async_create(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_doc_exists(self, document: Document) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_drop(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_exists(self) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_name_exists(self, name: str) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

@@ -1,15 +1,30 @@
 from typing import Any, Dict, List, Optional, Union
 
 try:
+    from packaging import version
+    from pinecone import __version__
+
+    if version.parse(__version__).major >= 6:
+        import warnings
+
+        warnings.warn(
+            "We do not yet support Pinecone v6.x.x. We are actively working to achieve compatibility. "
+            "In the meantime, we recommend using Pinecone v5.4.2 for the best experience. Please run `pip install pinecone==5.4.2`",
+            UserWarning,
+        )
+        raise RuntimeError("Incompatible Pinecone version detected. Execution halted.")
+
     from pinecone import Pinecone, PodSpec, ServerlessSpec
     from pinecone.config import Config
+
 except ImportError:
     raise ImportError("The `pinecone` package is not installed, please install using `pip install pinecone`.")
+
 
 from agno.document import Document
 from agno.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 
 
@@ -100,6 +115,7 @@ class PineconeDb(VectorDb):
             from agno.embedder.openai import OpenAIEmbedder
 
             _embedder = OpenAIEmbedder()
+            log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = _embedder
         self.reranker: Optional[Reranker] = reranker
 
@@ -112,7 +128,7 @@ class PineconeDb(VectorDb):
 
         """
         if self._client is None:
-            logger.debug("Creating Pinecone Client")
+            log_debug("Creating Pinecone Client")
             self._client = Pinecone(
                 api_key=self.api_key,
                 host=self.host,
@@ -133,7 +149,7 @@ class PineconeDb(VectorDb):
 
         """
         if self._index is None:
-            logger.debug(f"Connecting to Pinecone Index: {self.name}")
+            log_debug(f"Connecting to Pinecone Index: {self.name}")
             self._index = self.client.Index(self.name)
         return self._index
 
@@ -150,7 +166,7 @@ class PineconeDb(VectorDb):
     def create(self) -> None:
         """Create the index if it does not exist."""
         if not self.exists():
-            logger.debug(f"Creating index: {self.name}")
+            log_debug(f"Creating index: {self.name}")
 
             if self.use_hybrid_search:
                 self.metric = "dotproduct"
@@ -166,7 +182,7 @@ class PineconeDb(VectorDb):
     def drop(self) -> None:
         """Delete the index if it exists."""
         if self.exists():
-            logger.debug(f"Deleting index: {self.name}")
+            log_debug(f"Deleting index: {self.name}")
             self.client.delete_index(name=self.name, timeout=self.timeout)
 
     def doc_exists(self, document: Document) -> bool:
@@ -316,7 +332,7 @@ class PineconeDb(VectorDb):
                 vector=hdense,
                 sparse_vector=hsparse,
                 top_k=limit,
-                namespace=namespace,
+                namespace=namespace or self.namespace,
                 filter=filters,
                 include_values=include_values,
                 include_metadata=True,
@@ -325,7 +341,7 @@ class PineconeDb(VectorDb):
             response = self.index.query(
                 vector=dense_embedding,
                 top_k=limit,
-                namespace=namespace,
+                namespace=namespace or self.namespace,
                 filter=filters,
                 include_values=include_values,
                 include_metadata=True,
@@ -365,3 +381,29 @@ class PineconeDb(VectorDb):
             return True
         except Exception:
             return False
+
+    async def async_create(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_doc_exists(self, document: Document) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_drop(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_exists(self) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_name_exists(self, name: str) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

@@ -29,11 +29,11 @@ json_mode_agent = Agent(
     model=Groq(id="llama-3.3-70b-versatile"),
     description="You help people write movie scripts.",
     response_model=MovieScript,
-    # debug_mode=True,
+    use_json_mode=True,
 )
 
 # Get the response in a variable
-# run: RunResponse = json_mode_agent.run("New York")
-# pprint(run.content)
+run: RunResponse = json_mode_agent.run("New York")
+pprint(run.content)
 
-json_mode_agent.print_response("New York")
+# json_mode_agent.print_response("New York")

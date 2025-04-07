@@ -11,7 +11,7 @@ except ImportError:
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -54,6 +54,7 @@ class Clickhouse(VectorDb):
             from agno.embedder.openai import OpenAIEmbedder
 
             _embedder = OpenAIEmbedder()
+            log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = _embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -70,7 +71,7 @@ class Clickhouse(VectorDb):
         }
 
     def table_exists(self) -> bool:
-        logger.debug(f"Checking if table exists: {self.table_name}")
+        log_debug(f"Checking if table exists: {self.table_name}")
         try:
             parameters = self._get_base_parameters()
             return bool(
@@ -85,14 +86,14 @@ class Clickhouse(VectorDb):
 
     def create(self) -> None:
         if not self.table_exists():
-            logger.debug(f"Creating Database: {self.database_name}")
+            log_debug(f"Creating Database: {self.database_name}")
             parameters = {"database_name": self.database_name}
             self.client.command(
                 "CREATE DATABASE IF NOT EXISTS {database_name:Identifier}",
                 parameters=parameters,
             )
 
-            logger.debug(f"Creating table: {self.table_name}")
+            log_debug(f"Creating table: {self.table_name}")
 
             parameters = self._get_base_parameters()
 
@@ -212,7 +213,7 @@ class Clickhouse(VectorDb):
                 "content_hash",
             ],
         )
-        logger.debug(f"Inserted {len(documents)} documents")
+        log_debug(f"Inserted {len(documents)} documents")
 
     def upsert_available(self) -> bool:
         return True
@@ -269,8 +270,8 @@ class Clickhouse(VectorDb):
             "{database_name:Identifier}.{table_name:Identifier} "
             f"{where_query} {order_by_query} LIMIT {limit}"
         )
-        logger.debug(f"Query: {clickhouse_query}")
-        logger.debug(f"Params: {parameters}")
+        log_debug(f"Query: {clickhouse_query}")
+        log_debug(f"Params: {parameters}")
 
         try:
             results = self.client.query(
@@ -301,7 +302,7 @@ class Clickhouse(VectorDb):
 
     def drop(self) -> None:
         if self.table_exists():
-            logger.debug(f"Deleting table: {self.table_name}")
+            log_debug(f"Deleting table: {self.table_name}")
             parameters = self._get_base_parameters()
             self.client.command(
                 "DROP TABLE {database_name:Identifier}.{table_name:Identifier}",
@@ -323,7 +324,7 @@ class Clickhouse(VectorDb):
         return 0
 
     def optimize(self) -> None:
-        logger.debug("==== No need to optimize Clickhouse DB. Skipping this step ====")
+        log_debug("==== No need to optimize Clickhouse DB. Skipping this step ====")
 
     def delete(self) -> bool:
         parameters = self._get_base_parameters()
@@ -332,3 +333,29 @@ class Clickhouse(VectorDb):
             parameters=parameters,
         )
         return True
+
+    async def async_create(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_doc_exists(self, document: Document) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_drop(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_exists(self) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_name_exists(self, name: str) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

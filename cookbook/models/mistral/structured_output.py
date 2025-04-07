@@ -7,8 +7,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
-mistral_api_key = os.getenv("MISTRAL_API_KEY")
-
 
 class MovieScript(BaseModel):
     setting: str = Field(
@@ -29,20 +27,16 @@ class MovieScript(BaseModel):
     )
 
 
-json_mode_agent = Agent(
+structured_output_agent = Agent(
     model=MistralChat(
         id="mistral-large-latest",
-        api_key=mistral_api_key,
     ),
     tools=[DuckDuckGoTools()],
     description="You help people write movie scripts.",
     response_model=MovieScript,
     show_tool_calls=True,
-    debug_mode=True,
 )
 
 # Get the response in a variable
-# json_mode_response: RunResponse = json_mode_agent.run("New York")
-# pprint(json_mode_response.content)
-
-json_mode_agent.print_response("Find a cool movie idea about London and write it.")
+structured_output_response: RunResponse = structured_output_agent.run("New York")
+pprint(structured_output_response.content)

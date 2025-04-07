@@ -1,7 +1,7 @@
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 
 class EmailTools(Toolkit):
@@ -11,8 +11,10 @@ class EmailTools(Toolkit):
         sender_name: Optional[str] = None,
         sender_email: Optional[str] = None,
         sender_passkey: Optional[str] = None,
+        **kwargs,
     ):
-        super().__init__(name="email_tools")
+        super().__init__(name="email_tools", **kwargs)
+
         self.receiver_email: Optional[str] = receiver_email
         self.sender_name: Optional[str] = sender_name
         self.sender_email: Optional[str] = sender_email
@@ -48,7 +50,7 @@ class EmailTools(Toolkit):
         msg["To"] = self.receiver_email
         msg.set_content(body)
 
-        logger.info(f"Sending Email to {self.receiver_email}")
+        log_info(f"Sending Email to {self.receiver_email}")
         try:
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
                 smtp.login(self.sender_email, self.sender_passkey)

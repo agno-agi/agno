@@ -42,7 +42,7 @@ python cookbook/models/ollama/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/models/ollama/web_search.py
+python cookbook/models/ollama/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
@@ -63,7 +63,7 @@ python cookbook/models/ollama/storage.py
 python cookbook/models/ollama/knowledge.py
 ```
 
-### 9. Run Agent that uses memory   
+### 9. Run Agent that uses memory
 
 ```shell
 python cookbook/models/ollama/memory.py

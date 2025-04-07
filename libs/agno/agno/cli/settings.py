@@ -37,10 +37,10 @@ class AgnoCliSettings(BaseSettings):
         """Validate api_runtime."""
 
         valid_api_runtimes = ["dev", "stg", "prd"]
-        if v not in valid_api_runtimes:
+        if v.lower() not in valid_api_runtimes:
             raise ValueError(f"Invalid api_runtime: {v}")
 
-        return v
+        return v.lower()
 
     @field_validator("signin_url", mode="before")
     def update_signin_url(cls, v, info: ValidationInfo):

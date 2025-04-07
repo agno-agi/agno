@@ -55,10 +55,18 @@ def display_tool_calls(tool_calls_container, tools):
                 metrics = tool_call.get("metrics", {})
 
                 # Add timing information
-                execution_time = metrics.get("time", "N/A")
+                execution_time_str = "N/A"
+                try:
+                    if metrics:
+                        execution_time = metrics.time
+                        if execution_time is not None:
+                            execution_time_str = f"{execution_time:.2f}s"
+                except Exception as e:
+                    logger.error(f"Error displaying tool calls: {str(e)}")
+                    pass
 
                 with st.expander(
-                    f"🛠️ {tool_name.replace('_', ' ').title()} ({execution_time:.2f}s)",
+                    f"🛠️ {tool_name.replace('_', ' ').title()} ({execution_time_str})",
                     expanded=False,
                 ):
                     # Show query with syntax highlighting

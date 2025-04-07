@@ -25,14 +25,10 @@ class MovieScript(BaseModel):
     )
 
 
-movie_agent = Agent(
+structured_output_agent = Agent(
     model=Gemini(id="gemini-2.0-flash-exp"),
     description="You help people write movie scripts.",
     response_model=MovieScript,
 )
 
-# Get the response in a variable
-# run: RunResponse = movie_agent.run("New York")
-# pprint(run.content)
-
-movie_agent.print_response("New York")
+structured_output_agent.print_response("New York")

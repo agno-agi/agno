@@ -2,7 +2,7 @@ from os import getenv
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 try:
     import resend  # type: ignore
@@ -15,8 +15,9 @@ class ResendTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         from_email: Optional[str] = None,
+        **kwargs,
     ):
-        super().__init__(name="resend_tools")
+        super().__init__(name="resend_tools", **kwargs)
 
         self.from_email = from_email
         self.api_key = api_key or getenv("RESEND_API_KEY")
@@ -39,7 +40,7 @@ class ResendTools(Toolkit):
         if not to_email:
             return "Please provide an email address to send the email to"
 
-        logger.info(f"Sending email to: {to_email}")
+        log_info(f"Sending email to: {to_email}")
 
         resend.api_key = self.api_key
         try:

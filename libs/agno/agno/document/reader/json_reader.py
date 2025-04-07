@@ -1,10 +1,12 @@
+import asyncio
 import json
+from io import BytesIO
 from pathlib import Path
-from typing import List
+from typing import IO, Any, List, Union
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import logger
+from agno.utils.log import log_info
 
 
 class JSONReader(Reader):
@@ -12,14 +14,23 @@ class JSONReader(Reader):
 
     chunk: bool = False
 
-    def read(self, path: Path) -> List[Document]:
-        if not path.exists():
-            raise FileNotFoundError(f"Could not find file: {path}")
-
+    def read(self, path: Union[Path, IO[Any]]) -> List[Document]:
         try:
-            logger.info(f"Reading: {path}")
-            json_name = path.name.split(".")[0]
-            json_contents = json.loads(path.read_text("utf-8"))
+            if isinstance(path, Path):
+                if not path.exists():
+                    raise FileNotFoundError(f"Could not find file: {path}")
+                log_info(f"Reading: {path}")
+                json_name = path.name.split(".")[0]
+                json_contents = json.loads(path.read_text("utf-8"))
+
+            elif isinstance(path, BytesIO):
+                log_info(f"Reading uploaded file: {path.name}")
+                json_name = path.name.split(".")[0]
+                path.seek(0)
+                json_contents = json.load(path)
+
+            else:
+                raise ValueError("Unsupported file type. Must be Path or BytesIO.")
 
             if isinstance(json_contents, dict):
                 json_contents = [json_contents]
@@ -41,3 +52,14 @@ class JSONReader(Reader):
             return documents
         except Exception:
             raise
+
+    async def async_read(self, path: Union[Path, IO[Any]]) -> List[Document]:
+        """Asynchronously read JSON files.
+
+        Args:
+            path (Union[Path, IO[Any]]): Path to a JSON file or a file-like object
+
+        Returns:
+            List[Document]: List of documents from the JSON file
+        """
+        return await asyncio.to_thread(self.read, path)

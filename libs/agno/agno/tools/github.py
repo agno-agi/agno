@@ -3,7 +3,7 @@ import os
 from typing import List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from github import Auth, Github, GithubException
@@ -24,9 +24,12 @@ class GithubTools(Toolkit):
         get_pull_request_changes: bool = True,
         create_issue: bool = True,
         create_repository: bool = True,
+        delete_repository: bool = False,
         get_repository_languages: bool = True,
+        list_branches: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="github")
+        super().__init__(name="github", **kwargs)
 
         self.access_token = access_token or os.getenv("GITHUB_ACCESS_TOKEN")
         self.base_url = base_url
@@ -49,41 +52,52 @@ class GithubTools(Toolkit):
             self.register(self.create_issue)
         if create_repository:
             self.register(self.create_repository)
-
+        if delete_repository:
+            self.register(self.delete_repository)
+        if list_branches:
+            self.register(self.list_branches)
         if get_repository_languages:
             self.register(self.get_repository_languages)
 
     def authenticate(self):
         """Authenticate with GitHub using the provided access token."""
-
         if not self.access_token:  # Fixes lint type error
             raise ValueError("GitHub access token is required")
 
         auth = Auth.Token(self.access_token)
         if self.base_url:
-            logger.debug(f"Authenticating with GitHub Enterprise at {self.base_url}")
+            log_debug(f"Authenticating with GitHub Enterprise at {self.base_url}")
             return Github(base_url=self.base_url, auth=auth)
         else:
-            logger.debug("Authenticating with public GitHub")
+            log_debug("Authenticating with public GitHub")
             return Github(auth=auth)
 
-    def search_repositories(self, query: str, sort: str = "stars", order: str = "desc", per_page: int = 5) -> str:
+    def search_repositories(
+        self, query: str, sort: str = "stars", order: str = "desc", page: int = 1, per_page: int = 30
+    ) -> str:
         """Search for repositories on GitHub.
 
         Args:
             query (str): The search query keywords.
             sort (str, optional): The field to sort results by. Can be 'stars', 'forks', or 'updated'. Defaults to 'stars'.
             order (str, optional): The order of results. Can be 'asc' or 'desc'. Defaults to 'desc'.
-            per_page (int, optional): Number of results per page. Defaults to 5.
+            page (int, optional): Page number of results to return, counting from 1. Defaults to 1.
+            per_page (int, optional): Number of results per page. Max 100. Defaults to 30.
+            Note: GitHub's Search API has a maximum limit of 1000 results per query.
 
         Returns:
             A JSON-formatted string containing a list of repositories matching the search query.
         """
-        logger.debug(f"Searching repositories with query: '{query}'")
+        log_debug(f"Searching repositories with query: '{query}', page: {page}, per_page: {per_page}")
         try:
+            # Ensure per_page doesn't exceed GitHub's max of 100
+            per_page = min(per_page, 100)
+
             repositories = self.g.search_repositories(query=query, sort=sort, order=order)
+
+            # Get the specified page of results
             repo_list = []
-            for repo in repositories[:per_page]:
+            for repo in repositories.get_page(page - 1):
                 repo_info = {
                     "full_name": repo.full_name,
                     "description": repo.description,
@@ -93,7 +107,12 @@ class GithubTools(Toolkit):
                     "language": repo.language,
                 }
                 repo_list.append(repo_info)
+
+                if len(repo_list) >= per_page:
+                    break
+
             return json.dumps(repo_list, indent=2)
+
         except GithubException as e:
             logger.error(f"Error searching repositories: {e}")
             return json.dumps({"error": str(e)})
@@ -104,7 +123,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing a list of repository names.
         """
-        logger.debug("Listing repositories")
+        log_debug("Listing repositories")
         try:
             repos = self.g.get_user().get_repos()
             repo_names = [repo.full_name for repo in repos]
@@ -133,12 +152,12 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the created repository details.
         """
-        logger.debug(f"Creating repository: {name}")
+        log_debug(f"Creating repository: {name}")
         try:
             description = description if description is not None else ""
 
             if organization:
-                logger.debug(f"Creating in organization: {organization}")
+                log_debug(f"Creating in organization: {organization}")
                 org = self.g.get_organization(organization)
                 repo = org.create_repo(
                     name=name,
@@ -174,7 +193,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing repository details.
         """
-        logger.debug(f"Getting repository: {repo_name}")
+        log_debug(f"Getting repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
             repo_info = {
@@ -202,7 +221,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the list of languages.
         """
-        logger.debug(f"Getting languages for repository: {repo_name}")
+        log_debug(f"Getting languages for repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
             languages = repo.get_languages()
@@ -221,7 +240,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing a list of pull requests.
         """
-        logger.debug(f"Listing pull requests for repository: {repo_name} with state: {state}")
+        log_debug(f"Listing pull requests for repository: {repo_name} with state: {state}")
         try:
             repo = self.g.get_repo(repo_name)
             pulls = repo.get_pulls(state=state)
@@ -251,7 +270,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing pull request details.
         """
-        logger.debug(f"Getting pull request #{pr_number} for repository: {repo_name}")
+        log_debug(f"Getting pull request #{pr_number} for repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
             pr = repo.get_pull(pr_number)
@@ -282,7 +301,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the list of changed files.
         """
-        logger.debug(f"Getting changes for pull request #{pr_number} in repository: {repo_name}")
+        log_debug(f"Getting changes for pull request #{pr_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
             pr = repo.get_pull(pr_number)
@@ -316,7 +335,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the created issue details.
         """
-        logger.debug(f"Creating issue in repository: {repo_name}")
+        log_debug(f"Creating issue in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.create_issue(title=title, body=body)
@@ -345,7 +364,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing a list of issues.
         """
-        logger.debug(f"Listing issues for repository: {repo_name} with state: {state}")
+        log_debug(f"Listing issues for repository: {repo_name} with state: {state}")
         try:
             repo = self.g.get_repo(repo_name)
             issues = repo.get_issues(state=state)
@@ -377,7 +396,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing issue details.
         """
-        logger.debug(f"Getting issue #{issue_number} for repository: {repo_name}")
+        log_debug(f"Getting issue #{issue_number} for repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
@@ -409,7 +428,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the comment details.
         """
-        logger.debug(f"Adding comment to issue #{issue_number} in repository: {repo_name}")
+        log_debug(f"Adding comment to issue #{issue_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
@@ -436,7 +455,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string confirming the issue is closed.
         """
-        logger.debug(f"Closing issue #{issue_number} in repository: {repo_name}")
+        log_debug(f"Closing issue #{issue_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
@@ -456,7 +475,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string confirming the issue is reopened.
         """
-        logger.debug(f"Reopening issue #{issue_number} in repository: {repo_name}")
+        log_debug(f"Reopening issue #{issue_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
@@ -477,7 +496,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string confirming the assignees.
         """
-        logger.debug(f"Assigning users to issue #{issue_number} in repository: {repo_name}")
+        log_debug(f"Assigning users to issue #{issue_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
@@ -498,7 +517,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string confirming the labels.
         """
-        logger.debug(f"Labeling issue #{issue_number} in repository: {repo_name}")
+        log_debug(f"Labeling issue #{issue_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
@@ -518,7 +537,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing a list of comments.
         """
-        logger.debug(f"Listing comments for issue #{issue_number} in repository: {repo_name}")
+        log_debug(f"Listing comments for issue #{issue_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
@@ -552,7 +571,7 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string confirming the issue has been updated.
         """
-        logger.debug(f"Editing issue #{issue_number} in repository: {repo_name}")
+        log_debug(f"Editing issue #{issue_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
@@ -560,4 +579,39 @@ class GithubTools(Toolkit):
             return json.dumps({"message": f"Issue #{issue_number} updated."}, indent=2)
         except GithubException as e:
             logger.error(f"Error editing issue: {e}")
+            return json.dumps({"error": str(e)})
+
+    def delete_repository(self, repo_name: str) -> str:
+        """Delete a repository (requires admin permissions).
+
+            Args:
+                repo_name (str): The full name of the repository to delete (e.g., 'owner/repo').
+
+        Returns:
+            A JSON-formatted string with success message or error.
+        """
+        log_debug(f"Deleting repository: {repo_name}")
+        try:
+            repo = self.g.get_repo(repo_name)
+            repo.delete()
+            return json.dumps({"message": f"Repository {repo_name} deleted successfully"}, indent=2)
+        except GithubException as e:
+            logger.error(f"Error deleting repository: {e}")
+            return json.dumps({"error": str(e)})
+
+    def list_branches(self, repo_name: str) -> str:
+        """List all branches in a repository.
+
+        Args:
+            repo_name (str): Full repository name (e.g., 'owner/repo').
+
+        Returns:
+            JSON list of branch names.
+        """
+        try:
+            repo = self.g.get_repo(repo_name)
+            branches = [branch.name for branch in repo.get_branches()]
+            return json.dumps(branches, indent=2)
+        except GithubException as e:
+            logger.error(f"Error listing branches: {e}")
             return json.dumps({"error": str(e)})

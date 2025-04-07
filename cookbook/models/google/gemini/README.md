@@ -1,6 +1,8 @@
 # Google Gemini Cookbook
 
 > Note: Fork and clone this repository if needed
+>
+> This cookbook is for testing Gemini models. You can also
 
 ### 1. Create and activate a virtual environment
 
@@ -9,10 +11,20 @@ python3 -m venv ~/.venvs/aienv
 source ~/.venvs/aienv/bin/activate
 ```
 
-### 2. Export `GOOGLE_API_KEY`
+### 2. Export environment variables
+
+If you want to use the Gemini API, you need to export the following environment variables:
 
 ```shell
 export GOOGLE_API_KEY=***
+```
+
+If you want to use Vertex AI, you need to export the following environment variables:
+
+```shell
+export GOOGLE_GENAI_USE_VERTEXAI="true"
+export GOOGLE_CLOUD_PROJECT="your-project-id"
+export GOOGLE_CLOUD_LOCATION="your-location"
 ```
 
 ### 3. Install libraries
@@ -43,7 +55,6 @@ python cookbook/models/google/gemini/basic.py
 python cookbook/models/google/gemini/tool_use.py
 ```
 
-
 ### 6. Run Agent that returns structured output
 
 ```shell
@@ -65,13 +76,7 @@ python cookbook/models/google/gemini/knowledge.py
 ### 9. Run Agent that interprets an audio file
 
 ```shell
-python cookbook/models/google/gemini/audio_agent.py
-```
-
-or
-
-```shell
-python cookbook/models/google/gemini/audio_agent_file_upload.py
+python cookbook/models/google/gemini/audio_input_bytes_content.py
 ```
 
 ### 10. Run Agent that analyzes an image
@@ -89,7 +94,7 @@ python cookbook/models/google/gemini/image_agent_file_upload.py
 ### 11. Run Agent that analyzes a video
 
 ```shell
-python cookbook/models/google/gemini/video_agent.py
+python cookbook/models/google/gemini/video_agent_input_bytes_content.py
 ```
 
 ### 12. Run Agent that uses flash thinking mode from Gemini

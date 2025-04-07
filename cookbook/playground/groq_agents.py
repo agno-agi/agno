@@ -6,7 +6,7 @@
 from agno.agent import Agent
 from agno.models.groq import Groq
 from agno.playground import Playground, serve_playground_app
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 from agno.tools.youtube import YouTubeTools
@@ -27,7 +27,9 @@ web_agent = Agent(
         "Always include sources you used to generate the answer.",
     ]
     + common_instructions,
-    storage=SqliteAgentStorage(table_name="web_agent", db_file=xai_agent_storage),
+    storage=SqliteStorage(
+        table_name="web_agent", db_file=xai_agent_storage, auto_upgrade_schema=True
+    ),
     show_tool_calls=True,
     add_history_to_messages=True,
     num_history_responses=2,
@@ -51,7 +53,9 @@ finance_agent = Agent(
     ],
     description="You are an investment analyst that researches stocks and helps users make informed decisions.",
     instructions=["Always use tables to display data"] + common_instructions,
-    storage=SqliteAgentStorage(table_name="finance_agent", db_file=xai_agent_storage),
+    storage=SqliteStorage(
+        table_name="finance_agent", db_file=xai_agent_storage, auto_upgrade_schema=True
+    ),
     show_tool_calls=True,
     add_history_to_messages=True,
     num_history_responses=5,
@@ -76,7 +80,9 @@ youtube_agent = Agent(
         "If the user just provides a URL, summarize the video and answer questions about it.",
     ]
     + common_instructions,
-    storage=SqliteAgentStorage(table_name="youtube_agent", db_file=xai_agent_storage),
+    storage=SqliteStorage(
+        table_name="youtube_agent", db_file=xai_agent_storage, auto_upgrade_schema=True
+    ),
     show_tool_calls=True,
     add_history_to_messages=True,
     num_history_responses=5,
