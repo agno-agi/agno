@@ -33,7 +33,7 @@ class Toolkit:
         self.cache_ttl: int = cache_ttl
         self.cache_dir: Optional[str] = cache_dir
 
-    def register(self, function: Callable[..., Any], sanitize_arguments: bool = True):
+    def register(self, function: Callable[..., Any], sanitize_arguments: bool = True, name: Optional[str] = None):
         """Register a function with the toolkit.
 
         Args:
@@ -44,7 +44,7 @@ class Toolkit:
         """
         try:
             f = Function(
-                name=function.__name__,
+                name=name or function.__name__,
                 entrypoint=function,
                 sanitize_arguments=sanitize_arguments,
                 cache_results=self.cache_results,
