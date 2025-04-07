@@ -1642,13 +1642,12 @@ class Agent:
                             self._functions_for_model[tool.name] = tool
                             self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
                             log_debug(f"Included function {tool.name}")
-                            
+
                         # Add instructions from the Function
                         if tool.add_instructions and tool.instructions is not None:
                             if self._tool_instructions is None:
                                 self._tool_instructions = []
                             self._tool_instructions.append(tool.instructions)
-
 
                     elif callable(tool):
                         try:
@@ -2199,6 +2198,7 @@ class Agent:
             if self.timezone_identifier:
                 try:
                     from zoneinfo import ZoneInfo
+
                     tz = ZoneInfo(self.timezone_identifier)
                 except Exception:
                     log_warning("Invalid timezone identifier")
