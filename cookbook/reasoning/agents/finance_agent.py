@@ -14,8 +14,8 @@ reasoning_agent = Agent(
     ],
     instructions=["Use tables where possible"],
     show_tool_calls=True,
-    markdown=True,
     reasoning=True,
+    markdown=True,
 )
 reasoning_agent.print_response(
     "Write a report comparing NVDA to TSLA", stream=True, show_full_reasoning=True
