@@ -18,7 +18,7 @@ tmp_dir.mkdir(parents=True, exist_ok=True)
 
 # Initialize knowledge base
 agent_knowledge = UrlKnowledge(
-    urls=["https://docs.agno.com/llms-full.txt"],
+    urls=["https://docs.agno.com/teams/introduction"],
     vector_db=LanceDb(
         uri=str(tmp_dir.joinpath("lancedb")),
         table_name="agno_assist_knowledge",
@@ -38,4 +38,6 @@ if __name__ == "__main__":
     # Comment out after first run
     agent_knowledge.load()
 
-    agent_with_knowledge.print_response("Tell me about the Agno framework", stream=True)
+    agent_with_knowledge.print_response(
+        "Tell me about teams with context to agno", stream=True
+    )
