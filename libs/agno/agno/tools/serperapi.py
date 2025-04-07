@@ -22,7 +22,7 @@ class SerperApiTools(Toolkit):
     
     def __init__(
         self,
-        api_key: str = None,
+        api_key: str = "",
         gl: str = "us",
         num_results: int = 10,
     ):
@@ -75,7 +75,7 @@ class SerperApiTools(Toolkit):
             response = requests.request("POST", url, headers=headers, data=payload)
             results = response.text
 
-            return json.dumps(results)
+            return results
 
         except Exception as e:
             return f"Error searching for the query {query}: {e}"
