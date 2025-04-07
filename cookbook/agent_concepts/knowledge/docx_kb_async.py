@@ -25,5 +25,7 @@ if __name__ == "__main__":
     asyncio.run(knowledge_base.aload(recreate=False))
 
     asyncio.run(
-        agent.aprint_response("What docs do you have in your knowledge base?", markdown=True)
+        agent.aprint_response(
+            "What docs do you have in your knowledge base?", markdown=True
+        )
     )
