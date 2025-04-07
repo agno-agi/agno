@@ -7,9 +7,17 @@ from agno.tools import tool
     name="fetch_hackernews_stories",
     description="Get top stories from Hacker News",
     show_result=True,
-    instructions="When using the Hacker News API:\n1. Present stories in a clean, readable format\n2. Provide context when a URL is missing\n3. Be aware of rate limiting - results are cached for 1 hour",
-    add_instructions=True,
-    think=True,
+    instructions="""
+        Use this tool when:
+          1. The user wants to see recent popular tech news or discussions
+          2. You need examples of trending technology topics
+          3. The user asks for Hacker News content or tech industry stories
+
+        The tool will return titles and URLs for the specified number of top stories. When presenting results:
+          - Highlight interesting or unusual stories
+          - Summarize key themes if multiple stories are related
+          - If summarizing, mention the original source is Hacker News
+    """,
 )
 def get_top_hackernews_stories(num_stories: int = 5) -> str:
     response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
