@@ -39,7 +39,6 @@ agent = Agent(
     tools=[get_top_hackernews_stories],
     markdown=True,
     show_tool_calls=True,
-    debug_mode=True,
 )
 
 agent.print_response(
