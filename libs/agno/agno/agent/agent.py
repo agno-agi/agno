@@ -2186,13 +2186,16 @@ class Agent:
         if self.add_datetime_to_instructions:
             from datetime import datetime
 
-            from zoneinfo import ZoneInfo, available_timezones
+            tz = None
 
-            if self.timezone_identifier and self.timezone_identifier in available_timezones():
-                tz = ZoneInfo(self.timezone_identifier)
-                time = datetime.now(tz)
-            else:
-                time = datetime.now()
+            if self.timezone_identifier:
+                try:
+                    from zoneinfo import ZoneInfo
+                    tz = ZoneInfo(self.timezone_identifier)
+                except Exception:
+                    log_warning("Invalid timezone identifier")
+
+            time = datetime.now(tz) if tz else datetime.now()
                 
             additional_information.append(f"The current time is {time}.")
         # 3.2.3 Add agent name if provided
