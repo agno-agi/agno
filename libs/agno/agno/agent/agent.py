@@ -3211,7 +3211,6 @@ class Agent:
             log_debug("Starting Reasoning", center=True, symbol="=")
             while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
                 log_debug(f"Step {step_count}", center=True, symbol="=")
-                step_count += 1
                 try:
                     # Run the reasoning agent
                     reasoning_agent_response: RunResponse = reasoning_agent.run(
@@ -3256,6 +3255,8 @@ class Agent:
                 except Exception as e:
                     log_error(f"Reasoning error: {e}")
                     break
+                
+                step_count += 1
 
             log_debug(f"Total Reasoning steps: {len(all_reasoning_steps)}")
             log_debug("Reasoning finished", center=True, symbol="=")
