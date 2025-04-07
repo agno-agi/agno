@@ -3253,6 +3253,8 @@ class Agent:
                     if next_action == NextAction.FINAL_ANSWER:
                         break
                 except Exception as e:
+                    import traceback
+                    traceback.print_exc()
                     log_error(f"Reasoning error: {e}")
                     break
                 
