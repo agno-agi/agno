@@ -15,8 +15,9 @@ class DesiVocalTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         voice_id: Optional[str] = "f27d74e5-ea71-4697-be3e-f04bbd80c1a8",
+        **kwargs,
     ):
-        super().__init__(name="desi_vocal_tools")
+        super().__init__(name="desi_vocal_tools", **kwargs)
 
         self.api_key = api_key or getenv("DESI_VOCAL_API_KEY")
         if not self.api_key:

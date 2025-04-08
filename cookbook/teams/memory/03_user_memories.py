@@ -1,11 +1,10 @@
 """
 This recipe shows how to store personalized memories and summaries in a sqlite database.
+
 Steps:
 1. Run: `pip install openai sqlalchemy agno` to install dependencies
-2. Run: `python cookbook/memory/03_memories_and_summaries.py` to run the agent
+2. Run: `python cookbook/teams/memory/03_user_memories.py` to run the agent
 """
-
-import json
 
 from agno.agent import Agent
 from agno.memory.db.sqlite import SqliteMemoryDb
@@ -62,7 +61,7 @@ team = Team(
         "You can search the stock market for information about a particular company's stock.",
         "You can also search the web for wider company information.",
     ],
-    # Set add_history_to_messages=true to add the previous chat history to the messages sent to the Model.
+    # Set enable_team_history=true to add the previous chat history to the messages sent to the Model.
     enable_team_history=True,
     num_of_interactions_from_history=5,
     show_tool_calls=True,

@@ -18,6 +18,7 @@ class ConfluenceTools(Toolkit):
         password: Optional[str] = None,
         url: Optional[str] = None,
         api_key: Optional[str] = None,
+        **kwargs,
     ):
         """Initialize Confluence Tools with authentication credentials.
 
@@ -34,7 +35,7 @@ class ConfluenceTools(Toolkit):
             - CONFLUENCE_API_KEY
         """
 
-        super().__init__(name="confluence_tools")
+        super().__init__(name="confluence_tools", **kwargs)
         self.url = url or getenv("CONFLUENCE_URL")
         self.username = username or getenv("CONFLUENCE_USERNAME")
         self.password = api_key or getenv("CONFLUENCE_API_KEY") or password or getenv("CONFLUENCE_PASSWORD")

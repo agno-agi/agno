@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agno.media import Audio, AudioResponse, File, Image, Video
+from agno.media import Audio, AudioResponse, File, Image, ImageArtifact, Video
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 
@@ -173,6 +173,7 @@ class Message(BaseModel):
 
     # Output from the models
     audio_output: Optional[AudioResponse] = None
+    image_output: Optional[ImageArtifact] = None
 
     # The thinking content from the model
     thinking: Optional[str] = None
@@ -310,16 +311,20 @@ class Message(BaseModel):
             elif isinstance(self.content, dict):
                 _logger(json.dumps(self.content, indent=2))
         if self.tool_calls:
-            tool_calls_str = "Tool Calls:\n"
+            tool_calls_list = ["Tool Calls:"]
             for tool_call in self.tool_calls:
-                tool_calls_str += f"  - ID: '{tool_call.get('id', 'Unknown')}'\n"
-                tool_calls_str += f"    Name: '{tool_call.get('function', {}).get('name', 'Unknown')}'\n"
+                tool_id = tool_call.get("id")
+                function_name = tool_call.get("function", {}).get("name")
+                tool_calls_list.append(f"  - ID: '{tool_id}'") if tool_id else None
+                tool_calls_list.append(f"    Name: '{function_name}'") if function_name else None
                 tool_call_arguments = tool_call.get("function", {}).get("arguments")
-                arguments = []
                 if tool_call_arguments:
-                    for k, v in json.loads(tool_call_arguments).items():
-                        arguments.append(f"{k}: {v}")
-                    tool_calls_str += f"    Arguments: '{', '.join(arguments)}'"
+                    try:
+                        arguments = ", ".join(f"{k}: {v}" for k, v in json.loads(tool_call_arguments).items())
+                        tool_calls_list.append(f"    Arguments: '{arguments}'")
+                    except json.JSONDecodeError:
+                        tool_calls_list.append("    Arguments: 'Invalid JSON format'")
+            tool_calls_str = "\n".join(tool_calls_list)
 
             _logger(tool_calls_str)
         if self.images:

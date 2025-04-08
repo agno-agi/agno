@@ -177,6 +177,11 @@ class OpenAIResponses(Model):
             if self.structured_outputs and issubclass(self.response_format, BaseModel):
                 schema = self.response_format.model_json_schema()
                 schema["additionalProperties"] = False
+                # Remove default values from the schema
+                for prop_name, prop in schema["properties"].items():
+                    if "default" in prop:
+                        del schema["properties"][prop_name]["default"]
+                schema["required"] = [prop for prop in schema["properties"]]
                 base_params["text"] = {
                     "format": {
                         "type": "json_schema",
@@ -320,10 +325,10 @@ class OpenAIResponses(Model):
                         if message.images is not None:
                             message_dict["content"].extend(images_to_message(images=message.images))
 
-                if message.audio is not None:
+                if message.audio is not None and len(message.audio) > 0:
                     log_warning("Audio input is currently unsupported.")
 
-                if message.videos is not None:
+                if message.videos is not None and len(message.videos) > 0:
                     log_warning("Video input is currently unsupported.")
 
                 formatted_messages.append(message_dict)

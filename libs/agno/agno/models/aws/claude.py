@@ -151,13 +151,13 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
                     if image_content:
                         content.append(image_content)
 
-            if message.files is not None:
+            if message.files is not None and len(message.files) > 0:
                 log_warning("Files are not supported for AWS Bedrock Claude")
 
-            if message.audio is not None:
+            if message.audio is not None and len(message.audio) > 0:
                 log_warning("Audio is not supported for AWS Bedrock Claude")
 
-            if message.videos is not None:
+            if message.videos is not None and len(message.videos) > 0:
                 log_warning("Video is not supported for AWS Bedrock Claude")
 
         # Handle tool calls from history

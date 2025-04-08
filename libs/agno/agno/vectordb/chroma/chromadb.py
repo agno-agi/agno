@@ -6,7 +6,7 @@ try:
     from chromadb import PersistentClient as PersistentChromaDbClient
     from chromadb.api.client import ClientAPI
     from chromadb.api.models.Collection import Collection
-    from chromadb.api.types import GetResult, IncludeEnum, QueryResult
+    from chromadb.api.types import GetResult, QueryResult
 
 except ImportError:
     raise ImportError("The `chromadb` package is not installed. Please install it via `pip install chromadb`.")
@@ -99,7 +99,7 @@ class ChromaDb(VectorDb):
 
         try:
             collection: Collection = self.client.get_collection(name=self.collection_name)
-            collection_data: GetResult = collection.get(include=[IncludeEnum.documents])
+            collection_data: GetResult = collection.get(include=["documents"])  # type: ignore
             existing_documents = collection_data.get("documents", [])
             cleaned_content = document.content.replace("\x00", "\ufffd")
             if cleaned_content in existing_documents:  # type: ignore
@@ -307,4 +307,7 @@ class ChromaDb(VectorDb):
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
     async def async_exists(self) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
