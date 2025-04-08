@@ -7,7 +7,7 @@ from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Lit
 from uuid import uuid4
 
 from agno.exceptions import AgentRunException
-from agno.media import AudioResponse
+from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.tools.function import Function, FunctionCall
@@ -24,7 +24,9 @@ class MessageData:
     response_redacted_thinking: Any = ""
     response_citations: Optional[Citations] = None
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+
     response_audio: Optional[AudioResponse] = None
+    response_image: Optional[ImageArtifact] = None
 
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
@@ -341,6 +343,8 @@ class Model(ABC):
             model_response.citations = assistant_message.citations
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
+        if assistant_message.image_output is not None:
+            model_response.image = assistant_message.image_output
         if provider_response.extra is not None:
             if model_response.extra is None:
                 model_response.extra = {}
@@ -397,6 +401,8 @@ class Model(ABC):
             model_response.citations = assistant_message.citations
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
+        if assistant_message.image_output is not None:
+            model_response.image = assistant_message.image_output
         if provider_response.extra is not None:
             if model_response.extra is None:
                 model_response.extra = {}
@@ -434,6 +440,10 @@ class Model(ABC):
         # Add audio to assistant message
         if provider_response.audio is not None:
             assistant_message.audio_output = provider_response.audio
+
+        # Add image to assistant message
+        if provider_response.image is not None:
+            assistant_message.image_output = provider_response.image
 
         # Add thinking content to assistant message
         if provider_response.thinking is not None:
@@ -713,6 +723,10 @@ class Model(ABC):
             stream_data.response_audio.channels = model_response.audio.channels
 
             should_yield = True
+
+        if model_response.image:
+            if stream_data.response_image is None:
+                stream_data.response_image = model_response.image
 
         if model_response.extra is not None:
             if stream_data.extra is None:

@@ -216,10 +216,7 @@ class PDFUrlReader(BasePDFReader):
 
         from io import BytesIO
 
-        try:
-            import httpx
-        except ImportError:
-            raise ImportError("`httpx` not installed. Please install it via `pip install httpx`.")
+        import httpx
 
         log_info(f"Reading: {url}")
 

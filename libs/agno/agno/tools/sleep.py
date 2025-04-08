@@ -5,8 +5,8 @@ from agno.utils.log import log_info
 
 
 class SleepTools(Toolkit):
-    def __init__(self):
-        super().__init__(name="sleep")
+    def __init__(self, **kwargs):
+        super().__init__(name="sleep", **kwargs)
 
         self.register(self.sleep)
 
