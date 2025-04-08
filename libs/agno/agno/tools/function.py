@@ -48,6 +48,10 @@ class Function(BaseModel):
     )
     strict: Optional[bool] = None
 
+    instructions: Optional[str] = None
+    # If True, add instructions to the Agent's system message
+    add_instructions: bool = True
+
     # The function to be called.
     entrypoint: Optional[Callable] = None
     # If True, the entrypoint processing is skipped and the Function is used as is.

@@ -36,42 +36,6 @@ agent = Agent(
 agent.print_response("What's happening in New York?", stream=True)
 ```
 
-## 🚨 Open Source AI Agent Hackathon! 🚨
-
-We're launching a Global AI Agent Hackathon in collaboration with AI Agent ecosystem partners — open to all developers, builders, and startups working on agents, RAG, tool use, or multi-agent systems.
-
-### 💰 Win up to $20,000 in cash by building Agents
-
-- 🏅 10 winners: $300 each
-- 🥉 10 winners: $500 each
-- 🥈 5 winners: $1,000 each
-- 🥇 1 winner: $2,000
-- 🏆 GRAND PRIZE: $5,000 🏆
-
-### 🎁 Bonus
-- Top 5 projects will be featured in the top trending [Awesome LLM Apps](https://github.com/Shubhamsaboo/awesome-llm-apps) repo.
-
-### 🤝 Partners
-
-[Agno](https://www.agno.com), [Unwind AI](https://www.theunwindai.com) and more Agent ecosystem companies joining soon.
-
-### 📅 Here's the timeline:
-
-- April 3rd - Final dates revealed
-- April 10th - Prize and success criteria announced
-- April 15th (tentative) - Hackathon starts
-- May 30th (tentative) - Hackathon ends
-
-Join us for a month of building Agents!
-
-> Prizes will be distributed on an ongoing basis and continue till all prizes are awarded.
-
-⭐ Star this repo and follow along to stay updated.
-
-### 🤝 Want to join us as a partner or judge?
-
-If you're a company in the AI agent ecosystem or would like to judge the hackathon, reach out to [Shubham Saboo](https://x.com/Saboo_Shubham_) or [Ashpreet Bedi](https://x.com/ashpreetbedi) on X to partner. Let’s make this the biggest open source AI Agent hackathon.
-
 ## Key features
 
 Agno is simple, fast and model agnostic. Here are some key features:
@@ -85,7 +49,7 @@ Agno is simple, fast and model agnostic. Here are some key features:
 - **Structured Outputs**: Make Agents respond in a structured format.
 - **Monitoring**: Track agent sessions and performance in real-time on [agno.com](https://app.agno.com).
 
-## Getting Started
+## Getting Started with Agno
 
 - Start by [building your first Agent](https://docs.agno.com/introduction/agents)
 - Check out the [examples](https://docs.agno.com/examples/introduction)
@@ -275,6 +239,28 @@ python agent_team.py
 ```
 
 [View this example in the cookbook](./cookbook/getting_started/05_agent_team.py)
+
+## 🚨 Global Agent Hackathon! 🚨
+
+We're thrilled to announce a month long, open source AI Agent Hackathon — open to all builders and dreamers working on agents, RAG, tool use, and multi-agent systems.
+
+### 💰 Build something extordinary, win up to $20,000 in cash
+
+We're giving away $20,000 in prizes for the most ambitious Agent projects
+
+- 🏅 10 winners: $300 each
+- 🥉 10 winners: $500 each
+- 🥈 5 winners: $1,000 each
+- 🥇 1 winner: $2,000
+- 🏆 GRAND PRIZE: $5,000 🏆
+
+> Follow this [post](https://www.agno.com/blog/agent-hackathon-april-2025) for more details and updates
+
+### 🤝 Want to partner or judge?
+
+If you're building in the AI Agent space, or want to help shape the next generation of Agent builders - we'd love to work with you.
+
+Reach out to support@agno.com to get involved.
 
 ## Performance
 
