@@ -39,7 +39,9 @@ async def run_agent(message: str) -> None:
 
     try:
         # Initialize MCP toolkit with Stripe server
-        async with MCPTools(command=f"{npx_command} -y @stripe/mcp --tools={enabled_tools} --api-key={stripe_api_key}") as mcp_toolkit:
+        async with MCPTools(
+            command=f"{npx_command} -y @stripe/mcp --tools={enabled_tools} --api-key={stripe_api_key}"
+        ) as mcp_toolkit:
             agent = Agent(
                 name="StripeAgent",
                 instructions=dedent("""\

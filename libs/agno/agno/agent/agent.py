@@ -1625,7 +1625,7 @@ class Agent:
                                     func.strict = True
                                 self._functions_for_model[name] = func
                                 self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                log_debug(f"Included function {name} from {tool.name}")
+                                log_debug(f"Added function {name} from {tool.name}")
 
                         # Add instructions from the toolkit
                         if tool.add_instructions and tool.instructions is not None:
@@ -1641,7 +1641,7 @@ class Agent:
                                 tool.strict = True
                             self._functions_for_model[tool.name] = tool
                             self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                            log_debug(f"Included function {tool.name}")
+                            log_debug(f"Added function {tool.name}")
 
                         # Add instructions from the Function
                         if tool.add_instructions and tool.instructions is not None:
@@ -1659,7 +1659,7 @@ class Agent:
                                     func.strict = True
                                 self._functions_for_model[func.name] = func
                                 self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                log_debug(f"Included function {func.name}")
+                                log_debug(f"Added function {func.name}")
                         except Exception as e:
                             log_warning(f"Could not add function {tool}: {e}")
 
@@ -1699,7 +1699,7 @@ class Agent:
                     self.model.structured_outputs = False
 
             elif self.model.supports_json_schema_outputs:
-                if self.use_json_mode or not self.structured_outputs:
+                if self.use_json_mode or (not self.structured_outputs):
                     log_debug("Setting Model.response_format to JSON response mode")
                     self.model.response_format = {
                         "type": "json_schema",
@@ -1714,10 +1714,10 @@ class Agent:
 
             else:
                 log_debug("Model does not support structured or JSON schema outputs.")
-                self.model.response_format = (
-                    json_response_format if (self.use_json_mode or not self.structured_outputs) else None
-                )
+                self.model.response_format = json_response_format
                 self.model.structured_outputs = False
+
+            log_debug(f"Structured outputs: {self.model.structured_outputs}")
 
         # Add tools to the Model
         self.add_tools_to_model(model=self.model, async_mode=async_mode)
@@ -2252,10 +2252,8 @@ class Agent:
             system_message_content += "\n</additional_information>\n\n"
         # 3.3.7 Then add instructions for the tools
         if self._tool_instructions is not None:
-            system_message_content += "<tool_instructions>"
             for _ti in self._tool_instructions:
-                system_message_content += f"\n{_ti}"
-            system_message_content += "\n</tool_instructions>\n\n"
+                system_message_content += f"{_ti}\n"
 
         # Format the system message with the session state variables
         if self.add_state_in_messages:
