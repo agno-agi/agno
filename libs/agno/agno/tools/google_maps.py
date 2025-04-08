@@ -37,8 +37,9 @@ class GoogleMapTools(Toolkit):
         get_distance_matrix: bool = True,
         get_elevation: bool = True,
         get_timezone: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="google_maps")
+        super().__init__(name="google_maps", **kwargs)
 
         self.api_key = key or getenv("GOOGLE_MAPS_API_KEY")
         if not self.api_key:

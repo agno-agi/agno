@@ -166,6 +166,7 @@ jobs:
 
   # Run tests for Cohere
   test-cohere:
+    if: false # Disable cohere tests until we get a production account
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -225,6 +226,7 @@ jobs:
 
   # Run tests for Fireworks
   test-fireworks:
+    if: false # Disable fireworks tests until we get a production account
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -375,6 +377,7 @@ jobs:
 
   # Run tests for Perplexity
   test-perplexity:
+    if: false # Disable perplexity tests until we get a production account
     runs-on: ubuntu-latest
     strategy:
       matrix:

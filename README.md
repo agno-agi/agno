@@ -49,7 +49,7 @@ Agno is simple, fast and model agnostic. Here are some key features:
 - **Structured Outputs**: Make Agents respond in a structured format.
 - **Monitoring**: Track agent sessions and performance in real-time on [agno.com](https://app.agno.com).
 
-## Getting Started
+## Getting Started with Agno
 
 - Start by [building your first Agent](https://docs.agno.com/introduction/agents)
 - Check out the [examples](https://docs.agno.com/examples/introduction)
@@ -217,7 +217,7 @@ finance_agent = Agent(
     markdown=True,
 )
 
-agent_team = Agent(
+agent_team = Team(
     mode="coordinate",
     members=[web_agent, finance_agent],
     model=OpenAIChat(id="gpt-4o"),
@@ -239,6 +239,28 @@ python agent_team.py
 ```
 
 [View this example in the cookbook](./cookbook/getting_started/05_agent_team.py)
+
+## 🚨 Global Agent Hackathon! 🚨
+
+We're thrilled to announce a month long, open source AI Agent Hackathon — open to all builders and dreamers working on agents, RAG, tool use, and multi-agent systems.
+
+### 💰 Build something extordinary, win up to $20,000 in cash
+
+We're giving away $20,000 in prizes for the most ambitious Agent projects
+
+- 🏅 10 winners: $300 each
+- 🥉 10 winners: $500 each
+- 🥈 5 winners: $1,000 each
+- 🥇 1 winner: $2,000
+- 🏆 GRAND PRIZE: $5,000 🏆
+
+> Follow this [post](https://www.agno.com/blog/agent-hackathon-april-2025) for more details and updates
+
+### 🤝 Want to partner or judge?
+
+If you're building in the AI Agent space, or want to help shape the next generation of Agent builders - we'd love to work with you.
+
+Reach out to support@agno.com to get involved.
 
 ## Performance
 

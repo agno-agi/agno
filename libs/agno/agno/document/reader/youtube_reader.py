@@ -1,3 +1,4 @@
+import asyncio
 from typing import List
 
 from agno.document.base import Document
@@ -48,3 +49,6 @@ class YouTubeReader(Reader):
         except Exception as e:
             logger.error(f"Error reading transcript for {video_url}: {e}")
             return []
+
+    async def async_read(self, video_url: str) -> List[Document]:
+        return await asyncio.get_event_loop().run_in_executor(None, self.read, video_url)

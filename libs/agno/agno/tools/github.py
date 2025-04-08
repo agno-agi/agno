@@ -17,7 +17,7 @@ class GithubTools(Toolkit):
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
         search_repositories: bool = True,
-        list_repositories: bool = False,
+        list_repositories: bool = True,
         get_repository: bool = False,
         list_pull_requests: bool = False,
         get_pull_request: bool = False,
@@ -57,8 +57,9 @@ class GithubTools(Toolkit):
         search_issues_and_prs: bool = False,
         create_review_request: bool = False,
         get_pulls_by_query: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="github")
+        super().__init__(name="github", **kwargs)
 
         self.access_token = access_token or os.getenv("GITHUB_ACCESS_TOKEN")
         self.base_url = base_url
@@ -173,13 +174,14 @@ class GithubTools(Toolkit):
     ) -> str:
         """Search for repositories on GitHub.
 
+        Note: GitHub's Search API has a maximum limit of 1000 results per query.
+
         Args:
             query (str): The search query keywords.
             sort (str, optional): The field to sort results by. Can be 'stars', 'forks', or 'updated'. Defaults to 'stars'.
             order (str, optional): The order of results. Can be 'asc' or 'desc'. Defaults to 'desc'.
             page (int, optional): Page number of results to return, counting from 1. Defaults to 1.
             per_page (int, optional): Number of results per page. Max 100. Defaults to 30.
-            Note: GitHub's Search API has a maximum limit of 1000 results per query.
 
         Returns:
             A JSON-formatted string containing a list of repositories matching the search query.
@@ -908,7 +910,8 @@ class GithubTools(Toolkit):
         try:
             repo = self.g.get_repo(repo_name)
             pr = repo.get_pull(pr_number)
-            comment = pr.create_comment(body, commit_id, path, position)
+            commit = repo.get_commit(commit_id)
+            comment = pr.create_comment(body, commit, path, position)
 
             comment_info = {
                 "id": comment.id,
@@ -940,8 +943,14 @@ class GithubTools(Toolkit):
         log_debug(f"Editing comment #{comment_id} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
-            comment = repo.get_pull_comment(comment_id)
-            comment.edit(body)
+            comments = repo.get_pulls_comments()
+            comment = None
+            for comment in comments:
+                if comment.id == comment_id:
+                    comment.edit(body)
+
+            if not comment:
+                return f"Could not find comment #{comment_id} in repository: {repo_name}"
 
             comment_info = {
                 "id": comment.id,

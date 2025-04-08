@@ -37,8 +37,9 @@ class ModelsLabTools(Toolkit):
         add_to_eta: int = 15,
         max_wait_time: int = 60,
         file_type: FileType = FileType.MP4,
+        **kwargs,
     ):
-        super().__init__(name="models_labs")
+        super().__init__(name="models_labs", **kwargs)
 
         file_type_str = file_type.value.upper()
         self.url = MODELS_LAB_URLS[file_type_str]

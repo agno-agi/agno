@@ -22,6 +22,7 @@ class TwilioTools(Toolkit):
         region: Optional[str] = None,
         edge: Optional[str] = None,
         debug: bool = False,
+        **kwargs,
     ):
         """Initialize the Twilio toolkit.
 
@@ -38,7 +39,7 @@ class TwilioTools(Toolkit):
             edge: Optional Twilio edge location (e.g. 'sydney')
             debug: Enable debug logging
         """
-        super().__init__(name="twilio")
+        super().__init__(name="twilio", **kwargs)
 
         # Get credentials from environment if not provided
         self.account_sid = account_sid or getenv("TWILIO_ACCOUNT_SID")
