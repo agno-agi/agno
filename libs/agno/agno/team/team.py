@@ -3736,7 +3736,7 @@ class Team:
                                 func.strict = True
                             self._functions_for_model[name] = func
                             self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                            log_debug(f"Included function {name} from {tool.name}")
+                            log_debug(f"Added function {name} from {tool.name}")
 
                 elif isinstance(tool, Function):
                     if tool.name not in self._functions_for_model:
@@ -3746,7 +3746,7 @@ class Team:
                             tool.strict = True
                         self._functions_for_model[tool.name] = tool
                         self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                        log_debug(f"Included function {tool.name}")
+                        log_debug(f"Added function {tool.name}")
 
                 elif callable(tool):
                     # We add the tools, which are callable functions
@@ -3757,7 +3757,7 @@ class Team:
                             func.strict = True
                         self._functions_for_model[func.name] = func
                         self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                        log_debug(f"Included function {func.name}")
+                        log_debug(f"Added function {func.name}")
                     except Exception as e:
                         log_warning(f"Could not add function {tool}: {e}")
 
