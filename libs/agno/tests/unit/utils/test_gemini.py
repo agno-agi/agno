@@ -241,3 +241,28 @@ def test_format_function_definitions_complex_parameters():
     array_param = params.properties["array_param"]
     assert array_param.type == "ARRAY"
     assert array_param.items.type == "STRING"
+
+
+def test_convert_schema_union():
+    """Test converting a schema with union types using anyOf"""
+    schema_dict = {
+        "anyOf": [
+            {"type": "string", "description": "A string value"},
+            {"type": "integer", "description": "An integer value"},
+            {"type": "boolean", "description": "A boolean value"}
+        ],
+        "description": "A union of string, integer, and boolean"
+    }
+    
+    result = convert_schema(schema_dict)
+    
+    assert result is not None
+    assert result.description == "A union of string, integer, and boolean"
+    assert result.any_of is not None
+    assert len(result.any_of) == 3
+    assert result.any_of[0].type == "STRING"
+    assert result.any_of[0].description == "A string value"
+    assert result.any_of[1].type == "INTEGER"
+    assert result.any_of[1].description == "An integer value"
+    assert result.any_of[2].type == "BOOLEAN"
+    assert result.any_of[2].description == "A boolean value"

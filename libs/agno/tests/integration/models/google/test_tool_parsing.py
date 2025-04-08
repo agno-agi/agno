@@ -104,6 +104,36 @@ def test_union_type_parameters_tool_parsing():
     assert len(response.function_calls) > 0
 
 
+def test_python312_union_syntax_tool_parsing():
+    def get_weather_data(
+        temperature: int | float, 
+        location: str = "San Francisco", 
+        unit: str | None = None
+    ) -> str:
+        """
+        Get weather data for a location
+
+        Args:
+            temperature: The temperature value
+            location: The location to get weather for
+            unit: The temperature unit (celsius, fahrenheit, or kelvin)
+        """
+        unit = unit or "celsius"
+        return f"The temperature in {location} is {temperature}°{unit[0].upper()}"
+
+    tools = [{"type": "function", "function": Function.from_callable(get_weather_data).to_dict()}]
+    model = Gemini()
+    model.set_tools(tools)
+    response = model.invoke(
+        [
+            Message(role="system", content="You are an agent"),
+            Message(role="user", content="What's the weather like in Chicago at 75.5 degrees?"),
+        ]
+    )
+    assert response.function_calls is not None
+    assert len(response.function_calls) > 0
+
+
 def test_pydantic_model_parameters_tool_parsing():
     class City(BaseModel):
         name: str
