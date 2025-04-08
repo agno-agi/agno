@@ -561,7 +561,6 @@ class Claude(Model):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    # Overwrite the default from the base model
     def format_function_call_results(
         self, messages: List[Message], function_call_results: List[Message], tool_ids: List[str]
     ) -> None:
@@ -585,7 +584,6 @@ class Claude(Model):
                 )
             messages.append(Message(role="user", content=fc_responses))
 
-    # Overwrite the default from the base model
     def get_system_message_for_model(self) -> Optional[str]:
         if self._functions is not None and len(self._functions) > 0:
             tool_call_prompt = "Do not reflect on the quality of the returned search results in your response"
@@ -603,6 +601,8 @@ class Claude(Model):
             ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
+
+        log_error(f"Claude response: {response}")
 
         # Add role (Claude always uses 'assistant')
         model_response.role = response.role or "assistant"
@@ -649,6 +649,9 @@ class Claude(Model):
                             "function": function_def,
                         }
                     )
+            # In case of a tool call, if the content is None, set a default message.
+            if model_response.content is None:
+                model_response.content = "Tool call request"
 
         # Add usage metrics
         if response.usage is not None:
