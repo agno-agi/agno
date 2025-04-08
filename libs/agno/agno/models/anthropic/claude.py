@@ -603,8 +603,6 @@ class Claude(Model):
         """
         model_response = ModelResponse()
 
-        log_error(f"Claude response: {response}")
-
         # Add role (Claude always uses 'assistant')
         model_response.role = response.role or "assistant"
 
