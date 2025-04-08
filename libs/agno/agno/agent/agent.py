@@ -2252,10 +2252,8 @@ class Agent:
             system_message_content += "\n</additional_information>\n\n"
         # 3.3.7 Then add instructions for the tools
         if self._tool_instructions is not None:
-            system_message_content += "<tool_instructions>"
             for _ti in self._tool_instructions:
-                system_message_content += f"\n{_ti}"
-            system_message_content += "\n</tool_instructions>\n\n"
+                system_message_content += f"{_ti}\n"
 
         # Format the system message with the session state variables
         if self.add_state_in_messages:
