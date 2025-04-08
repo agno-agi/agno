@@ -28,12 +28,13 @@ class ReasoningTools(Toolkit):
 
         # Add instructions for using this toolkit
         if instructions is None:
-            self.instructions = self.DEFAULT_INSTRUCTIONS
+            self.instructions = "<reasoning_instructions>\n" + self.DEFAULT_INSTRUCTIONS
             if add_few_shot:
                 if few_shot_examples is not None:
                     self.instructions += "\n" + few_shot_examples
                 else:
                     self.instructions += "\n" + self.FEW_SHOT_EXAMPLES
+            self.instructions += "\n</reasoning_instructions>"
 
         # Register each tool based on the init flags
         if think:
@@ -94,14 +95,15 @@ class ReasoningTools(Toolkit):
             if "reasoning_steps" in agent.session_state:
                 formatted_reasoning_steps = ""
                 for i, step in enumerate(agent.session_state["reasoning_steps"], 1):
-                    formatted_reasoning_steps += dedent(f"""
-                    Step {i}:
-                    Title: {step.title}
-                    Reasoning: {step.reasoning}
-                    Action: {step.action}
-                    Confidence: {step.confidence}
-                    """)
-                return formatted_reasoning_steps
+                    step_str = f"""\
+Step {i}:
+Title: {step.title}
+Reasoning: {step.reasoning}
+Action: {step.action}
+Confidence: {step.confidence}
+"""
+                    formatted_reasoning_steps += step_str
+                return formatted_reasoning_steps.strip()
             return reasoning_step.model_dump_json()
         except Exception as e:
             log_error(f"Error recording thought: {e}")
@@ -172,14 +174,15 @@ class ReasoningTools(Toolkit):
             if "reasoning_steps" in agent.session_state:
                 formatted_reasoning_steps = ""
                 for i, step in enumerate(agent.session_state["reasoning_steps"], 1):
-                    formatted_reasoning_steps += dedent(f"""
-                    Step {i}:
-                    Title: {step.title}
-                    Reasoning: {step.reasoning}
-                    Action: {step.action}
-                    Confidence: {step.confidence}
-                    """)
-                return formatted_reasoning_steps
+                    step_str = f"""\
+Step {i}:
+Title: {step.title}
+Reasoning: {step.reasoning}
+Action: {step.action}
+Confidence: {step.confidence}
+"""
+                    formatted_reasoning_steps += step_str
+                return formatted_reasoning_steps.strip()
             return reasoning_step.model_dump_json()
         except Exception as e:
             log_error(f"Error recording analysis: {e}")
@@ -196,19 +199,18 @@ class ReasoningTools(Toolkit):
         1. **Think** (scratchpad):
             - Purpose: Use the `think` tool as a scratchpad to break down complex problems, outline steps, and decide on immediate actions within your reasoning flow. Use this to structure your internal monologue.
             - Usage: Call `think` multiple times to build a chain of thought. Detail your reasoning for each step and specify the intended action (e.g., "make a tool call", "perform calculation", "ask clarifying question").
-                You must always `think` before making a tool call or generating an answer.
+            - You must always `think` before making a tool call or generating an answer.
 
         2. **Analyze** (evaluation):
             - Purpose: Evaluate the result of a think step or tool call. Assess if the result is expected, sufficient, or requires further investigation.
             - Usage: Call `analyze` after a `think` step or a tool call. Determine the `next_action` based on your analysis: `continue` (more reasoning needed), `validate` (seek external confirmation/validation if possible), or `final_answer` (ready to conclude).
-                Also note your reasoning about whether it's correct/sufficient.
+            - Also note your reasoning about whether it's correct/sufficient.
 
         ## IMPORTANT GUIDELINES
         - **Always Think First:** You MUST use the `think` tool before any other action (like calling another tool or giving the final answer). This is your first step.
         - **Iterate to Solve:** Use the `think` and `analyze` tools iteratively to build a clear reasoning path. The typical flow is `Think` -> [`Tool Call` if needed] -> `Analyze`. Repeat this cycle until you reach a satisfactory conclusion. You must complete at least one full `think` -> `analyze` cycle.
         - **Keep Thoughts Internal:** The reasoning steps (thoughts and analyses) are for your internal process only. Do not share them directly with the user.
-        - **Conclude Clearly:** When your analysis determines the `next_action` is `final_answer`, provide a concise and accurate final answer to the user. \
-        """
+        - **Conclude Clearly:** When your analysis determines the `next_action` is `final_answer`, provide a concise and accurate final answer to the user."""
     )
 
     FEW_SHOT_EXAMPLES = dedent(
@@ -284,7 +286,7 @@ class ReasoningTools(Toolkit):
           confidence=0.9
         )
         ```
+
         *Agent's Final Answer to User:*
-        The capital of France is Paris. Its estimated population (city proper) is approximately 2.1 million as of early 2024.\
-        """
+        The capital of France is Paris. Its estimated population (city proper) is approximately 2.1 million as of early 2024."""
     )
