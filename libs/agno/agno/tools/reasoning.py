@@ -191,7 +191,7 @@ class ReasoningTools(Toolkit):
 
     DEFAULT_INSTRUCTIONS = dedent(
         """\
-        You have access to the Think and Analyze tools that will help you work through problems step-by-step and structure your thinking process. You must ALWAYS `think` before making a tool call or generating an answer.
+        You have access to the `think` and `analyze` tools to work through problems step-by-step and structure your thought process. You must ALWAYS `think` before making a tool call or generating an answer.
 
         1. **Think** (scratchpad):
             - Purpose: Use the `think` tool as a scratchpad to break down complex problems, outline steps, and decide on immediate actions within your reasoning flow. Use this to structure your internal monologue.
@@ -203,68 +203,88 @@ class ReasoningTools(Toolkit):
             - Usage: Call `analyze` after a `think` step or a tool call. Determine the `next_action` based on your analysis: `continue` (more reasoning needed), `validate` (seek external confirmation/validation if possible), or `final_answer` (ready to conclude).
                 Also note your reasoning about whether it's correct/sufficient.
 
-        **IMPORTANT:**
-        - You must complete atleast 1 `think` -> `analyze` cycle to reason through the problem.
-        - Do not expose your internal chain-of-thought to the user.
-        - Use the tools iteratively to build a clear reasoning path: Think -> [Tool Call] -> Analyze -> [Tool Call] -> ... -> Analyze -> Finalize.
-        - Iterate through the (Think → Analyze) cycle as many times as needed until you have a satisfactory final answer.
-        - If you need more data, refine your approach and call Think/Analyze again.
-        - Once you have a satisfactory final answer, provide a concise, clear final answer for the user.
+        ## IMPORTANT GUIDELINES
+        - **Always Think First:** You MUST use the `think` tool before any other action (like calling another tool or giving the final answer). This is your first step.
+        - **Iterate to Solve:** Use the `think` and `analyze` tools iteratively to build a clear reasoning path. The typical flow is `Think` -> [`Tool Call` if needed] -> `Analyze`. Repeat this cycle until you reach a satisfactory conclusion. You must complete at least one full `think` -> `analyze` cycle.
+        - **Keep Thoughts Internal:** The reasoning steps (thoughts and analyses) are for your internal process only. Do not share them directly with the user.
+        - **Conclude Clearly:** When your analysis determines the `next_action` is `final_answer`, provide a concise and accurate final answer to the user. \
         """
     )
 
     FEW_SHOT_EXAMPLES = dedent(
-        """\
-        You can refer to the examples below as guidance for how to use each tool.
+        """
+        Below are examples demonstrating how to use the `think` and `analyze` tools.
+
         ### Examples
 
-        **Example 1: Basic Step-by-Step**
-        User: How many continents are there on Earth?
+        **Example 1: Simple Fact Retrieval**
 
-        Think:
-          step_title="Understand the question"
-          thought="I need to confirm the standard number of continents."
-          action="Recall known information or quickly verify."
-          confidence=0.9
+        *User Request:* How many continents are there on Earth?
 
-        Analyze:
-          step_title="Check Basic Fact"
-          result="7 continents (commonly accepted: Africa, Antarctica, Asia, Australia, Europe, North America, South America)"
-          reasoning="The recalled information confirms the standard count is 7."
-          next_action="final_answer"
-          confidence=1.0
+        *Agent's Internal Process:*
 
-        Final Answer: There are 7 continents on Earth: Africa, Antarctica, Asia, Australia, Europe, North America, and South America.
-
-        **Example 2: Query Requiring External Information**
-        User: What is the capital of France and its current population?
-
-        Think:
-          step_title="Plan information retrieval"
-          thought="I need two pieces of information: the capital of France and its population. I should use a search tool to find these facts accurately."
-          action="Use search tool to find the capital first."
+        ```tool_call
+        think(
+          title="Understand Request",
+          thought="The user wants to know the standard number of continents on Earth. This is a common piece of knowledge.",
+          action="Recall or verify the number of continents.",
           confidence=0.95
-
-        # Make multiple tool calls to get the information needed
-        # [Perform a tool call, e.g., search(query="capital of France")]
-        # [Tool Result: "Paris"]
-        # [Perform a tool call, e.g., search(query="population of Paris 2024")]
-        # [Tool Result: "Approximately 2.1 million (as of early 2024 estimate)"]
-
-        Analyze:
-          step_title="Analyze Capital Search Result"
-          result="Paris"
-          reasoning="The search confirmed Paris is the capital."
-          next_action="continue"
+        )
+        ```
+        *--(Agent internally recalls the fact)--*
+        ```tool_call
+        analyze(
+          title="Evaluate Fact",
+          result="Standard geographical models list 7 continents: Africa, Antarctica, Asia, Australia, Europe, North America, South America.",
+          analysis="The recalled information directly answers the user's question accurately.",
+          next_action="final_answer",
           confidence=1.0
+        )
+        ```
 
-        Analyze:
-          step_title="Analyze Population Search Result"
-          result="Approximately 2.1 million (as of early 2024 estimate)"
-          reasoning="The search provided an estimated population figure. I now have both pieces of information requested by the user."
-          next_action="final_answer"
+        *Agent's Final Answer to User:*
+        There are 7 continents on Earth: Africa, Antarctica, Asia, Australia, Europe, North America, and South America.
+
+        **Example 2: Multi-Step Information Gathering**
+
+        *User Request:* What is the capital of France and its current population?
+
+        *Agent's Internal Process:*
+
+        ```tool_call
+        think(
+          title="Plan Information Retrieval",
+          thought="The user needs two pieces of information: the capital of France and its current population. I should use external tools (like search) to find the most up-to-date and accurate information.",
+          action="First, search for the capital of France.",
+          confidence=0.95
+        )
+        ```
+
+        *Agent performs multiple external tool calls*
+        *--(Tool call: search(query="capital of France"))--*
+        *--(Tool Result: "Paris")--*
+        *--(Tool call: search(query="population of Paris current"))--*
+        *--(Tool Result: "Approximately 2.1 million (city proper, estimate for early 2024)")--*
+
+        ```tool_call
+        analyze(
+          title="Analyze Capital Search Result",
+          result="The search result indicates Paris is the capital of France.",
+          analysis="This provides the first piece of requested information. Now I need to find the population of Paris.",
+          next_action="continue",
+          confidence=1.0
+        )
+        ```
+        ```tool_call
+        analyze(
+          title="Analyze Population Search Result",
+          result="The search provided an estimated population figure for Paris.",
+          analysis="I now have both the capital and its estimated population. I can provide the final answer.",
+          next_action="final_answer",
           confidence=0.9
-
-        Final Answer: The capital of France is Paris. Its estimated population is approximately 2.1 million as of early 2024.\
+        )
+        ```
+        *Agent's Final Answer to User:*
+        The capital of France is Paris. Its estimated population (city proper) is approximately 2.1 million as of early 2024.\
         """
     )

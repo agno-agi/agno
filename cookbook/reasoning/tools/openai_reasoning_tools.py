@@ -10,6 +10,7 @@ reasoning_agent = Agent(
             think=True,
             analyze=True,
             add_instructions=True,
+            add_few_shot=True,
         ),
         YFinanceTools(
             stock_price=True,
