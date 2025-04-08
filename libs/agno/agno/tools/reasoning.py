@@ -73,11 +73,11 @@ class ReasoningTools(Toolkit):
             # Add this step to the Agent's session state
             if agent.session_state is None:
                 agent.session_state = {}
-
             if "reasoning_steps" not in agent.session_state:
-                agent.session_state["reasoning_steps"] = []
-
-            agent.session_state["reasoning_steps"].append(reasoning_step.model_dump_json())
+                agent.session_state["reasoning_steps"] = {}
+            if agent.run_id not in agent.session_state["reasoning_steps"]:
+                agent.session_state["reasoning_steps"][agent.run_id] = []
+            agent.session_state["reasoning_steps"][agent.run_id].append(reasoning_step.model_dump_json())
 
             # Add the step to the run response
             if hasattr(agent, "run_response") and agent.run_response is not None:
@@ -85,16 +85,14 @@ class ReasoningTools(Toolkit):
                     from agno.run.response import RunResponseExtraData
 
                     agent.run_response.extra_data = RunResponseExtraData()
-
                 if agent.run_response.extra_data.reasoning_steps is None:
                     agent.run_response.extra_data.reasoning_steps = []
-
                 agent.run_response.extra_data.reasoning_steps.append(reasoning_step)
 
             # Return all previous reasoning_steps and the new reasoning_step
-            if "reasoning_steps" in agent.session_state:
+            if "reasoning_steps" in agent.session_state and agent.run_id in agent.session_state["reasoning_steps"]:
                 formatted_reasoning_steps = ""
-                for i, step in enumerate(agent.session_state["reasoning_steps"], 1):
+                for i, step in enumerate(agent.session_state["reasoning_steps"][agent.run_id], 1):
                     step_parsed = ReasoningStep.model_validate_json(step)
                     step_str = f"""\
 Step {i}:
@@ -153,11 +151,11 @@ Confidence: {step_parsed.confidence}
             # Add this step to the Agent's session state
             if agent.session_state is None:
                 agent.session_state = {}
-
             if "reasoning_steps" not in agent.session_state:
-                agent.session_state["reasoning_steps"] = []
-
-            agent.session_state["reasoning_steps"].append(reasoning_step.model_dump_json())
+                agent.session_state["reasoning_steps"] = {}
+            if agent.run_id not in agent.session_state["reasoning_steps"]:
+                agent.session_state["reasoning_steps"][agent.run_id] = []
+            agent.session_state["reasoning_steps"][agent.run_id].append(reasoning_step.model_dump_json())
 
             # Add the step to the run response if we can
             if hasattr(agent, "run_response") and agent.run_response is not None:
@@ -165,16 +163,14 @@ Confidence: {step_parsed.confidence}
                     from agno.run.response import RunResponseExtraData
 
                     agent.run_response.extra_data = RunResponseExtraData()
-
                 if agent.run_response.extra_data.reasoning_steps is None:
                     agent.run_response.extra_data.reasoning_steps = []
-
                 agent.run_response.extra_data.reasoning_steps.append(reasoning_step)
 
             # Return all previous reasoning_steps and the new reasoning_step
-            if "reasoning_steps" in agent.session_state:
+            if "reasoning_steps" in agent.session_state and agent.run_id in agent.session_state["reasoning_steps"]:
                 formatted_reasoning_steps = ""
-                for i, step in enumerate(agent.session_state["reasoning_steps"], 1):
+                for i, step in enumerate(agent.session_state["reasoning_steps"][agent.run_id], 1):
                     step_parsed = ReasoningStep.model_validate_json(step)
                     step_str = f"""\
 Step {i}:
@@ -210,7 +206,7 @@ Confidence: {step_parsed.confidence}
 
         ## IMPORTANT GUIDELINES
         - **Always Think First:** You MUST use the `think` tool before any other action (like calling another tool or giving the final answer). This is your first step.
-        - **Iterate to Solve:** Use the `think` and `analyze` tools iteratively to build a clear reasoning path. The typical flow is `Think` -> [`Tool Call` if needed] -> `Analyze`. Repeat this cycle until you reach a satisfactory conclusion. You must complete at least one full `think` -> `analyze` cycle.
+        - **Iterate to Solve:** Use the `think` and `analyze` tools iteratively to build a clear reasoning path. The typical flow is `Think` -> [`Tool Call` if needed] -> [`Analyze` if needed] -> ... -> `final_answer`. Repeat this cycle until you reach a satisfactory conclusion.
         - **Keep Thoughts Internal:** The reasoning steps (thoughts and analyses) are for your internal process only. Do not share them directly with the user.
         - **Conclude Clearly:** When your analysis determines the `next_action` is `final_answer`, provide a concise and accurate final answer to the user."""
     )

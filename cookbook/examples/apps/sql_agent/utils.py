@@ -76,13 +76,13 @@ def display_tool_calls(tool_calls_container, tools):
             for tool_call in tools:
                 tool_name = tool_call.get("tool_name", "Unknown Tool")
                 tool_args = tool_call.get("tool_args", {})
-                content = tool_call.get("content")
-                metrics = tool_call.get("metrics", {})
+                content = tool_call.get("content", None)
+                metrics = tool_call.get("metrics", None)
 
                 # Add timing information
                 execution_time_str = "N/A"
                 try:
-                    if metrics:
+                    if metrics is not None and hasattr(metrics, "time"):
                         execution_time = metrics.time
                         if execution_time is not None:
                             execution_time_str = f"{execution_time:.4f}s"
@@ -103,7 +103,7 @@ def display_tool_calls(tool_calls_container, tools):
                         st.markdown("**Arguments:**")
                         st.json(tool_args)
 
-                    if content:
+                    if content is not None:
                         try:
                             if is_json(content):
                                 st.markdown("**Results:**")
