@@ -15,34 +15,43 @@
 
 ## Introduction
 
-[Agno](https://docs.agno.com) is a lightweight library for building Reasoning Agents with memory, knowledge, tools and multi-modal support.
+[Agno](https://docs.agno.com) is a lightweight library for building AI Agents that can reason, have memory, knowledge, tools and full multi-modal support.
 
-Here's an Agent that can search the web while reasoning through the problem:
+Here's an Agent that writes a financial report by reasoning through each step:
 
 ```python websearch_agent.py
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),
-    tools=[DuckDuckGoTools()],
-    markdown=True
+    tools=[
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True, company_news=True),
+    ],
+    instructions=[
+        "Use tables to display data",
+        "Only output the report, no other text",
+    ],
+    markdown=True,
 )
-agent.print_response("What's happening in New York?", stream=True)
+agent.print_response("Write a report on NVDA", stream=True, show_full_reasoning=True, stream_intermediate_steps=True)
 ```
 
 ## Key features
 
-Agno is simple, fast and model agnostic. Here are some key features:
+Agno is simple, fast and model agnostic. Here are the key features:
 
 - **Lightning Fast**: Agent creation is 10,000x faster than LangGraph (see [performance](#performance)).
 - **Model Agnostic**: Use any model, any provider, no lock-in.
-- **Multi Modal**: Native support for text, image, audio and video.
-- **Multi Agent**: Build teams of specialized agents.
-- **Memory Management**: Store agent sessions and state in a database.
-- **Knowledge Stores**: Use vector databases for RAG or dynamic few-shot learning.
-- **Structured Outputs**: Make Agents respond in a structured format.
+- **Reasoning Agents**: Build best in class reasoning agents with Reasoning Models, Reasoning Tools or our custom `CoT+Tool-use` approach.
+- **Multi Modal**: Built in support for text, image, audio and video.
+- **Multi Agent**: Industry leading multi-agent architecture with 3 different modes: `route`, `collaborate` and `coordinate`.
+- **Long-term Memory**: Built in support for long-term memory with our `Storage` and `Memory` classes.
+- **Domain Knowledge**: Add domain knowledge to your Agents with our `Knowledge` classes. Fully async and highly performant.
+- **Structured Outputs**: First class support for structured outputs using native structured outputs or `json_mode`.
 - **Monitoring**: Track agent sessions and performance in real-time on [agno.com](https://app.agno.com).
 
 ## Getting Started with Agno

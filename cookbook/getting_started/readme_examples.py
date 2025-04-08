@@ -2,29 +2,39 @@
 Run `pip install openai duckduckgo-search yfinance lancedb tantivy pypdf agno` to install dependencies."""
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.reasoning import ReasoningTools
-
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-from agno.agent import Agent
-from agno.models.anthropic import Claude
-from agno.tools.duckduckgo import DuckDuckGoTools
-
 agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),
-    tools=[ReasoningTools(add_instructions=True), DuckDuckGoTools()],
-    stream_intermediate_steps=True,
-    markdown=True
+    tools=[
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(
+            stock_price=True,
+            analyst_recommendations=True,
+            company_info=True,
+            company_news=True,
+        ),
+    ],
+    instructions=[
+        "Use tables to display data",
+        "Only output the report, no other text",
+    ],
+    markdown=True,
 )
-agent.print_response("What's happening in New York?", stream=True)
+agent.print_response(
+    "Write a report on NVDA",
+    stream=True,
+    show_full_reasoning=True,
+    stream_intermediate_steps=True,
+)
 
 
 # # Level 0: Agents with no tools (basic inference tasks).
