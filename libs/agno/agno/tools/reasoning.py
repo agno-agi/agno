@@ -55,7 +55,7 @@ class ReasoningTools(Toolkit):
             confidence: How confident you are about this thought (0.0 to 1.0)
 
         Returns:
-            A summary of the reasoning step
+            A list of previous thoughts and the new thought
         """
         try:
             log_debug(f"Thought: {title}")
@@ -94,13 +94,13 @@ class ReasoningTools(Toolkit):
             if "reasoning_steps" in agent.session_state:
                 formatted_reasoning_steps = ""
                 for i, step in enumerate(agent.session_state["reasoning_steps"], 1):
-                    formatted_reasoning_steps += f"""
+                    formatted_reasoning_steps += dedent(f"""
                     Step {i}:
                     Title: {step.title}
                     Reasoning: {step.reasoning}
                     Action: {step.action}
                     Confidence: {step.confidence}
-                    """
+                    """)
                 return formatted_reasoning_steps
             return reasoning_step.model_dump_json()
         except Exception as e:
@@ -126,7 +126,7 @@ class ReasoningTools(Toolkit):
             confidence: How confident you are in this analysis (0.0 to 1.0)
 
         Returns:
-            A summary of the analysis
+            A list of previous thoughts and the new analysis
         """
         try:
             log_debug(f"Analysis step: {title}")
@@ -172,13 +172,13 @@ class ReasoningTools(Toolkit):
             if "reasoning_steps" in agent.session_state:
                 formatted_reasoning_steps = ""
                 for i, step in enumerate(agent.session_state["reasoning_steps"], 1):
-                    formatted_reasoning_steps += f"""
+                    formatted_reasoning_steps += dedent(f"""
                     Step {i}:
                     Title: {step.title}
                     Reasoning: {step.reasoning}
                     Action: {step.action}
                     Confidence: {step.confidence}
-                    """
+                    """)
                 return formatted_reasoning_steps
             return reasoning_step.model_dump_json()
         except Exception as e:
@@ -191,7 +191,7 @@ class ReasoningTools(Toolkit):
 
     DEFAULT_INSTRUCTIONS = dedent(
         """\
-        You have access to the Think and Analyze tools that will help you work through problems step-by-step and structure your thinking process. You must always `think` before making a tool call or generating an answer.
+        You have access to the Think and Analyze tools that will help you work through problems step-by-step and structure your thinking process. You must ALWAYS `think` before making a tool call or generating an answer.
 
         1. **Think** (scratchpad):
             - Purpose: Use the `think` tool as a scratchpad to break down complex problems, outline steps, and decide on immediate actions within your reasoning flow. Use this to structure your internal monologue.

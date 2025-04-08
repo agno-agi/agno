@@ -4,7 +4,7 @@ from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
 reasoning_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[
         ReasoningTools(
             think=True,
