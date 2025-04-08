@@ -4316,7 +4316,7 @@ class Team:
                             member_agent_run_response_chunk.tools is not None
                             and len(member_agent_run_response_chunk.tools) > 0
                         ):
-                            yield ",".join([tool.get("content") for tool in member_agent_run_response_chunk.tools])
+                            yield ",".join([tool.get("content", "") for tool in member_agent_run_response_chunk.tools])
                 else:
                     member_agent_run_response = member_agent.run(
                         member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
@@ -4332,7 +4332,7 @@ class Team:
                         if len(member_agent_run_response.content.strip()) > 0:
                             yield f"Agent {member_agent.name}: {member_agent_run_response.content}"
                         elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                            yield f"Agent {member_agent.name}: {','.join([tool.get('content') for tool in member_agent_run_response.tools])}"
+                            yield f"Agent {member_agent.name}: {','.join([tool.get('content', '') for tool in member_agent_run_response.tools])}"
                     elif issubclass(type(member_agent_run_response.content), BaseModel):
                         try:
                             yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
@@ -4456,6 +4456,8 @@ class Team:
                         except Exception as e:
                             return f"Agent {member_name}: Error - {str(e)}"
 
+                    return f"Agent {member_name}: No Response"
+
                 tasks.append(run_member_agent)
 
             # Need to collect and process yielded values from each task
@@ -4553,7 +4555,7 @@ class Team:
                         member_agent_run_response_chunk.tools is not None
                         and len(member_agent_run_response_chunk.tools) > 0
                     ):
-                        yield ",".join([tool.get("content") for tool in member_agent_run_response_chunk.tools])
+                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response_chunk.tools])
             else:
                 member_agent_run_response = member_agent.run(
                     member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
@@ -4571,11 +4573,11 @@ class Team:
 
                     # If the content is empty but we have tool calls
                     elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.get("content") for tool in member_agent_run_response.tools])
+                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response.tools])
 
                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                     try:
-                        yield member_agent_run_response.content.model_dump_json(indent=2)
+                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
                     except Exception as e:
                         yield str(e)
                 else:
@@ -4667,7 +4669,7 @@ class Team:
                         member_agent_run_response_chunk.tools is not None
                         and len(member_agent_run_response_chunk.tools) > 0
                     ):
-                        yield ",".join([tool.get("content") for tool in member_agent_run_response_chunk.tools])
+                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response_chunk.tools])
             else:
                 member_agent_run_response = await member_agent.arun(
                     member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
@@ -4684,10 +4686,10 @@ class Team:
 
                     # If the content is empty but we have tool calls
                     elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.get("content") for tool in member_agent_run_response.tools])
+                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response.tools])
                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                     try:
-                        yield member_agent_run_response.content.model_dump_json(indent=2)
+                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
                     except Exception as e:
                         yield str(e)
                 else:
@@ -4826,10 +4828,10 @@ class Team:
 
                     # If the content is empty but we have tool calls
                     elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.get("content") for tool in member_agent_run_response.tools])
+                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response.tools])
                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                     try:
-                        yield member_agent_run_response.content.model_dump_json(indent=2)
+                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
                     except Exception as e:
                         yield str(e)
                 else:
@@ -4917,10 +4919,10 @@ class Team:
 
                     # If the content is empty but we have tool calls
                     elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.get("content") for tool in member_agent_run_response.tools])
+                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response.tools])
                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                     try:
-                        yield member_agent_run_response.content.model_dump_json(indent=2)
+                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
                     except Exception as e:
                         yield str(e)
                 else:
