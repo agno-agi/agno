@@ -2217,10 +2217,10 @@ class Agent:
             system_message_content += f"{self.description}\n\n"
         # 3.3.2 Then add the Agent goal if provided
         if self.goal is not None:
-            system_message_content += f"<your_goal>\n{self.goal}\n</your_goal>\n\n"
+            system_message_content += f"\n<your_goal>\n{self.goal}\n</your_goal>\n\n"
         # 3.3.3 Then add the Agent role if provided
         if self.role is not None:
-            system_message_content += f"<your_role>\n{self.role}\n</your_role>\n\n"
+            system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
         # 3.3.4 Then add instructions for transferring tasks to team members
         if self.has_team and self.add_transfer_instructions:
             system_message_content += (
