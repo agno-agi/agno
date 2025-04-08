@@ -23,6 +23,10 @@
    - Use the connection string in your code
    - Ensure pymongo is installed: pip install "pymongo[srv]"
    - Test with a simple query to verify connectivity
+
+Alternatively to test locally, you can run a docker container
+
+docker run -p 27017:27017 -d --name mongodb-container --rm -v ./tmp/mongo-data:/data/db mongodb/mongodb-atlas-local:8.0.3
 """
 
 import asyncio
@@ -35,7 +39,7 @@ from agno.vectordb.mongodb import MongoDb
 """
 Example connection strings:
 "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
-"mongodb://localhost/?directConnection=true"
+"mongodb://localhost:27017/agno?authSource=admin"
 """
 mdb_connection_string = "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
 
