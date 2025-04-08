@@ -88,8 +88,6 @@ class MongoDb(VectorDb):
         )
 
         self._client = client
-        if not self._client:
-            self._client = self._get_client()
         self._db = None
         self._collection: Optional[Collection] = None
 
