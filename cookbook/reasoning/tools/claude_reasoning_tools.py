@@ -1,21 +1,27 @@
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
 reasoning_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-3-7-sonnet-latest"),
     tools=[
+        ReasoningTools(
+            think=True,
+            analyze=True,
+            add_instructions=True,
+            add_few_shot=True,
+        ),
         YFinanceTools(
             stock_price=True,
             analyst_recommendations=True,
             company_info=True,
             company_news=True,
-        )
+        ),
     ],
-    instructions="Use tables to display data",
-    use_json_mode=True,
+    instructions="Use tables where possible",
+    stream_intermediate_steps=True,
     show_tool_calls=True,
-    reasoning=True,
     markdown=True,
 )
 reasoning_agent.print_response(

@@ -26,13 +26,15 @@ from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.newspaper4k import Newspaper4kTools
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Article(BaseModel):
-    title: str
-    summary: str
-    reference_links: List[str]
+    title: str = Field(..., description="The title of the article")
+    summary: str = Field(..., description="A summary of the article")
+    reference_links: List[str] = Field(
+        ..., description="A list of reference links to the article"
+    )
 
 
 hn_researcher = Agent(

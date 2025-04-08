@@ -41,7 +41,7 @@ def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> O
 
         # Clean the JSON string
         # Remove markdown formatting
-        content = re.sub(r"[*_`#]", "", content)
+        content = re.sub(r"[*`#]", "", content)
 
         # Handle newlines and control characters
         content = content.replace("\n", " ").replace("\r", "")
