@@ -59,7 +59,7 @@ class ReasoningTools(Toolkit):
             A list of previous thoughts and the new thought
         """
         try:
-            log_debug(f"Thought: {title}")
+            log_debug(f"Thought about {title}")
 
             # Create a reasoning step
             reasoning_step = ReasoningStep(
@@ -131,7 +131,7 @@ Confidence: {step.confidence}
             A list of previous thoughts and the new analysis
         """
         try:
-            log_debug(f"Analysis step: {title}")
+            log_debug(f"Analyzed {title}")
 
             # Map string next_action to enum
             next_action_enum = NextAction.CONTINUE
@@ -262,11 +262,11 @@ Confidence: {step.confidence}
         )
         ```
 
-        *Agent performs multiple external tool calls*
-        *--(Tool call: search(query="capital of France"))--*
-        *--(Tool Result: "Paris")--*
-        *--(Tool call: search(query="population of Paris current"))--*
-        *--(Tool Result: "Approximately 2.1 million (city proper, estimate for early 2024)")--*
+        *Perform multiple external tool calls in parallel*
+        *--(Tool call 1: search(query="capital of France"))--*
+        *--(Tool call 2: search(query="population of Paris current"))--*
+        *--(Tool Result 1: "Paris")--*
+        *--(Tool Result 2: "Approximately 2.1 million (city proper, estimate for early 2024)")--*
 
         ```tool_call
         analyze(
