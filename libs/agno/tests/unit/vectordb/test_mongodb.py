@@ -361,8 +361,8 @@ def test_search_with_filters(vector_db: MongoDb, mock_mongodb_client: MagicMock,
 # Async Tests
 @pytest.mark.asyncio
 async def test_async_client(async_vector_db: MongoDb) -> None:
-    """Test that async_client property creates and returns a client."""
-    client = await async_vector_db.async_client
+    """Test that _get_async_client method creates and returns a client."""
+    client = await async_vector_db._get_async_client()
     assert client is not None
 
 

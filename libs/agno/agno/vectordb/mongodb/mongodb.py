@@ -113,9 +113,8 @@ class MongoDb(VectorDb):
                 raise
         return self._client
 
-    @property
-    async def async_client(self) -> AsyncMongoClient:
-        """Get or create the async MongoDB client."""
+    async def _get_async_client(self) -> AsyncMongoClient:
+        """Create or retrieve the async MongoDB client."""
         if self._async_client is None:
             log_debug("Creating Async MongoDB Client")
             self._async_client = AsyncMongoClient(
@@ -164,7 +163,7 @@ class MongoDb(VectorDb):
     async def _get_async_collection(self):
         """Get or create the async MongoDB collection."""
         if self._async_collection is None:
-            client = await self.async_client
+            client = await self._get_async_client()
             self._async_db = client[self.database]  # type: ignore
             self._async_collection = self._async_db[self.collection_name]  # type: ignore
         return self._async_collection
@@ -710,7 +709,7 @@ class MongoDb(VectorDb):
     async def async_exists(self) -> bool:
         """Check if the collection exists asynchronously."""
         try:
-            client = await self.async_client
+            client = await self._get_async_client()
             collection_names = await client[self.database].list_collection_names()
             exists = self.collection_name in collection_names
             log_debug(f"Collection '{self.collection_name}' existence (async): {exists}")
