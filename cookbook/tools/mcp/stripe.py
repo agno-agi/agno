@@ -21,20 +21,11 @@ from agno.agent import Agent
 from agno.tools.mcp import MCPTools
 from agno.utils.log import log_error, log_exception, log_info
 
-try:
-    from mcp import StdioServerParameters
-except (ImportError, ModuleNotFoundError):
-    raise ImportError(
-        "`mcp-sdk` not installed. Please install using `pip install mcp-sdk`"
-    )
-
 
 async def run_agent(message: str) -> None:
     """
     Sets up the Stripe MCP server and initialize the Agno agent
     """
-    log_info(f"Received task for Stripe Agent: '{message}'")
-
     # Verify Stripe API Key is available
     stripe_api_key = os.getenv("STRIPE_SECRET_KEY")
     if not stripe_api_key:
@@ -46,24 +37,9 @@ async def run_agent(message: str) -> None:
     # handle different Operating Systems
     npx_command = "npx.cmd" if os.name == "nt" else "npx"
 
-    # Create MCP server parameters
-    server_params = StdioServerParameters(
-        command=npx_command,
-        args=[
-            "-y",
-            "@stripe/mcp",
-            f"--tools={enabled_tools}",
-            f"--api-key={stripe_api_key}",
-        ],
-    )
-
     try:
         # Initialize MCP toolkit with Stripe server
-        async with MCPTools(server_params=server_params) as mcp_toolkit:
-            log_info("MCPTools successfully initialized. Available tools:")
-            for tool_name in mcp_toolkit.functions.keys():
-                log_info(f"- {tool_name}")
-
+        async with MCPTools(command=f"{npx_command} -y @stripe/mcp --tools={enabled_tools} --api-key={stripe_api_key}") as mcp_toolkit:
             agent = Agent(
                 name="StripeAgent",
                 instructions=dedent("""\
@@ -85,10 +61,6 @@ async def run_agent(message: str) -> None:
             log_info(f"Running agent with assignment: '{message}'")
             await agent.aprint_response(message, stream=True)
 
-    except ImportError as e:
-        log_error(
-            f"Import Error: {e}. Please ensure 'mcp-sdk' is installed (`pip install mcp-sdk`)."
-        )
     except FileNotFoundError:
         error_msg = f"Error: '{npx_command}' command not found. Please ensure Node.js and npm/npx are installed and in your system's PATH."
         log_error(error_msg)
