@@ -2,15 +2,15 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple, Union, Iterator
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.media import File, Image
-from agno.models.base import Model, MessageData
+from agno.models.base import MessageData, Model
 from agno.models.message import Citations, DocumentCitation, Message
 from agno.models.response import ModelResponse
 from agno.tools.function import FunctionCall
-from agno.utils.log import log_error, log_warning, log_debug
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from anthropic import Anthropic as AnthropicClient
@@ -727,7 +727,7 @@ class Claude(Model):
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
                 else:
-                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)  # type: ignore
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -812,7 +812,7 @@ class Claude(Model):
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
                 else:
-                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)  # type: ignore
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)

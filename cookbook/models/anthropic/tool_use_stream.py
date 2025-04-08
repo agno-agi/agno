@@ -8,7 +8,6 @@ agent = Agent(
     model=Claude(id="claude-3-5-sonnet-20240620"),
     tools=[DuckDuckGoTools()],
     show_tool_calls=True,
-    add_history_to_messages=True,
     markdown=True,
 )
-agent.cli_app("Whats happening in France?", stream=True)
+agent.print_response("Whats happening in France?", stream=True)
