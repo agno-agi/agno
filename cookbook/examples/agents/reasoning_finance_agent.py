@@ -1,17 +1,12 @@
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
-reasoning_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
     tools=[
-        ReasoningTools(
-            think=True,
-            analyze=True,
-            add_instructions=True,
-            add_few_shot=True,
-        ),
+        ReasoningTools(add_instructions=True, add_few_shot=True),
         YFinanceTools(
             stock_price=True,
             analyst_recommendations=True,
@@ -19,11 +14,14 @@ reasoning_agent = Agent(
             company_news=True,
         ),
     ],
-    instructions="Use tables where possible",
+    instructions=[
+        "Use tables to display data",
+        "Only output the report, no other text",
+    ],
     markdown=True,
 )
-reasoning_agent.print_response(
-    "Write a report comparing NVDA to TSLA",
+agent.print_response(
+    "Write a report on NVDA",
     stream=True,
     show_full_reasoning=True,
     stream_intermediate_steps=True,

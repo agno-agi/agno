@@ -15,38 +15,43 @@
 
 ## Introduction
 
-[Agno](https://docs.agno.com) is a lightweight library for building Multimodal Agents. It exposes LLMs as a unified API and gives them superpowers like memory, knowledge, tools and reasoning.
+[Agno](https://docs.agno.com) is a lightweight library for building Reasoning Agents with memory, knowledge, tools and native multi-modal support. Use Agno to build Reasoning Agents, Multi-Modal Agents, Teams of Agents and Agentic Workflows.
 
-- Build lightning-fast Agents that can generate text, image, audio and video.
-- Add memory, knowledge, tools and reasoning as needed.
-- Run anywhere, Agno is open-source.
+Here's an Agent that writes a financial report by reasoning through each step:
 
-Here's an Agent that can search the web:
-
-```python websearch_agent.py
+```python reasoning_finance_agent.py
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
-    markdown=True
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    tools=[
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True, company_news=True),
+    ],
+    instructions=[
+        "Use tables to display data",
+        "Only output the report, no other text",
+    ],
+    markdown=True,
 )
-agent.print_response("What's happening in New York?", stream=True)
+agent.print_response("Write a report on NVDA", stream=True, show_full_reasoning=True, stream_intermediate_steps=True)
 ```
 
 ## Key features
 
-Agno is simple, fast and model agnostic. Here are some key features:
+Agno is simple, fast and model-agnostic. Here are the key features:
 
-- **Lightning Fast**: Agent creation is 10,000x faster than LangGraph (see [performance](#performance)).
+- **Lightning Fast**: Agents instantiate 10,000x faster than LangGraph and use 50x less memory (see [performance](#performance)).
 - **Model Agnostic**: Use any model, any provider, no lock-in.
-- **Multi Modal**: Native support for text, image, audio and video.
-- **Multi Agent**: Build teams of specialized agents.
-- **Memory Management**: Store agent sessions and state in a database.
-- **Knowledge Stores**: Use vector databases for RAG or dynamic few-shot learning.
-- **Structured Outputs**: Make Agents respond in a structured format.
+- **Reasoning Agents**: Build best in class reasoning agents using Reasoning Models, Reasoning Tools or our custom `CoT+Tool-use` approach.
+- **Natively Multi Modal**: Built in support for text, image, audio and video.
+- **Multi Agent Teams**: Industry leading multi-agent architecture with 3 different modes: `route`, `collaborate` and `coordinate`.
+- **Long-term Memory**: Built in support for long-term memory with our `Storage` and `Memory` classes.
+- **Domain Knowledge**: Add domain knowledge to your Agents with our `Knowledge` classes. Fully async and highly performant.
+- **Structured Outputs**: First class support for structured outputs using native structured outputs or `json_mode`.
 - **Monitoring**: Track agent sessions and performance in real-time on [agno.com](https://app.agno.com).
 
 ## Getting Started with Agno
