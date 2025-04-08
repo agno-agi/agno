@@ -18,7 +18,11 @@ agent = Agent(
         "Use tables to display data",
         "Only output the report, no other text",
     ],
-    stream_intermediate_steps=True,
     markdown=True,
 )
-agent.print_response("Write a report on NVDA", stream=True, show_full_reasoning=True, stream_intermediate_steps=True)
+agent.print_response(
+    "Write a report on NVDA",
+    stream=True,
+    show_full_reasoning=True,
+    stream_intermediate_steps=True,
+)
