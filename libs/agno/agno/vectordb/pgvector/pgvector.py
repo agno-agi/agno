@@ -11,12 +11,16 @@ try:
     from sqlalchemy.sql.expression import bindparam, desc, func, select, text
     from sqlalchemy.types import DateTime, String
 except ImportError:
-    raise ImportError("`sqlalchemy` not installed. Please install using `pip install sqlalchemy psycopg`")
+    raise ImportError(
+        "`sqlalchemy` not installed. Please install using `pip install sqlalchemy psycopg`"
+    )
 
 try:
     from pgvector.sqlalchemy import Vector
 except ImportError:
-    raise ImportError("`pgvector` not installed. Please install using `pip install pgvector`")
+    raise ImportError(
+        "`pgvector` not installed. Please install using `pip install pgvector`"
+    )
 
 from agno.document import Document
 from agno.embedder import Embedder
@@ -147,7 +151,12 @@ class PgVector(VectorDb):
             Column("id", String, primary_key=True),
             Column("name", String),
             Column("meta_data", postgresql.JSONB, server_default=text("'{}'::jsonb")),
-            Column("filters", postgresql.JSONB, server_default=text("'{}'::jsonb"), nullable=True),
+            Column(
+                "filters",
+                postgresql.JSONB,
+                server_default=text("'{}'::jsonb"),
+                nullable=True,
+            ),
             Column("content", postgresql.TEXT),
             Column("embedding", Vector(self.dimensions)),
             Column("usage", postgresql.JSONB),
@@ -174,7 +183,9 @@ class PgVector(VectorDb):
         if self.schema_version == 1:
             return self.get_table_v1()
         else:
-            raise NotImplementedError(f"Unsupported schema version: {self.schema_version}")
+            raise NotImplementedError(
+                f"Unsupported schema version: {self.schema_version}"
+            )
 
     def table_exists(self) -> bool:
         """
@@ -185,7 +196,9 @@ class PgVector(VectorDb):
         """
         log_debug(f"Checking if table '{self.table.fullname}' exists.")
         try:
-            return inspect(self.db_engine).has_table(self.table_name, schema=self.schema)
+            return inspect(self.db_engine).has_table(
+                self.table_name, schema=self.schema
+            )
         except Exception as e:
             logger.error(f"Error checking if table exists: {e}")
             return False
@@ -292,7 +305,9 @@ class PgVector(VectorDb):
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
                     batch_docs = documents[i : i + batch_size]
-                    log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
+                    log_debug(
+                        f"Processing batch starting at index {i}, size: {len(batch_docs)}"
+                    )
                     try:
                         # Prepare documents for insertion
                         batch_records = []
@@ -314,7 +329,9 @@ class PgVector(VectorDb):
                                 }
                                 batch_records.append(record)
                             except Exception as e:
-                                logger.error(f"Error processing document '{doc.name}': {e}")
+                                logger.error(
+                                    f"Error processing document '{doc.name}': {e}"
+                                )
 
                         # Insert the batch of records
                         insert_stmt = postgresql.insert(self.table)
@@ -356,7 +373,9 @@ class PgVector(VectorDb):
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
                     batch_docs = documents[i : i + batch_size]
-                    log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
+                    log_debug(
+                        f"Processing batch starting at index {i}, size: {len(batch_docs)}"
+                    )
                     try:
                         # Prepare documents for upserting
                         batch_records = []
@@ -378,10 +397,14 @@ class PgVector(VectorDb):
                                 }
                                 batch_records.append(record)
                             except Exception as e:
-                                logger.error(f"Error processing document '{doc.name}': {e}")
+                                logger.error(
+                                    f"Error processing document '{doc.name}': {e}"
+                                )
 
                         # Upsert the batch of records
-                        insert_stmt = postgresql.insert(self.table).values(batch_records)
+                        insert_stmt = postgresql.insert(self.table).values(
+                            batch_records
+                        )
                         upsert_stmt = insert_stmt.on_conflict_do_update(
                             index_elements=["id"],
                             set_=dict(
@@ -405,7 +428,9 @@ class PgVector(VectorDb):
             logger.error(f"Error upserting documents: {e}")
             raise
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
         Perform a search based on the configured search type.
 
@@ -427,7 +452,9 @@ class PgVector(VectorDb):
             logger.error(f"Invalid search type '{self.search_type}'.")
             return []
 
-    def vector_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def vector_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
         Perform a vector similarity search.
 
@@ -458,18 +485,26 @@ class PgVector(VectorDb):
 
             # Build the base statement
             stmt = select(*columns)
+            stmt.join(func.jsonb_each_text(filters).label("flt") == True)
+            vals = [value for key, value in filters]
 
             # Apply filters if provided
             if filters is not None:
-                stmt = stmt.where(self.table.c.filters.contains(filters))
+                stmt = stmt.where(func.jsonb_each_text(filters).value.contains(vals))
 
             # Order the results based on the distance metric
             if self.distance == Distance.l2:
-                stmt = stmt.order_by(self.table.c.embedding.l2_distance(query_embedding))
+                stmt = stmt.order_by(
+                    self.table.c.embedding.l2_distance(query_embedding)
+                )
             elif self.distance == Distance.cosine:
-                stmt = stmt.order_by(self.table.c.embedding.cosine_distance(query_embedding))
+                stmt = stmt.order_by(
+                    self.table.c.embedding.cosine_distance(query_embedding)
+                )
             elif self.distance == Distance.max_inner_product:
-                stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
+                stmt = stmt.order_by(
+                    self.table.c.embedding.max_inner_product(query_embedding)
+                )
             else:
                 logger.error(f"Unknown distance metric: {self.distance}")
                 return []
@@ -485,9 +520,17 @@ class PgVector(VectorDb):
                 with self.Session() as sess, sess.begin():
                     if self.vector_index is not None:
                         if isinstance(self.vector_index, Ivfflat):
-                            sess.execute(text(f"SET LOCAL ivfflat.probes = {self.vector_index.probes}"))
+                            sess.execute(
+                                text(
+                                    f"SET LOCAL ivfflat.probes = {self.vector_index.probes}"
+                                )
+                            )
                         elif isinstance(self.vector_index, HNSW):
-                            sess.execute(text(f"SET LOCAL hnsw.ef_search = {self.vector_index.ef_search}"))
+                            sess.execute(
+                                text(
+                                    f"SET LOCAL hnsw.ef_search = {self.vector_index.ef_search}"
+                                )
+                            )
                     results = sess.execute(stmt).fetchall()
             except Exception as e:
                 logger.error(f"Error performing semantic search: {e}")
@@ -511,7 +554,9 @@ class PgVector(VectorDb):
                 )
 
             if self.reranker:
-                search_results = self.reranker.rerank(query=query, documents=search_results)
+                search_results = self.reranker.rerank(
+                    query=query, documents=search_results
+                )
 
             return search_results
         except Exception as e:
@@ -533,7 +578,9 @@ class PgVector(VectorDb):
         processed_words = [word + "*" for word in words]
         return " ".join(processed_words)
 
-    def keyword_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def keyword_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
         Perform a keyword search on the 'content' column.
 
@@ -562,8 +609,12 @@ class PgVector(VectorDb):
             # Build the text search vector
             ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
             # Create the ts_query using websearch_to_tsquery with parameter binding
-            processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
-            ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
+            processed_query = (
+                self.enable_prefix_matching(query) if self.prefix_match else query
+            )
+            ts_query = func.websearch_to_tsquery(
+                self.content_language, bindparam("query", value=processed_query)
+            )
             # Compute the text rank
             text_rank = func.ts_rank_cd(ts_vector, ts_query)
 
@@ -648,8 +699,12 @@ class PgVector(VectorDb):
             # Build the text search vector
             ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
             # Create the ts_query using websearch_to_tsquery with parameter binding
-            processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
-            ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
+            processed_query = (
+                self.enable_prefix_matching(query) if self.prefix_match else query
+            )
+            ts_query = func.websearch_to_tsquery(
+                self.content_language, bindparam("query", value=processed_query)
+            )
             # Compute the text rank
             text_rank = func.ts_rank_cd(ts_vector, ts_query)
 
@@ -661,12 +716,16 @@ class PgVector(VectorDb):
                 vector_score = 1 / (1 + vector_distance)
             elif self.distance == Distance.cosine:
                 # For cosine distance, smaller distances are better
-                vector_distance = self.table.c.embedding.cosine_distance(query_embedding)
+                vector_distance = self.table.c.embedding.cosine_distance(
+                    query_embedding
+                )
                 vector_score = 1 / (1 + vector_distance)
             elif self.distance == Distance.max_inner_product:
                 # For inner product, higher values are better
                 # Assume embeddings are normalized, so inner product ranges from -1 to 1
-                raw_vector_score = self.table.c.embedding.max_inner_product(query_embedding)
+                raw_vector_score = self.table.c.embedding.max_inner_product(
+                    query_embedding
+                )
                 # Normalize to range [0, 1]
                 vector_score = (raw_vector_score + 1) / 2
             else:
@@ -680,7 +739,9 @@ class PgVector(VectorDb):
             text_rank_weight = 1 - self.vector_score_weight  # weight for text rank
 
             # Combine the scores into a hybrid score
-            hybrid_score = (self.vector_score_weight * vector_score) + (text_rank_weight * text_rank)
+            hybrid_score = (self.vector_score_weight * vector_score) + (
+                text_rank_weight * text_rank
+            )
 
             # Build the base statement, including the hybrid score
             stmt = select(*columns, hybrid_score.label("hybrid_score"))
@@ -706,9 +767,17 @@ class PgVector(VectorDb):
                 with self.Session() as sess, sess.begin():
                     if self.vector_index is not None:
                         if isinstance(self.vector_index, Ivfflat):
-                            sess.execute(text(f"SET LOCAL ivfflat.probes = {self.vector_index.probes}"))
+                            sess.execute(
+                                text(
+                                    f"SET LOCAL ivfflat.probes = {self.vector_index.probes}"
+                                )
+                            )
                         elif isinstance(self.vector_index, HNSW):
-                            sess.execute(text(f"SET LOCAL hnsw.ef_search = {self.vector_index.ef_search}"))
+                            sess.execute(
+                                text(
+                                    f"SET LOCAL hnsw.ef_search = {self.vector_index.ef_search}"
+                                )
+                            )
                     results = sess.execute(stmt).fetchall()
             except Exception as e:
                 logger.error(f"Error performing hybrid search: {e}")
@@ -847,10 +916,14 @@ class PgVector(VectorDb):
         if vector_index_exists:
             log_info(f"Vector index '{self.vector_index.name}' already exists.")
             if force_recreate:
-                log_info(f"Force recreating vector index '{self.vector_index.name}'. Dropping existing index.")
+                log_info(
+                    f"Force recreating vector index '{self.vector_index.name}'. Dropping existing index."
+                )
                 self._drop_index(self.vector_index.name)
             else:
-                log_info(f"Skipping vector index creation as index '{self.vector_index.name}' already exists.")
+                log_info(
+                    f"Skipping vector index creation as index '{self.vector_index.name}' already exists."
+                )
                 return
 
         # Proceed to create the vector index
@@ -858,7 +931,9 @@ class PgVector(VectorDb):
             with self.Session() as sess, sess.begin():
                 # Set configuration parameters
                 if self.vector_index.configuration:
-                    log_debug(f"Setting configuration: {self.vector_index.configuration}")
+                    log_debug(
+                        f"Setting configuration: {self.vector_index.configuration}"
+                    )
                     for key, value in self.vector_index.configuration.items():
                         sess.execute(text(f"SET {key} = :value;"), {"value": value})
 
@@ -873,7 +948,9 @@ class PgVector(VectorDb):
             logger.error(f"Error creating vector index '{self.vector_index.name}': {e}")
             raise
 
-    def _create_ivfflat_index(self, sess: Session, table_fullname: str, index_distance: str) -> None:
+    def _create_ivfflat_index(
+        self, sess: Session, table_fullname: str, index_distance: str
+    ) -> None:
         """
         Create an IVFFlat index.
 
@@ -891,12 +968,16 @@ class PgVector(VectorDb):
             total_records = self.get_count()
             log_debug(f"Number of records: {total_records}")
             if total_records < 1000000:
-                num_lists = max(int(total_records / 1000), 1)  # Ensure at least one list
+                num_lists = max(
+                    int(total_records / 1000), 1
+                )  # Ensure at least one list
             else:
                 num_lists = max(int(sqrt(total_records)), 1)
 
         # Set ivfflat.probes
-        sess.execute(text("SET ivfflat.probes = :probes;"), {"probes": self.vector_index.probes})
+        sess.execute(
+            text("SET ivfflat.probes = :probes;"), {"probes": self.vector_index.probes}
+        )
 
         log_debug(
             f"Creating Ivfflat index '{self.vector_index.name}' on table '{table_fullname}' with "
@@ -912,7 +993,9 @@ class PgVector(VectorDb):
         )
         sess.execute(create_index_sql, {"num_lists": num_lists})
 
-    def _create_hnsw_index(self, sess: Session, table_fullname: str, index_distance: str) -> None:
+    def _create_hnsw_index(
+        self, sess: Session, table_fullname: str, index_distance: str
+    ) -> None:
         """
         Create an HNSW index.
 
@@ -936,7 +1019,13 @@ class PgVector(VectorDb):
             f"USING hnsw (embedding {index_distance}) "
             f"WITH (m = :m, ef_construction = :ef_construction);"
         )
-        sess.execute(create_index_sql, {"m": self.vector_index.m, "ef_construction": self.vector_index.ef_construction})
+        sess.execute(
+            create_index_sql,
+            {
+                "m": self.vector_index.m,
+                "ef_construction": self.vector_index.ef_construction,
+            },
+        )
 
     def _create_gin_index(self, force_recreate: bool = False) -> None:
         """
@@ -952,16 +1041,22 @@ class PgVector(VectorDb):
         if gin_index_exists:
             log_info(f"GIN index '{gin_index_name}' already exists.")
             if force_recreate:
-                log_info(f"Force recreating GIN index '{gin_index_name}'. Dropping existing index.")
+                log_info(
+                    f"Force recreating GIN index '{gin_index_name}'. Dropping existing index."
+                )
                 self._drop_index(gin_index_name)
             else:
-                log_info(f"Skipping GIN index creation as index '{gin_index_name}' already exists.")
+                log_info(
+                    f"Skipping GIN index creation as index '{gin_index_name}' already exists."
+                )
                 return
 
         # Proceed to create GIN index
         try:
             with self.Session() as sess, sess.begin():
-                log_debug(f"Creating GIN index '{gin_index_name}' on table '{self.table.fullname}'.")
+                log_debug(
+                    f"Creating GIN index '{gin_index_name}' on table '{self.table.fullname}'."
+                )
                 # Create index
                 create_gin_index_sql = text(
                     f'CREATE INDEX "{gin_index_name}" ON {self.table.fullname} '
@@ -1031,10 +1126,14 @@ class PgVector(VectorDb):
     async def async_doc_exists(self, document: Document) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
     async def async_search(
