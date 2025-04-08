@@ -586,8 +586,9 @@ class Team:
 
             except ModelProviderError as e:
                 import time
+
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                
+
                 last_exception = e
                 if attempt < num_attempts - 1:
                     time.sleep(2**attempt)
@@ -4311,7 +4312,10 @@ class Team:
                         check_if_run_cancelled(member_agent_run_response_chunk)
                         if member_agent_run_response_chunk.content is not None:
                             yield member_agent_run_response_chunk.content
-                        elif member_agent_run_response_chunk.tools is not None and len(member_agent_run_response_chunk.tools) > 0:
+                        elif (
+                            member_agent_run_response_chunk.tools is not None
+                            and len(member_agent_run_response_chunk.tools) > 0
+                        ):
                             yield ",".join([tool.get("content") for tool in member_agent_run_response_chunk.tools])
                 else:
                     member_agent_run_response = member_agent.run(
@@ -4320,7 +4324,9 @@ class Team:
 
                     check_if_run_cancelled(member_agent_run_response)
 
-                    if member_agent_run_response.content is None and (member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0):
+                    if member_agent_run_response.content is None and (
+                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                    ):
                         yield f"Agent {member_agent.name}: No response from the member agent."
                     elif isinstance(member_agent_run_response.content, str):
                         if len(member_agent_run_response.content.strip()) > 0:
@@ -4543,7 +4549,10 @@ class Team:
                     check_if_run_cancelled(member_agent_run_response_chunk)
                     if member_agent_run_response_chunk.content is not None:
                         yield member_agent_run_response_chunk.content
-                    elif member_agent_run_response_chunk.tools is not None and len(member_agent_run_response_chunk.tools) > 0:
+                    elif (
+                        member_agent_run_response_chunk.tools is not None
+                        and len(member_agent_run_response_chunk.tools) > 0
+                    ):
                         yield ",".join([tool.get("content") for tool in member_agent_run_response_chunk.tools])
             else:
                 member_agent_run_response = member_agent.run(
@@ -4552,7 +4561,9 @@ class Team:
 
                 check_if_run_cancelled(member_agent_run_response)
 
-                if member_agent_run_response.content is None and (member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0):
+                if member_agent_run_response.content is None and (
+                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                ):
                     yield "No response from the member agent."
                 elif isinstance(member_agent_run_response.content, str):
                     if len(member_agent_run_response.content.strip()) > 0:
@@ -4561,7 +4572,7 @@ class Team:
                     # If the content is empty but we have tool calls
                     elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
                         yield ",".join([tool.get("content") for tool in member_agent_run_response.tools])
-                        
+
                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                     try:
                         yield member_agent_run_response.content.model_dump_json(indent=2)
@@ -4652,15 +4663,20 @@ class Team:
                     check_if_run_cancelled(member_agent_run_response_chunk)
                     if member_agent_run_response_chunk.content is not None:
                         yield member_agent_run_response_chunk.content
-                    elif member_agent_run_response_chunk.tools is not None and len(member_agent_run_response_chunk.tools) > 0:
+                    elif (
+                        member_agent_run_response_chunk.tools is not None
+                        and len(member_agent_run_response_chunk.tools) > 0
+                    ):
                         yield ",".join([tool.get("content") for tool in member_agent_run_response_chunk.tools])
             else:
                 member_agent_run_response = await member_agent.arun(
                     member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
                 )
                 check_if_run_cancelled(member_agent_run_response)
-                
-                if member_agent_run_response.content is None and (member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0):
+
+                if member_agent_run_response.content is None and (
+                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                ):
                     yield "No response from the member agent."
                 elif isinstance(member_agent_run_response.content, str):
                     if len(member_agent_run_response.content.strip()) > 0:
@@ -4800,7 +4816,9 @@ class Team:
                     member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
                 )
 
-                if member_agent_run_response.content is None and (member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0):
+                if member_agent_run_response.content is None and (
+                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                ):
                     yield "No response from the member agent."
                 elif isinstance(member_agent_run_response.content, str):
                     if len(member_agent_run_response.content.strip()) > 0:
@@ -4889,7 +4907,9 @@ class Team:
                     member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
                 )
 
-                if member_agent_run_response.content is None and (member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0):
+                if member_agent_run_response.content is None and (
+                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                ):
                     yield "No response from the member agent."
                 elif isinstance(member_agent_run_response.content, str):
                     if len(member_agent_run_response.content.strip()) > 0:
