@@ -12,9 +12,9 @@ class ReasoningTools(Toolkit):
         self,
         think: bool = True,
         analyze: bool = True,
-        add_instructions: bool = True,
-        add_few_shot: bool = True,
         instructions: Optional[str] = None,
+        add_instructions: bool = False,
+        add_few_shot: bool = False,
         few_shot_examples: Optional[str] = None,
         **kwargs,
     ):
@@ -191,7 +191,7 @@ class ReasoningTools(Toolkit):
 
     DEFAULT_INSTRUCTIONS = dedent(
         """\
-        You have access to the Think and Analyze tools that will help you work through problems step-by-step and structure your thinking process.
+        You have access to the Think and Analyze tools that will help you work through problems step-by-step and structure your thinking process. You must always `think` before making a tool call or generating an answer.
 
         1. **Think** (scratchpad):
             - Purpose: Use the `think` tool as a scratchpad to break down complex problems, outline steps, and decide on immediate actions within your reasoning flow. Use this to structure your internal monologue.
@@ -204,7 +204,7 @@ class ReasoningTools(Toolkit):
                 Also note your reasoning about whether it's correct/sufficient.
 
         **IMPORTANT:**
-        - Always complete atleast 1 `think` -> `analyze` cycle to reason through the problem.
+        - You must complete atleast 1 `think` -> `analyze` cycle to reason through the problem.
         - Do not expose your internal chain-of-thought to the user.
         - Use the tools iteratively to build a clear reasoning path: Think -> [Tool Call] -> Analyze -> [Tool Call] -> ... -> Analyze -> Finalize.
         - Iterate through the (Think → Analyze) cycle as many times as needed until you have a satisfactory final answer.
@@ -245,18 +245,18 @@ class ReasoningTools(Toolkit):
           action="Use search tool to find the capital first."
           confidence=0.95
 
+        # Make multiple tool calls to get the information needed
         # [Perform a tool call, e.g., search(query="capital of France")]
         # [Tool Result: "Paris"]
+        # [Perform a tool call, e.g., search(query="population of Paris 2024")]
+        # [Tool Result: "Approximately 2.1 million (as of early 2024 estimate)"]
 
         Analyze:
           step_title="Analyze Capital Search Result"
           result="Paris"
-          reasoning="The search confirmed Paris is the capital. Now I need its population."
-          next_action="continue" # Need more information
+          reasoning="The search confirmed Paris is the capital."
+          next_action="continue"
           confidence=1.0
-
-        # [Perform a tool call, e.g., search(query="population of Paris 2024")]
-        # [Tool Result: "Approximately 2.1 million (as of early 2024 estimate)"]
 
         Analyze:
           step_title="Analyze Population Search Result"
