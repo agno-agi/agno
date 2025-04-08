@@ -10,7 +10,6 @@ class NextAction(str, Enum):
     FINAL_ANSWER = "final_answer"
     RESET = "reset"
 
-
 class ReasoningStep(BaseModel):
     title: Optional[str] = Field(None, description="A concise title summarizing the step's purpose")
     action: Optional[str] = Field(
@@ -28,4 +27,4 @@ class ReasoningStep(BaseModel):
 
 
 class ReasoningSteps(BaseModel):
-    reasoning_steps: List[ReasoningStep] = Field(description="A list of reasoning steps")
+    reasoning_steps: List[ReasoningStep] = Field(..., description="A list of reasoning steps")
