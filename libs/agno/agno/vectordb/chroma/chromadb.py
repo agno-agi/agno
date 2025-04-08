@@ -99,7 +99,7 @@ class ChromaDb(VectorDb):
 
         try:
             collection: Collection = self.client.get_collection(name=self.collection_name)
-            collection_data: GetResult = collection.get(include=["documents"])
+            collection_data: GetResult = collection.get(include=["documents"])  # type: ignore
             existing_documents = collection_data.get("documents", [])
             cleaned_content = document.content.replace("\x00", "\ufffd")
             if cleaned_content in existing_documents:  # type: ignore

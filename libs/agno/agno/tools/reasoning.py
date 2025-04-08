@@ -59,7 +59,7 @@ class ReasoningTools(Toolkit):
             A list of previous thoughts and the new thought
         """
         try:
-            log_debug(f"Thought: {title}")
+            log_debug(f"Thought about {title}")
 
             # Create a reasoning step
             reasoning_step = ReasoningStep(
@@ -131,7 +131,7 @@ Confidence: {step.confidence}
             A list of previous thoughts and the new analysis
         """
         try:
-            log_debug(f"Analysis step: {title}")
+            log_debug(f"Analyzed {title}")
 
             # Map string next_action to enum
             next_action_enum = NextAction.CONTINUE

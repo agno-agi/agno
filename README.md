@@ -19,7 +19,7 @@
 
 Here's an Agent that writes a financial report by reasoning through each step:
 
-```python websearch_agent.py
+```python reasoning_finance_agent.py
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.reasoning import ReasoningTools
@@ -42,13 +42,13 @@ agent.print_response("Write a report on NVDA", stream=True, show_full_reasoning=
 
 ## Key features
 
-Agno is simple, fast and model agnostic. Here are the key features:
+Agno is simple, fast and model-agnostic. Here are the key features:
 
-- **Lightning Fast**: Agent creation is 10,000x faster than LangGraph (see [performance](#performance)).
+- **Lightning Fast**: Agents instantiate 10,000x faster than LangGraph and use 50x less memory (see [performance](#performance)).
 - **Model Agnostic**: Use any model, any provider, no lock-in.
-- **Reasoning Agents**: Build best in class reasoning agents with Reasoning Models, Reasoning Tools or our custom `CoT+Tool-use` approach.
-- **Multi Modal**: Built in support for text, image, audio and video.
-- **Multi Agent**: Industry leading multi-agent architecture with 3 different modes: `route`, `collaborate` and `coordinate`.
+- **Reasoning Agents**: Build best in class reasoning agents using Reasoning Models, Reasoning Tools or our custom `CoT+Tool-use` approach.
+- **Natively Multi Modal**: Built in support for text, image, audio and video.
+- **Multi Agent Teams**: Industry leading multi-agent architecture with 3 different modes: `route`, `collaborate` and `coordinate`.
 - **Long-term Memory**: Built in support for long-term memory with our `Storage` and `Memory` classes.
 - **Domain Knowledge**: Add domain knowledge to your Agents with our `Knowledge` classes. Fully async and highly performant.
 - **Structured Outputs**: First class support for structured outputs using native structured outputs or `json_mode`.
