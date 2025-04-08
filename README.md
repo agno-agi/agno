@@ -15,21 +15,17 @@
 
 ## Introduction
 
-[Agno](https://docs.agno.com) is a lightweight library for building Multimodal Agents. It exposes LLMs as a unified API and gives them superpowers like memory, knowledge, tools and reasoning.
+[Agno](https://docs.agno.com) is a lightweight library for building Reasoning Agents with memory, knowledge, tools and multi-modal support.
 
-- Build lightning-fast Agents that can generate text, image, audio and video.
-- Add memory, knowledge, tools and reasoning as needed.
-- Run anywhere, Agno is open-source.
-
-Here's an Agent that can search the web:
+Here's an Agent that can search the web while reasoning through the problem:
 
 ```python websearch_agent.py
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-3-7-sonnet-latest"),
     tools=[DuckDuckGoTools()],
     markdown=True
 )
