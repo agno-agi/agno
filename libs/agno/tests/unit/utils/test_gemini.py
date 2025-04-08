@@ -249,13 +249,13 @@ def test_convert_schema_union():
         "anyOf": [
             {"type": "string", "description": "A string value"},
             {"type": "integer", "description": "An integer value"},
-            {"type": "boolean", "description": "A boolean value"}
+            {"type": "boolean", "description": "A boolean value"},
         ],
-        "description": "A union of string, integer, and boolean"
+        "description": "A union of string, integer, and boolean",
     }
-    
+
     result = convert_schema(schema_dict)
-    
+
     assert result is not None
     assert result.description == "A union of string, integer, and boolean"
     assert result.any_of is not None

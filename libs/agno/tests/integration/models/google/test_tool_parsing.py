@@ -105,11 +105,7 @@ def test_union_type_parameters_tool_parsing():
 
 
 def test_python312_union_syntax_tool_parsing():
-    def get_weather_data(
-        temperature: int | float, 
-        location: str = "San Francisco", 
-        unit: str | None = None
-    ) -> str:
+    def get_weather_data(temperature: int | float, location: str = "San Francisco", unit: str | None = None) -> str:
         """
         Get weather data for a location
 
