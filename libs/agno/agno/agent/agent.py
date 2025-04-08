@@ -174,7 +174,7 @@ class Agent:
     # If True, add the current datetime to the instructions to give the agent a sense of time
     # This allows for relative times like "tomorrow" to be used in the prompt
     add_datetime_to_instructions: bool = False
-    # Allows for custom timezone for datetime instructions following the TZ Database format
+    # Allows for custom timezone for datetime instructions following the TZ Database format (e.g. "Etc/UTC")
     timezone_identifier: Optional[str] = None
     # If True, add the session state variables in the user and system messages
     add_state_in_messages: bool = False
@@ -398,6 +398,7 @@ class Agent:
         self.parse_response = parse_response
 
         self.structured_outputs = structured_outputs
+
         self.use_json_mode = use_json_mode
         self.save_response_to_file = save_response_to_file
 
@@ -1624,7 +1625,7 @@ class Agent:
                                     func.strict = True
                                 self._functions_for_model[name] = func
                                 self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                log_debug(f"Included function {name} from {tool.name}")
+                                log_debug(f"Added function {name} from {tool.name}")
 
                         # Add instructions from the toolkit
                         if tool.add_instructions and tool.instructions is not None:
@@ -1640,7 +1641,13 @@ class Agent:
                                 tool.strict = True
                             self._functions_for_model[tool.name] = tool
                             self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                            log_debug(f"Included function {tool.name}")
+                            log_debug(f"Added function {tool.name}")
+
+                        # Add instructions from the Function
+                        if tool.add_instructions and tool.instructions is not None:
+                            if self._tool_instructions is None:
+                                self._tool_instructions = []
+                            self._tool_instructions.append(tool.instructions)
 
                     elif callable(tool):
                         try:
@@ -1652,7 +1659,7 @@ class Agent:
                                     func.strict = True
                                 self._functions_for_model[func.name] = func
                                 self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                log_debug(f"Included function {func.name}")
+                                log_debug(f"Added function {func.name}")
                         except Exception as e:
                             log_warning(f"Could not add function {tool}: {e}")
 
@@ -1692,7 +1699,7 @@ class Agent:
                     self.model.structured_outputs = False
 
             elif self.model.supports_json_schema_outputs:
-                if self.use_json_mode or not self.structured_outputs:
+                if self.use_json_mode or (not self.structured_outputs):
                     log_debug("Setting Model.response_format to JSON response mode")
                     self.model.response_format = {
                         "type": "json_schema",
@@ -1707,10 +1714,10 @@ class Agent:
 
             else:
                 log_debug("Model does not support structured or JSON schema outputs.")
-                self.model.response_format = (
-                    json_response_format if (self.use_json_mode or not self.structured_outputs) else None
-                )
+                self.model.response_format = json_response_format
                 self.model.structured_outputs = False
+
+            log_debug(f"Structured outputs: {self.model.structured_outputs}")
 
         # Add tools to the Model
         self.add_tools_to_model(model=self.model, async_mode=async_mode)
@@ -2191,12 +2198,13 @@ class Agent:
             if self.timezone_identifier:
                 try:
                     from zoneinfo import ZoneInfo
+
                     tz = ZoneInfo(self.timezone_identifier)
                 except Exception:
                     log_warning("Invalid timezone identifier")
 
             time = datetime.now(tz) if tz else datetime.now()
-                
+
             additional_information.append(f"The current time is {time}.")
         # 3.2.3 Add agent name if provided
         if self.name is not None and self.add_name_to_instructions:
@@ -2209,10 +2217,10 @@ class Agent:
             system_message_content += f"{self.description}\n\n"
         # 3.3.2 Then add the Agent goal if provided
         if self.goal is not None:
-            system_message_content += f"<your_goal>\n{self.goal}\n</your_goal>\n\n"
+            system_message_content += f"\n<your_goal>\n{self.goal}\n</your_goal>\n\n"
         # 3.3.3 Then add the Agent role if provided
         if self.role is not None:
-            system_message_content += f"<your_role>\n{self.role}\n</your_role>\n\n"
+            system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
         # 3.3.4 Then add instructions for transferring tasks to team members
         if self.has_team and self.add_transfer_instructions:
             system_message_content += (
@@ -2244,10 +2252,8 @@ class Agent:
             system_message_content += "\n</additional_information>\n\n"
         # 3.3.7 Then add instructions for the tools
         if self._tool_instructions is not None:
-            system_message_content += "<tool_instructions>"
             for _ti in self._tool_instructions:
-                system_message_content += f"\n{_ti}"
-            system_message_content += "\n</tool_instructions>\n\n"
+                system_message_content += f"{_ti}\n"
 
         # Format the system message with the session state variables
         if self.add_state_in_messages:
@@ -3226,7 +3232,6 @@ class Agent:
             log_debug("Starting Reasoning", center=True, symbol="=")
             while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
                 log_debug(f"Step {step_count}", center=True, symbol="=")
-                step_count += 1
                 try:
                     # Run the reasoning agent
                     reasoning_agent_response: RunResponse = reasoning_agent.run(
@@ -3271,6 +3276,8 @@ class Agent:
                 except Exception as e:
                     log_error(f"Reasoning error: {e}")
                     break
+
+                step_count += 1
 
             log_debug(f"Total Reasoning steps: {len(all_reasoning_steps)}")
             log_debug("Reasoning finished", center=True, symbol="=")
@@ -3784,6 +3791,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: bool = False,
+        stream_intermediate_steps: bool = False,
         markdown: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -3808,6 +3816,8 @@ class Agent:
         if self.response_model is not None:
             self.markdown = False
             stream = False
+
+        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
 
         if stream:
             _response_content: str = ""
@@ -3845,6 +3855,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     stream=True,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
                 ):
                     if isinstance(resp, RunResponse):
@@ -3886,7 +3897,9 @@ class Agent:
                             if step.title is not None:
                                 step_content.append(f"{step.title}\n", "bold")
                             if step.action is not None:
-                                step_content.append(f"{step.action}\n", "dim")
+                                step_content.append(
+                                    Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim")
+                                )
                             if step.result is not None:
                                 step_content.append(Text.from_markup(step.result, style="dim"))
 
@@ -3998,6 +4011,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     stream=False,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
                 )
                 response_timer.stop()
@@ -4018,7 +4032,7 @@ class Agent:
                         if step.title is not None:
                             step_content.append(f"{step.title}\n", "bold")
                         if step.action is not None:
-                            step_content.append(f"{step.action}\n", "dim")
+                            step_content.append(Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim"))
                         if step.result is not None:
                             step_content.append(Text.from_markup(step.result, style="dim"))
 
@@ -4125,6 +4139,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: bool = False,
+        stream_intermediate_steps: bool = False,
         markdown: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -4149,6 +4164,8 @@ class Agent:
         if self.response_model is not None:
             self.markdown = False
             stream = False
+
+        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
 
         if stream:
             _response_content: str = ""
@@ -4186,6 +4203,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     stream=True,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
                 ):
                     if isinstance(resp, RunResponse):
@@ -4227,7 +4245,9 @@ class Agent:
                             if step.title is not None:
                                 step_content.append(f"{step.title}\n", "bold")
                             if step.action is not None:
-                                step_content.append(f"{step.action}\n", "dim")
+                                step_content.append(
+                                    Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim")
+                                )
                             if step.result is not None:
                                 step_content.append(Text.from_markup(step.result, style="dim"))
 
@@ -4339,6 +4359,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     stream=False,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
                 )
                 response_timer.stop()
@@ -4359,7 +4380,7 @@ class Agent:
                         if step.title is not None:
                             step_content.append(f"{step.title}\n", "bold")
                         if step.action is not None:
-                            step_content.append(f"{step.action}\n", "dim")
+                            step_content.append(Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim"))
                         if step.result is not None:
                             step_content.append(Text.from_markup(step.result, style="dim"))
 

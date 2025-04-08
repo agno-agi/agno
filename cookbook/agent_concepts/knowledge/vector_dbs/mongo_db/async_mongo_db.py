@@ -23,7 +23,13 @@
    - Use the connection string in your code
    - Ensure pymongo is installed: pip install "pymongo[srv]"
    - Test with a simple query to verify connectivity
+
+Alternatively to test locally, you can run a docker container
+
+docker run -p 27017:27017 -d --name mongodb-container --rm -v ./tmp/mongo-data:/data/db mongodb/mongodb-atlas-local:8.0.3
 """
+
+import asyncio
 
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
@@ -33,22 +39,23 @@ from agno.vectordb.mongodb import MongoDb
 """
 Example connection strings:
 "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
-"mongodb://localhost/?directConnection=true"
+"mongodb://localhost:27017/agno?authSource=admin"
 """
-mdb_connection_string = "mongodb://ai:ai@localhost:27017/ai?authSource=admin"
+mdb_connection_string = "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
 
 knowledge_base = PDFUrlKnowledgeBase(
     urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
     vector_db=MongoDb(
         collection_name="recipes",
         db_url=mdb_connection_string,
-        wait_until_index_ready=60,
-        wait_after_insert=300,
     ),
-)  # adjust wait_after_insert and wait_until_index_ready to your needs
-
-knowledge_base.load(recreate=False)
+)
 
 # Create and use the agent
 agent = Agent(knowledge=knowledge_base, show_tool_calls=True)
-agent.print_response("How to make Thai curry?", markdown=True)
+
+if __name__ == "__main__":
+    # Comment out after the first run
+    asyncio.run(knowledge_base.aload(recreate=False))
+
+    asyncio.run(agent.aprint_response("How to make Thai curry?", markdown=True))
