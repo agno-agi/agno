@@ -16,6 +16,7 @@ try:
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
+
 @dataclass
 class xAI(OpenAILike):
     """
@@ -35,7 +36,6 @@ class xAI(OpenAILike):
 
     api_key: Optional[str] = getenv("XAI_API_KEY")
     base_url: Optional[str] = "https://api.x.ai/v1"
-
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
         """
@@ -111,7 +111,7 @@ class xAI(OpenAILike):
                 stream=True,
                 **self.request_kwargs,
             )
-            async for chunk in async_stream:
+            async for chunk in async_stream:  # type: ignore
                 yield chunk
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")

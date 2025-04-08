@@ -34,7 +34,7 @@ class ReasoningTools(Toolkit):
                     self.instructions += "\n" + few_shot_examples
                 else:
                     self.instructions += "\n" + self.FEW_SHOT_EXAMPLES
-            self.instructions += "\n</reasoning_instructions>"
+            self.instructions += "\n</reasoning_instructions>\n"
 
         # Register each tool based on the init flags
         if think:
@@ -77,7 +77,7 @@ class ReasoningTools(Toolkit):
             if "reasoning_steps" not in agent.session_state:
                 agent.session_state["reasoning_steps"] = []
 
-            agent.session_state["reasoning_steps"].append(reasoning_step)
+            agent.session_state["reasoning_steps"].append(reasoning_step.model_dump_json())
 
             # Add the step to the run response
             if hasattr(agent, "run_response") and agent.run_response is not None:
@@ -95,14 +95,15 @@ class ReasoningTools(Toolkit):
             if "reasoning_steps" in agent.session_state:
                 formatted_reasoning_steps = ""
                 for i, step in enumerate(agent.session_state["reasoning_steps"], 1):
+                    step_parsed = ReasoningStep.model_validate_json(step)
                     step_str = f"""\
 Step {i}:
-Title: {step.title}
-Reasoning: {step.reasoning}
-Action: {step.action}
-Confidence: {step.confidence}
+Title: {step_parsed.title}
+Reasoning: {step_parsed.reasoning}
+Action: {step_parsed.action}
+Confidence: {step_parsed.confidence}
 """
-                    formatted_reasoning_steps += step_str
+                    formatted_reasoning_steps += step_str + "\n"
                 return formatted_reasoning_steps.strip()
             return reasoning_step.model_dump_json()
         except Exception as e:
@@ -156,7 +157,7 @@ Confidence: {step.confidence}
             if "reasoning_steps" not in agent.session_state:
                 agent.session_state["reasoning_steps"] = []
 
-            agent.session_state["reasoning_steps"].append(reasoning_step)
+            agent.session_state["reasoning_steps"].append(reasoning_step.model_dump_json())
 
             # Add the step to the run response if we can
             if hasattr(agent, "run_response") and agent.run_response is not None:
@@ -174,14 +175,15 @@ Confidence: {step.confidence}
             if "reasoning_steps" in agent.session_state:
                 formatted_reasoning_steps = ""
                 for i, step in enumerate(agent.session_state["reasoning_steps"], 1):
+                    step_parsed = ReasoningStep.model_validate_json(step)
                     step_str = f"""\
 Step {i}:
-Title: {step.title}
-Reasoning: {step.reasoning}
-Action: {step.action}
-Confidence: {step.confidence}
+Title: {step_parsed.title}
+Reasoning: {step_parsed.reasoning}
+Action: {step_parsed.action}
+Confidence: {step_parsed.confidence}
 """
-                    formatted_reasoning_steps += step_str
+                    formatted_reasoning_steps += step_str + "\n"
                 return formatted_reasoning_steps.strip()
             return reasoning_step.model_dump_json()
         except Exception as e:
