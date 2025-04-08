@@ -4,7 +4,7 @@ from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
 reasoning_agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[
         ReasoningTools(
             think=True,
@@ -20,10 +20,12 @@ reasoning_agent = Agent(
         ),
     ],
     instructions="Use tables where possible",
-    stream_intermediate_steps=True,
     show_tool_calls=True,
     markdown=True,
 )
 reasoning_agent.print_response(
-    "Write a report comparing NVDA to TSLA", stream=True, show_full_reasoning=True
+    "Write a report comparing NVDA to TSLA",
+    stream=True,
+    show_full_reasoning=True,
+    stream_intermediate_steps=True,
 )

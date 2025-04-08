@@ -3791,6 +3791,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: bool = False,
+        stream_intermediate_steps: bool = False,
         markdown: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -3815,6 +3816,8 @@ class Agent:
         if self.response_model is not None:
             self.markdown = False
             stream = False
+
+        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
 
         if stream:
             _response_content: str = ""
@@ -3852,6 +3855,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     stream=True,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
                 ):
                     if isinstance(resp, RunResponse):
@@ -4007,6 +4011,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     stream=False,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
                 )
                 response_timer.stop()
@@ -4134,6 +4139,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: bool = False,
+        stream_intermediate_steps: bool = False,
         markdown: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -4158,6 +4164,8 @@ class Agent:
         if self.response_model is not None:
             self.markdown = False
             stream = False
+
+        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
 
         if stream:
             _response_content: str = ""
@@ -4195,6 +4203,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     stream=True,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
                 ):
                     if isinstance(resp, RunResponse):
@@ -4350,6 +4359,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     stream=False,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
                 )
                 response_timer.stop()
