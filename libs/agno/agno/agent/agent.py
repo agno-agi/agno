@@ -363,6 +363,7 @@ class Agent:
         # We default to creating user memories if agentic memory is enabled
         if self.enable_agentic_memory:
             self.create_user_memories = True
+        self.create_session_summaries = create_session_summaries
 
         self.add_history_to_messages = add_history_to_messages
         self.num_history_responses = num_history_responses
@@ -3227,7 +3228,7 @@ class Agent:
         if self.session_id is None and session_id is None:
             raise Exception("Session ID is not set")
 
-        session_id = self.session_id or session_id
+        session_id = session_id or self.session_id
 
         # -*- Read from storage
         self.read_from_storage(user_id=self.user_id, session_id=session_id)  # type: ignore
@@ -3815,7 +3816,7 @@ class Agent:
                 task: The task to update the memory with.
 
             Returns:
-                str: A string indicating the status of the update.
+                str: A string indicating the status of the task.
             """
             self.memory = cast(Memory, self.memory)
             response = self.memory.update_memory_task(task=task, user_id=user_id)
@@ -3828,7 +3829,7 @@ class Agent:
                 task: The task to update the memory with.
 
             Returns:
-                str: A string indicating the status of the update.
+                str: A string indicating the status of the task.
             """
             self.memory = cast(Memory, self.memory)
             response = await self.memory.aupdate_memory_task(task=task, user_id=user_id)
