@@ -93,7 +93,7 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
     return image_messages
 
 
-def sanitize_response_model(schema: dict):
+def sanitize_response_schema(schema: dict):
     """
     Recursively sanitize a Pydantic-generated JSON schema to comply with OpenAI's response_format rules:
 
@@ -117,8 +117,8 @@ def sanitize_response_model(schema: dict):
 
         # Recurse into all values
         for value in schema.values():
-            sanitize_response_model(value)
+            sanitize_response_schema(value)
 
     elif isinstance(schema, list):
         for item in schema:
-            sanitize_response_model(item)
+            sanitize_response_schema(item)

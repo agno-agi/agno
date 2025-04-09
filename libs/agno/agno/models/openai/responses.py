@@ -11,7 +11,7 @@ from agno.models.base import MessageData, Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
-from agno.utils.models.openai_responses import images_to_message, sanitize_response_model
+from agno.utils.models.openai_responses import images_to_message, sanitize_response_schema
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
@@ -177,7 +177,7 @@ class OpenAIResponses(Model):
             if self.structured_outputs and issubclass(self.response_format, BaseModel):
                 schema = self.response_format.model_json_schema()
                 # Sanitize the schema to ensure it complies with OpenAI's requirements
-                sanitize_response_model(schema)
+                sanitize_response_schema(schema)
                 base_params["text"] = {
                     "format": {
                         "type": "json_schema",
