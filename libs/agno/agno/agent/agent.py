@@ -29,7 +29,7 @@ from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
-from agno.memory_v2.memory import Memory, SessionSummary
+from agno.memory.v2.memory import Memory, SessionSummary
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent
@@ -2177,7 +2177,7 @@ class Agent:
                     except Exception as e:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "memories" in session.memory:
-                    from agno.memory_v2.memory import UserMemory as UserMemoryV2
+                    from agno.memory.v2.memory import UserMemory as UserMemoryV2
 
                     try:
                         self.memory.memories = {
@@ -2189,7 +2189,7 @@ class Agent:
                     except Exception as e:
                         log_warning(f"Failed to load user memories: {e}")
                 if "summaries" in session.memory:
-                    from agno.memory_v2.memory import SessionSummary as SessionSummaryV2
+                    from agno.memory.v2.memory import SessionSummary as SessionSummaryV2
 
                     try:
                         self.memory.summaries = {

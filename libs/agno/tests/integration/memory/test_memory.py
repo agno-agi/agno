@@ -4,8 +4,8 @@ from datetime import datetime
 
 import pytest
 
-from agno.memory_v2.db.memory.sqlite import SqliteMemoryDb
-from agno.memory_v2.db.summary.sqlite import SqliteSummaryDb
+from agno.memory.v2.db import SqliteMemoryDb
+from agno.memory.v2.db import SqliteSummaryDb
 from agno.memory_v2.memory import Memory, UserMemory
 from agno.models.google.gemini import Gemini
 from agno.models.message import Message

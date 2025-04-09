@@ -5,8 +5,8 @@ Every time you run this, the `Memory` object will be re-initialized from the DB.
 """
 
 from agno.agent.agent import Agent
-from agno.memory_v2.db.memory.sqlite import SqliteMemoryDb
-from agno.memory_v2.memory import Memory
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.memory.v2.memory import Memory
 from agno.models.google.gemini import Gemini
 from agno.storage.sqlite import SqliteStorage
 from utils import print_chat_history
@@ -28,7 +28,6 @@ agent = Agent(
     storage=SqliteStorage(
         table_name="agent_sessions", db_file="tmp/persistent_memory.db"
     ),
-    add_history_to_messages=True,
     create_user_memories=True,
     debug_mode=True,
 )

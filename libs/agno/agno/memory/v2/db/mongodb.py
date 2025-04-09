@@ -9,24 +9,24 @@ try:
 except ImportError:
     raise ImportError("`pymongo` not installed. Please install it with `pip install pymongo`")
 
-from agno.memory_v2.db.schema import SummaryRow
-from agno.memory_v2.db.summary import SummaryDb
+from agno.memory.v2.db import MemoryDb
+from agno.memory.v2.db.schema import MemoryRow
 from agno.utils.log import log_debug, logger
 
 
-class MongoSummaryDb(SummaryDb):
+class MongoMemoryDb(MemoryDb):
     def __init__(
         self,
-        collection_name: str = "summary",
+        collection_name: str = "memory",
         db_url: Optional[str] = None,
         db_name: str = "agno",
         client: Optional[MongoClient] = None,
     ):
         """
-        This class provides a summary store backed by a MongoDB collection.
+        This class provides a memory store backed by a MongoDB collection.
 
         Args:
-            collection_name: The name of the collection to store summaries
+            collection_name: The name of the collection to store memories
             db_url: MongoDB connection URL
             db_name: Name of the database
             client: Optional existing MongoDB client
@@ -44,7 +44,7 @@ class MongoSummaryDb(SummaryDb):
         self.collection: Collection = self.db[self.collection_name]
 
     def __str__(self) -> str:
-        return f"MongoSummaryDb(collection_name={self.collection_name}, db_name={self.db_name})"
+        return f"MongoMemoryDb(collection_name={self.collection_name}, db_name={self.db_name})"
 
     def create(self) -> None:
         """Create indexes for the collection"""
@@ -57,32 +57,32 @@ class MongoSummaryDb(SummaryDb):
             logger.error(f"Error creating indexes for collection '{self.collection_name}': {e}")
             raise
 
-    def summary_exists(self, summary: SummaryRow) -> bool:
-        """Check if a summary exists
+    def memory_exists(self, memory: MemoryRow) -> bool:
+        """Check if a memory exists
         Args:
-            summary: SummaryRow to check
+            memory: MemoryRow to check
         Returns:
-            bool: True if the summary exists, False otherwise
+            bool: True if the memory exists, False otherwise
         """
         try:
-            result = self.collection.find_one({"id": summary.id})
+            result = self.collection.find_one({"id": memory.id})
             return result is not None
         except PyMongoError as e:
-            logger.error(f"Error checking summary existence: {e}")
+            logger.error(f"Error checking memory existence: {e}")
             return False
 
-    def read_summaries(
+    def read_memories(
         self, user_id: Optional[str] = None, limit: Optional[int] = None, sort: Optional[str] = None
-    ) -> List[SummaryRow]:
-        """Read summaries from the collection
+    ) -> List[MemoryRow]:
+        """Read memories from the collection
         Args:
             user_id: ID of the user to read
-            limit: Maximum number of summaries to read
+            limit: Maximum number of memories to read
             sort: Sort order ("asc" or "desc")
         Returns:
-            List[SummaryRow]: List of summaries
+            List[MemoryRow]: List of memories
         """
-        summaries: List[SummaryRow] = []
+        memories: List[MemoryRow] = []
         try:
             # Build query
             query = {}
@@ -97,18 +97,18 @@ class MongoSummaryDb(SummaryDb):
                 cursor = cursor.limit(limit)
 
             for doc in cursor:
-                # Remove MongoDB _id before converting to SummaryRow
+                # Remove MongoDB _id before converting to MemoryRow
                 doc.pop("_id", None)
-                summaries.append(SummaryRow(user_id=doc["user_id"], summary=doc["summary"]))
+                memories.append(MemoryRow(user_id=doc["user_id"], memory=doc["memory"]))
         except PyMongoError as e:
-            logger.error(f"Error reading summaries: {e}")
-        return summaries
+            logger.error(f"Error reading memories: {e}")
+        return memories
 
-    def upsert_summary(self, summary: SummaryRow, create_and_retry: bool = True) -> None:
-        """Upsert a summary into the collection
+    def upsert_memory(self, memory: MemoryRow, create_and_retry: bool = True) -> None:
+        """Upsert a memory into the collection
         Args:
-            summary: SummaryRow to upsert
-            create_and_retry: Whether to create a new summary if the id already exists
+            memory: MemoryRow to upsert
+            create_and_retry: Whether to create a new memory if the id already exists
         Returns:
             None
         """
@@ -117,21 +117,21 @@ class MongoSummaryDb(SummaryDb):
             timestamp = int(now.timestamp())
 
             # Add version field for optimistic locking
-            summary_dict = summary.model_dump()
-            if "_version" not in summary_dict:
-                summary_dict["_version"] = 1
+            memory_dict = memory.model_dump()
+            if "_version" not in memory_dict:
+                memory_dict["_version"] = 1
             else:
-                summary_dict["_version"] += 1
+                memory_dict["_version"] += 1
 
             update_data = {
-                "user_id": summary.user_id,
-                "summary": summary.summary,
+                "user_id": memory.user_id,
+                "memory": memory.memory,
                 "updated_at": timestamp,
-                "_version": summary_dict["_version"],
+                "_version": memory_dict["_version"],
             }
 
             # For new documents, set created_at
-            query = {"id": summary.id}
+            query = {"id": memory.id}
             doc = self.collection.find_one(query)
             if not doc:
                 update_data["created_at"] = timestamp
@@ -139,27 +139,27 @@ class MongoSummaryDb(SummaryDb):
             result = self.collection.update_one(query, {"$set": update_data}, upsert=True)
 
             if not result.acknowledged:
-                logger.error("Summary upsert not acknowledged")
+                logger.error("Memory upsert not acknowledged")
 
         except PyMongoError as e:
-            logger.error(f"Error upserting summary: {e}")
+            logger.error(f"Error upserting memory: {e}")
             raise
 
-    def delete_summary(self, session_id: str) -> None:
-        """Delete a summary from the collection
+    def delete_memory(self, memory_id: str) -> None:
+        """Delete a memory from the collection
         Args:
-            session_id: ID of the summary to delete
+            id: ID of the memory to delete
         Returns:
             None
         """
         try:
-            result = self.collection.delete_one({"id": session_id})
+            result = self.collection.delete_one({"id": memory_id})
             if result.deleted_count == 0:
-                log_debug(f"No summary found with id: {session_id}")
+                log_debug(f"No memory found with id: {memory_id}")
             else:
-                log_debug(f"Successfully deleted summary with id: {session_id}")
+                log_debug(f"Successfully deleted memory with id: {memory_id}")
         except PyMongoError as e:
-            logger.error(f"Error deleting summary: {e}")
+            logger.error(f"Error deleting memory: {e}")
             raise
 
     def drop_table(self) -> None:

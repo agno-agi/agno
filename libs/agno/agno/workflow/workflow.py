@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.memory.workflow import WorkflowMemory, WorkflowRun
-from agno.memory_v2.memory import Memory
+from agno.memory.v2.memory import Memory
 from agno.run.response import RunEvent, RunResponse  # noqa: F401
 from agno.storage.base import Storage
 from agno.storage.session.workflow import WorkflowSession

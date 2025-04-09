@@ -2,7 +2,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.memory_v2 import Memory
-from agno.memory_v2.db.memory.postgres import PostgresMemoryDb
+from agno.memory.v2.db import PostgresMemoryDb
 from agno.models.anthropic import Claude
 from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat

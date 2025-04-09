@@ -30,7 +30,7 @@ from agno.exceptions import ModelProviderError, RunCancelledException
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory
 from agno.memory.team import TeamMemory, TeamRun
-from agno.memory_v2.memory import Memory, SessionSummary
+from agno.memory.v2.memory import Memory, SessionSummary
 from agno.models.base import Model
 from agno.models.message import Citations, Message
 from agno.models.response import ModelResponse, ModelResponseEvent
@@ -5634,7 +5634,7 @@ class Team:
                     except Exception as e:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "team_context" in session.memory:
-                    from agno.memory_v2.memory import TeamContext
+                    from agno.memory.v2.memory import TeamContext
 
                     try:
                         self.memory.team_context = {
@@ -5644,7 +5644,7 @@ class Team:
                     except Exception as e:
                         log_warning(f"Failed to load team context: {e}")
                 if "memories" in session.memory:
-                    from agno.memory_v2.memory import UserMemory as UserMemoryV2
+                    from agno.memory.v2.memory import UserMemory as UserMemoryV2
 
                     try:
                         self.memory.memories = {
@@ -5656,7 +5656,7 @@ class Team:
                     except Exception as e:
                         log_warning(f"Failed to load user memories: {e}")
                 if "summaries" in session.memory:
-                    from agno.memory_v2.memory import SessionSummary as SessionSummaryV2
+                    from agno.memory.v2.memory import SessionSummary as SessionSummaryV2
 
                     try:
                         self.memory.summaries = {

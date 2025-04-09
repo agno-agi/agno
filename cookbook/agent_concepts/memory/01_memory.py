@@ -1,4 +1,4 @@
-from agno.memory_v2.memory import Memory, UserMemory
+from agno.memory.v2 import Memory, UserMemory
 
 memory = Memory()
 

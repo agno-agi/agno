@@ -1,5 +1,5 @@
-from agno.memory_v2.memory import Memory
-from agno.models.google.gemini import Gemini
+from agno.memory.v2 import Memory
+from agno.models.google import Gemini
 
 memory = Memory(model=Gemini(id="gemini-2.0-flash-exp"))
 

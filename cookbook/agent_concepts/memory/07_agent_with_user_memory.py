@@ -5,13 +5,13 @@ Every time you run this, the `Memory` object will be re-initialized from the DB.
 """
 
 from agno.agent.agent import Agent
-from agno.memory_v2.memory import Memory
+from agno.memory.v2.memory import Memory
 from agno.models.google.gemini import Gemini
 
 # No need to set the model, it gets set by the agent to the agent's model
 memory = Memory()
 
-john_doe_id = "john_doe@example.com"
+john_doe_id = "111john_doe@example.com"
 
 agent = Agent(
     model=Gemini(id="gemini-2.0-flash-exp"),
@@ -26,7 +26,7 @@ agent.print_response(
     user_id=john_doe_id,
 )
 
-agent.print_response("What are my hobbies?", stream=True, user_id=john_doe_id)
+agent.cli_app("What are my hobbies?", stream=True, user_id=john_doe_id)
 
 
 memories = memory.get_user_memories(user_id=john_doe_id)

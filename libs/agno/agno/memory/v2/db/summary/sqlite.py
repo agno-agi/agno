@@ -20,21 +20,21 @@ try:
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it with `pip install sqlalchemy`")
 
-from agno.memory_v2.db.memory import MemoryDb
-from agno.memory_v2.db.schema import MemoryRow
+from agno.memory.v2.db import SummaryRow
+from agno.memory.v2.db import SummaryDb
 from agno.utils.log import log_debug, log_info, logger
 
 
-class SqliteMemoryDb(MemoryDb):
+class SqliteSummaryDb(SummaryDb):
     def __init__(
         self,
-        table_name: str = "memory",
+        table_name: str = "summary",
         db_url: Optional[str] = None,
         db_file: Optional[str] = None,
         db_engine: Optional[Engine] = None,
     ):
         """
-        This class provides a memory store backed by a SQLite table.
+        This class provides a summary store backed by a SQLite table.
 
         The following order is used to determine the database connection:
             1. Use the db_engine if provided
@@ -43,7 +43,7 @@ class SqliteMemoryDb(MemoryDb):
             4. Create a new in-memory database
 
         Args:
-            table_name: The name of the table to store Agent sessions.
+            table_name: The name of the table to store summaries.
             db_url: The database URL to connect to.
             db_file: The database file to connect to.
             db_engine: The database engine to use.
@@ -77,7 +77,7 @@ class SqliteMemoryDb(MemoryDb):
         self.table: Table = self.get_table()
 
     def __str__(self) -> str:
-        return f"SqliteMemoryDb(table_name={self.table_name}, db_file={self.db_file})"
+        return f"SqliteSummaryDb(table_name={self.table_name}, db_file={self.db_file})"
 
     def get_table(self) -> Table:
         return Table(
@@ -85,7 +85,7 @@ class SqliteMemoryDb(MemoryDb):
             self.metadata,
             Column("id", String, primary_key=True),
             Column("user_id", String),
-            Column("memory", String),
+            Column("summary", String),
             Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
             Column(
                 "updated_at", DateTime, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
@@ -102,16 +102,16 @@ class SqliteMemoryDb(MemoryDb):
                 logger.error(f"Error creating table '{self.table_name}': {e}")
                 raise
 
-    def memory_exists(self, memory: MemoryRow) -> bool:
+    def summary_exists(self, summary: SummaryRow) -> bool:
         with self.Session() as session:
-            stmt = select(self.table.c.id).where(self.table.c.id == memory.id)
+            stmt = select(self.table.c.id).where(self.table.c.id == summary.id)
             result = session.execute(stmt).first()
             return result is not None
 
-    def read_memories(
+    def read_summaries(
         self, user_id: Optional[str] = None, limit: Optional[int] = None, sort: Optional[str] = None
-    ) -> List[MemoryRow]:
-        memories: List[MemoryRow] = []
+    ) -> List[SummaryRow]:
+        summaries: List[SummaryRow] = []
         try:
             with self.Session() as session:
                 stmt = select(self.table)
@@ -128,37 +128,34 @@ class SqliteMemoryDb(MemoryDb):
 
                 result = session.execute(stmt)
                 for row in result:
-                    memories.append(
-                        MemoryRow(
-                            id=row.id,
-                            user_id=row.user_id,
-                            memory=eval(row.memory),
-                            last_updated=row.updated_at or row.created_at,
-                        )
-                    )
+                    summaries.append(SummaryRow(id=row.id, user_id=row.user_id, summary=eval(row.summary)))
         except SQLAlchemyError as e:
             log_debug(f"Exception reading from table: {e}")
             log_debug(f"Table does not exist: {self.table_name}")
             log_debug("Creating table for future transactions")
             self.create()
-        return memories
+        return summaries
 
-    def upsert_memory(self, memory: MemoryRow, create_and_retry: bool = True) -> None:
+    def upsert_summary(self, summary: SummaryRow, create_and_retry: bool = True) -> None:
         try:
             with self.Session() as session:
-                # Check if the memory already exists
-                existing = session.execute(select(self.table).where(self.table.c.id == memory.id)).first()
+                # Check if the summary already exists
+                existing = session.execute(select(self.table).where(self.table.c.id == summary.id)).first()
 
                 if existing:
-                    # Update existing memory
+                    # Update existing summary
                     stmt = (
                         self.table.update()
-                        .where(self.table.c.id == memory.id)
-                        .values(user_id=memory.user_id, memory=str(memory.memory), updated_at=text("CURRENT_TIMESTAMP"))
+                        .where(self.table.c.id == summary.id)
+                        .values(
+                            user_id=summary.user_id, summary=str(summary.summary), updated_at=text("CURRENT_TIMESTAMP")
+                        )
                     )
                 else:
-                    # Insert new memory
-                    stmt = self.table.insert().values(id=memory.id, user_id=memory.user_id, memory=str(memory.memory))  # type: ignore
+                    # Insert new summary
+                    stmt = self.table.insert().values(
+                        id=summary.id, user_id=summary.user_id, summary=str(summary.summary)
+                    )  # type: ignore
 
                 session.execute(stmt)
                 session.commit()
@@ -169,13 +166,13 @@ class SqliteMemoryDb(MemoryDb):
                 log_info("Creating table for future transactions")
                 self.create()
                 if create_and_retry:
-                    return self.upsert_memory(memory, create_and_retry=False)
+                    return self.upsert_summary(summary, create_and_retry=False)
             else:
                 raise
 
-    def delete_memory(self, memory_id: str) -> None:
+    def delete_summary(self, session_id: str) -> None:
         with self.Session() as session:
-            stmt = delete(self.table).where(self.table.c.id == memory_id)
+            stmt = delete(self.table).where(self.table.c.id == session_id)
             session.execute(stmt)
             session.commit()
 

@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from agno.memory_v2.db.schema import SummaryRow
+from agno.memory.v2.db.schema import MemoryRow
 
 
-class SummaryDb(ABC):
+class MemoryDb(ABC):
     """Base class for the Memory Database."""
 
     @abstractmethod
@@ -12,21 +12,21 @@ class SummaryDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def summary_exists(self, summary: SummaryRow) -> bool:
+    def memory_exists(self, memory: MemoryRow) -> bool:
         raise NotImplementedError
 
     @abstractmethod
-    def read_summaries(
+    def read_memories(
         self, user_id: Optional[str] = None, limit: Optional[int] = None, sort: Optional[str] = None
-    ) -> List[SummaryRow]:
+    ) -> List[MemoryRow]:
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_summary(self, summary: SummaryRow) -> Optional[SummaryRow]:
+    def upsert_memory(self, memory: MemoryRow) -> Optional[MemoryRow]:
         raise NotImplementedError
 
     @abstractmethod
-    def delete_summary(self, session_id: str) -> None:
+    def delete_memory(self, memory_id: str) -> None:
         raise NotImplementedError
 
     @abstractmethod

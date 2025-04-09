@@ -11,8 +11,8 @@ try:
 except ImportError:
     raise ImportError("`sqlalchemy` not installed.  Please install using `pip install sqlalchemy 'psycopg[binary]'`")
 
-from agno.memory_v2.db.schema import SummaryRow
-from agno.memory_v2.db.summary import SummaryDb
+from agno.memory.v2.db import SummaryRow
+from agno.memory.v2.db import SummaryDb
 from agno.utils.log import log_debug, logger
 
 
