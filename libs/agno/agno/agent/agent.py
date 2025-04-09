@@ -2933,6 +2933,25 @@ class Agent:
         else:
             extra_data.reasoning_messages.extend(reasoning_agent_messages)
 
+        # Create and store reasoning_content
+        reasoning_content = ""
+        for step in reasoning_steps:
+            if step.title:
+                reasoning_content += f"## {step.title}\n"
+            if step.reasoning:
+                reasoning_content += f"{step.reasoning}\n"
+            if step.action:
+                reasoning_content += f"Action: {step.action}\n"
+            if step.result:
+                reasoning_content += f"Result: {step.result}\n"
+            reasoning_content += "\n"
+
+        # Add to existing reasoning_content or set it
+        if not self.run_response.reasoning_content:
+            self.run_response.reasoning_content = reasoning_content
+        else:
+            self.run_response.reasoning_content += reasoning_content
+
     def aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
         aggregated_metrics: Dict[str, Any] = defaultdict(list)
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
