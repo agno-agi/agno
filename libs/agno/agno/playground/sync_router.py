@@ -11,7 +11,7 @@ from agno.agent.agent import Agent, RunResponse
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.memory.agent import AgentMemory
-from agno.memory_v2.memory import Memory
+from agno.memory.v2 import Memory
 from agno.playground.operator import (
     format_tools,
     get_agent_by_id,

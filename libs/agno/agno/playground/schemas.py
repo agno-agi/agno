@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.memory.agent import AgentMemory
 from agno.memory.team import TeamMemory
-from agno.memory_v2.memory import Memory
+from agno.memory.v2 import Memory
 from agno.playground.operator import format_tools
 from agno.team import Team
 
