@@ -1,8 +1,8 @@
-# SQL Agent
+# Reasoning SQL Agent
 
-This advanced example shows how to build a sophisticated text-to-SQL system that leverages Agentic RAG to provide deep insights into any data. We'll use the F1 dataset as an example, but the system is designed to be easily extensible to other datasets.
+This advanced example shows how to build a sophisticated text-to-SQL system that leverages Reasoning Agents to provide deep insights into any data. We'll use the F1 dataset as an example, but the system is designed to be easily extensible to other datasets.
 
-The agent uses Agentic RAG to search for table metadata and rules, enabling it to write and run better SQL queries.
+The agent uses Reasoning Agents to search for table metadata and rules, enabling it to write and run better SQL queries. This process, called `Dynamic Few Shot Prompting`, is a technique that allows the agent to dynamically search for few shot examples to improve its performance.
 
 > Note: Fork and clone the repository if needed
 
@@ -21,7 +21,7 @@ pip install -r cookbook/examples/apps/sql_agent/requirements.txt
 
 ### 3. Run PgVector
 
-Let's use Postgres for storing our data, but the SQL Agent should work with any database.
+Let's use Postgres for storing our data, but the SQL Agent should work with any database. This will also help us use `PgVector` for vector search.
 
 > Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) first.
 
@@ -53,11 +53,11 @@ python cookbook/examples/apps/sql_agent/load_f1_data.py
 
 ### 5. Load the knowledge base
 
-The knowledge base contains table metadata, rules and sample queries, which are used by the Agent to improve responses.
+The knowledge base contains table metadata, rules and sample queries, which are used by the Agent to improve responses. This is a dynamic few shot prompting technique. This data, stored in `cookbook/examples/apps/sql_agent/knowledge/` folder, is used by the Agent at run-time to search for sample queries and rules. We only add a minimal amount of data to the knowledge base, but you can add as much as you like.
 
 We recommend adding the following as you go along:
   - Add `table_rules` and `column_rules` to the table metadata. The Agent is prompted to follow them. This is useful when you want to guide the Agent to always query date in a particular format, or avoid certain columns.
-  - Add sample SQL queries to the `cookbook/use_cases/apps/sql_agent/knowledge_base/sample_queries.sql` file. This will give the Assistant a head start on how to write complex queries.
+  - Add sample SQL queries to the `cookbook/examples/apps/sql_agent/knowledge/sample_queries.sql` file. This will give the Assistant a head start on how to write complex queries.
 
 ```shell
 python cookbook/examples/apps/sql_agent/load_knowledge.py
@@ -65,16 +65,16 @@ python cookbook/examples/apps/sql_agent/load_knowledge.py
 
 ### 6. Export API Keys
 
-We recommend using gpt-4o for this task, but you can use any Model you like.
+We recommend using claude-3-7-sonnet for this task, but you can use any Model you like.
 
 ```shell
-export OPENAI_API_KEY=***
+export ANTHROPIC_API_KEY=***
 ```
 
 Other API keys are optional, but if you'd like to test:
 
 ```shell
-export ANTHROPIC_API_KEY=***
+export OPENAI_API_KEY=***
 export GOOGLE_API_KEY=***
 export GROQ_API_KEY=***
 ```

@@ -3,7 +3,8 @@ name: Main Validation
 on:
   push:
     branches:
-      - '*release*'  # Run on release
+      - '*release*'  # Run on release-* format
+      - 'release/*'  # Run on release/1.2.3 branch format
 
 jobs:
   style-check:

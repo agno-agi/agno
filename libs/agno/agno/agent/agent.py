@@ -2268,7 +2268,7 @@ class Agent:
             system_message_content += f"<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n"
         # 3.3.9 Then add additional context
         if self.additional_context is not None:
-            system_message_content += f"{self.additional_context.strip()}\n"
+            system_message_content += f"{self.additional_context}\n"
         # 3.3.10 Then add information about the team members
         if self.has_team and self.add_transfer_instructions:
             system_message_content += (
