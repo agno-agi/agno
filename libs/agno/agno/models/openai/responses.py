@@ -176,12 +176,8 @@ class OpenAIResponses(Model):
         if self.response_format is not None:
             if self.structured_outputs and issubclass(self.response_format, BaseModel):
                 schema = self.response_format.model_json_schema()
+                # Responses API requires "additionalProperties" to be False for structured outputs
                 schema["additionalProperties"] = False
-                # Remove default values from the schema
-                for prop_name, prop in schema["properties"].items():
-                    if "default" in prop:
-                        del schema["properties"][prop_name]["default"]
-                schema["required"] = [prop for prop in schema["properties"]]
                 base_params["text"] = {
                     "format": {
                         "type": "json_schema",
