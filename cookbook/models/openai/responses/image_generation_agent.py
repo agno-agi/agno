@@ -15,12 +15,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.openai import OpenAITools
 
-openai_tools: OpenAITools = OpenAITools()
-
 # Create a simple agent using the GPT-4o model and the OpenAI toolkit
 agent: Agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[openai_tools],
+    tools=[OpenAITools()],
     markdown=True,
 )
 
