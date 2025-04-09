@@ -26,7 +26,7 @@ agent.print_response(
     user_id=john_doe_id,
 )
 
-agent.cli_app("What are my hobbies?", stream=True, user_id=john_doe_id)
+agent.print_response("What are my hobbies?", stream=True, user_id=john_doe_id)
 
 
 memories = memory.get_user_memories(user_id=john_doe_id)

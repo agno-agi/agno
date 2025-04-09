@@ -3,9 +3,9 @@ from typing import Any, Callable, Dict, List, Optional, cast
 
 from pydantic import BaseModel, Field
 
-from agno.memory_v2.db.base import MemoryDb
-from agno.memory_v2.db.schema import MemoryRow
-from agno.memory_v2.schema import UserMemory
+from agno.memory.v2.db.base import MemoryDb
+from agno.memory.v2.db.schema import MemoryRow
+from agno.memory.v2.schema import UserMemory
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.tools.function import Function

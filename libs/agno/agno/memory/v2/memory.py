@@ -6,18 +6,11 @@ from typing import Any, Dict, List, Literal, Optional, Union, cast
 from pydantic import BaseModel, Field
 
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
-<<<<<<< HEAD:libs/agno/agno/memory/v2/memory.py
 from agno.memory.v2.db.base import MemoryDb
 from agno.memory.v2.db.schema import MemoryRow
 from agno.memory.v2.manager import MemoryManager, MemoryUpdatesResponse
 from agno.memory.v2.summarizer import SessionSummarizer
-=======
-from agno.memory_v2.db.base import MemoryDb
-from agno.memory_v2.db.schema import MemoryRow
-from agno.memory_v2.manager import MemoryManager, MemoryUpdatesResponse
-from agno.memory_v2.schema import UserMemory, SessionSummary
-from agno.memory_v2.summarizer import SessionSummarizer
->>>>>>> origin/memory-revamp:libs/agno/agno/memory_v2/memory.py
+from agno.memory.v2.schema import UserMemory, SessionSummary
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.run.response import RunResponse
