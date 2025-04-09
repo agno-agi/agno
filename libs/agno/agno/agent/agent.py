@@ -668,6 +668,12 @@ class Agent:
                         # Format tool calls whenever new ones are added during streaming
                         self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
 
+                        for tool_call in tool_calls_list:
+                            tool_name = tool_call.get("tool_name", "")
+                            if tool_name.lower() in ["think", "analyze"]:
+                                tool_args = tool_call.get("tool_args", {})
+                                self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+
                     # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                     if self.stream_intermediate_steps:
                         yield self.create_run_response(
@@ -739,6 +745,12 @@ class Agent:
                     self.run_response.tools = model_response.tool_calls
                 else:
                     self.run_response.tools.extend(model_response.tool_calls)
+
+                for tool_call in model_response.tool_calls:
+                    tool_name = tool_call.get("tool_name", "")
+                    if tool_name.lower() in ["think", "analyze"]:
+                        tool_args = tool_call.get("tool_args", {})
+                        self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
             # Update the run_response audio with the model response audio
             if model_response.audio is not None:
@@ -4493,6 +4505,55 @@ class Agent:
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]
                 live_log.update(Group(*panels))
+
+    def update_reasoning_content_from_tool_call(self, tool_name: str, tool_args: Dict[str, Any]) -> None:
+        """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
+        if not hasattr(self, "run_response") or self.run_response is None:
+            return
+
+        # Case 1: ReasoningTools.think (has title, thought, optional action and confidence)
+        elif tool_name.lower() == "think" and "title" in tool_args and "thought" in tool_args:
+            title = tool_args["title"]
+            thought = tool_args["thought"]
+            action = tool_args.get("action", "")
+            confidence = tool_args.get("confidence", None)
+
+            formatted_content = f"## {title}\n{thought}\n"
+            if action:
+                formatted_content += f"Action: {action}\n"
+            if confidence is not None:
+                formatted_content += f"Confidence: {confidence}\n"
+            formatted_content += "\n"
+
+            self._append_to_reasoning_content(formatted_content)
+
+        # Case 2: ReasoningTools.analyze (has title, result, analysis, optional next_action and confidence)
+        elif tool_name.lower() == "analyze" and "title" in tool_args:
+            title = tool_args["title"]
+            result = tool_args.get("result", "")
+            analysis = tool_args.get("analysis", "")
+            next_action = tool_args.get("next_action", "")
+            confidence = tool_args.get("confidence", None)
+
+            formatted_content = f"## {title}\n"
+            if result:
+                formatted_content += f"Result: {result}\n"
+            if analysis:
+                formatted_content += f"{analysis}\n"
+            if next_action and next_action.lower() != "continue":
+                formatted_content += f"Next Action: {next_action}\n"
+            if confidence is not None:
+                formatted_content += f"Confidence: {confidence}\n"
+            formatted_content += "\n"
+
+            self._append_to_reasoning_content(formatted_content)
+
+    def _append_to_reasoning_content(self, content: str) -> None:
+        """Helper to append content to the reasoning_content field."""
+        if not hasattr(self.run_response, "reasoning_content") or not self.run_response.reasoning_content:
+            self.run_response.reasoning_content = content
+        else:
+            self.run_response.reasoning_content += content
 
     def cli_app(
         self,

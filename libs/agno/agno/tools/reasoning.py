@@ -89,21 +89,18 @@ class ReasoningTools(Toolkit):
                     agent.run_response.extra_data.reasoning_steps = []
                 agent.run_response.extra_data.reasoning_steps.append(reasoning_step)
 
-                # Update reasoning_content
-                self._update_reasoning_content(agent, reasoning_step)
-
             # Return all previous reasoning_steps and the new reasoning_step
             if "reasoning_steps" in agent.session_state and agent.run_id in agent.session_state["reasoning_steps"]:
                 formatted_reasoning_steps = ""
                 for i, step in enumerate(agent.session_state["reasoning_steps"][agent.run_id], 1):
                     step_parsed = ReasoningStep.model_validate_json(step)
                     step_str = f"""\
-Step {i}:
-Title: {step_parsed.title}
-Reasoning: {step_parsed.reasoning}
-Action: {step_parsed.action}
-Confidence: {step_parsed.confidence}
-"""
+                                 Step {i}:
+                                 Title: {step_parsed.title}
+                                 Reasoning: {step_parsed.reasoning}
+                                 Action: {step_parsed.action}
+                                  Confidence: {step_parsed.confidence}
+                                """
                     formatted_reasoning_steps += step_str + "\n"
                 return formatted_reasoning_steps.strip()
             return reasoning_step.model_dump_json()
@@ -169,9 +166,6 @@ Confidence: {step_parsed.confidence}
                 if agent.run_response.extra_data.reasoning_steps is None:
                     agent.run_response.extra_data.reasoning_steps = []
                 agent.run_response.extra_data.reasoning_steps.append(reasoning_step)
-
-                # Update reasoning_content
-                self._update_reasoning_content(agent, reasoning_step)
 
             # Return all previous reasoning_steps and the new reasoning_step
             if "reasoning_steps" in agent.session_state and agent.run_id in agent.session_state["reasoning_steps"]:
@@ -294,35 +288,3 @@ Confidence: {step_parsed.confidence}
         *Agent's Final Answer to User:*
         The capital of France is Paris. Its estimated population (city proper) is approximately 2.1 million as of early 2024."""
     )
-
-    def _update_reasoning_content(self, agent: Agent, step: ReasoningStep) -> None:
-        """Helper function to update reasoning_content on the RunResponse based on a ReasoningStep.
-
-        Args:
-            agent: The agent whose run_response should be updated
-            step: The ReasoningStep to format and add to reasoning_content
-        """
-        if not hasattr(agent, "run_response") or agent.run_response is None:
-            return
-
-        # Create formatted content from the step
-        step_content = ""
-        if step.title:
-            step_content += f"## {step.title}\n"
-        if step.reasoning:
-            step_content += f"{step.reasoning}\n"
-        if step.action:
-            step_content += f"Action: {step.action}\n"
-        if step.result:
-            step_content += f"Result: {step.result}\n"
-        if step.next_action and step.next_action != NextAction.CONTINUE:
-            step_content += f"Next Action: {step.next_action.value.lower()}\n"
-        if step.confidence is not None:
-            step_content += f"Confidence: {step.confidence}\n"
-        step_content += "\n"
-
-        # Update reasoning_content on the run_response
-        if not hasattr(agent.run_response, "reasoning_content") or not agent.run_response.reasoning_content:
-            agent.run_response.reasoning_content = step_content
-        else:
-            agent.run_response.reasoning_content += step_content
