@@ -39,6 +39,7 @@ agent = Agent(
 )
 agent.print_response("Write a report on NVDA", stream=True, show_full_reasoning=True, stream_intermediate_steps=True)
 ```
+https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
 
 ## Key features
 

@@ -209,10 +209,6 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
         elif message.role == "assistant":
             content = []
 
-            # In case the model returns no response, add a default message.
-            if message.content is None:
-                content.append(TextBlock(text="No response received from model", type="text"))
-
             if message.thinking is not None and message.provider_data is not None:
                 from anthropic.types import RedactedThinkingBlock, ThinkingBlock
 
