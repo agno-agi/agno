@@ -3,7 +3,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from agno.memory_v2.memory import Memory, SessionSummary, UserMemory
+from agno.memory_v2.memory import Memory
+from agno.memory_v2.schema import UserMemory, SessionSummary
 from agno.models.message import Message
 from agno.run.response import RunResponse
 
@@ -65,7 +66,6 @@ def test_default_initialization():
     assert memory.memories == {}
     assert memory.summaries == {}
     assert memory.runs == {}
-    assert memory.team_context == {}
     assert memory.model is not None
 
 
@@ -540,7 +540,7 @@ def test_create_user_memories(memory_with_managers):
         MagicMock(id=None, memory="New memory 1", topics=["topic1"]),
         MagicMock(id=None, memory="New memory 2", topics=["topic2"]),
     ]
-    memory_with_managers.memory_manager.run.return_value = MagicMock(updates=mock_updates)
+    memory_with_managers.memory_manager.create_or_update_memories.return_value = MagicMock(updates=mock_updates)
 
     # Create user memories
     messages = [Message(role="user", content="Remember this information")]

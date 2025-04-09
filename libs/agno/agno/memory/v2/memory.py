@@ -6,10 +6,18 @@ from typing import Any, Dict, List, Literal, Optional, Union, cast
 from pydantic import BaseModel, Field
 
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
+<<<<<<< HEAD:libs/agno/agno/memory/v2/memory.py
 from agno.memory.v2.db.base import MemoryDb
 from agno.memory.v2.db.schema import MemoryRow
 from agno.memory.v2.manager import MemoryManager, MemoryUpdatesResponse
 from agno.memory.v2.summarizer import SessionSummarizer
+=======
+from agno.memory_v2.db.base import MemoryDb
+from agno.memory_v2.db.schema import MemoryRow
+from agno.memory_v2.manager import MemoryManager, MemoryUpdatesResponse
+from agno.memory_v2.schema import UserMemory, SessionSummary
+from agno.memory_v2.summarizer import SessionSummarizer
+>>>>>>> origin/memory-revamp:libs/agno/agno/memory_v2/memory.py
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.run.response import RunResponse
@@ -25,56 +33,6 @@ class MemorySearchResponse(BaseModel):
     memory_ids: List[str] = Field(
         ..., description="The IDs of the memories that are most semantically similar to the query."
     )
-
-
-@dataclass
-class UserMemory:
-    """Model for User Memories"""
-
-    memory: str
-    topics: Optional[List[str]] = None
-    last_updated: Optional[datetime] = None
-    memory_id: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            "memory_id": self.memory_id,
-            "memory": self.memory,
-            "topics": self.topics,
-            "last_updated": self.last_updated.isoformat() if self.last_updated else None,
-        }
-        return {k: v for k, v in _dict.items() if v is not None}
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "UserMemory":
-        last_updated = data.get("last_updated")
-        if last_updated:
-            data["last_updated"] = datetime.fromisoformat(last_updated)
-        return cls(**data)
-
-
-@dataclass
-class SessionSummary:
-    """Model for Session Summary."""
-
-    summary: str
-    topics: Optional[List[str]] = None
-    last_updated: Optional[datetime] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            "summary": self.summary,
-            "topics": self.topics,
-            "last_updated": self.last_updated.isoformat() if self.last_updated else None,
-        }
-        return {k: v for k, v in _dict.items() if v is not None}
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SessionSummary":
-        last_updated = data.get("last_updated")
-        if last_updated:
-            data["last_updated"] = datetime.fromisoformat(last_updated)
-        return cls(**data)
 
 
 @dataclass
@@ -216,6 +174,7 @@ class Memory:
     def initialize(self):
         if self.db:
             all_memories = self.db.read_memories()
+            # Reset the memories
             self.memories = {}
             for memory in all_memories:
                 if memory.user_id is not None and memory.id is not None:
@@ -419,7 +378,7 @@ class Memory:
         existing_memories = [
             {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
         ]
-        memory_updates: MemoryUpdatesResponse = self.memory_manager.run(  # type: ignore
+        memory_updates: MemoryUpdatesResponse = self.memory_manager.create_or_update_memories(  # type: ignore
             messages=messages, existing_memories=existing_memories
         )
 
@@ -427,8 +386,12 @@ class Memory:
         for update in memory_updates.updates:
             # We have an existing memory id, so we need to replace the memory
             if update.id is not None:
+                if len(messages) == 1:
+                    input_string = messages[0].get_content_string()
+                else:
+                    input_string = f"[{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}]"
                 user_memory = UserMemory(
-                    memory_id=update.id, memory=update.memory, topics=update.topics, last_updated=datetime.now()
+                    memory_id=update.id, memory=update.memory, topics=update.topics, last_updated=datetime.now(), input=input_string
                 )
                 memory_id = self.replace_user_memory(memory_id=update.id, memory=user_memory, user_id=user_id)
                 if memory_id is None:
@@ -439,8 +402,13 @@ class Memory:
                 from uuid import uuid4
 
                 memory_id = str(uuid4())
+
+                if len(messages) == 1:
+                    input_string = messages[0].get_content_string()
+                else:
+                    input_string = f"[{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}]"
                 user_memory = UserMemory(
-                    memory_id=memory_id, memory=update.memory, topics=update.topics, last_updated=datetime.now()
+                    memory_id=memory_id, memory=update.memory, topics=update.topics, last_updated=datetime.now(), input=input_string
                 )
 
                 memory_id = self.add_user_memory(memory=user_memory, user_id=user_id)
@@ -474,7 +442,7 @@ class Memory:
         existing_memories = [
             {"memory_id": memory.memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
         ]
-        memory_updates: Optional[MemoryUpdatesResponse] = await self.memory_manager.arun(
+        memory_updates: Optional[MemoryUpdatesResponse] = await self.memory_manager.acreate_or_update_memories(
             messages=messages, existing_memories=existing_memories
         )
         if memory_updates is None:
@@ -484,14 +452,25 @@ class Memory:
         for update in memory_updates.updates:
             # We have an existing memory id, so we need to replace the memory
             if update.id is not None:
-                user_memory = UserMemory(memory=update.memory, topics=update.topics, last_updated=datetime.now())
+
+                if len(messages) == 1:
+                    input_string = messages[0].get_content_string()
+                else:
+                    input_string = f"[{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}]"
+
+                user_memory = UserMemory(memory=update.memory, topics=update.topics, last_updated=datetime.now(), input=input_string)
                 memory_id = self.replace_user_memory(memory_id=update.id, memory=user_memory, user_id=user_id)
                 if memory_id is None:
                     continue
                 response_memories[memory_id] = user_memory
             # We don't have an existing memory id, so we need to add a new memory
             else:
-                user_memory = UserMemory(memory=update.memory, topics=update.topics, last_updated=datetime.now())
+                if len(messages) == 1:
+                    input_string = messages[0].get_content_string()
+                else:
+                    input_string = f"[{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}]"
+
+                user_memory = UserMemory(memory=update.memory, topics=update.topics, last_updated=datetime.now(), input=input_string)
                 memory_id = self.add_user_memory(memory=user_memory, user_id=user_id)
                 response_memories[memory_id] = user_memory
 
@@ -499,6 +478,52 @@ class Memory:
             log_debug("No memories created")
 
         return response_memories
+
+    def update_memory_task(self, task: str, user_id: Optional[str] = None) -> str:
+        """Updates the memory with a task"""
+
+        if not self.memory_manager:
+            raise ValueError("Memory manager not initialized")
+
+        if user_id is None:
+            user_id = "default"
+
+        existing_memories = self.memories.get(user_id, {})  # type: ignore
+        existing_memories = [
+            {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
+        ]
+        # The memory manager updates the DB directly
+        response = self.memory_manager.run_memory_task(  # type: ignore
+            task=task, existing_memories=existing_memories, user_id=user_id, db=self.db
+        )
+
+        # We refresh from the DB
+        self.initialize()
+
+        return response
+
+    async def aupdate_memory_task(self, task: str, user_id: Optional[str] = None) -> str:
+        """Updates the memory with a task"""
+
+        if not self.memory_manager:
+            raise ValueError("Memory manager not initialized")
+
+        if user_id is None:
+            user_id = "default"
+
+        existing_memories = self.memories.get(user_id, {})  # type: ignore
+        existing_memories = [
+            {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
+        ]
+        # The memory manager updates the DB directly
+        response = await self.memory_manager.arun_memory_task(  # type: ignore
+            task=task, existing_memories=existing_memories, user_id=user_id, db=self.db
+        )
+
+        # We refresh from the DB
+        self.initialize()
+
+        return response
 
     # -*- DB Functions
     def _upsert_db_memory(self, memory: MemoryRow) -> str:
@@ -770,7 +795,6 @@ class Memory:
             return []
 
         memories_dict = self.memories.get(user_id, {})
-        sorted_memories_list = []
 
         # Sort memories by last_updated timestamp if available
         if memories_dict:
@@ -804,7 +828,6 @@ class Memory:
             return []
 
         memories_dict = self.memories.get(user_id, {})
-        sorted_memories_list = []
         # Sort memories by last_updated timestamp if available
         if memories_dict:
             # Convert to list of values for sorting

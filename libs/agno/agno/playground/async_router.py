@@ -222,7 +222,7 @@ def get_async_playground_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        if session_id is not None:
+        if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
         else:
             logger.debug("Creating new session")
@@ -428,8 +428,7 @@ def get_async_playground_router(
         all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=body.user_id)  # type: ignore
         for session in all_agent_sessions:
             if session.session_id == session_id:
-                agent.session_id = session_id
-                agent.rename_session(body.name)
+                agent.rename_session(body.name, session_id=session_id)
                 return JSONResponse(content={"message": f"successfully renamed session {session.session_id}"})
 
         return JSONResponse(status_code=404, content="Session not found.")
@@ -632,7 +631,7 @@ def get_async_playground_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        if session_id is not None:
+        if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
         else:
             logger.debug("Creating new session")
@@ -802,8 +801,7 @@ def get_async_playground_router(
         all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=body.user_id, entity_id=team_id)  # type: ignore
         for session in all_team_sessions:
             if session.session_id == session_id:
-                team.session_id = session_id
-                team.rename_session(body.name)
+                team.rename_session(body.name, session_id=session_id)
                 return JSONResponse(content={"message": f"successfully renamed team session {body.name}"})
 
         raise HTTPException(status_code=404, detail="Session not found")

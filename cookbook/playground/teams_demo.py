@@ -2,7 +2,11 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.memory_v2 import Memory
+<<<<<<< HEAD
 from agno.memory.v2.db import PostgresMemoryDb
+=======
+from agno.memory_v2.db.postgres import PostgresMemoryDb
+>>>>>>> origin/memory-revamp
 from agno.models.anthropic import Claude
 from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat

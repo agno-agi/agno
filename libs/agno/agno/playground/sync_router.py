@@ -222,10 +222,11 @@ def get_sync_playground_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        if session_id is not None:
+        if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
         else:
             logger.debug("Creating new session")
+            session_id = str(uuid4())
 
         if monitor:
             agent.monitoring = True
@@ -626,10 +627,11 @@ def get_sync_playground_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        if session_id is not None:
+        if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
         else:
             logger.debug("Creating new session")
+            session_id = str(uuid4())
 
         if monitor:
             team.monitoring = True

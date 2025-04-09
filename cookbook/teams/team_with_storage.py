@@ -3,12 +3,10 @@ from uuid import uuid4
 from agno.agent.agent import Agent
 from agno.memory.db.postgres import PgMemoryDb
 from agno.memory.team import TeamMemory
-from agno.models.anthropic.claude import Claude
 from agno.models.mistral.mistral import MistralChat
 from agno.models.openai.chat import OpenAIChat
 from agno.storage.postgres import PostgresStorage
 from agno.team import Team
-from sqlalchemy import create_engine
 
 french_agent = Agent(
     name="French Agent",

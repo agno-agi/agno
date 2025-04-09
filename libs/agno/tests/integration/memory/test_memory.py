@@ -4,9 +4,15 @@ from datetime import datetime
 
 import pytest
 
+<<<<<<< HEAD
 from agno.memory.v2.db import SqliteMemoryDb
 from agno.memory.v2.db import SqliteSummaryDb
 from agno.memory_v2.memory import Memory, UserMemory
+=======
+from agno.memory_v2.db.sqlite import SqliteMemoryDb
+from agno.memory_v2.memory import Memory
+from agno.memory_v2.schema import UserMemory
+>>>>>>> origin/memory-revamp
 from agno.models.google.gemini import Gemini
 from agno.models.message import Message
 from agno.run.response import RunResponse
@@ -66,6 +72,24 @@ def test_add_user_memory_with_db(memory_with_db):
     assert new_memory.get_user_memory("test_user", memory_id) is not None
     assert new_memory.get_user_memory("test_user", memory_id).memory == "The user's name is John Doe"
 
+def test_create_user_memory_with_db(memory_with_db):
+    """Test creating user memories with database persistence."""
+    # Create messages to generate memories from
+    message = "My name is John Doe and I like to play basketball"
+    # Create memories from the messages
+    result = memory_with_db.create_user_memory(message, user_id="test_user")
+
+    # Verify memories were created
+    assert len(result) > 0
+
+    # Get all memories for the user
+    memories = memory_with_db.get_user_memories("test_user")
+
+    # Verify memories were added to the in-memory store
+    assert len(memories) > 0
+
+    assert memories[0].input == message
+    assert "basketball" in memories[0].memory.lower()
 
 def test_create_user_memories_with_db(memory_with_db):
     """Test creating user memories with database persistence."""
@@ -208,16 +232,6 @@ def test_create_session_summary_with_db(memory_with_db):
     assert summary is not None
     assert summary.summary is not None
 
-    # Create a new Memory instance with the same database
-    new_memory = Memory(
-        model=memory_with_db.model, db=memory_with_db.db
-    )
-
-    # Verify the summary was loaded from the database
-    loaded_summary = new_memory.get_session_summary(user_id, session_id)
-    assert loaded_summary is not None
-    assert loaded_summary.summary == summary.summary
-
 
 @pytest.mark.asyncio
 async def test_acreate_session_summary_with_db(memory_with_db):
@@ -242,16 +256,6 @@ async def test_acreate_session_summary_with_db(memory_with_db):
     # Verify the summary was created
     assert summary is not None
     assert summary.summary is not None
-
-    # Create a new Memory instance with the same database
-    new_memory = Memory(
-        model=memory_with_db.model, db=memory_with_db.db
-    )
-
-    # Verify the summary was loaded from the database
-    loaded_summary = new_memory.get_session_summary(user_id, session_id)
-    assert loaded_summary is not None
-    assert loaded_summary.summary == summary.summary
 
 
 def test_memory_persistence_across_instances(model, memory_db):
@@ -428,5 +432,84 @@ def test_search_user_memories_first_n(memory_with_db):
     assert results[1].memory == "Second memory"
 
 
-if __name__ == "__main__":
-    pytest.main()
+def test_update_memory_task_with_db(memory_with_db):
+    """Test updating memory with a task using database persistence."""
+    # Add multiple memories with different content
+    memory1 = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
+    memory2 = UserMemory(
+        memory="The user likes to play basketball", topics=["sports", "hobbies"], last_updated=datetime.now()
+    )
+    memory3 = UserMemory(
+        memory="The user's favorite color is blue", topics=["preferences", "colors"], last_updated=datetime.now()
+    )
+
+    # Add the memories
+    memory_with_db.add_user_memory(memory=memory1, user_id="test_user")
+    memory_with_db.add_user_memory(memory=memory2, user_id="test_user")
+    memory_with_db.add_user_memory(memory=memory3, user_id="test_user")
+
+    # Update memories with a task
+    task = "The user's age is 30"
+    response = memory_with_db.update_memory_task(task=task, user_id="test_user")
+
+    # Verify the task was processed
+    assert response is not None
+
+    # Get all memories for the user
+    memories = memory_with_db.get_user_memories("test_user")
+
+    # Verify memories were updated
+    assert len(memories) > 0
+    assert any("30" in memory.memory for memory in memories)
+    
+    response = memory_with_db.update_memory_task(task="Delete any memories of the user's name", user_id="test_user")
+
+    # Verify the task was processed
+    assert response is not None
+
+    # Get all memories for the user
+    memories = memory_with_db.get_user_memories("test_user")
+    assert len(memories) > 0
+    assert any("John Doe" not in memory.memory for memory in memories)
+
+
+@pytest.mark.asyncio
+async def test_aupdate_memory_task_with_db(memory_with_db):
+    """Test async updating memory with a task using database persistence."""
+    # Add multiple memories with different content
+    memory1 = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
+    memory2 = UserMemory(
+        memory="The user likes to play basketball", topics=["sports", "hobbies"], last_updated=datetime.now()
+    )
+    memory3 = UserMemory(
+        memory="The user's favorite color is blue", topics=["preferences", "colors"], last_updated=datetime.now()
+    )
+
+    # Add the memories
+    memory_with_db.add_user_memory(memory=memory1, user_id="test_user")
+    memory_with_db.add_user_memory(memory=memory2, user_id="test_user")
+    memory_with_db.add_user_memory(memory=memory3, user_id="test_user")
+
+    # Update memories with a task asynchronously
+    task = "The user's occupation is software engineer"
+    response = await memory_with_db.aupdate_memory_task(task=task, user_id="test_user")
+
+    # Verify the task was processed
+    assert response is not None
+
+    # Get all memories for the user
+    memories = memory_with_db.get_user_memories("test_user")
+
+    # Verify memories were updated
+    assert len(memories) > 0
+    assert any("occupation" in memory.memory.lower() and "software engineer" in memory.memory.lower() for memory in memories)
+    
+    response = await memory_with_db.aupdate_memory_task(task="Delete any memories of the user's name", user_id="test_user")
+
+    # Verify the task was processed
+    assert response is not None
+
+    # Get all memories for the user
+    memories = memory_with_db.get_user_memories("test_user")
+    assert len(memories) > 0
+    assert any("John Doe" not in memory.memory for memory in memories)

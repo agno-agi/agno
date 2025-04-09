@@ -1,7 +1,7 @@
 import json
 from typing import List
 
-from agno.memory_v2.memory import UserMemory
+from agno.memory_v2.schema import UserMemory
 from agno.run.team import TeamRunResponse
 from rich.console import Console
 from rich.json import JSON

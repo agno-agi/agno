@@ -22,7 +22,7 @@ def get_json_output_prompt(response_model: Union[str, list, BaseModel]) -> str:
             json_output_prompt += "\n<json_fields>"
             json_output_prompt += f"\n{json.dumps(response_model)}"
             json_output_prompt += "\n</json_fields>"
-        elif issubclass(type(response_model), BaseModel) or isinstance(response_model, BaseModel):
+        elif issubclass(response_model, BaseModel) or issubclass(type(response_model), BaseModel) or isinstance(response_model, BaseModel):
             json_schema = response_model.model_json_schema()
             if json_schema is not None:
                 response_model_properties = {}
