@@ -3781,24 +3781,6 @@ class Team:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
                 if member.description is not None:
                     system_message_content += f"{indent * ' '}   - Description: {member.description}\n"
-                if member.tools is not None:
-                    system_message_content += f"{indent * ' '}   - Available tools:\n"
-                    tool_name_and_description = []
-
-                    for _tool in member.tools:
-                        if isinstance(_tool, Toolkit):
-                            for _func in _tool.functions.values():
-                                if _func.entrypoint:
-                                    tool_name_and_description.append(
-                                        (_func.name, get_entrypoint_docstring(_func.entrypoint))
-                                    )
-                        elif isinstance(_tool, Function) and _tool.entrypoint:
-                            tool_name_and_description.append((_tool.name, get_entrypoint_docstring(_tool.entrypoint)))
-                        elif callable(_tool):
-                            tool_name_and_description.append((_tool.__name__, get_entrypoint_docstring(_tool)))
-
-                    for _tool_name, _tool_description in tool_name_and_description:
-                        system_message_content += f"{indent * ' '}    - {_tool_name}: {_tool_description}\n"
 
         return system_message_content
 
