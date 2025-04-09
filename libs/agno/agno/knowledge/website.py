@@ -20,7 +20,9 @@ class WebsiteKnowledgeBase(AgentKnowledge):
     @model_validator(mode="after")
     def set_reader(self) -> "WebsiteKnowledgeBase":
         if self.reader is None:
-            self.reader = WebsiteReader(max_depth=self.max_depth, max_links=self.max_links)
+            self.reader = WebsiteReader(
+                max_depth=self.max_depth, max_links=self.max_links, chunking_strategy=self.chunking_strategy
+            )
         return self
 
     @property

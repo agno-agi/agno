@@ -48,6 +48,10 @@ class Function(BaseModel):
     )
     strict: Optional[bool] = None
 
+    instructions: Optional[str] = None
+    # If True, add instructions to the Agent's system message
+    add_instructions: bool = True
+
     # The function to be called.
     entrypoint: Optional[Callable] = None
     # If True, the entrypoint processing is skipped and the Function is used as is.
@@ -100,7 +104,7 @@ class Function(BaseModel):
             }
 
             # Parse docstring for parameters
-            param_descriptions = {}
+            param_descriptions: Dict[str, Any] = {}
             if docstring := getdoc(c):
                 parsed_doc = parse(docstring)
                 param_docs = parsed_doc.params
@@ -109,8 +113,10 @@ class Function(BaseModel):
                     for param in param_docs:
                         param_name = param.arg_name
                         param_type = param.type_name
-
-                        param_descriptions[param_name] = f"({param_type}) {param.description}"
+                        if param_type is None:
+                            param_descriptions[param_name] = param.description
+                        else:
+                            param_descriptions[param_name] = f"({param_type}) {param.description}"
 
             # Get JSON schema for parameters only
             parameters = get_json_schema(
