@@ -37,3 +37,13 @@ memories = memory.get_user_memories(user_id=john_doe_id)
 print("John Doe's memories:")
 for i, m in enumerate(memories):
     print(f"{i}: {m.memory}")
+
+agent.print_response("Remove all existing memories of me.", stream=True, user_id=john_doe_id)
+
+memories = memory.get_user_memories(user_id=john_doe_id)
+print("John Doe's memory count:", len(memories))
+
+agent.print_response("My name is Salvador Dali and I like to paint.", stream=True, user_id=john_doe_id)
+
+memories = memory.get_user_memories(user_id=john_doe_id)
+print("John Doe's memory count:", len(memories))

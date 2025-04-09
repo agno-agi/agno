@@ -7,11 +7,7 @@ Steps:
 """
 
 from agno.agent import Agent
-<<<<<<< HEAD
-from agno.memory.v2.db import SqliteMemoryDb
-=======
->>>>>>> origin/memory-revamp
-from agno.memory_v2.memory import Memory
+from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.models.perplexity.perplexity import Perplexity
 from agno.storage.sqlite import SqliteStorage
