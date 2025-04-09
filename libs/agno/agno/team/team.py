@@ -39,7 +39,6 @@ from agno.run.response import RunEvent, RunResponse
 from agno.run.team import TeamRunResponse
 from agno.storage.base import Storage
 from agno.storage.session.team import TeamSession
-from agno.tools.function import Function, get_entrypoint_docstring
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import (
     log_debug,
