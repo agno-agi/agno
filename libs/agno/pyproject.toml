@@ -1,7 +1,7 @@
 [project]
 name = "agno"
-version = "1.2.14"
-description = "Agno: a lightweight framework for building Multimodal Agents"
+version = "1.2.15"
+description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
 license = { file = "LICENSE" }
