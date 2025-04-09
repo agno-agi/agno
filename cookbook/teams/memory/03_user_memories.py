@@ -9,7 +9,7 @@ Steps:
 from agno.agent import Agent
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.team import TeamMemory
-from agno.memory_v2.memory import Memory
+from agno.memory.v2.memory import Memory
 from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
 from agno.models.perplexity.perplexity import Perplexity

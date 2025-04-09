@@ -3,8 +3,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from agno.memory_v2.memory import Memory
-from agno.memory_v2.schema import UserMemory, SessionSummary
+from agno.memory.v2.memory import Memory
+from agno.memory.v2.schema import UserMemory, SessionSummary
 from agno.models.message import Message
 from agno.run.response import RunResponse
 

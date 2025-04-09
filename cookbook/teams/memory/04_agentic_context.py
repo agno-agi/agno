@@ -7,7 +7,7 @@ Steps:
 """
 
 from agno.agent import Agent
-from agno.memory_v2.memory import Memory
+from agno.memory.v2.memory import Memory
 from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
 from agno.storage.agent.sqlite import SqliteAgentStorage

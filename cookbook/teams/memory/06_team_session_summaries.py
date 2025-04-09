@@ -9,7 +9,7 @@ Steps:
 import asyncio
 
 from agno.agent import Agent
-from agno.memory_v2.memory import Memory
+from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.team.team import Team
