@@ -11,7 +11,7 @@ from agno.models.google.gemini import Gemini
 # No need to set the model, it gets set by the agent to the agent's model
 memory = Memory()
 
-john_doe_id = "111john_doe@example.com"
+john_doe_id = "john_doe@example.com"
 
 agent = Agent(
     model=Gemini(id="gemini-2.0-flash-exp"),

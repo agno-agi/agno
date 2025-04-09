@@ -4,12 +4,8 @@ from datetime import datetime
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.memory_v2 import Memory
-<<<<<<< HEAD
-from agno.memory.v2.db import SqliteMemoryDb
-=======
-from agno.memory_v2.db.sqlite import SqliteMemoryDb
->>>>>>> origin/memory-revamp
+from agno.memory.v2 import Memory
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
 from agno.storage.sqlite import SqliteStorage

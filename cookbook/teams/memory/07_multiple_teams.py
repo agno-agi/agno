@@ -9,12 +9,8 @@ Steps:
 import asyncio
 
 from agno.agent import Agent
-<<<<<<< HEAD
-from agno.memory.v2.db import SqliteMemoryDb
-=======
-from agno.memory_v2.db.sqlite import SqliteMemoryDb
->>>>>>> origin/memory-revamp
-from agno.memory_v2.memory import Memory
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.memory.v2.memory import Memory
 from agno.models.anthropic.claude import Claude
 from agno.models.google.gemini import Gemini
 from agno.models.mistral.mistral import MistralChat

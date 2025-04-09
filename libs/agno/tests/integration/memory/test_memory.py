@@ -4,15 +4,8 @@ from datetime import datetime
 
 import pytest
 
-<<<<<<< HEAD
-from agno.memory.v2.db import SqliteMemoryDb
-from agno.memory.v2.db import SqliteSummaryDb
-from agno.memory_v2.memory import Memory, UserMemory
-=======
-from agno.memory_v2.db.sqlite import SqliteMemoryDb
-from agno.memory_v2.memory import Memory
-from agno.memory_v2.schema import UserMemory
->>>>>>> origin/memory-revamp
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.memory.v2.memory import Memory, UserMemory
 from agno.models.google.gemini import Gemini
 from agno.models.message import Message
 from agno.run.response import RunResponse
@@ -461,7 +454,7 @@ def test_update_memory_task_with_db(memory_with_db):
     # Verify memories were updated
     assert len(memories) > 0
     assert any("30" in memory.memory for memory in memories)
-    
+
     response = memory_with_db.update_memory_task(task="Delete any memories of the user's name", user_id="test_user")
 
     # Verify the task was processed
@@ -503,7 +496,7 @@ async def test_aupdate_memory_task_with_db(memory_with_db):
     # Verify memories were updated
     assert len(memories) > 0
     assert any("occupation" in memory.memory.lower() and "software engineer" in memory.memory.lower() for memory in memories)
-    
+
     response = await memory_with_db.aupdate_memory_task(task="Delete any memories of the user's name", user_id="test_user")
 
     # Verify the task was processed
