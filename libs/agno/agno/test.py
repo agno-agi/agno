@@ -64,9 +64,7 @@ agent = Agent(
 
 # Run the agent (non-streaming)
 print("Running with KnowledgeTools (non-streaming)...")
-agent.print_response(
-    "What does Paul Graham explain here with respect to need to read?", stream=False
-)
+agent.print_response("What does Paul Graham explain here with respect to need to read?", stream=False)
 
 # Print the reasoning_content
 print("\n--- reasoning_content from agent.run_response ---")

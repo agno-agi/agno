@@ -27,14 +27,21 @@ agent = Agent(
 
 # Run the agent (non-streaming)
 print("Running with ThinkingTools (non-streaming)...")
-response = agent.run("What is the sum of the first 10 natural numbers?", stream=False)
+response = agent.print_response(
+    "What is the sum of the first 10 natural numbers?", stream=False
+)
 
 # Print the reasoning_content
-print("\n--- reasoning_content from response ---")
-if hasattr(response, "reasoning_content") and response.reasoning_content:
-    print(response.reasoning_content)
+print("\n--- reasoning_content from agent.run_response ---")
+if (
+    hasattr(agent, "run_response")
+    and agent.run_response
+    and hasattr(agent.run_response, "reasoning_content")
+    and agent.run_response.reasoning_content
+):
+    print(agent.run_response.reasoning_content)
 else:
-    print("No reasoning_content found in response")
+    print("No reasoning_content found in agent.run_response")
 
 
 print("\n\n=== Example 2: Using ThinkingTools in streaming mode ===\n")
