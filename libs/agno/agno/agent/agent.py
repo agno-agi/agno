@@ -1301,6 +1301,14 @@ class Agent:
         if self.stream and model_response.audio is not None:
             self.run_response.response_audio = model_response.audio
 
+        # Process all tool calls to update reasoning_content
+        if self.run_response.tools:
+            for tool_call in self.run_response.tools:
+                tool_name = tool_call.get("tool_name", "")
+                if tool_name.lower() in ["think", "analyze"]:
+                    tool_args = tool_call.get("tool_args", {})
+                    self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+
         # 9. Update Agent Memory
         # Add the system message to the memory
         if run_messages.system_message is not None:
@@ -4522,14 +4530,7 @@ class Agent:
             )
 
             # Add the step to the run response
-            if hasattr(self, "run_response") and self.run_response is not None:
-                if self.run_response.extra_data is None:
-                    from agno.run.response import RunResponseExtraData
-
-                    self.run_response.extra_data = RunResponseExtraData()
-                if self.run_response.extra_data.reasoning_steps is None:
-                    self.run_response.extra_data.reasoning_steps = []
-                self.run_response.extra_data.reasoning_steps.append(reasoning_step)
+            self._add_reasoning_step_to_extra_data(reasoning_step)
 
             formatted_content = f"## {title}\n{thought}\n"
             if action:
@@ -4565,14 +4566,7 @@ class Agent:
             )
 
             # Add the step to the run response
-            if hasattr(self, "run_response") and self.run_response is not None:
-                if self.run_response.extra_data is None:
-                    from agno.run.response import RunResponseExtraData
-
-                    self.run_response.extra_data = RunResponseExtraData()
-                if self.run_response.extra_data.reasoning_steps is None:
-                    self.run_response.extra_data.reasoning_steps = []
-                self.run_response.extra_data.reasoning_steps.append(reasoning_step)
+            self._add_reasoning_step_to_extra_data(reasoning_step)
 
             formatted_content = f"## {title}\n"
             if result:
@@ -4593,6 +4587,18 @@ class Agent:
             self.run_response.reasoning_content = content
         else:
             self.run_response.reasoning_content += content
+
+    def _add_reasoning_step_to_extra_data(self, reasoning_step: ReasoningStep) -> None:
+        if hasattr(self, "run_response") and self.run_response is not None:
+            if self.run_response.extra_data is None:
+                from agno.run.response import RunResponseExtraData
+
+                self.run_response.extra_data = RunResponseExtraData()
+
+        if self.run_response.extra_data.reasoning_steps is None:
+            self.run_response.extra_data.reasoning_steps = []
+
+        self.run_response.extra_data.reasoning_steps.append(reasoning_step)
 
     def cli_app(
         self,
