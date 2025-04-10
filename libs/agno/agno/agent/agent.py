@@ -94,9 +94,9 @@ class Agent:
     memory: Optional[Union[AgentMemory, Memory]] = None
     # Enable the agent to manage memories of the user
     enable_agentic_memory: bool = False
-    # Create user memories after each user message
+    # If True, the agent creates/updates user memories at the end of runs
     enable_user_memories: bool = False
-    # Create session summaries after each run
+    # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
 
     # --- Agent History ---

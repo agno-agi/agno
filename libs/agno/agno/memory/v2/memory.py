@@ -447,8 +447,6 @@ class Memory:
         if user_id is None:
             user_id = "default"
 
-        print("HERE", task)
-
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
             {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
