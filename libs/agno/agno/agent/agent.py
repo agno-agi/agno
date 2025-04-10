@@ -4617,6 +4617,12 @@ class Agent:
 
             self._append_to_reasoning_content(formatted_content)
 
+        # Case 3: ThinkingTools.think (simple format, just has 'thought')
+        elif tool_name.lower() == "think" and "thought" in tool_args:
+            thought = tool_args["thought"]
+            formatted_content = f"## Thinking\n{thought}\n\n"
+            self._append_to_reasoning_content(formatted_content)
+
     def _append_to_reasoning_content(self, content: str) -> None:
         """Helper to append content to the reasoning_content field."""
         if not hasattr(self.run_response, "reasoning_content") or not self.run_response.reasoning_content:  # type: ignore
