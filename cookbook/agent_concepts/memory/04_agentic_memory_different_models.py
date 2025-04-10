@@ -4,6 +4,7 @@ from agno.models.google.gemini import Gemini
 from agno.models.openai.chat import OpenAIChat
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
+
 # Reset for this example
 memory_db.clear()
 

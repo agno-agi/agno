@@ -361,7 +361,7 @@ class Memory:
 
         if not self.memory_manager:
             raise ValueError("Memory manager not initialized")
-        
+
         if self.db is None:
             log_warning("MemoryDb not provided.")
             return "Please provide a db to store memories"
@@ -386,16 +386,14 @@ class Memory:
         """Creates a memory from a message and adds it to the memory db."""
         return await self.acreate_user_memories(messages=[Message(role="user", content=message)], user_id=user_id)
 
-    async def acreate_user_memories(
-        self, messages: List[Message], user_id: Optional[str] = None
-    ) -> str:
+    async def acreate_user_memories(self, messages: List[Message], user_id: Optional[str] = None) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
         if not messages or not isinstance(messages, list):
             raise ValueError("Invalid messages list")
 
         if not self.memory_manager:
             raise ValueError("Memory manager not initialized")
-        
+
         if self.db is None:
             log_warning("MemoryDb not provided.")
             return "Please provide a db to store memories"
@@ -407,7 +405,7 @@ class Memory:
         existing_memories = [
             {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
         ]
-        
+
         response = await self.memory_manager.acreate_or_update_memories(  # type: ignore
             messages=messages, existing_memories=existing_memories, user_id=user_id, db=self.db
         )
@@ -448,7 +446,7 @@ class Memory:
 
         if user_id is None:
             user_id = "default"
-            
+
         print("HERE", task)
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore

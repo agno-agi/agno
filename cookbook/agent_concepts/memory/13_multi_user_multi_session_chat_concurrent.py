@@ -60,14 +60,14 @@ async def user_1_conversation():
         user_id=user_1_id,
         session_id=user_1_session_2_id,
     )
-    
+
     # Continue the conversation in session 1
     await chat_agent.arun(
         "What do you suggest I do this weekend?",
         user_id=user_1_id,
         session_id=user_1_session_1_id,
     )
-    
+
     print("User 1 Done")
 
 
@@ -100,9 +100,7 @@ async def user_3_conversation():
 async def run_concurrent_chat_agent():
     """Run all user conversations concurrently"""
     await asyncio.gather(
-        user_1_conversation(),
-        user_2_conversation(),
-        user_3_conversation()
+        user_1_conversation(), user_2_conversation(), user_3_conversation()
     )
 
 

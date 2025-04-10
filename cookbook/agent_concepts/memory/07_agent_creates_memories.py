@@ -28,7 +28,7 @@ agent = Agent(
     storage=SqliteStorage(
         table_name="agent_sessions", db_file="tmp/persistent_memory.db"
     ),
-    create_user_memories=True,
+    enable_user_memories=True,
 )
 
 agent.print_response(

@@ -13,7 +13,7 @@ except ImportError:
 
 from agno.memory.v2.db import MemoryDb
 from agno.memory.v2.db.schema import MemoryRow
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_info, logger
 
 
 class PostgresMemoryDb(MemoryDb):
@@ -169,6 +169,7 @@ class PostgresMemoryDb(MemoryDb):
     def clear(self) -> bool:
         with self.Session() as sess, sess.begin():
             stmt = delete(self.table)
+            log_info(f"Clearing table: {self.table.name}")
             sess.execute(stmt)
             return True
 

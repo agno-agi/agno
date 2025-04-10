@@ -8,8 +8,7 @@ from agno.memory.v2.schema import UserMemory
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_error, log_warning
-
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 # class MemoryUpdate(BaseModel):
 #     """Model for updates to the user's memory."""
@@ -48,7 +47,7 @@ class MemoryManager:
 
         _tools_for_model = []
         _functions_for_model = {}
-        
+
         for tool in tools:
             try:
                 function_name = tool.__name__
@@ -134,7 +133,9 @@ class MemoryManager:
 
     #     return Message(role="system", content="\n".join(system_prompt_lines))
 
-    def get_system_message(self, existing_memories: Optional[List[Dict[str, Any]]] = None, messages: Optional[List[Message]] = None) -> Message:
+    def get_system_message(
+        self, existing_memories: Optional[List[Dict[str, Any]]] = None, messages: Optional[List[Message]] = None
+    ) -> Message:
         # -*- Return a system message for the memory manager
         system_prompt_lines = [
             "Your task is to add, update, or delete memories based on the user's task."
@@ -154,7 +155,7 @@ class MemoryManager:
             "  3. Decide to update an existing memory using the `update_memory` tool.",
             "  4. Decide to delete an existing memory using the `delete_memory` tool.",
             "  5. Decide to clear all memories using the `clear_memory` tool. Use this with extreme caution, as it will remove all memories from the database.",
-            "You can call multiple of these tools in a single response if needed."
+            "You can call multiple of these tools in a single response if needed.",
         ]
 
         if messages:
@@ -198,7 +199,10 @@ class MemoryManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.add_tools_to_model(model_copy, self._get_db_tools(user_id, db, input_string, enable_delete_memory=False, enable_clear_memory=False))
+        self.add_tools_to_model(
+            model_copy,
+            self._get_db_tools(user_id, db, input_string, enable_delete_memory=False, enable_clear_memory=False),
+        )
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
@@ -212,8 +216,7 @@ class MemoryManager:
         log_debug("MemoryManager End", center=True)
 
         return response.content
-    
-    
+
     async def acreate_or_update_memories(
         self,
         messages: List[Message],
@@ -236,7 +239,10 @@ class MemoryManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.add_tools_to_model(model_copy, self._get_db_tools(user_id, db, input_string, enable_delete_memory=False, enable_clear_memory=False))
+        self.add_tools_to_model(
+            model_copy,
+            self._get_db_tools(user_id, db, input_string, enable_delete_memory=False, enable_clear_memory=False),
+        )
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
@@ -250,7 +256,7 @@ class MemoryManager:
         log_debug("MemoryManager End", center=True)
 
         return response.content
-    
+
     def run_memory_task(
         self,
         task: str,
@@ -312,13 +318,16 @@ class MemoryManager:
         return response.content
 
     # -*- DB Functions
-    def _get_db_tools(self, user_id: str, 
-                      db: MemoryDb, 
-                      input_string: str, 
-                      enable_add_memory: bool = True,
-                      enable_update_memory: bool = True,
-                      enable_delete_memory: bool = True,
-                      enable_clear_memory: bool = True) -> List[Callable]:
+    def _get_db_tools(
+        self,
+        user_id: str,
+        db: MemoryDb,
+        input_string: str,
+        enable_add_memory: bool = True,
+        enable_update_memory: bool = True,
+        enable_delete_memory: bool = True,
+        enable_clear_memory: bool = True,
+    ) -> List[Callable]:
         from datetime import datetime
 
         def add_memory(memory: str, topics: Optional[List[str]] = None) -> str:
@@ -330,6 +339,7 @@ class MemoryManager:
                 str: A message indicating if the memory was added successfully or not.
             """
             from uuid import uuid4
+
             try:
                 last_updated = datetime.now()
                 memory_id = str(uuid4())
@@ -338,11 +348,16 @@ class MemoryManager:
                         id=memory_id,
                         user_id=user_id,
                         memory=UserMemory(
-                            memory_id=memory_id, memory=memory, topics=topics, last_updated=last_updated, input=input_string
+                            memory_id=memory_id,
+                            memory=memory,
+                            topics=topics,
+                            last_updated=last_updated,
+                            input=input_string,
                         ).to_dict(),
                         last_updated=last_updated,
                     )
                 )
+                log_info(f"Memory added: {memory_id}")
                 return "Memory added successfully"
             except Exception as e:
                 log_warning(f"Error storing memory in db: {e}")
@@ -364,14 +379,19 @@ class MemoryManager:
                         id=memory_id,
                         user_id=user_id,
                         memory=UserMemory(
-                            memory_id=memory_id, memory=memory, topics=topics, last_updated=last_updated, input=input_string
+                            memory_id=memory_id,
+                            memory=memory,
+                            topics=topics,
+                            last_updated=last_updated,
+                            input=input_string,
                         ).to_dict(),
                         last_updated=last_updated,
                     )
                 )
+                log_info(f"Memory updated")
                 return "Memory updated successfully"
             except Exception as e:
-                log_warning(f"Error storing memory in db: {e}")
+                log_warning("Error storing memory in db: {e}")
                 return f"Error adding memory: {e}"
 
         def delete_memory(memory_id: str) -> str:
@@ -383,6 +403,7 @@ class MemoryManager:
             """
             try:
                 db.delete_memory(memory_id=memory_id)
+                log_info("Memory deleted")
                 return "Memory deleted successfully"
             except Exception as e:
                 log_warning(f"Error deleting memory in db: {e}")
@@ -394,6 +415,7 @@ class MemoryManager:
                 str: A message indicating if the memory was cleared successfully or not.
             """
             db.clear()
+            log_info("Memory cleared")
             return "Memory cleared successfully"
 
         functions = []
