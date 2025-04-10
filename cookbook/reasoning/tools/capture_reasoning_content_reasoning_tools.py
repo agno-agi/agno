@@ -27,7 +27,7 @@ def test_reasoning_content():
     )
 
     # Test 1: Non-streaming mode
-    print("Testing with stream=False...")
+    print("Running with stream=False...")
     response = agent.run(
         "What is the sum of the first 10 natural numbers?", stream=False
     )
@@ -45,7 +45,7 @@ def test_reasoning_content():
         print("❌ reasoning_content NOT FOUND in non-streaming response")
 
     # Test 2: Streaming mode with a fresh agent
-    print("\nTesting with stream=True...")
+    print("\nRunning with stream=True...")
 
     # Create a fresh agent for streaming test
     streaming_agent = Agent(
@@ -88,15 +88,6 @@ def test_reasoning_content():
             )
     else:
         print("❌ Agent's run_response is not accessible after streaming")
-
-    # Summary
-    print("\n=== Summary ===")
-    print(
-        f"Non-streaming mode: {'✅ SUCCESS' if (hasattr(response, 'reasoning_content') and response.reasoning_content) else '❌ FAILED'}"
-    )
-    print(
-        f"Streaming mode:     {'✅ SUCCESS' if (hasattr(streaming_agent, 'run_response') and hasattr(streaming_agent.run_response, 'reasoning_content') and streaming_agent.run_response.reasoning_content) else '❌ FAILED'}"
-    )
 
 
 if __name__ == "__main__":
