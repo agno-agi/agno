@@ -11,7 +11,6 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.thinking import ThinkingTools
 
-
 print("\n=== Example 1: Using ThinkingTools in non-streaming mode ===\n")
 
 # Create agent with ThinkingTools
@@ -28,8 +27,7 @@ agent = Agent(
 
 # Run the agent (non-streaming)
 print("Running with ThinkingTools (non-streaming)...")
-response = agent.run(
-    "What is the sum of the first 10 natural numbers?", stream=False)
+response = agent.run("What is the sum of the first 10 natural numbers?", stream=False)
 
 # Print the reasoning_content
 print("\n--- reasoning_content from response ---")

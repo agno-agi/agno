@@ -29,15 +29,12 @@ def test_thinking_tools_non_streaming():
     )
 
     # Run the agent in non-streaming mode
-    response = agent.run(
-        "What is the sum of the first 10 natural numbers?", stream=False)
+    response = agent.run("What is the sum of the first 10 natural numbers?", stream=False)
 
     # Assert that reasoning_content exists and is populated
-    assert hasattr(
-        response, "reasoning_content"), "Response should have reasoning_content attribute"
+    assert hasattr(response, "reasoning_content"), "Response should have reasoning_content attribute"
     assert response.reasoning_content is not None, "reasoning_content should not be None"
-    assert len(
-        response.reasoning_content) > 0, "reasoning_content should not be empty"
+    assert len(response.reasoning_content) > 0, "reasoning_content should not be empty"
 
 
 @pytest.mark.integration
@@ -56,15 +53,11 @@ def test_thinking_tools_streaming():
     )
 
     # Consume all streaming responses
-    _ = list(agent.run("What is the value of 5! (factorial)?",
-             stream=True, stream_intermediate_steps=True))
+    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
 
     # Check the agent's run_response directly after streaming is complete
-    assert hasattr(
-        agent, "run_response"), "Agent should have run_response after streaming"
+    assert hasattr(agent, "run_response"), "Agent should have run_response after streaming"
     assert agent.run_response is not None, "Agent's run_response should not be None"
-    assert hasattr(agent.run_response,
-                   "reasoning_content"), "Response should have reasoning_content attribute"
+    assert hasattr(agent.run_response, "reasoning_content"), "Response should have reasoning_content attribute"
     assert agent.run_response.reasoning_content is not None, "reasoning_content should not be None"
-    assert len(
-        agent.run_response.reasoning_content) > 0, "reasoning_content should not be empty"
+    assert len(agent.run_response.reasoning_content) > 0, "reasoning_content should not be empty"
