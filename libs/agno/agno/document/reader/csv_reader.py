@@ -158,10 +158,7 @@ class CSVUrlReader(Reader):
         if not url:
             raise ValueError("No URL provided")
 
-        try:
-            import httpx
-        except ImportError:
-            raise ImportError("`httpx` not installed")
+        import httpx
 
         logger.info(f"Reading async: {url}")
 
