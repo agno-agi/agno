@@ -1,0 +1,12 @@
+agno
+anthropic
+google-genai
+groq
+nest_asyncio
+openai
+pandas
+pgvector
+psycopg[binary]
+simplejson
+sqlalchemy
+streamlit
