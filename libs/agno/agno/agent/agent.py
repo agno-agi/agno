@@ -615,7 +615,6 @@ class Agent:
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
                             redacted_thinking=model_response_chunk.redacted_thinking,
-                            reasoning_content=self.run_response.reasoning_content,
                             citations=model_response_chunk.citations,
                             created_at=model_response_chunk.created_at,
                         )
@@ -3124,6 +3123,29 @@ class Agent:
     # Reasoning
     ###########################################################################
 
+    def _format_reasoning_step_content(self, reasoning_step: ReasoningStep) -> str:
+        """Format content for a reasoning step without changing any existing logic."""
+        step_content = ""
+        if reasoning_step.title:
+            step_content += f"## {reasoning_step.title}\n"
+        if reasoning_step.reasoning:
+            step_content += f"{reasoning_step.reasoning}\n"
+        if reasoning_step.action:
+            step_content += f"Action: {reasoning_step.action}\n"
+        if reasoning_step.result:
+            step_content += f"Result: {reasoning_step.result}\n"
+        step_content += "\n"
+
+        # Get the current reasoning_content and append this step
+        current_reasoning_content = ""
+        if hasattr(self.run_response, "reasoning_content") and self.run_response.reasoning_content:  # type: ignore
+            current_reasoning_content = self.run_response.reasoning_content  # type: ignore
+
+        # Create updated reasoning_content
+        updated_reasoning_content = current_reasoning_content + step_content
+
+        return updated_reasoning_content
+
     def reason(self, run_messages: RunMessages) -> Iterator[RunResponse]:
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
@@ -3292,27 +3314,12 @@ class Agent:
                     # Yield reasoning steps
                     if self.stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
-                            # Create reasoning_content for this step
-                            step_content = ""
-                            if reasoning_step.title:
-                                step_content += f"## {reasoning_step.title}\n"
-                            if reasoning_step.reasoning:
-                                step_content += f"{reasoning_step.reasoning}\n"
-                            if reasoning_step.action:
-                                step_content += f"Action: {reasoning_step.action}\n"
-                            if reasoning_step.result:
-                                step_content += f"Result: {reasoning_step.result}\n"
-                            step_content += "\n"
-
-                            # Get the current reasoning_content and append this step
-                            current_reasoning_content = ""
-                            if hasattr(self.run_response, "reasoning_content") and self.run_response.reasoning_content:
-                                current_reasoning_content = self.run_response.reasoning_content
+                            updated_reasoning_content = self._format_reasoning_step_content(reasoning_step)
 
                             yield self.create_run_response(
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,
-                                reasoning_content=current_reasoning_content + step_content,
+                                reasoning_content=updated_reasoning_content,
                                 event=RunEvent.reasoning_step,
                             )
 
@@ -3524,9 +3531,13 @@ class Agent:
                     # Yield reasoning steps
                     if self.stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
+                            updated_reasoning_content = self._format_reasoning_step_content(reasoning_step)
+
+                            # Yield the response with the updated reasoning_content
                             yield self.create_run_response(
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,
+                                reasoning_content=updated_reasoning_content,
                                 event=RunEvent.reasoning_step,
                             )
 
@@ -4608,10 +4619,10 @@ class Agent:
 
     def _append_to_reasoning_content(self, content: str) -> None:
         """Helper to append content to the reasoning_content field."""
-        if not hasattr(self.run_response, "reasoning_content") or not self.run_response.reasoning_content:
-            self.run_response.reasoning_content = content
+        if not hasattr(self.run_response, "reasoning_content") or not self.run_response.reasoning_content:  # type: ignore
+            self.run_response.reasoning_content = content  # type: ignore
         else:
-            self.run_response.reasoning_content += content
+            self.run_response.reasoning_content += content  # type: ignore
 
     def _add_reasoning_step_to_extra_data(self, reasoning_step: ReasoningStep) -> None:
         if hasattr(self, "run_response") and self.run_response is not None:
