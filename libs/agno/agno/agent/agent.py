@@ -615,6 +615,7 @@ class Agent:
                             content=model_response_chunk.content,
                             thinking=model_response_chunk.thinking,
                             redacted_thinking=model_response_chunk.redacted_thinking,
+                            reasoning_content=self.run_response.reasoning_content,
                             citations=model_response_chunk.citations,
                             created_at=model_response_chunk.created_at,
                         )
@@ -864,6 +865,7 @@ class Agent:
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,
+                reasoning_content=self.run_response.reasoning_content,
                 event=RunEvent.run_completed,
             )
 
@@ -1399,6 +1401,7 @@ class Agent:
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,
+                reasoning_content=self.run_response.reasoning_content,
                 event=RunEvent.run_completed,
             )
 
@@ -1539,6 +1542,7 @@ class Agent:
         *,
         thinking: Optional[str] = None,
         redacted_thinking: Optional[str] = None,
+        reasoning_content: Optional[str] = None,
         event: RunEvent = RunEvent.run_response,
         content_type: Optional[str] = None,
         created_at: Optional[int] = None,
@@ -1552,6 +1556,7 @@ class Agent:
             agent_id=self.agent_id,
             content=content,
             thinking=thinking_combined if thinking_combined else None,
+            reasoning_content=reasoning_content,
             tools=self.run_response.tools,
             audio=self.run_response.audio,
             images=self.run_response.images,
@@ -3122,7 +3127,9 @@ class Agent:
     def reason(self, run_messages: RunMessages) -> Iterator[RunResponse]:
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
-            yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
+            yield self.create_run_response(
+                content="Reasoning started", reasoning_content="", event=RunEvent.reasoning_started
+            )
 
         use_default_reasoning = False
 
@@ -3285,9 +3292,27 @@ class Agent:
                     # Yield reasoning steps
                     if self.stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
+                            # Create reasoning_content for this step
+                            step_content = ""
+                            if reasoning_step.title:
+                                step_content += f"## {reasoning_step.title}\n"
+                            if reasoning_step.reasoning:
+                                step_content += f"{reasoning_step.reasoning}\n"
+                            if reasoning_step.action:
+                                step_content += f"Action: {reasoning_step.action}\n"
+                            if reasoning_step.result:
+                                step_content += f"Result: {reasoning_step.result}\n"
+                            step_content += "\n"
+
+                            # Get the current reasoning_content and append this step
+                            current_reasoning_content = ""
+                            if hasattr(self.run_response, "reasoning_content") and self.run_response.reasoning_content:
+                                current_reasoning_content = self.run_response.reasoning_content
+
                             yield self.create_run_response(
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,
+                                reasoning_content=current_reasoning_content + step_content,
                                 event=RunEvent.reasoning_step,
                             )
 
