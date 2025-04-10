@@ -79,16 +79,6 @@ class ReasoningTools(Toolkit):
                 agent.session_state["reasoning_steps"][agent.run_id] = []
             agent.session_state["reasoning_steps"][agent.run_id].append(reasoning_step.model_dump_json())
 
-            # Add the step to the run response
-            if hasattr(agent, "run_response") and agent.run_response is not None:
-                if agent.run_response.extra_data is None:
-                    from agno.run.response import RunResponseExtraData
-
-                    agent.run_response.extra_data = RunResponseExtraData()
-                if agent.run_response.extra_data.reasoning_steps is None:
-                    agent.run_response.extra_data.reasoning_steps = []
-                agent.run_response.extra_data.reasoning_steps.append(reasoning_step)
-
             # Return all previous reasoning_steps and the new reasoning_step
             if "reasoning_steps" in agent.session_state and agent.run_id in agent.session_state["reasoning_steps"]:
                 formatted_reasoning_steps = ""
@@ -156,16 +146,6 @@ class ReasoningTools(Toolkit):
             if agent.run_id not in agent.session_state["reasoning_steps"]:
                 agent.session_state["reasoning_steps"][agent.run_id] = []
             agent.session_state["reasoning_steps"][agent.run_id].append(reasoning_step.model_dump_json())
-
-            # Add the step to the run response if we can
-            if hasattr(agent, "run_response") and agent.run_response is not None:
-                if agent.run_response.extra_data is None:
-                    from agno.run.response import RunResponseExtraData
-
-                    agent.run_response.extra_data = RunResponseExtraData()
-                if agent.run_response.extra_data.reasoning_steps is None:
-                    agent.run_response.extra_data.reasoning_steps = []
-                agent.run_response.extra_data.reasoning_steps.append(reasoning_step)
 
             # Return all previous reasoning_steps and the new reasoning_step
             if "reasoning_steps" in agent.session_state and agent.run_id in agent.session_state["reasoning_steps"]:

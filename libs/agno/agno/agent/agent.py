@@ -4504,15 +4504,32 @@ class Agent:
 
     def update_reasoning_content_from_tool_call(self, tool_name: str, tool_args: Dict[str, Any]) -> None:
         """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
-        if not hasattr(self, "run_response") or self.run_response is None:
-            return
 
         # Case 1: ReasoningTools.think (has title, thought, optional action and confidence)
-        elif tool_name.lower() == "think" and "title" in tool_args and "thought" in tool_args:
+        if tool_name.lower() == "think" and "title" in tool_args and "thought" in tool_args:
             title = tool_args["title"]
             thought = tool_args["thought"]
             action = tool_args.get("action", "")
             confidence = tool_args.get("confidence", None)
+
+            # Create a reasoning step
+            reasoning_step = ReasoningStep(
+                title=title,
+                reasoning=thought,
+                action=action,
+                next_action=NextAction.CONTINUE,
+                confidence=confidence,
+            )
+
+            # Add the step to the run response
+            if hasattr(self, "run_response") and self.run_response is not None:
+                if self.run_response.extra_data is None:
+                    from agno.run.response import RunResponseExtraData
+
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.reasoning_steps is None:
+                    self.run_response.extra_data.reasoning_steps = []
+                self.run_response.extra_data.reasoning_steps.append(reasoning_step)
 
             formatted_content = f"## {title}\n{thought}\n"
             if action:
@@ -4530,6 +4547,32 @@ class Agent:
             analysis = tool_args.get("analysis", "")
             next_action = tool_args.get("next_action", "")
             confidence = tool_args.get("confidence", None)
+
+            # Map string next_action to enum
+            next_action_enum = NextAction.CONTINUE
+            if next_action.lower() == "validate":
+                next_action_enum = NextAction.VALIDATE
+            elif next_action.lower() in ["final", "final_answer", "finalize"]:
+                next_action_enum = NextAction.FINAL_ANSWER
+
+            # Create a reasoning step
+            reasoning_step = ReasoningStep(
+                title=title,
+                result=result,
+                reasoning=analysis,
+                next_action=next_action_enum,
+                confidence=confidence,
+            )
+
+            # Add the step to the run response
+            if hasattr(self, "run_response") and self.run_response is not None:
+                if self.run_response.extra_data is None:
+                    from agno.run.response import RunResponseExtraData
+
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.reasoning_steps is None:
+                    self.run_response.extra_data.reasoning_steps = []
+                self.run_response.extra_data.reasoning_steps.append(reasoning_step)
 
             formatted_content = f"## {title}\n"
             if result:
