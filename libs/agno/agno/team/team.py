@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass, replace
 from os import getenv
@@ -188,6 +189,9 @@ class Team:
     # This helps us improve the Teams implementation and provide better support
     telemetry: bool = True
 
+    # Register on platform
+    register_on_platform: bool = False
+
     def __init__(
         self,
         members: List[Union[Agent, "Team"]],
@@ -196,6 +200,7 @@ class Team:
         name: Optional[str] = None,
         team_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        register_on_platform: bool = False,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -242,6 +247,7 @@ class Team:
         self.team_id = team_id
 
         self.user_id = user_id
+        self.register_on_platform = register_on_platform
         self.session_id = session_id
         self.session_name = session_name
         self.session_state = session_state
@@ -462,6 +468,10 @@ class Team:
 
         # Configure the model for runs
         self._configure_model(show_tool_calls=show_tool_calls)
+
+        # Register the team on the platform
+        if self.register_on_platform:
+            asyncio.create_task(self._aregister_team_on_platform())
 
         # Run the team
         last_exception = None
@@ -1053,6 +1063,10 @@ class Team:
 
         # Configure the model for runs
         self._configure_model(show_tool_calls=show_tool_calls)
+
+        if self.register_on_platform:
+            t = threading.Thread(target=self._register_team_on_platform, daemon=True)
+            t.start()
 
         # Run the team
         last_exception = None
@@ -5357,3 +5371,47 @@ class Team:
         except Exception:
             # If copy fails, return as is
             return field_value
+
+    def _register_team_on_platform(self) -> None:
+        from agno.api.team import TeamCreate, create_team
+
+        print("Registering Team on platform")
+        try:
+            create_team(
+                team=TeamCreate(
+                    team_id=self.team_id,
+                    name=self.name,
+                    config=self.to_platform_dict(),
+                ),
+            )
+        except Exception as e:
+            log_debug(f"Could not create team on platform: {e}")
+            print(f"Could not create team on platform: {e}")
+
+    async def _aregister_team_on_platform(self) -> None:
+        from agno.api.team import TeamCreate, acreate_team
+
+        try:
+            await acreate_team(
+                team=TeamCreate(
+                    team_id=self.team_id,
+                    name=self.name,
+                    config=self.to_platform_dict(),
+                ),
+            )
+        except Exception as e:
+            print(f"Could not create team on platform: {e}")
+            log_debug(f"Could not create team on platform: {e}")
+
+    def to_platform_dict(self) -> Dict[str, Any]:
+        return {
+            "members": [member.to_platform_dict() for member in self.members],
+            "mode": self.mode,
+            "model": self.model.to_dict() if self.model is not None else None,
+            "name": self.name,
+            "instructions": self.instructions,
+            "description": self.description,
+            "storage": self.storage.__class__.__name__ if self.storage is not None else None,
+            # "tools": [tool.to_dict() for tool in self.tools] if self.tools is not None else None,
+            # "memory": self.memory.to_dict() if self.memory is not None else None,
+        }

@@ -4,6 +4,8 @@ from datetime import datetime
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
 from agno.storage.sqlite import SqliteStorage
@@ -12,6 +14,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 from agno.tools.youtube import YouTubeTools
+from agno.vectordb.lancedb import LanceDb, SearchType
 
 agent_storage_file: str = "tmp/agents.db"
 image_agent_storage_file: str = "tmp/image_agent.db"
@@ -30,6 +33,10 @@ simple_agent = Agent(
     num_history_responses=3,
     add_datetime_to_instructions=True,
     markdown=True,
+    instructions=[
+        "Never answer like a bat",
+    ],
+    register_on_platform=False,
 )
 
 web_agent = Agent(
@@ -45,10 +52,22 @@ web_agent = Agent(
     storage=SqliteStorage(
         table_name="web_agent", db_file=agent_storage_file, auto_upgrade_schema=True
     ),
+    description="You are a web agent that can search the web for information.",
     add_history_to_messages=True,
     num_history_responses=5,
     add_datetime_to_instructions=True,
     markdown=True,
+    register_on_platform=True,
+    debug_mode=True,
+    knowledge=PDFUrlKnowledgeBase(
+        urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+        vector_db=LanceDb(
+            uri="tmp/lancedb",
+            table_name="recipe_knowledge",
+            search_type=SearchType.hybrid,
+            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+        ),
+    ),
 )
 
 finance_agent = Agent(

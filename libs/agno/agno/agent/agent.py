@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -66,6 +68,9 @@ class Agent:
     agent_id: Optional[str] = None
     # Agent introduction. This is added to the message history when a run is started.
     introduction: Optional[str] = None
+
+    # Register on platform
+    register_on_platform: bool = False
 
     # --- User settings ---
     # ID of the user interacting with this agent
@@ -258,6 +263,7 @@ class Agent:
         name: Optional[str] = None,
         agent_id: Optional[str] = None,
         introduction: Optional[str] = None,
+        register_on_platform: bool = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -329,7 +335,7 @@ class Agent:
         self.name = name
         self.agent_id = agent_id
         self.introduction = introduction
-
+        self.register_on_platform = register_on_platform
         self.user_id = user_id
 
         self.session_id = session_id
@@ -478,6 +484,10 @@ class Agent:
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
+        if self.monitoring:
+            print("setting register_on_platform to True")
+            self.register_on_platform = True
+
     def initialize_agent(self) -> None:
         self.set_storage_mode()
         self.set_debug()
@@ -536,6 +546,9 @@ class Agent:
         # 1.3 Create a run_id and RunResponse
         self.run_id = str(uuid4())
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
+
+        
+        self._register_agent_on_platform()
 
         log_debug(f"Agent Run Start: {self.run_response.run_id}", center=True)
 
@@ -850,7 +863,12 @@ class Agent:
             self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
         # Log Agent Run
-        self._log_agent_run()
+        def log_and_register():
+            self._log_agent_run()
+
+        # Start the log_and_register function in a separate thread
+        thread = threading.Thread(target=log_and_register)
+        thread.start()
 
         log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
         if self.stream_intermediate_steps:
@@ -1065,6 +1083,14 @@ class Agent:
         # 1.3 Create a run_id and RunResponse
         self.run_id = str(uuid4())
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
+
+        # 1.4 Register the agent on the platform
+ 
+        def _run_async_in_thread(coro):
+            asyncio.run(coro)
+
+        t = threading.Thread(target=_run_async_in_thread, args=(self._aregister_agent_on_platform(),), daemon=True)
+        t.start()
 
         log_debug(f"Async Agent Run Start: {self.run_response.run_id}", center=True, symbol="*")
 
@@ -1377,9 +1403,17 @@ class Agent:
             self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
         # Log Agent Run
-        await self._alog_agent_run()
+        async def alog_and_register():
+            await self._alog_agent_run()
 
-        log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
+        # Define a synchronous wrapper to run the async function
+        def run_async_in_thread():
+            asyncio.run(alog_and_register())
+
+        # Run the synchronous wrapper in a separate thread
+        await asyncio.to_thread(run_async_in_thread)
+
+        log_debug(f"Async Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,
@@ -3727,6 +3761,36 @@ class Agent:
 
         return run_data
 
+    def _register_agent_on_platform(self) -> None:
+        print("registering agent on", self.run_id, self.agent_id, self.name)
+        self.set_monitoring()
+        if not self.register_on_platform:
+            return
+
+        from agno.api.agent import AgentCreate, create_agent
+
+        try:
+            print("registering agent on", self.run_id, self.agent_id, self.name)
+            create_agent(app=AgentCreate(name=self.name, agent_id=self.agent_id, config=self.to_platform_dict()))
+        except Exception as e:
+            log_debug(f"Could not create Agent app: {e}")
+
+    async def _aregister_agent_on_platform(self) -> None:
+        print("Aregistering agent on", self.run_id, self.agent_id, self.name)
+        self.set_monitoring()
+        if not self.register_on_platform:
+            return
+
+        from agno.api.agent import AgentCreate, acreate_agent
+
+        try:
+            print("async creating agent on", self.run_id, self.agent_id, self.name)
+            await acreate_agent(
+                agent=AgentCreate(name=self.name, agent_id=self.agent_id, config=self.to_platform_dict())
+            )
+        except Exception as e:
+            log_debug(f"Could not create Agent app: {e}")
+
     def _log_agent_run(self) -> None:
         self.set_monitoring()
 
@@ -3738,7 +3802,6 @@ class Agent:
         try:
             run_data = self._create_run_data()
             agent_session: AgentSession = self.agent_session or self.get_agent_session()
-
             create_agent_run(
                 run=AgentRunCreate(
                     run_id=self.run_id,
@@ -4497,3 +4560,40 @@ class Agent:
                 break
 
             self.print_response(message=message, stream=stream, markdown=markdown, **kwargs)
+
+    def to_platform_dict(self) -> Dict[str, Any]:
+        tools = []
+        if self.tools is not None:
+            for tool in self.tools:
+                functions = []
+                for function in tool.functions.keys():
+                    print(function)
+                    functions.append({"name": function, "parameters": tool.functions[function].to_dict()})
+                tools.append({"name": tool.name, "functions": functions})
+
+        model = None
+        if self.model is not None:
+            model = {
+                "name": self.model.__class__.__name__,
+                "id": self.model.id,
+                "provider": self.model.provider,
+                "response_format": self.model.response_format,
+            }
+
+        payload = {
+            "instructions": self.instructions if self.instructions is not None else [],
+            "tools": tools,
+            "memory": {
+                "name": self.memory.__class__.__name__ if self.memory is not None else None,
+            },
+            "storage": {
+                "name": self.storage.__class__.__name__ if self.storage is not None else None,
+            },
+            "knowledge": {
+                "name": self.knowledge.__class__.__name__ if self.knowledge is not None else None,
+            },
+            "model": model,
+            "name": self.name,
+            "description": self.description,
+        }
+        return payload
