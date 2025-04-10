@@ -14,7 +14,7 @@ from agno.tools.reasoning import ReasoningTools
 
 
 @pytest.mark.integration
-def test_reasoning_content_non_streaming():
+def test_reasoning_content_from_reasoning_tools():
     """Test that reasoning_content is populated in non-streaming mode."""
     # Create an agent with ReasoningTools
     agent = Agent(
@@ -34,10 +34,12 @@ def test_reasoning_content_non_streaming():
     assert hasattr(response, "reasoning_content"), "Response should have reasoning_content attribute"
     assert response.reasoning_content is not None, "reasoning_content should not be None"
     assert len(response.reasoning_content) > 0, "reasoning_content should not be empty"
+    assert response.extra_data.reasoning_steps is not None
+    assert len(response.extra_data.reasoning_steps) > 0
 
 
 @pytest.mark.integration
-def test_reasoning_content_streaming():
+def test_reasoning_content_from_reasoning_tools_streaming():
     """Test that reasoning_content is populated in streaming mode."""
     # Create a fresh agent for streaming test
     streaming_agent = Agent(
@@ -61,3 +63,5 @@ def test_reasoning_content_streaming():
     )
     assert streaming_agent.run_response.reasoning_content is not None, "reasoning_content should not be None"
     assert len(streaming_agent.run_response.reasoning_content) > 0, "reasoning_content should not be empty"
+    assert streaming_agent.run_response.extra_data.reasoning_steps is not None
+    assert len(streaming_agent.run_response.extra_data.reasoning_steps) > 0
