@@ -1,7 +1,7 @@
 [project]
 name = "agno"
-version = "1.1.13"
-description = "Agno: a lightweight framework for building multi-modal Agents"
+version = "1.2.15"
+description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -39,9 +39,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
+dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
 
 # Dependencies for Models
+azure = ["azure-ai-inference", "aiohttp"]
 anthropic = ["anthropic"]
 cohere = ["cohere"]
 google = ["google-genai"]
@@ -71,11 +72,13 @@ fal = ["fal_client"]
 webex = ["webexpythonsdk"]
 mcp = ["mcp"]
 browserbase = ["browserbase", "playwright"]
+agentql = ["agentql"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary", "psycopg"]
 sqlite = ["sqlalchemy"]
+gcs = ["google-cloud-storage"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
@@ -85,10 +88,14 @@ qdrant = ["qdrant-client"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
+weaviate = ["weaviate-client"]
+milvusdb = ["pymilvus"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
+text = ["aiofiles"]
+csv = ["aiofiles"]
 
 # Dependencies for Performance
 performance = ["memory_profiler"]
@@ -105,6 +112,7 @@ aws = ["agno-aws", "agno-docker"]
 # All models
 models = [
   "agno[anthropic]",
+  "agno[azure]",
   "agno[cohere]",
   "agno[google]",
   "agno[groq]",
@@ -133,7 +141,8 @@ tools = [
   "agno[webex]",
   "agno[mcp]",
   "agno[browserbase]",
-#  "agno[yfinance]",
+  "agno[agentql]",
+#  "agno[yfinance]",  # Broken right now
 ]
 
 # All storage
@@ -141,6 +150,7 @@ storage = [
   "agno[sql]",
   "agno[postgres]",
   "agno[sqlite]",
+  "agno[gcs]",
 ]
 
 # All vector databases
@@ -151,13 +161,17 @@ vectordbs = [
   "agno[qdrant]",
   "agno[cassandra]",
   "agno[mongodb]",
-  "agno[singlestore]"
+  "agno[singlestore]",
+  "agno[weaviate]",
+  "agno[milvusdb]"
 ]
 
 # All knowledge
 knowledge = [
   "agno[pdf]",
   "agno[docx]",
+  "agno[text]",
+  "agno[csv]"
 ]
 
 # All libraries for testing
@@ -195,7 +209,6 @@ include = ["LICENSE"]
 
 [tool.pytest.ini_options]
 log_cli = true
-testpaths = "tests"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
@@ -240,8 +253,10 @@ module = [
   "duckdb.*",
   "duckduckgo_search.*",
   "email_validator.*",
+  "e2b_code_interpreter.*",
   "exa_py.*",
   "fastapi.*",
+  "filetype.*",
   "firecrawl.*",
   "github.*",
   "google.*",
@@ -304,6 +319,7 @@ module = [
   "tavily.*",
   "textract.*",
   "timeout_decorator.*",
+  "tiktoken.*",
   "torch.*",
   "todoist_api_python.*",
   "tweepy.*",
@@ -318,5 +334,6 @@ module = [
   "wikipedia.*",
   "yfinance.*",
   "youtube_transcript_api.*",
+  "aiofiles.*",
 ]
 ignore_missing_imports = true

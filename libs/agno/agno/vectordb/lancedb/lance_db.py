@@ -11,7 +11,7 @@ except ImportError:
 from agno.document import Document
 from agno.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -62,7 +62,7 @@ class LanceDb(VectorDb):
             from agno.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -125,7 +125,7 @@ class LanceDb(VectorDb):
                     "Please install tantivy-py `pip install tantivy` to use the full text search feature."  # noqa: E501
                 )
 
-        logger.debug(f"Initialized LanceDb with table: '{self.table_name}'")
+        log_debug(f"Initialized LanceDb with table: '{self.table_name}'")
 
     async def _get_async_connection(self) -> lancedb.AsyncConnection:
         """Get or create an async connection to LanceDB."""
@@ -146,7 +146,7 @@ class LanceDb(VectorDb):
             conn = await self._get_async_connection()
             schema = self._base_schema()
 
-            logger.debug(f"Creating table asynchronously: {self.table_name}")
+            log_debug(f"Creating table asynchronously: {self.table_name}")
             self.async_table = await conn.create_table(self.table_name, schema=schema, mode="overwrite", exist_ok=True)
 
     def _base_schema(self) -> pa.Schema:
@@ -167,7 +167,7 @@ class LanceDb(VectorDb):
     def _init_table(self) -> lancedb.db.LanceTable:
         schema = self._base_schema()
 
-        logger.info(f"Creating table: {self.table_name}")
+        log_info(f"Creating table: {self.table_name}")
         tbl = self.connection.create_table(self.table_name, schema=schema, mode="overwrite", exist_ok=True)  # type: ignore
         return tbl  # type: ignore
 
@@ -213,10 +213,10 @@ class LanceDb(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
         """
         if len(documents) <= 0:
-            logger.info("No documents to insert")
+            log_info("No documents to insert")
             return
 
-        logger.info(f"Inserting {len(documents)} documents")
+        log_info(f"Inserting {len(documents)} documents")
         data = []
 
         for document in documents:
@@ -236,14 +236,14 @@ class LanceDb(VectorDb):
                     "payload": json.dumps(payload),
                 }
             )
-            logger.debug(f"Parsed document: {document.name} ({document.meta_data})")
+            log_debug(f"Parsed document: {document.name} ({document.meta_data})")
 
         if self.table is None:
             logger.error("Table not initialized. Please create the table first")
             return
 
         if not data:
-            logger.debug("No new data to insert")
+            log_debug("No new data to insert")
             return
 
         if self.on_bad_vectors is not None:
@@ -251,7 +251,7 @@ class LanceDb(VectorDb):
         else:
             self.table.add(data)
 
-        logger.debug(f"Inserted {len(data)} documents")
+        log_debug(f"Inserted {len(data)} documents")
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -262,10 +262,10 @@ class LanceDb(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
         """
         if len(documents) <= 0:
-            logger.debug("No documents to insert")
+            log_debug("No documents to insert")
             return
 
-        logger.info(f"Inserting {len(documents)} documents")
+        log_info(f"Inserting {len(documents)} documents")
         data = []
 
         # Prepare documents for insertion
@@ -286,10 +286,10 @@ class LanceDb(VectorDb):
                     "payload": json.dumps(payload),
                 }
             )
-            logger.debug(f"Parsed document: {document.name} ({document.meta_data})")
+            log_debug(f"Parsed document: {document.name} ({document.meta_data})")
 
         if not data:
-            logger.debug("No new data to insert")
+            log_debug("No new data to insert")
             return
 
         try:
@@ -300,7 +300,7 @@ class LanceDb(VectorDb):
             else:
                 await self.async_table.add(data)  # type: ignore
 
-            logger.debug(f"Asynchronously inserted {len(data)} documents")
+            log_debug(f"Asynchronously inserted {len(data)} documents")
         except Exception as e:
             logger.error(f"Error during async document insertion: {e}")
             raise
@@ -464,13 +464,13 @@ class LanceDb(VectorDb):
 
     def drop(self) -> None:
         if self.exists():
-            logger.debug(f"Deleting collection: {self.table_name}")
+            log_debug(f"Deleting collection: {self.table_name}")
             self.connection.drop_table(self.table_name)  # type: ignore
 
     async def async_drop(self) -> None:
         """Drop the table asynchronously."""
         if await self.async_exists():
-            logger.debug(f"Deleting collection: {self.table_name}")
+            log_debug(f"Deleting collection: {self.table_name}")
             conn = await self._get_async_connection()
             await conn.drop_table(self.table_name)
 
@@ -518,3 +518,6 @@ class LanceDb(VectorDb):
         except Exception as e:
             logger.error(f"Error checking name existence: {e}")
             return False
+
+    async def async_name_exists(self, name: str) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

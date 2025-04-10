@@ -5,15 +5,17 @@ from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+from uuid import uuid4
 
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.media import Audio, File, Image, Video
+from agno.media import Audio, File, ImageArtifact, Video
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.gemini import format_function_definitions, format_image_for_message
+from agno.utils.log import log_error, log_info, log_warning
 
 try:
     from google import genai
@@ -22,14 +24,12 @@ try:
     from google.genai.types import (
         Content,
         DynamicRetrievalConfig,
-        FunctionDeclaration,
         GenerateContentConfig,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         GoogleSearch,
         GoogleSearchRetrieval,
         Part,
-        Schema,
         Tool,
     )
     from google.genai.types import (
@@ -37,120 +37,6 @@ try:
     )
 except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
-
-
-def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
-    # Case 1: Image is a URL
-    # Download the image from the URL and add it as base64 encoded data
-    if image.url is not None:
-        content_bytes = image.image_url_content
-        if content_bytes is not None:
-            try:
-                import base64
-
-                image_data = {
-                    "mime_type": "image/jpeg",
-                    "data": base64.b64encode(content_bytes).decode("utf-8"),
-                }
-                return image_data
-            except Exception as e:
-                logger.warning(f"Failed to download image from {image}: {e}")
-                return None
-        else:
-            logger.warning(f"Unsupported image format: {image}")
-            return None
-
-    # Case 2: Image is a local path
-    elif image.filepath is not None:
-        try:
-            image_path = Path(image.filepath)
-            if image_path.exists() and image_path.is_file():
-                with open(image_path, "rb") as f:
-                    content_bytes = f.read()
-            else:
-                logger.error(f"Image file {image_path} does not exist.")
-                raise
-            return {
-                "mime_type": "image/jpeg",
-                "data": content_bytes,
-            }
-        except Exception as e:
-            logger.warning(f"Failed to load image from {image.filepath}: {e}")
-            return None
-
-    # Case 3: Image is a bytes object
-    # Add it as base64 encoded data
-    elif image.content is not None and isinstance(image.content, bytes):
-        import base64
-
-        image_data = {"mime_type": "image/jpeg", "data": base64.b64encode(image.content).decode("utf-8")}
-        return image_data
-    else:
-        logger.warning(f"Unknown image type: {type(image)}")
-        return None
-
-
-def _convert_schema(schema_dict) -> Optional[Schema]:
-    """
-    Recursively convert a JSON-like schema dictionary to a types.Schema object.
-
-    Parameters:
-        schema_dict (dict): The JSON schema dictionary with keys like "type", "description",
-                            "properties", and "required".
-
-    Returns:
-        types.Schema: The converted schema.
-    """
-    schema_type = schema_dict.get("type", "")
-    if isinstance(schema_type, list):
-        schema_type = schema_type[0]
-    schema_type = schema_type.upper()
-    description = schema_dict.get("description", "")
-
-    if schema_type == "OBJECT" and "properties" in schema_dict:
-        properties = {key: _convert_schema(prop_def) for key, prop_def in schema_dict["properties"].items()}
-        required = schema_dict.get("required", [])
-
-        if properties:
-            return Schema(
-                type=schema_type,
-                properties=properties,
-                required=required,
-                description=description,
-            )
-        else:
-            return None
-
-    if schema_type == "ARRAY" and "items" in schema_dict:
-        items = _convert_schema(schema_dict["items"])
-        return Schema(type=schema_type, description=description, items=items)
-    else:
-        return Schema(type=schema_type, description=description)
-
-
-def _format_function_definitions(tools_list):
-    function_declarations = []
-
-    for tool in tools_list:
-        if tool.get("type") == "function":
-            func_info = tool.get("function", {})
-            name = func_info.get("name")
-            description = func_info.get("description", "")
-            parameters_dict = func_info.get("parameters", {})
-
-            parameters_schema = _convert_schema(parameters_dict)
-            # Create a FunctionDeclaration instance
-            function_decl = FunctionDeclaration(
-                name=name,
-                description=description,
-                parameters=parameters_schema,
-            )
-
-            function_declarations.append(function_decl)
-    if function_declarations:
-        return Tool(function_declarations=function_declarations)
-    else:
-        return None
 
 
 @dataclass
@@ -191,7 +77,7 @@ class Gemini(Model):
     presence_penalty: Optional[float] = None
     frequency_penalty: Optional[float] = None
     seed: Optional[int] = None
-    response_modalities: Optional[list[str]] = None
+    response_modalities: Optional[list[str]] = None  # "Text" and/or "Image"
     speech_config: Optional[dict[str, Any]] = None
     request_params: Optional[Dict[str, Any]] = None
 
@@ -205,12 +91,15 @@ class Gemini(Model):
     # Gemini client
     client: Optional[GeminiClient] = None
 
-    # The role to map the message role to.
+    # The role to map the Gemini response
     role_map = {
-        "system": "system",
-        "user": "user",
         "model": "assistant",
-        "tool": "tool",
+    }
+
+    # The role to map the Message
+    reverse_role_map = {
+        "assistant": "model",
+        "tool": "user",
     }
 
     def get_client(self) -> GeminiClient:
@@ -224,15 +113,18 @@ class Gemini(Model):
             return self.client
 
         client_params: Dict[str, Any] = {}
-        if not self.vertexai:
+        vertexai = self.vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
+
+        if not vertexai:
             self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
             if not self.api_key:
-                logger.error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
+                log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
             client_params["api_key"] = self.api_key
         else:
+            log_info("Using Vertex AI API")
             client_params["vertexai"] = True
             client_params["project"] = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
-            client_params["location"] = self.location
+            client_params["location"] = self.location or getenv("GOOGLE_CLOUD_LOCATION")
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
 
@@ -282,20 +174,12 @@ class Gemini(Model):
         if system_message is not None:
             config["system_instruction"] = system_message  # type: ignore
 
-        if (
-            self.response_format is not None
-            and isinstance(self.response_format, type)
-            and issubclass(self.response_format, BaseModel)
-        ):
-            config["response_mime_type"] = "application/json"  # type: ignore
-            config["response_schema"] = self.response_format
-
         if self.grounding and self.search:
-            logger.info("Both grounding and search are enabled. Grounding will take precedence.")
+            log_info("Both grounding and search are enabled. Grounding will take precedence.")
             self.search = False
 
         if self.grounding:
-            logger.info("Grounding enabled. External tools will be disabled.")
+            log_info("Grounding enabled. External tools will be disabled.")
             config["tools"] = [
                 Tool(
                     google_search=GoogleSearchRetrieval(
@@ -307,11 +191,24 @@ class Gemini(Model):
             ]
 
         elif self.search:
-            logger.info("Search enabled. External tools will be disabled.")
+            log_info("Search enabled. External tools will be disabled.")
             config["tools"] = [Tool(google_search=GoogleSearch())]
 
         elif self._tools:
-            config["tools"] = [_format_function_definitions(self._tools)]
+            config["tools"] = [format_function_definitions(self._tools)]
+
+        if (
+            self.response_format is not None
+            and isinstance(self.response_format, type)
+            and issubclass(self.response_format, BaseModel)
+        ):
+            config["response_mime_type"] = "application/json"  # type: ignore
+            config["response_schema"] = self.response_format
+
+            if config.get("tool") is not None and len(config["tools"]) > 0:
+                log_warning(
+                    "The current google-genai version does not support structured outputs with tools. Use `use_json_mode=True` to force JSON mode."
+                )
 
         config = {k: v for k, v in config.items() if v is not None}
 
@@ -342,12 +239,12 @@ class Gemini(Model):
                 **request_kwargs,
             )
         except (ClientError, ServerError) as e:
-            logger.error(f"Error from Gemini API: {e}")
+            log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
                 message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            logger.error(f"Unknown error from Gemini API: {e}")
+            log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]):
@@ -370,12 +267,12 @@ class Gemini(Model):
                 **request_kwargs,
             )
         except (ClientError, ServerError) as e:
-            logger.error(f"Error from Gemini API: {e}")
+            log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
                 message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            logger.error(f"Unknown error from Gemini API: {e}")
+            log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]):
@@ -393,12 +290,12 @@ class Gemini(Model):
                 **request_kwargs,
             )
         except (ClientError, ServerError) as e:
-            logger.error(f"Error from Gemini API: {e}")
+            log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
                 message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            logger.error(f"Unknown error from Gemini API: {e}")
+            log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]):
@@ -418,12 +315,12 @@ class Gemini(Model):
             async for chunk in async_stream:
                 yield chunk
         except (ClientError, ServerError) as e:
-            logger.error(f"Error from Gemini API: {e}")
+            log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
                 message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            logger.error(f"Unknown error from Gemini API: {e}")
+            log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message]):
@@ -441,7 +338,8 @@ class Gemini(Model):
                 system_message = message.content
                 continue
 
-            role = "model" if role == "assistant" else role
+            # Set the role for the message according to Gemini's requirements
+            role = self.reverse_role_map.get(role, role)
 
             # Add content to the message for the model
             content = message.content
@@ -449,7 +347,7 @@ class Gemini(Model):
             message_parts: List[Any] = []
 
             # Function calls
-            if (not content or role == "model") and message.tool_calls:
+            if (not content or role == "model") and message.tool_calls is not None and len(message.tool_calls) > 0:
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_call(
@@ -458,18 +356,19 @@ class Gemini(Model):
                         )
                     )
             # Function results
-            elif role == "tool" and message.tool_calls:
+            elif message.tool_calls is not None and len(message.tool_calls) > 0:
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_response(
                             name=tool_call["tool_name"], response={"result": tool_call["content"]}
                         )
                     )
+            # Regular text content
             else:
                 if isinstance(content, str):
                     message_parts = [Part.from_text(text=content)]
 
-            if message.role == "user":
+            if role == "user" and message.tool_calls is None:
                 # Add images to the message for the model
                 if message.images is not None:
                     for image in message.images:
@@ -477,7 +376,7 @@ class Gemini(Model):
                             # Google recommends that if using a single image, place the text prompt after the image.
                             message_parts.insert(0, image.content)
                         else:
-                            image_content = _format_image_for_message(image)
+                            image_content = format_image_for_message(image)
                             if image_content:
                                 message_parts.append(Part.from_bytes(**image_content))
 
@@ -500,7 +399,7 @@ class Gemini(Model):
                                     message_parts.insert(0, video_file)  # type: ignore
                     except Exception as e:
                         traceback.print_exc()
-                        logger.warning(f"Failed to load video from {message.videos}: {e}")
+                        log_warning(f"Failed to load video from {message.videos}: {e}")
                         continue
 
                 # Add audio to the message for the model
@@ -520,7 +419,7 @@ class Gemini(Model):
                                 if audio_content:
                                     message_parts.append(audio_content)
                     except Exception as e:
-                        logger.warning(f"Failed to load audio from {message.audio}: {e}")
+                        log_warning(f"Failed to load audio from {message.audio}: {e}")
                         continue
 
                 # Add files to the message for the model
@@ -557,7 +456,7 @@ class Gemini(Model):
             try:
                 existing_audio_upload = self.get_client().files.get(name=remote_file_name)
             except Exception as e:
-                logger.warning(f"Error getting file {remote_file_name}: {e}")
+                log_warning(f"Error getting file {remote_file_name}: {e}")
                 pass
 
             if existing_audio_upload:
@@ -574,7 +473,7 @@ class Gemini(Model):
                         ),
                     )
                 else:
-                    logger.error(f"Audio file {audio_path} does not exist.")
+                    log_error(f"Audio file {audio_path} does not exist.")
                     raise Exception(f"Audio file {audio_path} does not exist.")
 
                 # Check whether the file is ready to be used.
@@ -588,7 +487,7 @@ class Gemini(Model):
                 file_uri=audio_file.uri, mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3"
             )
         else:
-            logger.warning(f"Unknown audio type: {type(audio.content)}")
+            log_warning(f"Unknown audio type: {type(audio.content)}")
             return None
 
     def _format_video_for_message(self, video: Video) -> Optional[GeminiFile]:
@@ -607,7 +506,7 @@ class Gemini(Model):
             try:
                 existing_video_upload = self.get_client().files.get(name=remote_file_name)
             except Exception as e:
-                logger.warning(f"Error getting file {remote_file_name}: {e}")
+                log_warning(f"Error getting file {remote_file_name}: {e}")
                 pass
 
             if existing_video_upload:
@@ -624,7 +523,7 @@ class Gemini(Model):
                         ),
                     )
                 else:
-                    logger.error(f"Video file {video_path} does not exist.")
+                    log_error(f"Video file {video_path} does not exist.")
                     raise Exception(f"Video file {video_path} does not exist.")
 
                 # Check whether the file is ready to be used.
@@ -639,7 +538,7 @@ class Gemini(Model):
                 file_uri=video_file.uri, mime_type=f"video/{video.format}" if video.format else "video/mp4"
             )
         else:
-            logger.warning(f"Unknown video type: {type(video.content)}")
+            log_warning(f"Unknown video type: {type(video.content)}")
             return None
 
     def _format_file_for_message(self, file: File) -> Optional[Part]:
@@ -654,7 +553,7 @@ class Gemini(Model):
                 content, mime_type = url_content
                 return Part.from_bytes(mime_type=mime_type, data=content)
             else:
-                logger.warning(f"Failed to download file from {file.url}")
+                log_warning(f"Failed to download file from {file.url}")
                 return None
 
         # Case 3: File is a local file path
@@ -682,7 +581,7 @@ class Gemini(Model):
                         raise ValueError(file_upload.state.name)
                     return Part.from_uri(file_uri=file_upload.uri, mime_type=file_upload.mime_type)
             else:
-                logger.error(f"File {file_path} does not exist.")
+                log_error(f"File {file_path} does not exist.")
 
         return None
 
@@ -734,6 +633,11 @@ class Gemini(Model):
                     # Extract text if present
                     if hasattr(part, "text") and part.text is not None:
                         model_response.content = part.text
+
+                    if hasattr(part, "inline_data") and part.inline_data is not None:
+                        model_response.image = ImageArtifact(
+                            id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                        )
 
                     # Extract function call if present
                     if hasattr(part, "function_call") and part.function_call is not None:
@@ -796,6 +700,11 @@ class Gemini(Model):
                 # Extract text if present
                 if hasattr(part, "text") and part.text is not None:
                     model_response.content = part.text
+
+                if hasattr(part, "inline_data") and part.inline_data is not None:
+                    model_response.image = ImageArtifact(
+                        id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                    )
 
                 # Extract function call if present
                 if hasattr(part, "function_call") and part.function_call is not None:

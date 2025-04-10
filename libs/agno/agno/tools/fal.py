@@ -9,7 +9,7 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.media import ImageArtifact, VideoArtifact
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 try:
     import fal_client  # type: ignore
@@ -22,8 +22,9 @@ class FalTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         model: str = "fal-ai/hunyuan-video",
+        **kwargs,
     ):
-        super().__init__(name="fal")
+        super().__init__(name="fal", **kwargs)
 
         self.api_key = api_key or getenv("FAL_KEY")
         if not self.api_key:
@@ -37,7 +38,7 @@ class FalTools(Toolkit):
             for log in update.logs:
                 message = log["message"]
                 if message not in self.seen_logs:
-                    logger.info(message)
+                    log_info(message)
                     self.seen_logs.add(message)
 
     def generate_media(self, agent: Agent, prompt: str) -> str:

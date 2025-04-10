@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 try:
     from exa_py import Exa
@@ -61,8 +61,9 @@ class ExaTools(Toolkit):
         exclude_domains: Optional[List[str]] = None,
         show_results: bool = False,
         model: Optional[str] = None,
+        **kwargs,
     ):
-        super().__init__(name="exa")
+        super().__init__(name="exa", **kwargs)
 
         self.api_key = api_key or getenv("EXA_API_KEY")
         if not self.api_key:
@@ -117,7 +118,7 @@ class ExaTools(Toolkit):
                     if result.highlights:  # type: ignore
                         result_dict["highlights"] = result.highlights  # type: ignore
                 except Exception as e:
-                    logger.debug(f"Failed to get highlights {e}")
+                    log_debug(f"Failed to get highlights {e}")
                     result_dict["highlights"] = f"Failed to get highlights {e}"
             exa_results_parsed.append(result_dict)
         return json.dumps(exa_results_parsed, indent=4)
@@ -137,7 +138,7 @@ class ExaTools(Toolkit):
         """
         try:
             if self.show_results:
-                logger.info(f"Searching exa for: {query}")
+                log_info(f"Searching exa for: {query}")
             search_kwargs: Dict[str, Any] = {
                 "text": self.text,
                 "highlights": self.highlights,
@@ -160,7 +161,7 @@ class ExaTools(Toolkit):
             parsed_results = self._parse_results(exa_results)
             # Extract search results
             if self.show_results:
-                logger.info(parsed_results)
+                log_info(parsed_results)
             return parsed_results
         except Exception as e:
             logger.error(f"Failed to search exa {e}")
@@ -185,13 +186,13 @@ class ExaTools(Toolkit):
 
         try:
             if self.show_results:
-                logger.info(f"Fetching contents for URLs: {urls}")
+                log_info(f"Fetching contents for URLs: {urls}")
 
             exa_results = self.exa.get_contents(urls=urls, **query_kwargs)
 
             parsed_results = self._parse_results(exa_results)
             if self.show_results:
-                logger.info(parsed_results)
+                log_info(parsed_results)
 
             return parsed_results
         except Exception as e:
@@ -225,13 +226,13 @@ class ExaTools(Toolkit):
 
         try:
             if self.show_results:
-                logger.info(f"Finding similar links to: {url}")
+                log_info(f"Finding similar links to: {url}")
 
             exa_results = self.exa.find_similar_and_contents(url=url, **query_kwargs)
 
             parsed_results = self._parse_results(exa_results)
             if self.show_results:
-                logger.info(parsed_results)
+                log_info(parsed_results)
 
             return parsed_results
         except Exception as e:
@@ -253,7 +254,7 @@ class ExaTools(Toolkit):
             raise ValueError("Model must be either 'exa' or 'exa-pro'")
         try:
             if self.show_results:
-                logger.info(f"Generating answer for query: {query}")
+                log_info(f"Generating answer for query: {query}")
             answer_kwargs: Dict[str, Any] = {
                 "model": self.model,
                 "text": text,
@@ -275,7 +276,7 @@ class ExaTools(Toolkit):
                 ],
             }
             if self.show_results:
-                logger.info(json.dumps(result))
+                log_info(json.dumps(result))
 
             return json.dumps(result, indent=4)
 

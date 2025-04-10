@@ -8,12 +8,13 @@ class NextAction(str, Enum):
     CONTINUE = "continue"
     VALIDATE = "validate"
     FINAL_ANSWER = "final_answer"
+    RESET = "reset"
 
 
 class ReasoningStep(BaseModel):
     title: Optional[str] = Field(None, description="A concise title summarizing the step's purpose")
     action: Optional[str] = Field(
-        None, description="The action derived from this step. Talk in first person like I will ... "
+        None, description="The action derived from this step. Talk in first person like I will ..."
     )
     result: Optional[str] = Field(
         None, description="The result of executing the action. Talk in first person like I did this and got ... "

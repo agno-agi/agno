@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -40,10 +39,19 @@ from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
+from agno.utils.log import (
+    log_debug,
+    log_error,
+    log_exception,
+    log_info,
+    log_warning,
+    set_log_level_to_debug,
+    set_log_level_to_info,
+)
 from agno.utils.message import get_text_from_message
+from agno.utils.response import create_panel, escape_markdown_tags, format_tool_calls
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_structured_output
+from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
 
 
@@ -83,8 +91,10 @@ class Agent:
     memory: Optional[AgentMemory] = None
     # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_messages: bool = False
-    # Number of historical responses to add to the messages.
-    num_history_responses: int = 3
+    # Deprecated in favor of num_history_runs: Number of historical responses to add to the messages
+    num_history_responses: Optional[int] = None
+    # Number of historical runs to include in the messages
+    num_history_runs: int = 3
 
     # --- Agent Knowledge ---
     knowledge: Optional[AgentKnowledge] = None
@@ -108,7 +118,7 @@ class Agent:
     # Tools are functions the model may generate JSON inputs for.
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
     # Show tool calls in Agent response.
-    show_tool_calls: bool = False
+    show_tool_calls: bool = True
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
     # Controls which (if any) tool is called by the model.
@@ -164,6 +174,8 @@ class Agent:
     # If True, add the current datetime to the instructions to give the agent a sense of time
     # This allows for relative times like "tomorrow" to be used in the prompt
     add_datetime_to_instructions: bool = False
+    # Allows for custom timezone for datetime instructions following the TZ Database format (e.g. "Etc/UTC")
+    timezone_identifier: Optional[str] = None
     # If True, add the session state variables in the user and system messages
     add_state_in_messages: bool = False
 
@@ -189,15 +201,17 @@ class Agent:
     delay_between_retries: int = 1
     # Exponential backoff: if True, the delay between retries is doubled each time
     exponential_backoff: bool = False
+
+    # --- Agent Response Model Settings ---
     # Provide a response model to get the response as a Pydantic model
     response_model: Optional[Type[BaseModel]] = None
     # If True, the response from the Model is converted into the response_model
     # Otherwise, the response is returned as a JSON string
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
-    structured_outputs: bool = False
-    # Sets the response_format mode of the model, i.e. to either respond with a Pydantic model or with JSON.
-    response_format: Literal["structured", "json"] = "structured"
+    structured_outputs: Optional[bool] = None
+    # If `response_model` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
+    use_json_mode: bool = False
     # Save the response to a file
     save_response_to_file: Optional[str] = None
 
@@ -222,6 +236,11 @@ class Agent:
     add_transfer_instructions: bool = True
     # Separator between responses from the team
     team_response_separator: str = "\n"
+
+    # Optional team session ID, set by the team leader agent.
+    team_session_id: Optional[str] = None
+    # Optional team ID. Indicates this agent is part of a team.
+    team_id: Optional[str] = None
 
     # --- Debug & Monitoring ---
     # Enable debug logs
@@ -248,7 +267,8 @@ class Agent:
         resolve_context: bool = True,
         memory: Optional[AgentMemory] = None,
         add_history_to_messages: bool = False,
-        num_history_responses: int = 3,
+        num_history_responses: Optional[int] = None,
+        num_history_runs: int = 3,
         knowledge: Optional[AgentKnowledge] = None,
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
@@ -256,7 +276,7 @@ class Agent:
         storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
-        show_tool_calls: bool = False,
+        show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         reasoning: bool = False,
@@ -279,6 +299,7 @@ class Agent:
         markdown: bool = False,
         add_name_to_instructions: bool = False,
         add_datetime_to_instructions: bool = False,
+        timezone_identifier: Optional[str] = None,
         add_state_in_messages: bool = False,
         add_messages: Optional[List[Union[Dict, Message]]] = None,
         user_message: Optional[Union[List, Dict, str, Callable, Message]] = None,
@@ -290,7 +311,7 @@ class Agent:
         response_model: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
         structured_outputs: Optional[bool] = None,
-        response_format: Literal["structured", "json"] = "structured",
+        use_json_mode: bool = False,
         save_response_to_file: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
@@ -322,6 +343,9 @@ class Agent:
         self.memory = memory
         self.add_history_to_messages = add_history_to_messages
         self.num_history_responses = num_history_responses
+        self.num_history_runs = num_history_runs
+        if num_history_responses is not None:
+            self.num_history_runs = num_history_responses
 
         self.knowledge = knowledge
         self.add_references = add_references
@@ -359,6 +383,7 @@ class Agent:
         self.markdown = markdown
         self.add_name_to_instructions = add_name_to_instructions
         self.add_datetime_to_instructions = add_datetime_to_instructions
+        self.timezone_identifier = timezone_identifier
         self.add_state_in_messages = add_state_in_messages
         self.add_messages = add_messages
 
@@ -372,22 +397,16 @@ class Agent:
         self.response_model = response_model
         self.parse_response = parse_response
 
-        if structured_outputs is not None:
-            warnings.warn(
-                "The 'structured_outputs' parameter is deprecated and will be removed in a future version. "
-                "Please use the new 'response_format' parameter instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.structured_outputs = structured_outputs
+        self.structured_outputs = structured_outputs
 
-        self.response_format = response_format
+        self.use_json_mode = use_json_mode
         self.save_response_to_file = save_response_to_file
 
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
 
         self.team = team
+
         self.team_data = team_data
         self.role = role
         self.respond_directly = respond_directly
@@ -408,28 +427,29 @@ class Agent:
 
         # Images generated during this session
         self.images: Optional[List[ImageArtifact]] = None
-        # Videos generated during this session
-        self.videos: Optional[List[VideoArtifact]] = None
         # Audio generated during this session
         self.audio: Optional[List[AudioArtifact]] = None
+        # Videos generated during this session
+        self.videos: Optional[List[VideoArtifact]] = None
         # Agent session
         self.agent_session: Optional[AgentSession] = None
 
         self._tools_for_model: Optional[List[Dict]] = None
         self._functions_for_model: Optional[Dict[str, Function]] = None
+        self._tool_instructions: Optional[List[str]] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
     def set_agent_id(self) -> str:
         if self.agent_id is None:
             self.agent_id = str(uuid4())
-        logger.debug(f"*********** Agent ID: {self.agent_id} ***********")
+        log_debug(f"Agent ID: {self.agent_id}", center=True)
         return self.agent_id
 
     def set_session_id(self) -> str:
         if self.session_id is None or self.session_id == "":
             self.session_id = str(uuid4())
-        logger.debug(f"*********** Session ID: {self.session_id} ***********")
+        log_debug(f"Session ID: {self.session_id}", center=True)
         return self.session_id
 
     def set_debug(self) -> None:
@@ -441,8 +461,8 @@ class Agent:
 
     def set_storage_mode(self):
         if self.storage is not None:
-            if self.storage.mode == "workflow":
-                logger.warning("You cannot use storage in both workflow and agent mode")
+            if self.storage.mode in ["workflow", "team"]:
+                log_warning(f"You shouldn't use storage in multiple modes. Current mode is {self.storage.mode}.")
 
             self.storage.mode = "agent"
 
@@ -505,6 +525,7 @@ class Agent:
         11. Save session to storage
         12. Save output to file if save_response_to_file is set
         """
+
         # 1. Prepare the Agent for the run
         # 1.1 Initialize the Agent
         self.initialize_agent()
@@ -516,7 +537,7 @@ class Agent:
         self.run_id = str(uuid4())
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
-        logger.debug(f"*********** Agent Run Start: {self.run_response.run_id} ***********")
+        log_debug(f"Agent Run Start: {self.run_response.run_id}", center=True)
 
         # 2. Update the Model and resolve context
         self.update_model()
@@ -532,7 +553,7 @@ class Agent:
             message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
         if len(run_messages.messages) == 0:
-            logger.error("No messages to be sent to the model.")
+            log_error("No messages to be sent to the model.")
 
         self.run_messages = run_messages
 
@@ -580,6 +601,7 @@ class Agent:
                         self.run_response.thinking = model_response.redacted_thinking
 
                     if model_response_chunk.citations is not None:
+                        # We get citations in one chunk
                         self.run_response.citations = model_response_chunk.citations
 
                     # Only yield if we have content or thinking to show
@@ -627,6 +649,11 @@ class Agent:
 
                         yield self.run_response
 
+                    if model_response_chunk.image is not None:
+                        self.add_image(model_response_chunk.image)
+
+                        yield self.run_response
+
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                     # Add tool calls to the run_response
@@ -637,6 +664,9 @@ class Agent:
                             self.run_response.tools = tool_calls_list
                         else:
                             self.run_response.tools.extend(tool_calls_list)
+
+                        # Format tool calls whenever new ones are added during streaming
+                        self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
 
                     # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                     if self.stream_intermediate_steps:
@@ -674,6 +704,10 @@ class Agent:
         else:
             # Get the model response
             model_response = self.model.response(messages=run_messages.messages)
+            # Format tool calls if they exist
+            if model_response.tool_calls:
+                self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
+
             # Handle structured outputs
             if self.response_model is not None and model_response.parsed is not None:
                 # We get native structured outputs from the model
@@ -709,6 +743,9 @@ class Agent:
             # Update the run_response audio with the model response audio
             if model_response.audio is not None:
                 self.run_response.response_audio = model_response.audio
+
+            if model_response.image is not None:
+                self.add_image(model_response.image)
 
             # Update the run_response messages with the messages
             self.run_response.messages = run_messages.messages
@@ -761,6 +798,7 @@ class Agent:
             and run_messages.user_message is not None
         ):
             self.memory.update_memory(input=run_messages.user_message.get_content_string())
+
         if messages is not None and len(messages) > 0:
             for _im in messages:
                 # Parse the message and convert to a Message object if possible
@@ -771,9 +809,9 @@ class Agent:
                     try:
                         mp = Message(**_im)
                     except Exception as e:
-                        logger.warning(f"Failed to validate message: {e}")
+                        log_warning(f"Failed to validate message: {e}")
                 else:
-                    logger.warning(f"Unsupported message type: {type(_im)}")
+                    log_warning(f"Unsupported message type: {type(_im)}")
                     continue
 
                 # Add the message to the AgentRun
@@ -784,7 +822,7 @@ class Agent:
                     if self.memory.create_user_memories and self.memory.update_user_memories_after_run:
                         self.memory.update_memory(input=mp.get_content_string())
                 else:
-                    logger.warning("Unable to add message to memory")
+                    log_warning("Unable to add message to memory")
         # Add AgentRun to memory
         self.memory.add_run(agent_run)
         # Update the session summary if needed
@@ -812,9 +850,9 @@ class Agent:
             self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
         # Log Agent Run
-        self.log_agent_run()
+        self._log_agent_run()
 
-        logger.debug(f"*********** Agent Run End: {self.run_response.run_id} ***********")
+        log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,
@@ -864,7 +902,7 @@ class Agent:
         stream: Optional[bool] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Any]] = None,
+        videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
@@ -887,12 +925,8 @@ class Agent:
             try:
                 # If a response_model is set, return the response as a structured output
                 if self.response_model is not None and self.parse_response:
-                    # Set show_tool_calls=False if we have response_model
-                    self.show_tool_calls = False
-                    logger.debug("Setting show_tool_calls=False as response_model is set")
-
                     # Set stream=False and run the agent
-                    logger.debug("Setting stream=False as response_model is set")
+                    log_debug("Setting stream=False as response_model is set")
                     self.stream = False
                     run_response: RunResponse = next(
                         self._run(
@@ -915,7 +949,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            structured_output = parse_structured_output(run_response.content, self.response_model)
+                            structured_output = parse_response_model_str(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -925,11 +959,11 @@ class Agent:
                                     self.run_response.content = structured_output
                                     self.run_response.content_type = self.response_model.__name__
                             else:
-                                logger.warning("Failed to convert response to response_model")
+                                log_warning("Failed to convert response to response_model")
                         except Exception as e:
-                            logger.warning(f"Failed to convert response to output model: {e}")
+                            log_warning(f"Failed to convert response to output model: {e}")
                     else:
-                        logger.warning("Something went wrong. Run response content is not a string")
+                        log_warning("Something went wrong. Run response content is not a string")
                     return run_response
                 else:
                     if stream and self.is_streamable:
@@ -959,7 +993,7 @@ class Agent:
                         )
                         return next(resp)
             except ModelProviderError as e:
-                logger.warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
+                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
                     raise e
                 last_exception = e
@@ -971,10 +1005,20 @@ class Agent:
                     import time
 
                     time.sleep(delay)
+            except KeyboardInterrupt:
+                # Create a cancelled response
+                cancelled_response = RunResponse(
+                    run_id=self.run_id or str(uuid4()),
+                    session_id=self.session_id,
+                    agent_id=self.agent_id,
+                    content="Operation cancelled by user",
+                    event=RunEvent.run_cancelled,
+                )
+                return cancelled_response
 
         # If we get here, all retries failed
         if last_exception is not None:
-            logger.error(
+            log_error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
             raise last_exception
@@ -1022,10 +1066,10 @@ class Agent:
         self.run_id = str(uuid4())
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, agent_id=self.agent_id)
 
-        logger.debug(f"*********** Async Agent Run Start: {self.run_response.run_id} ***********")
+        log_debug(f"Async Agent Run Start: {self.run_response.run_id}", center=True, symbol="*")
 
         # 2. Update the Model and resolve context
-        self.update_model()
+        self.update_model(async_mode=True)  # use async search for vector db
         self.run_response.model = self.model.id if self.model is not None else None
         if self.context is not None and self.resolve_context:
             self.resolve_run_context()
@@ -1038,7 +1082,7 @@ class Agent:
             message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
         if len(run_messages.messages) == 0:
-            logger.error("No messages to be sent to the model.")
+            log_error("No messages to be sent to the model.")
         self.run_messages = run_messages
 
         # 5. Reason about the task if reasoning is enabled
@@ -1133,6 +1177,11 @@ class Agent:
 
                         yield self.run_response
 
+                    if model_response_chunk.image is not None:
+                        self.add_image(model_response_chunk.image)
+
+                        yield self.run_response
+
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                     # Add tool calls to the run_response
@@ -1143,6 +1192,9 @@ class Agent:
                             self.run_response.tools = tool_calls_list
                         else:
                             self.run_response.tools.extend(tool_calls_list)
+
+                        # Format tool calls whenever new ones are added during streaming
+                        self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
 
                     # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                     if self.stream_intermediate_steps:
@@ -1182,6 +1234,10 @@ class Agent:
         else:
             # Get the model response
             model_response = await self.model.aresponse(messages=run_messages.messages)
+            # Format tool calls if they exist
+            if model_response.tool_calls:
+                self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
+
             # Handle structured outputs
             if self.response_model is not None and model_response.parsed is not None:
                 # We get native structured outputs from the model
@@ -1216,6 +1272,9 @@ class Agent:
             # Update the run_response audio with the model response audio
             if model_response.audio is not None:
                 self.run_response.response_audio = model_response.audio
+
+            if model_response.image is not None:
+                self.add_image(model_response.image)
 
             # Update the run_response messages with the messages
             self.run_response.messages = run_messages.messages
@@ -1277,9 +1336,9 @@ class Agent:
                     try:
                         mp = Message(**_im)
                     except Exception as e:
-                        logger.warning(f"Failed to validate message: {e}")
+                        log_warning(f"Failed to validate message: {e}")
                 else:
-                    logger.warning(f"Unsupported message type: {type(_im)}")
+                    log_warning(f"Unsupported message type: {type(_im)}")
                     continue
 
                 # Add the message to the AgentRun
@@ -1290,7 +1349,7 @@ class Agent:
                     if self.memory.create_user_memories and self.memory.update_user_memories_after_run:
                         await self.memory.aupdate_memory(input=mp.get_content_string())
                 else:
-                    logger.warning("Unable to add message to memory")
+                    log_warning("Unable to add message to memory")
         # Add AgentRun to memory
         self.memory.add_run(agent_run)
         # Update the session summary if needed
@@ -1318,9 +1377,9 @@ class Agent:
             self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
         # Log Agent Run
-        await self.alog_agent_run()
+        await self._alog_agent_run()
 
-        logger.debug(f"*********** Agent Run End: {self.run_response.run_id} ***********")
+        log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
         if self.stream_intermediate_steps:
             yield self.create_run_response(
                 content=self.run_response.content,
@@ -1358,16 +1417,12 @@ class Agent:
         last_exception = None
         num_attempts = retries + 1
         for attempt in range(num_attempts):
-            logger.debug(f"Attempt {attempt + 1}/{num_attempts}")
+            log_debug(f"Attempt {attempt + 1}/{num_attempts}")
             try:
                 # If a response_model is set, return the response as a structured output
                 if self.response_model is not None and self.parse_response:
-                    # Set show_tool_calls=False if we have response_model
-                    self.show_tool_calls = False
-                    logger.debug("Setting show_tool_calls=False as response_model is set")
-
                     # Set stream=False and run the agent
-                    logger.debug("Setting stream=False as response_model is set")
+                    log_debug("Setting stream=False as response_model is set")
                     run_response = await self._arun(
                         message=message,
                         stream=False,
@@ -1387,7 +1442,7 @@ class Agent:
                     # Otherwise convert the response to the structured format
                     if isinstance(run_response.content, str):
                         try:
-                            structured_output = parse_structured_output(run_response.content, self.response_model)
+                            structured_output = parse_response_model_str(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
@@ -1397,11 +1452,11 @@ class Agent:
                                     self.run_response.content = structured_output
                                     self.run_response.content_type = self.response_model.__name__
                             else:
-                                logger.warning("Failed to convert response to response_model")
+                                log_warning("Failed to convert response to response_model")
                         except Exception as e:
-                            logger.warning(f"Failed to convert response to output model: {e}")
+                            log_warning(f"Failed to convert response to output model: {e}")
                     else:
-                        logger.warning("Something went wrong. Run response content is not a string")
+                        log_warning("Something went wrong. Run response content is not a string")
                     return run_response
                 else:
                     if stream and self.is_streamable:
@@ -1431,7 +1486,7 @@ class Agent:
                         )
                         return await resp.__anext__()
             except ModelProviderError as e:
-                logger.warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
+                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
                     raise e
                 last_exception = e
@@ -1443,10 +1498,19 @@ class Agent:
                     import time
 
                     time.sleep(delay)
+            except KeyboardInterrupt:
+                # Create a cancelled response
+                return RunResponse(
+                    run_id=self.run_id or str(uuid4()),
+                    session_id=self.session_id,
+                    agent_id=self.agent_id,
+                    content="Operation cancelled by user",
+                    event=RunEvent.run_cancelled,
+                )
 
         # If we get here, all retries failed
         if last_exception is not None:
-            logger.error(
+            log_error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
             raise last_exception
@@ -1489,14 +1553,13 @@ class Agent:
             rr.created_at = created_at
         return rr
 
-    def get_tools(self) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
+    def get_tools(self, async_mode: bool = False) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
         self.memory = cast(AgentMemory, self.memory)
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Add provided tools
         if self.tools is not None:
-            for tool in self.tools:
-                agent_tools.append(tool)
+            agent_tools.extend(self.tools)
 
         # Add tools for accessing memory
         if self.read_chat_history:
@@ -1509,30 +1572,34 @@ class Agent:
         # Add tools for accessing knowledge
         if self.knowledge is not None or self.retriever is not None:
             if self.search_knowledge:
-                agent_tools.append(self.search_knowledge_base)
+                # Use async or sync search based on async_mode
+                if async_mode:
+                    agent_tools.append(self.async_search_knowledge_base)
+                else:
+                    agent_tools.append(self.search_knowledge_base)
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
         # Add transfer tools
-        if self.team is not None and len(self.team) > 0:
+        if self.has_team and self.team is not None:
             for agent_index, agent in enumerate(self.team):
                 agent_tools.append(self.get_transfer_function(agent, agent_index))
 
         return agent_tools
 
-    def add_tools_to_model(self, model: Model) -> None:
+    def add_tools_to_model(self, model: Model, async_mode: bool = False) -> None:
         # Skip if functions_for_model is not None
         if self._functions_for_model is None or self._tools_for_model is None:
             # Get Agent tools
-            agent_tools = self.get_tools()
+            agent_tools = self.get_tools(async_mode=async_mode)
             if agent_tools is not None and len(agent_tools) > 0:
-                logger.debug("Processing tools for model")
+                log_debug("Processing tools for model")
 
                 # Check if we need strict mode for the functions for the model
                 strict = False
                 if (
                     self.response_model is not None
-                    and (self.structured_outputs or (self.response_format == "structured"))
+                    and (self.structured_outputs or (not self.use_json_mode))
                     and model.supports_native_structured_outputs
                 ):
                     strict = True
@@ -1545,7 +1612,7 @@ class Agent:
                         # If a dict is passed, it is a builtin tool
                         # that is run by the model provider and not the Agent
                         self._tools_for_model.append(tool)
-                        logger.debug(f"Included builtin tool {tool}")
+                        log_debug(f"Included builtin tool {tool}")
 
                     elif isinstance(tool, Toolkit):
                         # For each function in the toolkit and process entrypoint
@@ -1558,7 +1625,13 @@ class Agent:
                                     func.strict = True
                                 self._functions_for_model[name] = func
                                 self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                logger.debug(f"Included function {name} from {tool.name}")
+                                log_debug(f"Added function {name} from {tool.name}")
+
+                        # Add instructions from the toolkit
+                        if tool.add_instructions and tool.instructions is not None:
+                            if self._tool_instructions is None:
+                                self._tool_instructions = []
+                            self._tool_instructions.append(tool.instructions)
 
                     elif isinstance(tool, Function):
                         if tool.name not in self._functions_for_model:
@@ -1568,7 +1641,13 @@ class Agent:
                                 tool.strict = True
                             self._functions_for_model[tool.name] = tool
                             self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                            logger.debug(f"Included function {tool.name}")
+                            log_debug(f"Added function {tool.name}")
+
+                        # Add instructions from the Function
+                        if tool.add_instructions and tool.instructions is not None:
+                            if self._tool_instructions is None:
+                                self._tool_instructions = []
+                            self._tool_instructions.append(tool.instructions)
 
                     elif callable(tool):
                         try:
@@ -1580,23 +1659,23 @@ class Agent:
                                     func.strict = True
                                 self._functions_for_model[func.name] = func
                                 self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                logger.debug(f"Included function {func.name}")
+                                log_debug(f"Added function {func.name}")
                         except Exception as e:
-                            logger.warning(f"Could not add function {tool}: {e}")
+                            log_warning(f"Could not add function {tool}: {e}")
 
                 # Set tools on the model
                 model.set_tools(tools=self._tools_for_model)
                 # Set functions on the model
                 model.set_functions(functions=self._functions_for_model)
 
-    def update_model(self) -> None:
+    def update_model(self, async_mode: bool = False) -> None:
         # Use the default Model (OpenAIChat) if no model is provided
         if self.model is None:
             try:
                 from agno.models.openai import OpenAIChat
             except ModuleNotFoundError as e:
-                logger.exception(e)
-                logger.error(
+                log_exception(e)
+                log_error(
                     "Agno agents use `openai` as the default model provider. "
                     "Please provide a `model` or install `openai` using `pip install openai -U`."
                 )
@@ -1610,18 +1689,18 @@ class Agent:
             json_response_format = {"type": "json_object"}
 
             if self.model.supports_native_structured_outputs:
-                if self.response_format == "structured" or self.structured_outputs:
-                    logger.debug("Setting Model.response_format to Agent.response_model")
+                if (not self.use_json_mode) or self.structured_outputs:
+                    log_debug("Setting Model.response_format to Agent.response_model")
                     self.model.response_format = self.response_model
                     self.model.structured_outputs = True
                 else:
-                    logger.debug("Model does not support native structured outputs")
+                    log_debug("Model supports native structured outputs but not enabled. Using JSON mode instead.")
                     self.model.response_format = json_response_format
                     self.model.structured_outputs = False
 
             elif self.model.supports_json_schema_outputs:
-                if self.response_format == "json" or not self.structured_outputs:
-                    logger.debug("Setting Model.response_format to JSON response mode")
+                if self.use_json_mode or (not self.structured_outputs):
+                    log_debug("Setting Model.response_format to JSON response mode")
                     self.model.response_format = {
                         "type": "json_schema",
                         "json_schema": {
@@ -1633,14 +1712,15 @@ class Agent:
                     self.model.response_format = None
                 self.model.structured_outputs = False
 
-            else:  # Model does not support structured or JSON schema outputs
-                self.model.response_format = (
-                    json_response_format if (self.response_format == "json" or not self.structured_outputs) else None
-                )
+            else:
+                log_debug("Model does not support structured or JSON schema outputs.")
+                self.model.response_format = json_response_format
                 self.model.structured_outputs = False
 
+            log_debug(f"Structured outputs: {self.model.structured_outputs}")
+
         # Add tools to the Model
-        self.add_tools_to_model(model=self.model)
+        self.add_tools_to_model(model=self.model, async_mode=async_mode)
 
         # Set show_tool_calls on the Model
         if self.show_tool_calls is not None:
@@ -1657,35 +1737,37 @@ class Agent:
     def resolve_run_context(self) -> None:
         from inspect import signature
 
-        logger.debug("Resolving context")
+        log_debug("Resolving context")
         if self.context is not None:
-            for ctx_key, ctx_value in self.context.items():
-                if callable(ctx_value):
-                    try:
-                        sig = signature(ctx_value)
-                        resolved_ctx_value = None
-                        if "agent" in sig.parameters:
-                            resolved_ctx_value = ctx_value(agent=self)
-                        else:
-                            resolved_ctx_value = ctx_value()
-                        if resolved_ctx_value is not None:
-                            self.context[ctx_key] = resolved_ctx_value
-                    except Exception as e:
-                        logger.warning(f"Failed to resolve context for {ctx_key}: {e}")
-                else:
-                    self.context[ctx_key] = ctx_value
+            if isinstance(self.context, dict):
+                for ctx_key, ctx_value in self.context.items():
+                    if callable(ctx_value):
+                        try:
+                            sig = signature(ctx_value)
+                            if "agent" in sig.parameters:
+                                resolved_ctx_value = ctx_value(agent=self)
+                            else:
+                                resolved_ctx_value = ctx_value()
+                            if resolved_ctx_value is not None:
+                                self.context[ctx_key] = resolved_ctx_value
+                        except Exception as e:
+                            log_warning(f"Failed to resolve context for {ctx_key}: {e}")
+                    else:
+                        self.context[ctx_key] = ctx_value
+            else:
+                log_warning("Context is not a dict")
 
     def load_user_memories(self) -> None:
         self.memory = cast(AgentMemory, self.memory)
         if self.memory and self.memory.create_user_memories:
-            if self.user_id is not None:
+            if self.user_id is not None and self.memory.user_id is None:
                 self.memory.user_id = self.user_id
 
             self.memory.load_user_memories()
             if self.user_id is not None:
-                logger.debug(f"Memories loaded for user: {self.user_id}")
+                log_debug(f"Memories loaded for user: {self.user_id}")
             else:
-                logger.debug("Memories loaded")
+                log_debug("Memories loaded")
 
     def get_agent_data(self) -> Dict[str, Any]:
         agent_data: Dict[str, Any] = {}
@@ -1721,11 +1803,13 @@ class Agent:
         """Get an AgentSession object, which can be saved to the database"""
         self.memory = cast(AgentMemory, self.memory)
         self.session_id = cast(str, self.session_id)
+        self.team_session_id = cast(str, self.team_session_id)
         self.agent_id = cast(str, self.agent_id)
         return AgentSession(
             session_id=self.session_id,
             agent_id=self.agent_id,
             user_id=self.user_id,
+            team_session_id=self.team_session_id,
             memory=self.memory.to_dict() if self.memory is not None else None,
             agent_data=self.get_agent_data(),
             session_data=self.get_session_data(),
@@ -1823,27 +1907,27 @@ class Agent:
             try:
                 if "runs" in session.memory:
                     try:
-                        self.memory.runs = [AgentRun(**m) for m in session.memory["runs"]]
+                        self.memory.runs = [AgentRun.model_validate(m) for m in session.memory["runs"]]
                     except Exception as e:
-                        logger.warning(f"Failed to load runs from memory: {e}")
+                        log_warning(f"Failed to load runs from memory: {e}")
                 if "messages" in session.memory:
                     try:
-                        self.memory.messages = [Message(**m) for m in session.memory["messages"]]
+                        self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]]
                     except Exception as e:
-                        logger.warning(f"Failed to load messages from memory: {e}")
+                        log_warning(f"Failed to load messages from memory: {e}")
                 if "summary" in session.memory:
                     try:
-                        self.memory.summary = SessionSummary(**session.memory["summary"])
+                        self.memory.summary = SessionSummary.model_validate(session.memory["summary"])
                     except Exception as e:
-                        logger.warning(f"Failed to load session summary from memory: {e}")
+                        log_warning(f"Failed to load session summary from memory: {e}")
                 if "memories" in session.memory:
                     try:
-                        self.memory.memories = [Memory(**m) for m in session.memory["memories"]]
+                        self.memory.memories = [Memory.model_validate(m) for m in session.memory["memories"]]
                     except Exception as e:
-                        logger.warning(f"Failed to load user memories: {e}")
+                        log_warning(f"Failed to load user memories: {e}")
             except Exception as e:
-                logger.warning(f"Failed to load AgentMemory: {e}")
-        logger.debug(f"-*- AgentSession loaded: {session.session_id}")
+                log_warning(f"Failed to load AgentMemory: {e}")
+        log_debug(f"-*- AgentSession loaded: {session.session_id}")
 
     def read_from_storage(self) -> Optional[AgentSession]:
         """Load the AgentSession from storage
@@ -1878,7 +1962,10 @@ class Agent:
                 self.memory.add_run(
                     AgentRun(
                         response=RunResponse(
-                            content=introduction, messages=[Message(role="assistant", content=introduction)]
+                            content=introduction,
+                            messages=[
+                                Message(role=self.model.assistant_message_role, content=introduction)  # type: ignore
+                            ],
                         )
                     )
                 )
@@ -1899,12 +1986,12 @@ class Agent:
         # Load an existing session or create a new session
         if self.storage is not None:
             # Load existing session if session_id is provided
-            logger.debug(f"Reading AgentSession: {self.session_id}")
+            log_debug(f"Reading AgentSession: {self.session_id}")
             self.read_from_storage()
 
             # Create a new session if it does not exist
             if self.agent_session is None:
-                logger.debug("-*- Creating new AgentSession")
+                log_debug("-*- Creating new AgentSession")
                 # Initialize the agent_id and session_id if they are not set
                 if self.agent_id is None or self.session_id is None:
                     self.initialize_agent()
@@ -1915,8 +2002,8 @@ class Agent:
                 self.write_to_storage()
                 if self.agent_session is None:
                     raise Exception("Failed to create new AgentSession in storage")
-                logger.debug(f"-*- Created AgentSession: {self.agent_session.session_id}")
-                self.log_agent_session()
+                log_debug(f"-*- Created AgentSession: {self.agent_session.session_id}")
+                self._log_agent_session()
         return self.session_id
 
     def new_session(self) -> None:
@@ -2011,7 +2098,7 @@ class Agent:
                         json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2)}"
                         json_output_prompt += "\n</json_field_properties>"
             else:
-                logger.warning(f"Could not build json schema for {self.response_model}")
+                log_warning(f"Could not build json schema for {self.response_model}")
         else:
             json_output_prompt += "Provide the output as JSON."
 
@@ -2060,13 +2147,18 @@ class Agent:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
 
             # Add the JSON output prompt if response_model is provided and structured_outputs is False
-            if self.response_model is not None and self.model and (
-                self.model.supports_native_structured_outputs
-                and (self.response_format == "json" or self.structured_outputs is False)
+            if (
+                self.response_model is not None
+                and self.model
+                and (
+                    self.model.supports_native_structured_outputs
+                    and (self.use_json_mode or self.structured_outputs is False)
+                )
             ):
                 sys_message_content += f"\n{self.get_json_output_prompt()}"
 
-            return Message(role=self.system_message_role, content=sys_message_content)  # type: ignore
+            # type: ignore
+            return Message(role=self.system_message_role, content=sys_message_content)
 
         # 2. If create_default_system_message is False, return None.
         if not self.create_default_system_message:
@@ -2101,7 +2193,19 @@ class Agent:
         if self.add_datetime_to_instructions:
             from datetime import datetime
 
-            additional_information.append(f"The current time is {datetime.now()}")
+            tz = None
+
+            if self.timezone_identifier:
+                try:
+                    from zoneinfo import ZoneInfo
+
+                    tz = ZoneInfo(self.timezone_identifier)
+                except Exception:
+                    log_warning("Invalid timezone identifier")
+
+            time = datetime.now(tz) if tz else datetime.now()
+
+            additional_information.append(f"The current time is {time}.")
         # 3.2.3 Add agent name if provided
         if self.name is not None and self.add_name_to_instructions:
             additional_information.append(f"Your name is: {self.name}.")
@@ -2113,10 +2217,10 @@ class Agent:
             system_message_content += f"{self.description}\n\n"
         # 3.3.2 Then add the Agent goal if provided
         if self.goal is not None:
-            system_message_content += f"<your_goal>\n{self.goal}\n</your_goal>\n\n"
+            system_message_content += f"\n<your_goal>\n{self.goal}\n</your_goal>\n\n"
         # 3.3.3 Then add the Agent role if provided
         if self.role is not None:
-            system_message_content += f"<your_role>\n{self.role}\n</your_role>\n\n"
+            system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
         # 3.3.4 Then add instructions for transferring tasks to team members
         if self.has_team and self.add_transfer_instructions:
             system_message_content += (
@@ -2146,6 +2250,10 @@ class Agent:
             for _ai in additional_information:
                 system_message_content += f"\n- {_ai}"
             system_message_content += "\n</additional_information>\n\n"
+        # 3.3.7 Then add instructions for the tools
+        if self._tool_instructions is not None:
+            for _ti in self._tool_instructions:
+                system_message_content += f"{_ti}\n"
 
         # Format the system message with the session state variables
         if self.add_state_in_messages:
@@ -2160,7 +2268,7 @@ class Agent:
             system_message_content += f"<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n"
         # 3.3.9 Then add additional context
         if self.additional_context is not None:
-            system_message_content += f"{self.additional_context.strip()}\n"
+            system_message_content += f"{self.additional_context}\n"
         # 3.3.10 Then add information about the team members
         if self.has_team and self.add_transfer_instructions:
             system_message_content += (
@@ -2206,7 +2314,7 @@ class Agent:
         # Add the JSON output prompt if response_model is provided and structured_outputs is False (only applicable if the model supports structured outputs)
         if self.response_model is not None and not (
             self.model.supports_native_structured_outputs
-            and (self.response_format == "structured" or self.structured_outputs is True)
+            and (not self.use_json_mode or self.structured_outputs is True)
         ):
             system_message_content += f"{self.get_json_output_prompt()}"
 
@@ -2259,7 +2367,7 @@ class Agent:
                     self.run_response.extra_data.references = []
                 self.run_response.extra_data.references.append(references)
             retrieval_timer.stop()
-            logger.debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
         # 1. If the user_message is provided, use that.
         if self.user_message is not None:
@@ -2369,6 +2477,7 @@ class Agent:
             message=message, audio=audio, images=images, videos=videos, files=files, messages=messages, **kwargs
         )
         """
+
         # Initialize the RunMessages object
         run_messages = RunMessages()
         self.memory = cast(AgentMemory, self.memory)
@@ -2398,10 +2507,10 @@ class Agent:
                         run_messages.messages.append(_m_parsed)
                         run_messages.extra_messages.append(_m_parsed)
                     except Exception as e:
-                        logger.warning(f"Failed to validate message: {e}")
+                        log_warning(f"Failed to validate message: {e}")
             # Add the extra messages to the run_response
             if len(messages_to_add_to_run_response) > 0:
-                logger.debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
+                log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
                 if self.run_response.extra_data is None:
                     self.run_response.extra_data = RunResponseExtraData(add_messages=messages_to_add_to_run_response)
                 else:
@@ -2415,7 +2524,7 @@ class Agent:
             from copy import deepcopy
 
             history: List[Message] = self.memory.get_messages_from_last_n_runs(
-                last_n=self.num_history_responses, skip_role=self.system_message_role
+                last_n=self.num_history_runs, skip_role=self.system_message_role
             )
             if len(history) > 0:
                 # Create a deep copy of the history messages to avoid modifying the original messages
@@ -2425,15 +2534,8 @@ class Agent:
                 for _msg in history_copy:
                     _msg.from_history = True
 
-                logger.debug(f"Adding {len(history_copy)} messages from history")
+                log_debug(f"Adding {len(history_copy)} messages from history")
 
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData(history=history_copy)
-                else:
-                    if self.run_response.extra_data.history is None:
-                        self.run_response.extra_data.history = history_copy
-                    else:
-                        self.run_response.extra_data.history.extend(history_copy)
                 run_messages.messages += history_copy
 
         # 4.Add user message to run_messages
@@ -2451,7 +2553,7 @@ class Agent:
             try:
                 user_message = Message.model_validate(message)
             except Exception as e:
-                logger.warning(f"Failed to validate message: {e}")
+                log_warning(f"Failed to validate message: {e}")
         # Add user message to run_messages
         if user_message is not None:
             run_messages.user_message = user_message
@@ -2472,7 +2574,7 @@ class Agent:
                             run_messages.extra_messages = []
                         run_messages.extra_messages.append(Message.model_validate(_m))
                     except Exception as e:
-                        logger.warning(f"Failed to validate message: {e}")
+                        log_warning(f"Failed to validate message: {e}")
 
         return run_messages
 
@@ -2504,7 +2606,7 @@ class Agent:
             fields_for_new_agent.update(update)
         # Create a new Agent
         new_agent = self.__class__(**fields_for_new_agent)
-        logger.debug(f"Created new {self.__class__.__name__}")
+        log_debug(f"Created new {self.__class__.__name__}")
         return new_agent
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
@@ -2519,36 +2621,33 @@ class Agent:
         elif field_name in ("storage", "model", "reasoning_model"):
             try:
                 return deepcopy(field_value)
-            except Exception as e:
-                logger.warning(f"Failed to deepcopy field: {field_name} - {e}")
+            except Exception:
                 try:
                     return copy(field_value)
                 except Exception as e:
-                    logger.warning(f"Failed to copy field: {field_name} - {e}")
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
                     return field_value
 
         # For compound types, attempt a deep copy
         elif isinstance(field_value, (list, dict, set)):
             try:
                 return deepcopy(field_value)
-            except Exception as e:
-                logger.warning(f"Failed to deepcopy field: {field_name} - {e}")
+            except Exception:
                 try:
                     return copy(field_value)
                 except Exception as e:
-                    logger.warning(f"Failed to copy field: {field_name} - {e}")
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
                     return field_value
 
         # For pydantic models, attempt a model_copy
         elif isinstance(field_value, BaseModel):
             try:
                 return field_value.model_copy(deep=True)
-            except Exception as e:
-                logger.warning(f"Failed to deepcopy field: {field_name} - {e}")
+            except Exception:
                 try:
                     return field_value.model_copy(deep=False)
                 except Exception as e:
-                    logger.warning(f"Failed to copy field: {field_name} - {e}")
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
                     return field_value
 
         # For other types, attempt a shallow copy first
@@ -2580,7 +2679,7 @@ class Agent:
                         f"\n\n<additional_information>\n{additional_information}\n</additional_information>"
                     )
             except Exception as e:
-                logger.warning(f"Failed to add additional information to the member agent: {e}")
+                log_warning(f"Failed to add additional information to the member agent: {e}")
 
             member_agent_session_id = member_agent.session_id
             member_agent_agent_id = member_agent.agent_id
@@ -2694,14 +2793,43 @@ class Agent:
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.retriever(**retriever_kwargs)
             except Exception as e:
-                logger.warning(f"Retriever failed: {e}")
+                log_warning(f"Retriever failed: {e}")
                 return None
 
         if self.knowledge is None:
             return None
 
-        # TODO: add async support
         relevant_docs: List[Document] = self.knowledge.search(query=query, num_documents=num_documents, **kwargs)
+        if len(relevant_docs) == 0:
+            return None
+        return [doc.to_dict() for doc in relevant_docs]
+
+    async def aget_relevant_docs_from_knowledge(
+        self, query: str, num_documents: Optional[int] = None, **kwargs
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Get relevant documents from knowledge base asynchronously."""
+        from agno.document import Document
+
+        if self.retriever is not None and callable(self.retriever):
+            from inspect import signature
+
+            try:
+                sig = signature(self.retriever)
+                retriever_kwargs: Dict[str, Any] = {}
+                if "agent" in sig.parameters:
+                    retriever_kwargs = {"agent": self}
+                retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+                return self.retriever(**retriever_kwargs)
+            except Exception as e:
+                log_warning(f"Retriever failed: {e}")
+                return None
+
+        if self.knowledge is None or self.knowledge.vector_db is None:
+            return None
+
+        relevant_docs: List[Document] = await self.knowledge.async_search(
+            query=query, num_documents=num_documents, **kwargs
+        )
         if len(relevant_docs) == 0:
             return None
         return [doc.to_dict() for doc in relevant_docs]
@@ -2736,7 +2864,7 @@ class Agent:
         try:
             return json.dumps(context, indent=2, default=str)
         except (TypeError, ValueError, OverflowError) as e:
-            logger.warning(f"Failed to convert context to JSON: {e}")
+            log_warning(f"Failed to convert context to JSON: {e}")
             # Attempt a fallback conversion for non-serializable objects
             sanitized_context = {}
             for key, value in context.items():
@@ -2751,7 +2879,7 @@ class Agent:
             try:
                 return json.dumps(sanitized_context, indent=2)
             except Exception as e:
-                logger.error(f"Failed to convert sanitized context to JSON: {e}")
+                log_error(f"Failed to convert sanitized context to JSON: {e}")
                 return str(context)
 
     def save_run_response_to_file(self, message: Optional[Union[str, List, Dict, Message]] = None) -> None:
@@ -2761,7 +2889,7 @@ class Agent:
                 if isinstance(message, str):
                     message_str = message
                 else:
-                    logger.warning("Did not use message in output file name: message is not a string")
+                    log_warning("Did not use message in output file name: message is not a string")
             try:
                 from pathlib import Path
 
@@ -2782,7 +2910,7 @@ class Agent:
 
                     fn_path.write_text(json.dumps(self.run_response.content, indent=2))
             except Exception as e:
-                logger.warning(f"Failed to save output to file: {e}")
+                log_warning(f"Failed to save output to file: {e}")
 
     def update_run_response_with_reasoning(
         self, reasoning_steps: List[ReasoningStep], reasoning_agent_messages: List[Message]
@@ -2837,7 +2965,7 @@ class Agent:
         # -*- Save to storage
         self.write_to_storage()
         # -*- Log Agent session
-        self.log_agent_session()
+        self._log_agent_session()
 
     def rename_session(self, session_name: str) -> None:
         """Rename the current session and save to storage"""
@@ -2849,7 +2977,7 @@ class Agent:
         # -*- Save to storage
         self.write_to_storage()
         # -*- Log Agent session
-        self.log_agent_session()
+        self._log_agent_session()
 
     def generate_session_name(self) -> str:
         """Generate a name for the session using the first 6 messages from the memory"""
@@ -2866,7 +2994,7 @@ class Agent:
                 messages_for_generating_session_name.append(message_pair[0])
                 messages_for_generating_session_name.append(message_pair[1])
         except Exception as e:
-            logger.warning(f"Failed to generate name: {e}")
+            log_warning(f"Failed to generate name: {e}")
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
@@ -2883,10 +3011,10 @@ class Agent:
         generated_name = self.model.response(messages=generate_name_messages)
         content = generated_name.content
         if content is None:
-            logger.error("Generated name is None. Trying again.")
+            log_error("Generated name is None. Trying again.")
             return self.generate_session_name()
         if len(content.split()) > 15:
-            logger.error("Generated name is too long. Trying again.")
+            log_error("Generated name is too long. Trying again.")
             return self.generate_session_name()
         return content.replace('"', "").strip()
 
@@ -2897,13 +3025,13 @@ class Agent:
         self.read_from_storage()
         # -*- Generate name for session
         generated_session_name = self.generate_session_name()
-        logger.debug(f"Generated Session Name: {generated_session_name}")
+        log_debug(f"Generated Session Name: {generated_session_name}")
         # -*- Rename thread
         self.session_name = generated_session_name
         # -*- Save to storage
         self.write_to_storage()
         # -*- Log Agent Session
-        self.log_agent_session()
+        self._log_agent_session()
 
     def delete_session(self, session_id: str):
         """Delete the current session and save to storage"""
@@ -2961,13 +3089,15 @@ class Agent:
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
 
+        use_default_reasoning = False
+
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
             reasoning_model = self.model.__class__(id=self.model.id)
         if reasoning_model is None:
-            logger.warning("Reasoning error. Reasoning model is None, continuing regular session...")
+            log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
 
         # If a reasoning model is provided, use it to generate reasoning
@@ -2981,11 +3111,12 @@ class Agent:
                 ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
                 )
+                log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
                 ds_reasoning_message: Optional[Message] = get_deepseek_reasoning(
                     reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages()
                 )
                 if ds_reasoning_message is None:
-                    logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
                 run_messages.messages.append(ds_reasoning_message)
                 # Add reasoning step to the Agent's run_response
@@ -2993,6 +3124,11 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)],
                     reasoning_agent_messages=[ds_reasoning_message],
                 )
+                if self.stream_intermediate_steps:
+                    yield self.create_run_response(
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)]),
+                        event=RunEvent.reasoning_completed,
+                    )
             # Use Groq for reasoning
             elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id.lower():
                 from agno.reasoning.groq import get_groq_reasoning, get_groq_reasoning_agent
@@ -3000,11 +3136,12 @@ class Agent:
                 groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
                 )
+                log_debug("Starting Groq Reasoning", center=True, symbol="=")
                 groq_reasoning_message: Optional[Message] = get_groq_reasoning(
                     reasoning_agent=groq_reasoning_agent, messages=run_messages.get_input_messages()
                 )
                 if groq_reasoning_message is None:
-                    logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
                 run_messages.messages.append(groq_reasoning_message)
                 # Add reasoning step to the Agent's run_response
@@ -3012,6 +3149,11 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)],
                     reasoning_agent_messages=[groq_reasoning_message],
                 )
+                if self.stream_intermediate_steps:
+                    yield self.create_run_response(
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)]),
+                        event=RunEvent.reasoning_completed,
+                    )
             # Use o-3 or OpenAILike with deepseek model for reasoning
             elif (reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")) or (
                 isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower()
@@ -3021,11 +3163,12 @@ class Agent:
                 openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
                 )
+                log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
                 openai_reasoning_message: Optional[Message] = get_openai_reasoning(
                     reasoning_agent=openai_reasoning_agent, messages=run_messages.get_input_messages()
                 )
                 if openai_reasoning_message is None:
-                    logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
                 run_messages.messages.append(openai_reasoning_message)
                 # Add reasoning step to the Agent's run_response
@@ -3033,38 +3176,48 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)],
                     reasoning_agent_messages=[openai_reasoning_message],
                 )
+                if self.stream_intermediate_steps:
+                    yield self.create_run_response(
+                        content=ReasoningSteps(
+                            reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)]
+                        ),
+                        event=RunEvent.reasoning_completed,
+                    )
             else:
-                logger.info(
-                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, adding manual CoT"
+                log_warning(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
                 )
-        # If no reasoning model is provided, use the default reasoning approach
+                use_default_reasoning = True
+        # If no reasoning model is provided, use default reasoning
         else:
+            use_default_reasoning = True
+
+        if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
-                response_format: Literal["structured", "json"] = self.response_format
-                if self.structured_outputs is not None:
-                    response_format = "structured" if self.structured_outputs else "json"  # type: ignore
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    response_format=response_format,
+                    use_json_mode=self.use_json_mode,
                     monitoring=self.monitoring,
+                    telemetry=self.telemetry,
+                    debug_mode=self.debug_mode,
                 )
 
             # Validate reasoning agent
             if reasoning_agent is None:
-                logger.warning("Reasoning error. Reasoning agent is None, continuing regular session...")
+                log_warning("Reasoning error. Reasoning agent is None, continuing regular session...")
                 return
             # Ensure the reasoning agent response model is ReasoningSteps
             if reasoning_agent.response_model is not None and not isinstance(reasoning_agent.response_model, type):
                 if not issubclass(reasoning_agent.response_model, ReasoningSteps):
-                    logger.warning(
+                    log_warning(
                         "Reasoning agent response model should be `ReasoningSteps`, continuing regular session..."
                     )
                 return
@@ -3076,21 +3229,20 @@ class Agent:
             next_action = NextAction.CONTINUE
             reasoning_messages: List[Message] = []
             all_reasoning_steps: List[ReasoningStep] = []
-            logger.debug("==== Starting Reasoning ====")
+            log_debug("Starting Reasoning", center=True, symbol="=")
             while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
-                logger.debug(f"==== Step {step_count} ====")
-                step_count += 1
+                log_debug(f"Step {step_count}", center=True, symbol="=")
                 try:
                     # Run the reasoning agent
                     reasoning_agent_response: RunResponse = reasoning_agent.run(
                         messages=run_messages.get_input_messages()
                     )
                     if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
-                        logger.warning("Reasoning error. Reasoning response is empty, continuing regular session...")
+                        log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
                         break
 
                     if reasoning_agent_response.content.reasoning_steps is None:
-                        logger.warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
+                        log_warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
                         break
 
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
@@ -3122,11 +3274,13 @@ class Agent:
                     if next_action == NextAction.FINAL_ANSWER:
                         break
                 except Exception as e:
-                    logger.error(f"Reasoning error: {e}")
+                    log_error(f"Reasoning error: {e}")
                     break
 
-            logger.debug(f"Total Reasoning steps: {len(all_reasoning_steps)}")
-            logger.debug("==== Reasoning finished====")
+                step_count += 1
+
+            log_debug(f"Total Reasoning steps: {len(all_reasoning_steps)}")
+            log_debug("Reasoning finished", center=True, symbol="=")
 
             # Update the messages_for_model to include reasoning messages
             update_messages_with_reasoning(
@@ -3134,18 +3288,20 @@ class Agent:
                 reasoning_messages=reasoning_messages,
             )
 
-        # Yield the final reasoning completed event
-        if self.stream_intermediate_steps:
-            yield self.create_run_response(
-                content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
-                content_type=ReasoningSteps.__class__.__name__,
-                event=RunEvent.reasoning_completed,
-            )
+            # Yield the final reasoning completed event
+            if self.stream_intermediate_steps:
+                yield self.create_run_response(
+                    content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
+                    content_type=ReasoningSteps.__class__.__name__,
+                    event=RunEvent.reasoning_completed,
+                )
 
     async def areason(self, run_messages: RunMessages) -> Any:
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self.create_run_response(content="Reasoning started", event=RunEvent.reasoning_started)
+
+        use_default_reasoning = False
 
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
@@ -3153,7 +3309,7 @@ class Agent:
         if reasoning_model is None and self.model is not None:
             reasoning_model = self.model.__class__(id=self.model.id)
         if reasoning_model is None:
-            logger.warning("Reasoning error. Reasoning model is None, continuing regular session...")
+            log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
 
         # If a reasoning model is provided, use it to generate reasoning
@@ -3167,11 +3323,12 @@ class Agent:
                 ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
                 )
+                log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
                 ds_reasoning_message: Optional[Message] = await aget_deepseek_reasoning(
                     reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages()
                 )
                 if ds_reasoning_message is None:
-                    logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
                 run_messages.messages.append(ds_reasoning_message)
                 # Add reasoning step to the Agent's run_response
@@ -3179,6 +3336,11 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)],
                     reasoning_agent_messages=[ds_reasoning_message],
                 )
+                if self.stream_intermediate_steps:
+                    yield self.create_run_response(
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)]),
+                        event=RunEvent.reasoning_completed,
+                    )
             # Use Groq for reasoning
             elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
                 from agno.reasoning.groq import aget_groq_reasoning, get_groq_reasoning_agent
@@ -3186,11 +3348,12 @@ class Agent:
                 groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
                 )
+                log_debug("Starting Groq Reasoning", center=True, symbol="=")
                 groq_reasoning_message: Optional[Message] = await aget_groq_reasoning(
                     reasoning_agent=groq_reasoning_agent, messages=run_messages.get_input_messages()
                 )
                 if groq_reasoning_message is None:
-                    logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
                 run_messages.messages.append(groq_reasoning_message)
                 # Add reasoning step to the Agent's run_response
@@ -3198,6 +3361,11 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)],
                     reasoning_agent_messages=[groq_reasoning_message],
                 )
+                if self.stream_intermediate_steps:
+                    yield self.create_run_response(
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)]),
+                        event=RunEvent.reasoning_completed,
+                    )
             # Use o-3 for reasoning
             elif (reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")) or (
                 isinstance(reasoning_model, OpenAILike) and "deepseek" in reasoning_model.id.lower()
@@ -3208,11 +3376,12 @@ class Agent:
                 openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
                     reasoning_model=reasoning_model, monitoring=self.monitoring
                 )
+                log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
                 openai_reasoning_message: Optional[Message] = await aget_openai_reasoning(
                     reasoning_agent=openai_reasoning_agent, messages=run_messages.get_input_messages()
                 )
                 if openai_reasoning_message is None:
-                    logger.warning("Reasoning error. Reasoning response is None, continuing regular session...")
+                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
                 run_messages.messages.append(openai_reasoning_message)
                 # Add reasoning step to the Agent's run_response
@@ -3220,38 +3389,48 @@ class Agent:
                     reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)],
                     reasoning_agent_messages=[openai_reasoning_message],
                 )
+                if self.stream_intermediate_steps:
+                    yield self.create_run_response(
+                        content=ReasoningSteps(
+                            reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)]
+                        ),
+                        event=RunEvent.reasoning_completed,
+                    )
             else:
-                logger.info(
-                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, adding manual CoT"
+                log_warning(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
                 )
-        # If no reasoning model is provided, use the default reasoning approach
+                use_default_reasoning = True
+        # If no reasoning model is provided, use default reasoning
         else:
+            use_default_reasoning = True
+
+        if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
-                response_format: Literal["structured", "json"] = self.response_format
-                if self.structured_outputs is not None:
-                    response_format = "structured" if self.structured_outputs else "json"  # type: ignore
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
                     min_steps=self.reasoning_min_steps,
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
-                    response_format=response_format,
+                    use_json_mode=self.use_json_mode,
                     monitoring=self.monitoring,
+                    telemetry=self.telemetry,
+                    debug_mode=self.debug_mode,
                 )
 
             # Validate reasoning agent
             if reasoning_agent is None:
-                logger.warning("Reasoning error. Reasoning agent is None, continuing regular session...")
+                log_warning("Reasoning error. Reasoning agent is None, continuing regular session...")
                 return
             # Ensure the reasoning agent response model is ReasoningSteps
             if reasoning_agent.response_model is not None and not isinstance(reasoning_agent.response_model, type):
                 if not issubclass(reasoning_agent.response_model, ReasoningSteps):
-                    logger.warning(
+                    log_warning(
                         "Reasoning agent response model should be `ReasoningSteps`, continuing regular session..."
                     )
                 return
@@ -3263,9 +3442,9 @@ class Agent:
             next_action = NextAction.CONTINUE
             reasoning_messages: List[Message] = []
             all_reasoning_steps: List[ReasoningStep] = []
-            logger.debug("==== Starting Reasoning ====")
+            log_debug("Starting Reasoning", center=True, symbol="=")
             while next_action == NextAction.CONTINUE and step_count < self.reasoning_max_steps:
-                logger.debug(f"==== Step {step_count} ====")
+                log_debug(f"Step {step_count}", center=True, symbol="=")
                 step_count += 1
                 try:
                     # Run the reasoning agent
@@ -3273,11 +3452,11 @@ class Agent:
                         messages=run_messages.get_input_messages()
                     )
                     if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
-                        logger.warning("Reasoning error. Reasoning response is empty, continuing regular session...")
+                        log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
                         break
 
                     if reasoning_agent_response.content.reasoning_steps is None:
-                        logger.warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
+                        log_warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
                         break
 
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
@@ -3309,11 +3488,11 @@ class Agent:
                     if next_action == NextAction.FINAL_ANSWER:
                         break
                 except Exception as e:
-                    logger.error(f"Reasoning error: {e}")
+                    log_error(f"Reasoning error: {e}")
                     break
 
-            logger.debug(f"Total Reasoning steps: {len(all_reasoning_steps)}")
-            logger.debug("==== Reasoning finished====")
+            log_debug(f"Total Reasoning steps: {len(all_reasoning_steps)}")
+            log_debug("Reasoning finished", center=True, symbol="=")
 
             # Update the messages_for_model to include reasoning messages
             update_messages_with_reasoning(
@@ -3321,13 +3500,13 @@ class Agent:
                 reasoning_messages=reasoning_messages,
             )
 
-        # Yield the final reasoning completed event
-        if self.stream_intermediate_steps:
-            yield self.create_run_response(
-                content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
-                content_type=ReasoningSteps.__class__.__name__,
-                event=RunEvent.reasoning_completed,
-            )
+            # Yield the final reasoning completed event
+            if self.stream_intermediate_steps:
+                yield self.create_run_response(
+                    content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
+                    content_type=ReasoningSteps.__class__.__name__,
+                    event=RunEvent.reasoning_completed,
+                )
 
     ###########################################################################
     # Default Tools
@@ -3387,7 +3566,7 @@ class Agent:
         tool_calls = self.memory.get_tool_calls(num_calls)
         if len(tool_calls) == 0:
             return ""
-        logger.debug(f"tool_calls: {tool_calls}")
+        log_debug(f"tool_calls: {tool_calls}")
         return json.dumps(tool_calls)
 
     def search_knowledge_base(self, query: str) -> str:
@@ -3416,7 +3595,36 @@ class Agent:
                 self.run_response.extra_data.references = []
             self.run_response.extra_data.references.append(references)
         retrieval_timer.stop()
-        logger.debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+        if docs_from_knowledge is None:
+            return "No documents found"
+        return self.convert_documents_to_string(docs_from_knowledge)
+
+    async def async_search_knowledge_base(self, query: str) -> str:
+        """Use this function to search the knowledge base for information about a query asynchronously.
+
+        Args:
+            query: The query to search for.
+
+        Returns:
+            str: A string containing the response from the knowledge base.
+        """
+        self.run_response = cast(RunResponse, self.run_response)
+        retrieval_timer = Timer()
+        retrieval_timer.start()
+        docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query)
+        if docs_from_knowledge is not None:
+            references = MessageReferences(
+                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+            )
+            if self.run_response.extra_data is None:
+                self.run_response.extra_data = RunResponseExtraData()
+            if self.run_response.extra_data.references is None:
+                self.run_response.extra_data.references = []
+            self.run_response.extra_data.references.append(references)
+        retrieval_timer.stop()
+        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
         if docs_from_knowledge is None:
             return "No documents found"
@@ -3442,7 +3650,7 @@ class Agent:
         if document_name is None:
             document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
-        logger.info(f"Adding document to knowledge base: {document_name}: {document_content}")
+        log_info(f"Adding document to knowledge base: {document_name}: {document_content}")
         self.knowledge.load_document(
             document=Document(
                 name=document_name,
@@ -3470,7 +3678,7 @@ class Agent:
     # Api functions
     ###########################################################################
 
-    def log_agent_session(self):
+    def _log_agent_session(self):
         if not (self.telemetry or self.monitoring):
             return
 
@@ -3481,30 +3689,12 @@ class Agent:
             create_agent_session(
                 session=AgentSessionCreate(
                     session_id=agent_session.session_id,
-                    agent_data=agent_session.monitoring_data() if self.monitoring else agent_session.telemetry_data(),
+                    agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
                 ),
                 monitor=self.monitoring,
             )
         except Exception as e:
-            logger.debug(f"Could not create agent monitor: {e}")
-
-    async def alog_agent_session(self):
-        if not (self.telemetry or self.monitoring):
-            return
-
-        from agno.api.agent import AgentSessionCreate, acreate_agent_session
-
-        try:
-            agent_session: AgentSession = self.agent_session or self.get_agent_session()
-            await acreate_agent_session(
-                session=AgentSessionCreate(
-                    session_id=agent_session.session_id,
-                    agent_data=agent_session.monitoring_data() if self.monitoring else agent_session.telemetry_data(),
-                ),
-                monitor=self.monitoring,
-            )
-        except Exception as e:
-            logger.debug(f"Could not create agent monitor: {e}")
+            log_debug(f"Could not create agent monitor: {e}")
 
     def _create_run_data(self) -> Dict[str, Any]:
         """Create and return the run data dictionary."""
@@ -3537,7 +3727,7 @@ class Agent:
 
         return run_data
 
-    def log_agent_run(self) -> None:
+    def _log_agent_run(self) -> None:
         self.set_monitoring()
 
         if not self.telemetry and not self.monitoring:
@@ -3554,14 +3744,15 @@ class Agent:
                     run_id=self.run_id,
                     run_data=run_data,
                     session_id=agent_session.session_id,
-                    agent_data=agent_session.monitoring_data() if self.monitoring else agent_session.telemetry_data(),
+                    agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
+                    team_session_id=agent_session.team_session_id,
                 ),
                 monitor=self.monitoring,
             )
         except Exception as e:
-            logger.debug(f"Could not create agent event: {e}")
+            log_debug(f"Could not create agent event: {e}")
 
-    async def alog_agent_run(self) -> None:
+    async def _alog_agent_run(self) -> None:
         self.set_monitoring()
 
         if not self.telemetry and not self.monitoring:
@@ -3578,34 +3769,17 @@ class Agent:
                     run_id=self.run_id,
                     run_data=run_data,
                     session_id=agent_session.session_id,
-                    agent_data=agent_session.monitoring_data() if self.monitoring else agent_session.telemetry_data(),
+                    agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
+                    team_session_id=agent_session.team_session_id,
                 ),
                 monitor=self.monitoring,
             )
         except Exception as e:
-            logger.debug(f"Could not create agent event: {e}")
+            log_debug(f"Could not create agent event: {e}")
 
     ###########################################################################
     # Print Response
     ###########################################################################
-
-    def create_panel(self, content, title, border_style="blue"):
-        from rich.box import HEAVY
-        from rich.panel import Panel
-
-        return Panel(
-            content, title=title, title_align="left", border_style=border_style, box=HEAVY, expand=True, padding=(1, 1)
-        )
-
-    def escape_markdown_tags(self, content: str, tags: Set[str]) -> str:
-        """Escape special tags in markdown content."""
-        escaped_content = content
-        for tag in tags:
-            # Escape opening tag
-            escaped_content = escaped_content.replace(f"<{tag}>", f"&lt;{tag}&gt;")
-            # Escape closing tag
-            escaped_content = escaped_content.replace(f"</{tag}>", f"&lt;/{tag}&gt;")
-        return escaped_content
 
     def print_response(
         self,
@@ -3617,6 +3791,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: bool = False,
+        stream_intermediate_steps: bool = False,
         markdown: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -3639,9 +3814,10 @@ class Agent:
             self.markdown = True
 
         if self.response_model is not None:
-            markdown = False
             self.markdown = False
             stream = False
+
+        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
 
         if stream:
             _response_content: str = ""
@@ -3662,7 +3838,7 @@ class Agent:
                     render = True
                     # Convert message to a panel
                     message_content = get_text_from_message(message)
-                    message_panel = self.create_panel(
+                    message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
                         border_style="cyan",
@@ -3679,6 +3855,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     stream=True,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
                 ):
                     if isinstance(resp, RunResponse):
@@ -3691,18 +3868,18 @@ class Agent:
                             reasoning_steps = resp.extra_data.reasoning_steps
 
                     response_content_stream: Union[str, Markdown] = _response_content
+
                     # Escape special tags before markdown conversion
                     if self.markdown:
-                        escaped_content = self.escape_markdown_tags(_response_content, tags_to_include_in_markdown)
+                        escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
                         response_content_stream = Markdown(escaped_content)
-
                     panels = [status]
 
                     if message and show_message:
                         render = True
                         # Convert message to a panel
                         message_content = get_text_from_message(message)
-                        message_panel = self.create_panel(
+                        message_panel = create_panel(
                             content=Text(message_content, style="green"),
                             title="Message",
                             border_style="cyan",
@@ -3720,7 +3897,9 @@ class Agent:
                             if step.title is not None:
                                 step_content.append(f"{step.title}\n", "bold")
                             if step.action is not None:
-                                step_content.append(f"{step.action}\n", "dim")
+                                step_content.append(
+                                    Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim")
+                                )
                             if step.result is not None:
                                 step_content.append(Text.from_markup(step.result, style="dim"))
 
@@ -3734,7 +3913,7 @@ class Agent:
                                     step_content.append(
                                         Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim")
                                     )
-                            reasoning_panel = self.create_panel(
+                            reasoning_panel = create_panel(
                                 content=step_content, title=f"Reasoning step {i}", border_style="green"
                             )
                             panels.append(reasoning_panel)
@@ -3744,7 +3923,7 @@ class Agent:
                     if len(_response_thinking) > 0:
                         render = True
                         # Create panel for thinking
-                        thinking_panel = self.create_panel(
+                        thinking_panel = create_panel(
                             content=Text(_response_thinking),
                             title=f"Thinking ({response_timer.elapsed:.1f}s)",
                             border_style="green",
@@ -3753,10 +3932,29 @@ class Agent:
                     if render:
                         live_log.update(Group(*panels))
 
+                    # Add tool calls panel if available
+                    if (
+                        self.show_tool_calls
+                        and self.run_response is not None
+                        and self.run_response.formatted_tool_calls
+                    ):
+                        render = True
+                        # Create bullet points for each tool call
+                        tool_calls_content = Text()
+                        for tool_call in self.run_response.formatted_tool_calls:
+                            tool_calls_content.append(f"• {tool_call}\n")
+
+                        tool_calls_panel = create_panel(
+                            content=tool_calls_content.plain.rstrip(),
+                            title="Tool Calls",
+                            border_style="yellow",
+                        )
+                        panels.append(tool_calls_panel)
+
                     if len(_response_content) > 0:
                         render = True
                         # Create panel for response
-                        response_panel = self.create_panel(
+                        response_panel = create_panel(
                             content=response_content_stream,
                             title=f"Response ({response_timer.elapsed:.1f}s)",
                             border_style="blue",
@@ -3765,20 +3963,20 @@ class Agent:
                     if render:
                         live_log.update(Group(*panels))
 
-                if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
-                    md_content = "\n".join(
-                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
-                        for i, citation in enumerate(resp.citations.urls)
-                        if citation.url  # Only include citations with valid URLs
-                    )
-                    if md_content:  # Only create panel if there are citations
-                        citations_panel = self.create_panel(
-                            content=Markdown(md_content),
-                            title="Citations",
-                            border_style="green",
+                    if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                        md_content = "\n".join(
+                            f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                            for i, citation in enumerate(resp.citations.urls)
+                            if citation.url  # Only include citations with valid URLs
                         )
-                        panels.append(citations_panel)
-                        live_log.update(Group(*panels))
+                        if md_content:  # Only create panel if there are citations
+                            citations_panel = create_panel(
+                                content=Markdown(md_content),
+                                title="Citations",
+                                border_style="green",
+                            )
+                            panels.append(citations_panel)
+                            live_log.update(Group(*panels))
                 response_timer.stop()
 
                 # Final update to remove the "Thinking..." status
@@ -3796,7 +3994,7 @@ class Agent:
                 if message and show_message:
                     # Convert message to a panel
                     message_content = get_text_from_message(message)
-                    message_panel = self.create_panel(
+                    message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
                         border_style="cyan",
@@ -3813,6 +4011,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     stream=False,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
                 )
                 response_timer.stop()
@@ -3833,7 +4032,7 @@ class Agent:
                         if step.title is not None:
                             step_content.append(f"{step.title}\n", "bold")
                         if step.action is not None:
-                            step_content.append(f"{step.action}\n", "dim")
+                            step_content.append(Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim"))
                         if step.result is not None:
                             step_content.append(Text.from_markup(step.result, style="dim"))
 
@@ -3847,7 +4046,7 @@ class Agent:
                                 step_content.append(
                                     Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim")
                                 )
-                        reasoning_panel = self.create_panel(
+                        reasoning_panel = create_panel(
                             content=step_content, title=f"Reasoning step {i}", border_style="green"
                         )
                         panels.append(reasoning_panel)
@@ -3855,7 +4054,7 @@ class Agent:
 
                 if isinstance(run_response, RunResponse) and run_response.thinking is not None:
                     # Create panel for thinking
-                    thinking_panel = self.create_panel(
+                    thinking_panel = create_panel(
                         content=Text(run_response.thinking),
                         title=f"Thinking ({response_timer.elapsed:.1f}s)",
                         border_style="green",
@@ -3863,13 +4062,26 @@ class Agent:
                     panels.append(thinking_panel)
                     live_log.update(Group(*panels))
 
+                # Add tool calls panel if available
+                if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
+                    # Create bullet points for each tool call
+                    tool_calls_content = Text()
+                    for tool_call in run_response.formatted_tool_calls:
+                        tool_calls_content.append(f"• {tool_call}\n")
+
+                    tool_calls_panel = create_panel(
+                        content=tool_calls_content.plain.rstrip(),
+                        title="Tool Calls",
+                        border_style="yellow",
+                    )
+                    panels.append(tool_calls_panel)
+                    live_log.update(Group(*panels))
+
                 response_content_batch: Union[str, JSON, Markdown] = ""
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:
-                            escaped_content = self.escape_markdown_tags(
-                                run_response.content, tags_to_include_in_markdown
-                            )
+                            escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
                             response_content_batch = Markdown(escaped_content)
                         else:
                             response_content_batch = run_response.get_content_as_string(indent=4)
@@ -3879,15 +4091,15 @@ class Agent:
                                 run_response.content.model_dump_json(exclude_none=True), indent=2
                             )
                         except Exception as e:
-                            logger.warning(f"Failed to convert response to JSON: {e}")
+                            log_warning(f"Failed to convert response to JSON: {e}")
                     else:
                         try:
                             response_content_batch = JSON(json.dumps(run_response.content), indent=4)
                         except Exception as e:
-                            logger.warning(f"Failed to convert response to JSON: {e}")
+                            log_warning(f"Failed to convert response to JSON: {e}")
 
                 # Create panel for response
-                response_panel = self.create_panel(
+                response_panel = create_panel(
                     content=response_content_batch,
                     title=f"Response ({response_timer.elapsed:.1f}s)",
                     border_style="blue",
@@ -3905,7 +4117,7 @@ class Agent:
                         if citation.url  # Only include citations with valid URLs
                     )
                     if md_content:  # Only create panel if there are citations
-                        citations_panel = self.create_panel(
+                        citations_panel = create_panel(
                             content=Markdown(md_content),
                             title="Citations",
                             border_style="green",
@@ -3927,6 +4139,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: bool = False,
+        stream_intermediate_steps: bool = False,
         markdown: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -3949,9 +4162,10 @@ class Agent:
             self.markdown = True
 
         if self.response_model is not None:
-            markdown = False
             self.markdown = False
             stream = False
+
+        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
 
         if stream:
             _response_content: str = ""
@@ -3972,7 +4186,7 @@ class Agent:
                     render = True
                     # Convert message to a panel
                     message_content = get_text_from_message(message)
-                    message_panel = self.create_panel(
+                    message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
                         border_style="cyan",
@@ -3981,7 +4195,7 @@ class Agent:
                 if render:
                     live_log.update(Group(*panels))
 
-                _arun_generator = await self.arun(
+                async for resp in await self.arun(
                     message=message,
                     messages=messages,
                     audio=audio,
@@ -3989,9 +4203,9 @@ class Agent:
                     videos=videos,
                     files=files,
                     stream=True,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
-                )
-                async for resp in _arun_generator:
+                ):
                     if isinstance(resp, RunResponse):
                         if resp.event == RunEvent.run_response:
                             if isinstance(resp.content, str):
@@ -4004,7 +4218,7 @@ class Agent:
                     response_content_stream: Union[str, Markdown] = _response_content
                     # Escape special tags before markdown conversion
                     if self.markdown:
-                        escaped_content = self.escape_markdown_tags(_response_content, tags_to_include_in_markdown)
+                        escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
                         response_content_stream = Markdown(escaped_content)
 
                     panels = [status]
@@ -4012,8 +4226,8 @@ class Agent:
                     if message and show_message:
                         render = True
                         # Convert message to a panel
-                        message_content = get_text_from_message(self.format_message_with_state_variables(message))
-                        message_panel = self.create_panel(
+                        message_content = get_text_from_message(message)
+                        message_panel = create_panel(
                             content=Text(message_content, style="green"),
                             title="Message",
                             border_style="cyan",
@@ -4031,7 +4245,9 @@ class Agent:
                             if step.title is not None:
                                 step_content.append(f"{step.title}\n", "bold")
                             if step.action is not None:
-                                step_content.append(f"{step.action}\n", "dim")
+                                step_content.append(
+                                    Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim")
+                                )
                             if step.result is not None:
                                 step_content.append(Text.from_markup(step.result, style="dim"))
 
@@ -4045,7 +4261,7 @@ class Agent:
                                     step_content.append(
                                         Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim")
                                     )
-                            reasoning_panel = self.create_panel(
+                            reasoning_panel = create_panel(
                                 content=step_content, title=f"Reasoning step {i}", border_style="green"
                             )
                             panels.append(reasoning_panel)
@@ -4055,7 +4271,7 @@ class Agent:
                     if len(_response_thinking) > 0:
                         render = True
                         # Create panel for thinking
-                        thinking_panel = self.create_panel(
+                        thinking_panel = create_panel(
                             content=Text(_response_thinking),
                             title=f"Thinking ({response_timer.elapsed:.1f}s)",
                             border_style="green",
@@ -4064,10 +4280,29 @@ class Agent:
                     if render:
                         live_log.update(Group(*panels))
 
+                    # Add tool calls panel if available
+                    if (
+                        self.show_tool_calls
+                        and self.run_response is not None
+                        and self.run_response.formatted_tool_calls
+                    ):
+                        render = True
+                        # Create bullet points for each tool call
+                        tool_calls_content = Text()
+                        for tool_call in self.run_response.formatted_tool_calls:
+                            tool_calls_content.append(f"• {tool_call}\n")
+
+                        tool_calls_panel = create_panel(
+                            content=tool_calls_content.plain.rstrip(),
+                            title="Tool Calls",
+                            border_style="yellow",
+                        )
+                        panels.append(tool_calls_panel)
+
                     if len(_response_content) > 0:
                         render = True
                         # Create panel for response
-                        response_panel = self.create_panel(
+                        response_panel = create_panel(
                             content=response_content_stream,
                             title=f"Response ({response_timer.elapsed:.1f}s)",
                             border_style="blue",
@@ -4076,20 +4311,20 @@ class Agent:
                     if render:
                         live_log.update(Group(*panels))
 
-                if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
-                    md_content = "\n".join(
-                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
-                        for i, citation in enumerate(resp.citations.urls)
-                        if citation.url  # Only include citations with valid URLs
-                    )
-                    if md_content:  # Only create panel if there are citations
-                        citations_panel = self.create_panel(
-                            content=Markdown(md_content),
-                            title="Citations",
-                            border_style="green",
+                    if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                        md_content = "\n".join(
+                            f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
+                            for i, citation in enumerate(resp.citations.urls)
+                            if citation.url  # Only include citations with valid URLs
                         )
-                        panels.append(citations_panel)
-                        live_log.update(Group(*panels))
+                        if md_content:  # Only create panel if there are citations
+                            citations_panel = create_panel(
+                                content=Markdown(md_content),
+                                title="Citations",
+                                border_style="green",
+                            )
+                            panels.append(citations_panel)
+                            live_log.update(Group(*panels))
                 response_timer.stop()
 
                 # Final update to remove the "Thinking..." status
@@ -4107,7 +4342,7 @@ class Agent:
                 if message and show_message:
                     # Convert message to a panel
                     message_content = get_text_from_message(message)
-                    message_panel = self.create_panel(
+                    message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
                         border_style="cyan",
@@ -4122,7 +4357,9 @@ class Agent:
                     audio=audio,
                     images=images,
                     videos=videos,
+                    files=files,
                     stream=False,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
                 )
                 response_timer.stop()
@@ -4143,7 +4380,7 @@ class Agent:
                         if step.title is not None:
                             step_content.append(f"{step.title}\n", "bold")
                         if step.action is not None:
-                            step_content.append(f"{step.action}\n", "dim")
+                            step_content.append(Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim"))
                         if step.result is not None:
                             step_content.append(Text.from_markup(step.result, style="dim"))
 
@@ -4157,7 +4394,7 @@ class Agent:
                                 step_content.append(
                                     Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim")
                                 )
-                        reasoning_panel = self.create_panel(
+                        reasoning_panel = create_panel(
                             content=step_content, title=f"Reasoning step {i}", border_style="green"
                         )
                         panels.append(reasoning_panel)
@@ -4165,7 +4402,7 @@ class Agent:
 
                 if isinstance(run_response, RunResponse) and run_response.thinking is not None:
                     # Create panel for thinking
-                    thinking_panel = self.create_panel(
+                    thinking_panel = create_panel(
                         content=Text(run_response.thinking),
                         title=f"Thinking ({response_timer.elapsed:.1f}s)",
                         border_style="green",
@@ -4173,13 +4410,24 @@ class Agent:
                     panels.append(thinking_panel)
                     live_log.update(Group(*panels))
 
+                if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
+                    tool_calls_content = Text()
+                    for tool_call in run_response.formatted_tool_calls:
+                        tool_calls_content.append(f"• {tool_call}\n")
+
+                    tool_calls_panel = create_panel(
+                        content=tool_calls_content.plain.rstrip(),
+                        title="Tool Calls",
+                        border_style="yellow",
+                    )
+                    panels.append(tool_calls_panel)
+                    live_log.update(Group(*panels))
+
                 response_content_batch: Union[str, JSON, Markdown] = ""
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:
-                            escaped_content = self.escape_markdown_tags(
-                                run_response.content, tags_to_include_in_markdown
-                            )
+                            escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
                             response_content_batch = Markdown(escaped_content)
                         else:
                             response_content_batch = run_response.get_content_as_string(indent=4)
@@ -4189,15 +4437,15 @@ class Agent:
                                 run_response.content.model_dump_json(exclude_none=True), indent=2
                             )
                         except Exception as e:
-                            logger.warning(f"Failed to convert response to JSON: {e}")
+                            log_warning(f"Failed to convert response to JSON: {e}")
                     else:
                         try:
                             response_content_batch = JSON(json.dumps(run_response.content), indent=4)
                         except Exception as e:
-                            logger.warning(f"Failed to convert response to JSON: {e}")
+                            log_warning(f"Failed to convert response to JSON: {e}")
 
                 # Create panel for response
-                response_panel = self.create_panel(
+                response_panel = create_panel(
                     content=response_content_batch,
                     title=f"Response ({response_timer.elapsed:.1f}s)",
                     border_style="blue",
@@ -4215,7 +4463,7 @@ class Agent:
                         if citation.url  # Only include citations with valid URLs
                     )
                     if md_content:  # Only create panel if there are citations
-                        citations_panel = self.create_panel(
+                        citations_panel = create_panel(
                             content=Markdown(md_content),
                             title="Citations",
                             border_style="green",

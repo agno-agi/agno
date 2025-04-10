@@ -5,6 +5,7 @@ from agno.utils.log import logger
 
 def is_origin_union_type(origin: Any) -> bool:
     import sys
+
     if sys.version_info.minor >= 10:
         from types import UnionType  # type: ignore
 
@@ -19,7 +20,7 @@ def get_json_type_for_py_type(arg: str) -> str:
     :param arg: The type to get the JSON schema type for.
     :return: The JSON schema type.
     """
-    # logger.info(f"Getting JSON type for: {arg}")
+    # log_info(f"Getting JSON type for: {arg}")
     if arg in ("int", "float", "complex", "Decimal"):
         return "number"
     elif arg in ("str", "string"):
@@ -38,11 +39,11 @@ def get_json_type_for_py_type(arg: str) -> str:
 
 
 def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
-    # logger.info(f"Getting JSON schema for arg: {t}")
+    # log_info(f"Getting JSON schema for arg: {t}")
     type_args = get_args(t)
-    # logger.info(f"Type args: {type_args}")
+    # log_info(f"Type args: {type_args}")
     type_origin = get_origin(t)
-    # logger.info(f"Type origin: {type_origin}")
+    # log_info(f"Type origin: {type_origin}")
 
     if type_origin is not None:
         if type_origin in (list, tuple, set, frozenset):
@@ -64,7 +65,11 @@ def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
                     continue
             return {"anyOf": types} if types else None
 
-    return {"type": get_json_type_for_py_type(t.__name__)}
+    json_schema: Dict[str, Any] = {"type": get_json_type_for_py_type(t.__name__)}
+    if json_schema["type"] == "object":
+        json_schema["properties"] = {}
+        json_schema["additionalProperties"] = False
+    return json_schema
 
 
 def get_json_schema(
@@ -78,7 +83,7 @@ def get_json_schema(
         json_schema["additionalProperties"] = False
 
     for k, v in type_hints.items():
-        # logger.info(f"Parsing arg: {k} | {v}")
+        # log_info(f"Parsing arg: {k} | {v}")
         if k == "return":
             continue
 

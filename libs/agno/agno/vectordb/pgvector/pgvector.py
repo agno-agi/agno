@@ -21,7 +21,7 @@ except ImportError:
 from agno.document import Document
 from agno.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
@@ -98,7 +98,7 @@ class PgVector(VectorDb):
             from agno.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -130,7 +130,7 @@ class PgVector(VectorDb):
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
         # Database table
         self.table: Table = self.get_table()
-        logger.debug(f"Initialized PgVector with table '{self.schema}.{self.table_name}'")
+        log_debug(f"Initialized PgVector with table '{self.schema}.{self.table_name}'")
 
     def get_table_v1(self) -> Table:
         """
@@ -183,7 +183,7 @@ class PgVector(VectorDb):
         Returns:
             bool: True if the table exists, False otherwise.
         """
-        logger.debug(f"Checking if table '{self.table.fullname}' exists.")
+        log_debug(f"Checking if table '{self.table.fullname}' exists.")
         try:
             return inspect(self.db_engine).has_table(self.table_name, schema=self.schema)
         except Exception as e:
@@ -196,12 +196,12 @@ class PgVector(VectorDb):
         """
         if not self.table_exists():
             with self.Session() as sess, sess.begin():
-                logger.debug("Creating extension: vector")
+                log_debug("Creating extension: vector")
                 sess.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
                 if self.schema is not None:
-                    logger.debug(f"Creating schema: {self.schema}")
+                    log_debug(f"Creating schema: {self.schema}")
                     sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
-            logger.debug(f"Creating table: {self.table_name}")
+            log_debug(f"Creating table: {self.table_name}")
             self.table.create(self.db_engine)
 
     def _record_exists(self, column, value) -> bool:
@@ -292,7 +292,7 @@ class PgVector(VectorDb):
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
                     batch_docs = documents[i : i + batch_size]
-                    logger.debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
+                    log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
                         # Prepare documents for insertion
                         batch_records = []
@@ -320,7 +320,7 @@ class PgVector(VectorDb):
                         insert_stmt = postgresql.insert(self.table)
                         sess.execute(insert_stmt, batch_records)
                         sess.commit()  # Commit batch independently
-                        logger.info(f"Inserted batch of {len(batch_records)} documents.")
+                        log_info(f"Inserted batch of {len(batch_records)} documents.")
                     except Exception as e:
                         logger.error(f"Error with batch starting at index {i}: {e}")
                         sess.rollback()  # Rollback the current batch if there's an error
@@ -356,7 +356,7 @@ class PgVector(VectorDb):
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
                     batch_docs = documents[i : i + batch_size]
-                    logger.debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
+                    log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
                         # Prepare documents for upserting
                         batch_records = []
@@ -396,7 +396,7 @@ class PgVector(VectorDb):
                         )
                         sess.execute(upsert_stmt)
                         sess.commit()  # Commit batch independently
-                        logger.info(f"Upserted batch of {len(batch_records)} documents.")
+                        log_info(f"Upserted batch of {len(batch_records)} documents.")
                     except Exception as e:
                         logger.error(f"Error with batch starting at index {i}: {e}")
                         sess.rollback()  # Rollback the current batch if there's an error
@@ -478,7 +478,7 @@ class PgVector(VectorDb):
             stmt = stmt.limit(limit)
 
             # Log the query for debugging
-            logger.debug(f"Vector search query: {stmt}")
+            log_debug(f"Vector search query: {stmt}")
 
             # Execute the query
             try:
@@ -579,7 +579,7 @@ class PgVector(VectorDb):
             stmt = stmt.limit(limit)
 
             # Log the query for debugging
-            logger.debug(f"Keyword search query: {stmt}")
+            log_debug(f"Keyword search query: {stmt}")
 
             # Execute the query
             try:
@@ -699,7 +699,7 @@ class PgVector(VectorDb):
             stmt = stmt.limit(limit)
 
             # Log the query for debugging
-            logger.debug(f"Hybrid search query: {stmt}")
+            log_debug(f"Hybrid search query: {stmt}")
 
             # Execute the query
             try:
@@ -740,14 +740,14 @@ class PgVector(VectorDb):
         """
         if self.table_exists():
             try:
-                logger.debug(f"Dropping table '{self.table.fullname}'.")
+                log_debug(f"Dropping table '{self.table.fullname}'.")
                 self.table.drop(self.db_engine)
-                logger.info(f"Table '{self.table.fullname}' dropped successfully.")
+                log_info(f"Table '{self.table.fullname}' dropped successfully.")
             except Exception as e:
                 logger.error(f"Error dropping table '{self.table.fullname}': {e}")
                 raise
         else:
-            logger.info(f"Table '{self.table.fullname}' does not exist.")
+            log_info(f"Table '{self.table.fullname}' does not exist.")
 
     def exists(self) -> bool:
         """
@@ -781,10 +781,10 @@ class PgVector(VectorDb):
         Args:
             force_recreate (bool): If True, existing indexes will be dropped and recreated.
         """
-        logger.debug("==== Optimizing Vector DB ====")
+        log_debug("==== Optimizing Vector DB ====")
         self._create_vector_index(force_recreate=force_recreate)
         self._create_gin_index(force_recreate=force_recreate)
-        logger.debug("==== Optimized Vector DB ====")
+        log_debug("==== Optimized Vector DB ====")
 
     def _index_exists(self, index_name: str) -> bool:
         """
@@ -823,7 +823,7 @@ class PgVector(VectorDb):
             force_recreate (bool): If True, existing index will be dropped and recreated.
         """
         if self.vector_index is None:
-            logger.debug("No vector index specified, skipping vector index optimization.")
+            log_debug("No vector index specified, skipping vector index optimization.")
             return
 
         # Generate index name if not provided
@@ -845,12 +845,12 @@ class PgVector(VectorDb):
         vector_index_exists = self._index_exists(self.vector_index.name)
 
         if vector_index_exists:
-            logger.info(f"Vector index '{self.vector_index.name}' already exists.")
+            log_info(f"Vector index '{self.vector_index.name}' already exists.")
             if force_recreate:
-                logger.info(f"Force recreating vector index '{self.vector_index.name}'. Dropping existing index.")
+                log_info(f"Force recreating vector index '{self.vector_index.name}'. Dropping existing index.")
                 self._drop_index(self.vector_index.name)
             else:
-                logger.info(f"Skipping vector index creation as index '{self.vector_index.name}' already exists.")
+                log_info(f"Skipping vector index creation as index '{self.vector_index.name}' already exists.")
                 return
 
         # Proceed to create the vector index
@@ -858,7 +858,7 @@ class PgVector(VectorDb):
             with self.Session() as sess, sess.begin():
                 # Set configuration parameters
                 if self.vector_index.configuration:
-                    logger.debug(f"Setting configuration: {self.vector_index.configuration}")
+                    log_debug(f"Setting configuration: {self.vector_index.configuration}")
                     for key, value in self.vector_index.configuration.items():
                         sess.execute(text(f"SET {key} = :value;"), {"value": value})
 
@@ -889,7 +889,7 @@ class PgVector(VectorDb):
         num_lists = self.vector_index.lists
         if self.vector_index.dynamic_lists:
             total_records = self.get_count()
-            logger.debug(f"Number of records: {total_records}")
+            log_debug(f"Number of records: {total_records}")
             if total_records < 1000000:
                 num_lists = max(int(total_records / 1000), 1)  # Ensure at least one list
             else:
@@ -898,7 +898,7 @@ class PgVector(VectorDb):
         # Set ivfflat.probes
         sess.execute(text("SET ivfflat.probes = :probes;"), {"probes": self.vector_index.probes})
 
-        logger.debug(
+        log_debug(
             f"Creating Ivfflat index '{self.vector_index.name}' on table '{table_fullname}' with "
             f"lists: {num_lists}, probes: {self.vector_index.probes}, "
             f"and distance metric: {index_distance}"
@@ -924,7 +924,7 @@ class PgVector(VectorDb):
         # Cast index to HNSW for type hinting
         self.vector_index = cast(HNSW, self.vector_index)
 
-        logger.debug(
+        log_debug(
             f"Creating HNSW index '{self.vector_index.name}' on table '{table_fullname}' with "
             f"m: {self.vector_index.m}, ef_construction: {self.vector_index.ef_construction}, "
             f"and distance metric: {index_distance}"
@@ -950,18 +950,18 @@ class PgVector(VectorDb):
         gin_index_exists = self._index_exists(gin_index_name)
 
         if gin_index_exists:
-            logger.info(f"GIN index '{gin_index_name}' already exists.")
+            log_info(f"GIN index '{gin_index_name}' already exists.")
             if force_recreate:
-                logger.info(f"Force recreating GIN index '{gin_index_name}'. Dropping existing index.")
+                log_info(f"Force recreating GIN index '{gin_index_name}'. Dropping existing index.")
                 self._drop_index(gin_index_name)
             else:
-                logger.info(f"Skipping GIN index creation as index '{gin_index_name}' already exists.")
+                log_info(f"Skipping GIN index creation as index '{gin_index_name}' already exists.")
                 return
 
         # Proceed to create GIN index
         try:
             with self.Session() as sess, sess.begin():
-                logger.debug(f"Creating GIN index '{gin_index_name}' on table '{self.table.fullname}'.")
+                log_debug(f"Creating GIN index '{gin_index_name}' on table '{self.table.fullname}'.")
                 # Create index
                 create_gin_index_sql = text(
                     f'CREATE INDEX "{gin_index_name}" ON {self.table.fullname} '
@@ -985,7 +985,7 @@ class PgVector(VectorDb):
             with self.Session() as sess:
                 sess.execute(delete(self.table))
                 sess.commit()
-                logger.info(f"Deleted all records from table '{self.table.fullname}'.")
+                log_info(f"Deleted all records from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
             logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
@@ -1046,4 +1046,7 @@ class PgVector(VectorDb):
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
     async def async_exists(self) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

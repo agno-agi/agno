@@ -7,7 +7,7 @@ from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.media import Image
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.models.message import Message
-from agno.utils.log import logger
+from agno.utils.log import log_error, log_warning
 
 try:
     from anthropic import AnthropicBedrock, APIConnectionError, APIStatusError, AsyncAnthropicBedrock, RateLimitError
@@ -17,13 +17,13 @@ try:
         ToolUseBlock,
     )
 except ImportError:
-    logger.error("`anthropic[bedrock]` not installed. Please install it via `pip install anthropic[bedrock]`.")
+    log_error("`anthropic[bedrock]` not installed. Please install it via `pip install anthropic[bedrock]`.")
     raise
 
 try:
     from boto3.session import Session
 except ImportError:
-    logger.error("`boto3` not installed. Please install it via `pip install boto3`.")
+    log_error("`boto3` not installed. Please install it via `pip install boto3`.")
     raise
 
 
@@ -39,10 +39,29 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     """
     Add an image to a message by converting it to base64 encoded format.
     """
-    import base64
-    import imghdr
+    using_filetype = False
 
-    type_mapping = {"jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp"}
+    import base64
+
+    # 'imghdr' was deprecated in Python 3.11: https://docs.python.org/3/library/imghdr.html
+    # 'filetype' used as a fallback
+    try:
+        import imghdr
+    except (ModuleNotFoundError, ImportError):
+        try:
+            import filetype
+
+            using_filetype = True
+        except (ModuleNotFoundError, ImportError):
+            raise ImportError("`filetype` not installed. Please install using `pip install filetype`")
+
+    type_mapping = {
+        "jpeg": "image/jpeg",
+        "jpg": "image/jpeg",
+        "png": "image/png",
+        "gif": "image/gif",
+        "webp": "image/webp",
+    }
 
     try:
         # Case 1: Image is a URL
@@ -58,7 +77,7 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
                 with open(image.filepath, "rb") as f:
                     content_bytes = f.read()
             else:
-                logger.error(f"Image file not found: {image}")
+                log_error(f"Image file not found: {image}")
                 return None
 
         # Case 3: Image is a bytes object
@@ -66,17 +85,26 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             content_bytes = image.content
 
         else:
-            logger.error(f"Unsupported image type: {type(image)}")
+            log_error(f"Unsupported image type: {type(image)}")
             return None
 
-        img_type = imghdr.what(None, h=content_bytes)  # type: ignore
+        if using_filetype:
+            kind = filetype.guess(content_bytes)
+            if not kind:
+                log_error("Unable to determine image type")
+                return None
+
+            img_type = kind.extension
+        else:
+            img_type = imghdr.what(None, h=content_bytes)  # type: ignore
+
         if not img_type:
-            logger.error("Unable to determine image type")
+            log_error("Unable to determine image type")
             return None
 
         media_type = type_mapping.get(img_type)
         if not media_type:
-            logger.error(f"Unsupported image type: {img_type}")
+            log_error(f"Unsupported image type: {img_type}")
             return None
 
         return {
@@ -89,7 +117,7 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         }
 
     except Exception as e:
-        logger.error(f"Error processing image: {e}")
+        log_error(f"Error processing image: {e}")
         return None
 
 
@@ -103,6 +131,7 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
     Returns:
         Tuple[List[Dict[str, str]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
+
     chat_messages: List[Dict[str, str]] = []
     system_messages: List[str] = []
 
@@ -122,14 +151,14 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
                     if image_content:
                         content.append(image_content)
 
-            if message.files is not None:
-                logger.warning("Files are not supported for AWS Bedrock Claude")
+            if message.files is not None and len(message.files) > 0:
+                log_warning("Files are not supported for AWS Bedrock Claude")
 
-            if message.audio is not None:
-                logger.warning("Audio is not supported for AWS Bedrock Claude")
+            if message.audio is not None and len(message.audio) > 0:
+                log_warning("Audio is not supported for AWS Bedrock Claude")
 
-            if message.videos is not None:
-                logger.warning("Video is not supported for AWS Bedrock Claude")
+            if message.videos is not None and len(message.videos) > 0:
+                log_warning("Video is not supported for AWS Bedrock Claude")
 
         # Handle tool calls from history
         elif message.role == "assistant":
@@ -294,6 +323,7 @@ class Claude(AnthropicClaude):
             RateLimitError: If the API rate limit is exceeded
             APIStatusError: For other API-related errors
         """
+
         try:
             chat_messages, system_message = _format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message)
@@ -304,18 +334,18 @@ class Claude(AnthropicClaude):
                 **request_kwargs,
             )
         except APIConnectionError as e:
-            logger.error(f"Connection error while calling Claude API: {str(e)}")
+            log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except RateLimitError as e:
-            logger.warning(f"Rate limit exceeded: {str(e)}")
+            log_warning(f"Rate limit exceeded: {str(e)}")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            logger.error(f"Claude API error (status {e.status_code}): {str(e)}")
+            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            logger.error(f"Unexpected error calling Claude API: {str(e)}")
+            log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Any:
@@ -328,6 +358,7 @@ class Claude(AnthropicClaude):
         Returns:
             Any: The streamed response from the model.
         """
+
         chat_messages, system_message = _format_messages(messages)
         request_kwargs = self._prepare_request_kwargs(system_message)
 
@@ -342,18 +373,18 @@ class Claude(AnthropicClaude):
                 .__enter__()
             )
         except APIConnectionError as e:
-            logger.error(f"Connection error while calling Claude API: {str(e)}")
+            log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except RateLimitError as e:
-            logger.warning(f"Rate limit exceeded: {str(e)}")
+            log_warning(f"Rate limit exceeded: {str(e)}")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            logger.error(f"Claude API error (status {e.status_code}): {str(e)}")
+            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            logger.error(f"Unexpected error calling Claude API: {str(e)}")
+            log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> AnthropicMessage:
@@ -371,6 +402,7 @@ class Claude(AnthropicClaude):
             RateLimitError: If the API rate limit is exceeded
             APIStatusError: For other API-related errors
         """
+
         try:
             chat_messages, system_message = _format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message)
@@ -381,18 +413,18 @@ class Claude(AnthropicClaude):
                 **request_kwargs,
             )
         except APIConnectionError as e:
-            logger.error(f"Connection error while calling Claude API: {str(e)}")
+            log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except RateLimitError as e:
-            logger.warning(f"Rate limit exceeded: {str(e)}")
+            log_warning(f"Rate limit exceeded: {str(e)}")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            logger.error(f"Claude API error (status {e.status_code}): {str(e)}")
+            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            logger.error(f"Unexpected error calling Claude API: {str(e)}")
+            log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
@@ -405,6 +437,7 @@ class Claude(AnthropicClaude):
         Returns:
             Any: The streamed response from the model.
         """
+
         try:
             chat_messages, system_message = _format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message)
@@ -416,16 +449,16 @@ class Claude(AnthropicClaude):
                 async for chunk in stream:
                     yield chunk
         except APIConnectionError as e:
-            logger.error(f"Connection error while calling Claude API: {str(e)}")
+            log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except RateLimitError as e:
-            logger.warning(f"Rate limit exceeded: {str(e)}")
+            log_warning(f"Rate limit exceeded: {str(e)}")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            logger.error(f"Claude API error (status {e.status_code}): {str(e)}")
+            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            logger.error(f"Unexpected error calling Claude API: {str(e)}")
+            log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e

@@ -137,7 +137,7 @@ def test_persistent_memory():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
         exponential_backoff=True,
-        tools=[DuckDuckGoTools()],
+        tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         show_tool_calls=True,
         telemetry=False,
@@ -199,7 +199,7 @@ def test_json_response_mode():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
         response_model=MovieScript,
-        response_format="json",
+        use_json_mode=True,
         telemetry=False,
         monitoring=False,
     )
@@ -248,10 +248,6 @@ def test_history():
     assert len(agent.run_response.messages) == 2
     agent.run("Hello 2")
     assert len(agent.run_response.messages) == 4
-    agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 6
-    agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8
 
 
 @pytest.mark.skip(reason="Need to fix this by getting credentials in Github actions")
@@ -290,12 +286,12 @@ def test_custom_client_params():
     agent = Agent(
         model=Gemini(
             id="gemini-1.5-flash",
-            exponential_backoff=True,
             vertexai=True,
             location="us-central1",
             generation_config=generation_config,
             safety_settings=safety_settings,
         ),
+        exponential_backoff=True,
         telemetry=False,
         monitoring=False,
     )

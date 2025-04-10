@@ -2,7 +2,7 @@ from os import getenv
 from typing import List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from apify_client import ApifyClient
@@ -16,8 +16,9 @@ class ApifyTools(Toolkit):
         api_key: Optional[str] = None,
         website_content_crawler: bool = True,
         web_scraper: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="apify_tools")
+        super().__init__(name="apify_tools", **kwargs)
 
         self.api_key = api_key or getenv("MY_APIFY_TOKEN")
         if not self.api_key:
@@ -45,7 +46,7 @@ class ApifyTools(Toolkit):
 
         client = ApifyClient(self.api_key)
 
-        logger.debug(f"Crawling URLs: {urls}")
+        log_debug(f"Crawling URLs: {urls}")
 
         formatted_urls = [{"url": url} for url in urls]
 
@@ -78,7 +79,7 @@ class ApifyTools(Toolkit):
 
         client = ApifyClient(self.api_key)
 
-        logger.debug(f"Scrapping URLs: {urls}")
+        log_debug(f"Scrapping URLs: {urls}")
 
         formatted_urls = [{"url": url} for url in urls]
 

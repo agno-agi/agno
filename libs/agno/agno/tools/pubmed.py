@@ -5,7 +5,7 @@ from xml.etree import ElementTree
 import httpx
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug
 
 
 class PubmedTools(Toolkit):
@@ -13,8 +13,9 @@ class PubmedTools(Toolkit):
         self,
         email: str = "your_email@example.com",
         max_results: Optional[int] = None,
+        **kwargs,
     ):
-        super().__init__(name="pubmed")
+        super().__init__(name="pubmed", **kwargs)
         self.max_results: Optional[int] = max_results
         self.email: str = email
 
@@ -65,7 +66,7 @@ class PubmedTools(Toolkit):
             str: A JSON string containing the search results.
         """
         try:
-            logger.debug(f"Searching PubMed for: {query}")
+            log_debug(f"Searching PubMed for: {query}")
             ids = self.fetch_pubmed_ids(query, self.max_results or max_results, self.email)
             details_root = self.fetch_details(ids)
             articles = self.parse_details(details_root)

@@ -24,7 +24,7 @@ def hash_string_sha256(input_string):
     return hex_digest
 
 
-def parse_structured_output(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
+def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
     structured_output = None
     try:
         # First attempt: direct JSON validation
@@ -41,7 +41,7 @@ def parse_structured_output(content: str, response_model: Type[BaseModel]) -> Op
 
         # Clean the JSON string
         # Remove markdown formatting
-        content = re.sub(r"[*_`#]", "", content)
+        content = re.sub(r"[*`#]", "", content)
 
         # Handle newlines and control characters
         content = content.replace("\n", " ").replace("\r", "")

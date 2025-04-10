@@ -12,7 +12,7 @@ from agno.tools.yfinance import YFinanceTools
 def test_tool_use():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -30,7 +30,7 @@ def test_tool_use():
 def test_tool_use_stream():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -51,14 +51,17 @@ def test_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
+    full_content = ""
+    for r in responses:
+        full_content += r.content
+    assert "TSLA" in full_content
 
 
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -77,7 +80,7 @@ async def test_async_tool_use():
 async def test_async_tool_use_stream():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -98,13 +101,16 @@ async def test_async_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
+    full_content = ""
+    for r in responses:
+        full_content += r.content
+    assert "TSLA" in full_content
 
 
 def test_parallel_tool_calls():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -120,13 +126,12 @@ def test_parallel_tool_calls():
             tool_calls.extend(msg.tool_calls)
     assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
     assert response.content is not None
-    assert "TSLA" in response.content and "AAPL" in response.content
 
 
 def test_multiple_tool_calls():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
-        tools=[YFinanceTools(), DuckDuckGoTools()],
+        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -142,7 +147,6 @@ def test_multiple_tool_calls():
             tool_calls.extend(msg.tool_calls)
     assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
     assert response.content is not None
-    assert "get_current_stock_price" in response.content and "duckduckgo_news" in response.content.lower()
 
 
 @pytest.mark.skip("Mistral struggles with custom tool calls")

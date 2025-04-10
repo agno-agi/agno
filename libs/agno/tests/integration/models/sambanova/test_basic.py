@@ -128,7 +128,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=Sambanova(id="Meta-Llama-3.3-70B-Instruct"),
-        response_format="json",
+        use_json_mode=True,
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,

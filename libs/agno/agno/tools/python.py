@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 
 @functools.lru_cache(maxsize=None)
@@ -24,8 +24,9 @@ class PythonTools(Toolkit):
         read_files: bool = False,
         safe_globals: Optional[dict] = None,
         safe_locals: Optional[dict] = None,
+        **kwargs,
     ):
-        super().__init__(name="python_tools")
+        super().__init__(name="python_tools", **kwargs)
 
         self.base_dir: Path = base_dir or Path.cwd()
 
@@ -64,21 +65,21 @@ class PythonTools(Toolkit):
         try:
             warn()
             file_path = self.base_dir.joinpath(file_name)
-            logger.debug(f"Saving code to {file_path}")
+            log_debug(f"Saving code to {file_path}")
             if not file_path.parent.exists():
                 file_path.parent.mkdir(parents=True, exist_ok=True)
             if file_path.exists() and not overwrite:
                 return f"File {file_name} already exists"
             file_path.write_text(code, encoding="utf-8")
-            logger.info(f"Saved: {file_path}")
-            logger.info(f"Running {file_path}")
+            log_info(f"Saved: {file_path}")
+            log_info(f"Running {file_path}")
             globals_after_run = runpy.run_path(str(file_path), init_globals=self.safe_globals, run_name="__main__")
 
             if variable_to_return:
                 variable_value = globals_after_run.get(variable_to_return)
                 if variable_value is None:
                     return f"Variable {variable_to_return} not found"
-                logger.debug(f"Variable {variable_to_return} value: {variable_value}")
+                log_debug(f"Variable {variable_to_return} value: {variable_value}")
                 return str(variable_value)
             else:
                 return f"successfully ran {str(file_path)}"
@@ -99,13 +100,13 @@ class PythonTools(Toolkit):
             warn()
             file_path = self.base_dir.joinpath(file_name)
 
-            logger.info(f"Running {file_path}")
+            log_info(f"Running {file_path}")
             globals_after_run = runpy.run_path(str(file_path), init_globals=self.safe_globals, run_name="__main__")
             if variable_to_return:
                 variable_value = globals_after_run.get(variable_to_return)
                 if variable_value is None:
                     return f"Variable {variable_to_return} not found"
-                logger.debug(f"Variable {variable_to_return} value: {variable_value}")
+                log_debug(f"Variable {variable_to_return} value: {variable_value}")
                 return str(variable_value)
             else:
                 return f"successfully ran {str(file_path)}"
@@ -120,7 +121,7 @@ class PythonTools(Toolkit):
         :return: The contents of the file if successful, otherwise returns an error message.
         """
         try:
-            logger.info(f"Reading file: {file_name}")
+            log_info(f"Reading file: {file_name}")
             file_path = self.base_dir.joinpath(file_name)
             contents = file_path.read_text(encoding="utf-8")
             return str(contents)
@@ -134,7 +135,7 @@ class PythonTools(Toolkit):
         :return: Comma separated list of files in the base directory.
         """
         try:
-            logger.info(f"Reading files in : {self.base_dir}")
+            log_info(f"Reading files in : {self.base_dir}")
             files = [str(file_path.name) for file_path in self.base_dir.iterdir()]
             return ", ".join(files)
         except Exception as e:
@@ -155,14 +156,14 @@ class PythonTools(Toolkit):
         try:
             warn()
 
-            logger.debug(f"Running code:\n\n{code}\n\n")
+            log_debug(f"Running code:\n\n{code}\n\n")
             exec(code, self.safe_globals, self.safe_locals)
 
             if variable_to_return:
                 variable_value = self.safe_locals.get(variable_to_return)
                 if variable_value is None:
                     return f"Variable {variable_to_return} not found"
-                logger.debug(f"Variable {variable_to_return} value: {variable_value}")
+                log_debug(f"Variable {variable_to_return} value: {variable_value}")
                 return str(variable_value)
             else:
                 return "successfully ran python code"
@@ -181,7 +182,7 @@ class PythonTools(Toolkit):
         try:
             warn()
 
-            logger.debug(f"Installing package {package_name}")
+            log_debug(f"Installing package {package_name}")
             import subprocess
             import sys
 

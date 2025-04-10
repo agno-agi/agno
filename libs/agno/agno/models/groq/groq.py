@@ -8,7 +8,7 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.log import log_error, log_warning
 from agno.utils.openai import images_to_message
 
 try:
@@ -69,7 +69,7 @@ class Groq(Model):
         if not self.api_key:
             self.api_key = getenv("GROQ_API_KEY")
             if not self.api_key:
-                logger.error("GROQ_API_KEY not set. Please set the GROQ_API_KEY environment variable.")
+                log_error("GROQ_API_KEY not set. Please set the GROQ_API_KEY environment variable.")
 
         # Define base client params
         base_params = {
@@ -231,11 +231,11 @@ class Groq(Model):
                 message_dict["content"] = [{"type": "text", "text": message.content}]
                 message_dict["content"].extend(images_to_message(images=message.images))
 
-        if message.audio is not None:
-            logger.warning("Audio input is currently unsupported.")
+        if message.audio is not None and len(message.audio) > 0:
+            log_warning("Audio input is currently unsupported.")
 
-        if message.videos is not None:
-            logger.warning("Video input is currently unsupported.")
+        if message.videos is not None and len(message.videos) > 0:
+            log_warning("Video input is currently unsupported.")
 
         return message_dict
 
@@ -256,15 +256,15 @@ class Groq(Model):
                 **self.request_kwargs,
             )
         except (APIResponseValidationError, APIStatusError) as e:
-            logger.error(f"Error calling Groq API: {str(e)}")
+            log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(
                 message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
             ) from e
         except APIError as e:
-            logger.error(f"Error calling Groq API: {str(e)}")
+            log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            logger.error(f"Unexpected error calling Groq API: {str(e)}")
+            log_error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> ChatCompletion:
@@ -284,15 +284,15 @@ class Groq(Model):
                 **self.request_kwargs,
             )
         except (APIResponseValidationError, APIStatusError) as e:
-            logger.error(f"Error calling Groq API: {str(e)}")
+            log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(
                 message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
             ) from e
         except APIError as e:
-            logger.error(f"Error calling Groq API: {str(e)}")
+            log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            logger.error(f"Unexpected error calling Groq API: {str(e)}")
+            log_error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
@@ -313,15 +313,15 @@ class Groq(Model):
                 **self.request_kwargs,
             )
         except (APIResponseValidationError, APIStatusError) as e:
-            logger.error(f"Error calling Groq API: {str(e)}")
+            log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(
                 message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
             ) from e
         except APIError as e:
-            logger.error(f"Error calling Groq API: {str(e)}")
+            log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            logger.error(f"Unexpected error calling Groq API: {str(e)}")
+            log_error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> Any:
@@ -345,15 +345,15 @@ class Groq(Model):
             async for chunk in stream:  # type: ignore
                 yield chunk
         except (APIResponseValidationError, APIStatusError) as e:
-            logger.error(f"Error calling Groq API: {str(e)}")
+            log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(
                 message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
             ) from e
         except APIError as e:
-            logger.error(f"Error calling Groq API: {str(e)}")
+            log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            logger.error(f"Unexpected error calling Groq API: {str(e)}")
+            log_error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
@@ -425,7 +425,7 @@ class Groq(Model):
             try:
                 model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
             except Exception as e:
-                logger.warning(f"Error processing tool calls: {e}")
+                log_warning(f"Error processing tool calls: {e}")
 
         # Add usage metrics if present
         if response.usage is not None:

@@ -12,6 +12,17 @@ except ImportError:
 
 
 class FirecrawlTools(Toolkit):
+    """
+    Firecrawl is a tool for scraping and crawling websites.
+    Args:
+        api_key (Optional[str]): The API key to use for the Firecrawl app.
+        formats (Optional[List[str]]): The formats to use for the Firecrawl app.
+        limit (int): The maximum number of pages to crawl.
+        scrape (bool): Whether to scrape the website.
+        crawl (bool): Whether to crawl the website.
+        api_url (Optional[str]): The API URL to use for the Firecrawl app.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -20,8 +31,9 @@ class FirecrawlTools(Toolkit):
         scrape: bool = True,
         crawl: bool = False,
         api_url: Optional[str] = "https://api.firecrawl.dev",
+        **kwargs,
     ):
-        super().__init__(name="firecrawl_tools")
+        super().__init__(name="firecrawl_tools", **kwargs)
 
         self.api_key: Optional[str] = api_key or getenv("FIRECRAWL_API_KEY")
         if not self.api_key:

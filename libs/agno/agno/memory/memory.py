@@ -1,6 +1,13 @@
+from enum import Enum
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
+
+
+class MemoryRetrieval(str, Enum):
+    last_n = "last_n"
+    first_n = "first_n"
+    semantic = "semantic"
 
 
 class Memory(BaseModel):

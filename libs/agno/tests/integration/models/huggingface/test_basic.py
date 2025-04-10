@@ -150,7 +150,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
-        response_format="json",
+        use_json_mode=True,
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,
@@ -209,7 +209,7 @@ def test_history():
 def test_persistent_memory():
     agent = Agent(
         model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
-        tools=[DuckDuckGoTools()],
+        tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         show_tool_calls=True,
         telemetry=False,

@@ -2,7 +2,7 @@ import json
 import math
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 
 class CalculatorTools(Toolkit):
@@ -17,8 +17,9 @@ class CalculatorTools(Toolkit):
         is_prime: bool = False,
         square_root: bool = False,
         enable_all: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="calculator")
+        super().__init__(name="calculator", **kwargs)
 
         # Register functions in the toolkit
         if add or enable_all:
@@ -49,7 +50,7 @@ class CalculatorTools(Toolkit):
             str: JSON string of the result.
         """
         result = a + b
-        logger.info(f"Adding {a} and {b} to get {result}")
+        log_info(f"Adding {a} and {b} to get {result}")
         return json.dumps({"operation": "addition", "result": result})
 
     def subtract(self, a: float, b: float) -> str:
@@ -63,7 +64,7 @@ class CalculatorTools(Toolkit):
             str: JSON string of the result.
         """
         result = a - b
-        logger.info(f"Subtracting {b} from {a} to get {result}")
+        log_info(f"Subtracting {b} from {a} to get {result}")
         return json.dumps({"operation": "subtraction", "result": result})
 
     def multiply(self, a: float, b: float) -> str:
@@ -77,7 +78,7 @@ class CalculatorTools(Toolkit):
             str: JSON string of the result.
         """
         result = a * b
-        logger.info(f"Multiplying {a} and {b} to get {result}")
+        log_info(f"Multiplying {a} and {b} to get {result}")
         return json.dumps({"operation": "multiplication", "result": result})
 
     def divide(self, a: float, b: float) -> str:
@@ -97,7 +98,7 @@ class CalculatorTools(Toolkit):
             result = a / b
         except Exception as e:
             return json.dumps({"operation": "division", "error": e, "result": "Error"})
-        logger.info(f"Dividing {a} by {b} to get {result}")
+        log_info(f"Dividing {a} by {b} to get {result}")
         return json.dumps({"operation": "division", "result": result})
 
     def exponentiate(self, a: float, b: float) -> str:
@@ -111,7 +112,7 @@ class CalculatorTools(Toolkit):
             str: JSON string of the result.
         """
         result = math.pow(a, b)
-        logger.info(f"Raising {a} to the power of {b} to get {result}")
+        log_info(f"Raising {a} to the power of {b} to get {result}")
         return json.dumps({"operation": "exponentiation", "result": result})
 
     def factorial(self, n: int) -> str:
@@ -127,7 +128,7 @@ class CalculatorTools(Toolkit):
             logger.error("Attempt to calculate factorial of a negative number")
             return json.dumps({"operation": "factorial", "error": "Factorial of a negative number is undefined"})
         result = math.factorial(n)
-        logger.info(f"Calculating factorial of {n} to get {result}")
+        log_info(f"Calculating factorial of {n} to get {result}")
         return json.dumps({"operation": "factorial", "result": result})
 
     def is_prime(self, n: int) -> str:
@@ -160,5 +161,5 @@ class CalculatorTools(Toolkit):
             return json.dumps({"operation": "square_root", "error": "Square root of a negative number is undefined"})
 
         result = math.sqrt(n)
-        logger.info(f"Calculating square root of {n} to get {result}")
+        log_info(f"Calculating square root of {n} to get {result}")
         return json.dumps({"operation": "square_root", "result": result})

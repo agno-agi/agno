@@ -13,45 +13,53 @@
   <a href="https://github.com/agno-agi/agno/stargazers">🌟 Star Us</a>
 </div>
 
-## Overview
+## Introduction
 
-**[Agno](https://docs.agno.com) is a lightweight library for building Multimodal Agents with memory, knowledge and tools.**
+[Agno](https://docs.agno.com) is a lightweight library for building Reasoning Agents with memory, knowledge, tools and native multi-modal support. Use Agno to build Reasoning Agents, Multi-Modal Agents, Teams of Agents and Agentic Workflows.
 
-1. Build lightning-fast Agents that work with text, image, audio and video.
-2. Add memory, knowledge and tools as needed.
-3. Run anywhere, Agno is open-source.
+Here's an Agent that writes a financial report by reasoning through each step:
 
-## AI Engineering is Software Engineering
-
-When building AI products, 80% of your solution will be standard python code, and the remaining 20% will use Agents for automation. Agno is designed for such use cases.
-
-Write your AI logic using familiar programming constructs (if, else, while, for) and avoid complex abstractions like graphs and chains. Here's a simple Agent that can search the web:
-
-```python websearch_agent.py
+```python reasoning_finance_agent.py
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
-    markdown=True
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    tools=[
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True, company_news=True),
+    ],
+    instructions=[
+        "Use tables to display data",
+        "Only output the report, no other text",
+    ],
+    markdown=True,
 )
-agent.print_response("What's happening in New York?", stream=True)
+agent.print_response("Write a report on NVDA", stream=True, show_full_reasoning=True, stream_intermediate_steps=True)
 ```
+https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
 
 ## Key features
 
-Agno is designed to be simple, fast and model agnostic. Here are some key features:
+Agno is simple, fast and model-agnostic. Here are the key features:
 
-- **Lightning Fast**: Agent creation is ~10,000x faster than LangGraph (see [performance](#performance)).
+- **Lightning Fast**: Agents instantiate 10,000x faster than LangGraph and use 50x less memory (see [performance](#performance)).
 - **Model Agnostic**: Use any model, any provider, no lock-in.
-- **Multi Modal**: Native support for text, image, audio and video.
-- **Multi Agent**: Build teams of specialized agents.
-- **Memory Management**: Store agent sessions and state in a database.
-- **Knowledge Stores**: Use vector databases for RAG or dynamic few-shot.
-- **Structured Outputs**: Make Agents respond with structured data.
+- **Reasoning Agents**: Build best in class reasoning agents using Reasoning Models, Reasoning Tools or our custom `CoT+Tool-use` approach.
+- **Natively Multi Modal**: Built in support for text, image, audio and video.
+- **Multi Agent Teams**: Industry leading multi-agent architecture with 3 different modes: `route`, `collaborate` and `coordinate`.
+- **Long-term Memory**: Built in support for long-term memory with our `Storage` and `Memory` classes.
+- **Domain Knowledge**: Add domain knowledge to your Agents with our `Knowledge` classes. Fully async and highly performant.
+- **Structured Outputs**: First class support for structured outputs using native structured outputs or `json_mode`.
 - **Monitoring**: Track agent sessions and performance in real-time on [agno.com](https://app.agno.com).
+
+## Getting Started with Agno
+
+- Start by [building your first Agent](https://docs.agno.com/introduction/agents)
+- Check out the [examples](https://docs.agno.com/examples/introduction)
+- Read the [documentation](https://docs.agno.com)
 
 ## Installation
 
@@ -61,16 +69,19 @@ pip install -U agno
 
 ## What are Agents?
 
-**Agents** are AI programs that execute tasks autonomously. They solve problems by running tools, accessing knowledge and memory to improve responses. Unlike traditional programs that follow a predefined execution path, agents dynamically adapt their approach based on context, knowledge and tool results.
+**Agents** are intelligent programs that solve problems autonomously.
+
+Agents have memory, domain knowledge and the ability to use tools (like searching the web, querying a database, making API calls). Unlike traditional programs that follow a predefined execution path, Agents dynamically adapt their approach based on the context and tool results.
 
 Instead of a rigid binary definition, let's think of Agents in terms of agency and autonomy.
-
 - **Level 0**: Agents with no tools (basic inference tasks).
 - **Level 1**: Agents with tools for autonomous task execution.
 - **Level 2**: Agents with knowledge, combining memory and reasoning.
 - **Level 3**: Teams of specialized agents collaborating on complex workflows.
 
 ## Example - Basic Agent
+
+The simplest Agent is just an inference task, no tools, no memory, no knowledge.
 
 ```python
 from agno.agent import Agent
@@ -190,6 +201,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
+from agno.team import Team
 
 web_agent = Agent(
     name="Web Agent",
@@ -211,9 +223,11 @@ finance_agent = Agent(
     markdown=True,
 )
 
-agent_team = Agent(
-    team=[web_agent, finance_agent],
+agent_team = Team(
+    mode="coordinate",
+    members=[web_agent, finance_agent],
     model=OpenAIChat(id="gpt-4o"),
+    success_criteria="A comprehensive financial news report with clear sections and data-driven insights.",
     instructions=["Always include sources", "Use tables to display data"],
     show_tool_calls=True,
     markdown=True,
@@ -231,6 +245,28 @@ python agent_team.py
 ```
 
 [View this example in the cookbook](./cookbook/getting_started/05_agent_team.py)
+
+## 🚨 Global Agent Hackathon! 🚨
+
+We're thrilled to announce a month long, open source AI Agent Hackathon — open to all builders and dreamers working on agents, RAG, tool use, and multi-agent systems.
+
+### 💰 Build something extordinary, win up to $20,000 in cash
+
+We're giving away $20,000 in prizes for the most ambitious Agent projects
+
+- 🏅 10 winners: $300 each
+- 🥉 10 winners: $500 each
+- 🥈 5 winners: $1,000 each
+- 🥇 1 winner: $2,000
+- 🏆 GRAND PRIZE: $5,000 🏆
+
+> Follow this [post](https://www.agno.com/blog/agent-hackathon-april-2025) for more details and updates
+
+### 🤝 Want to partner or judge?
+
+If you're building in the AI Agent space, or want to help shape the next generation of Agent builders - we'd love to work with you.
+
+Reach out to support@agno.com to get involved.
 
 ## Performance
 

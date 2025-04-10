@@ -2,7 +2,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info
 from agno.vectordb.base import VectorDb
 from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 
@@ -28,7 +28,7 @@ class Cassandra(VectorDb):
             from agno.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.table_name: str = table_name
         self.embedder: Embedder = embedder
         self.session = session
@@ -47,7 +47,7 @@ class Cassandra(VectorDb):
     def create(self) -> None:
         """Create the table in Cassandra for storing vectors and metadata."""
         if not self.exists():
-            logger.debug(f"Cassandra VectorDB : Creating table {self.table_name}")
+            log_debug(f"Cassandra VectorDB : Creating table {self.table_name}")
             self.initialize_table()
 
     def _row_to_document(self, row: Dict[str, Any]) -> Document:
@@ -78,7 +78,7 @@ class Cassandra(VectorDb):
         return result.one()[0] > 0
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        logger.debug(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
+        log_debug(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
         futures = []
         for doc in documents:
             doc.embed(embedder=self.embedder)
@@ -102,7 +102,7 @@ class Cassandra(VectorDb):
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Keyword-based search on document metadata."""
-        logger.debug(f"Cassandra VectorDB : Performing Vector Search on {self.table_name} with query {query}")
+        log_debug(f"Cassandra VectorDB : Performing Vector Search on {self.table_name} with query {query}")
         return self.vector_search(query=query, limit=limit)
 
     def _search_to_documents(
@@ -126,7 +126,7 @@ class Cassandra(VectorDb):
 
     def drop(self) -> None:
         """Drop the vector table in Cassandra."""
-        logger.debug(f"Cassandra VectorDB : Dropping Table {self.table_name}")
+        log_debug(f"Cassandra VectorDB : Dropping Table {self.table_name}")
         drop_table_query = f"DROP TABLE IF EXISTS {self.keyspace}.{self.table_name}"
         self.session.execute(drop_table_query)
 
@@ -141,7 +141,7 @@ class Cassandra(VectorDb):
 
     def delete(self) -> bool:
         """Delete all documents in the table."""
-        logger.debug(f"Cassandra VectorDB : Clearing the table {self.table_name}")
+        log_debug(f"Cassandra VectorDB : Clearing the table {self.table_name}")
         self.table.clear()
         return True
 
@@ -166,4 +166,7 @@ class Cassandra(VectorDb):
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
     async def async_exists(self) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

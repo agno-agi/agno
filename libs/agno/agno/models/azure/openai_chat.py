@@ -10,7 +10,7 @@ try:
     from openai import AsyncAzureOpenAI as AsyncAzureOpenAIClient
     from openai import AzureOpenAI as AzureOpenAIClient
 except (ModuleNotFoundError, ImportError):
-    raise ImportError("`azure openai` not installed. Please install using `pip install openai`")
+    raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
 
 @dataclass

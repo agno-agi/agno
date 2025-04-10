@@ -18,7 +18,7 @@ from agno.embedder import Embedder
 from agno.reranker.base import Reranker
 
 # from agno.vectordb.singlestore.index import Ivfflat, HNSWFlat
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -52,7 +52,7 @@ class SingleStore(VectorDb):
             from agno.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -89,7 +89,7 @@ class SingleStore(VectorDb):
         Create the table if it does not exist.
         """
         if not self.table_exists():
-            logger.info(f"Creating table: {self.collection}")
+            log_info(f"Creating table: {self.collection}")
             with self.db_engine.connect() as connection:
                 connection.execute(
                     text(f"""
@@ -116,7 +116,7 @@ class SingleStore(VectorDb):
         Returns:
             bool: True if the table exists, False otherwise.
         """
-        logger.debug(f"Checking if table exists: {self.table.name}")
+        log_debug(f"Checking if table exists: {self.table.name}")
         try:
             return inspect(self.db_engine).has_table(self.table.name, schema=self.schema)
         except Exception as e:
@@ -195,10 +195,10 @@ class SingleStore(VectorDb):
                 )
                 sess.execute(stmt)
                 counter += 1
-                logger.debug(f"Inserted document: {document.name} ({document.meta_data})")
+                log_debug(f"Inserted document: {document.name} ({document.meta_data})")
 
             sess.commit()
-            logger.debug(f"Committed {counter} documents")
+            log_debug(f"Committed {counter} documents")
 
     def upsert_available(self) -> bool:
         """Indicate that upsert functionality is available."""
@@ -248,10 +248,10 @@ class SingleStore(VectorDb):
                 )
                 sess.execute(stmt)
                 counter += 1
-                logger.debug(f"Upserted document: {document.name} ({document.meta_data})")
+                log_debug(f"Upserted document: {document.name} ({document.meta_data})")
 
             sess.commit()
-            logger.debug(f"Committed {counter} documents")
+            log_debug(f"Committed {counter} documents")
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
@@ -297,7 +297,7 @@ class SingleStore(VectorDb):
             stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
 
         stmt = stmt.limit(limit=limit)
-        logger.debug(f"Query: {stmt}")
+        log_debug(f"Query: {stmt}")
 
         # Get neighbors
         # This will only work if embedding column is created with `vector` data type.
@@ -350,7 +350,7 @@ class SingleStore(VectorDb):
         Delete the table.
         """
         if self.table_exists():
-            logger.debug(f"Deleting table: {self.collection}")
+            log_debug(f"Deleting table: {self.collection}")
             self.table.drop(self.db_engine)
 
     def exists(self) -> bool:
@@ -414,4 +414,7 @@ class SingleStore(VectorDb):
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
     async def async_exists(self) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

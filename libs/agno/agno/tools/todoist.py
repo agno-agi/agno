@@ -24,6 +24,7 @@ class TodoistTools(Toolkit):
         delete_task: bool = True,
         get_active_tasks: bool = True,
         get_projects: bool = True,
+        **kwargs,
     ):
         """Initialize the Todoist toolkit.
 
@@ -37,7 +38,7 @@ class TodoistTools(Toolkit):
             get_active_tasks: Whether to register the get_active_tasks function
             get_projects: Whether to register the get_projects function
         """
-        super().__init__(name="todoist")
+        super().__init__(name="todoist", **kwargs)
 
         self.api_token = api_token or os.getenv("TODOIST_API_TOKEN")
         if not self.api_token:
@@ -129,24 +130,64 @@ class TodoistTools(Toolkit):
             logger.error(f"Failed to get task: {str(e)}")
             return json.dumps({"error": str(e)})
 
-    def update_task(self, task_id: str, **kwargs) -> str:
+    def update_task(
+        self,
+        task_id: str,
+        content: Optional[str] = None,
+        description: Optional[str] = None,
+        labels: Optional[List[str]] = None,
+        priority: Optional[int] = None,
+        due_string: Optional[str] = None,
+        due_date: Optional[str] = None,
+        due_datetime: Optional[str] = None,
+        due_lang: Optional[str] = None,
+        assignee_id: Optional[str] = None,
+        section_id: Optional[str] = None,
+    ) -> str:
         """
-        Update an existing task.
+        Update an existing task with the specified parameters.
 
         Args:
             task_id: The ID of the task to update
-            **kwargs: Any task properties to update (content, due_string, priority, etc.)
-                If a nested 'kwargs' dictionary is provided, its contents will be used instead.
+            content: The task content/name
+            description: The task description
+            labels: Array of label names
+            priority: Task priority from 1 (normal) to 4 (urgent)
+            due_string: Human readable date ("next Monday", "tomorrow", etc)
+            due_date: Specific date in YYYY-MM-DD format
+            due_datetime: Specific date and time in RFC3339 format
+            due_lang: 2-letter code specifying language of due_string ("en", "fr", etc)
+            assignee_id: The responsible user ID
+            section_id: ID of the section to move task to
 
         Returns:
-            str: JSON string containing success status
+            str: JSON string containing success status or error message
         """
         try:
-            # Check if there's a nested kwargs dictionary and use it if present
-            if len(kwargs) == 1 and "kwargs" in kwargs and isinstance(kwargs["kwargs"], dict):
-                kwargs = kwargs["kwargs"]
+            # Build updates dictionary with only provided parameters
+            updates: Dict[str, Any] = {}
+            if content is not None:
+                updates["content"] = content
+            if description is not None:
+                updates["description"] = description
+            if labels is not None:
+                updates["labels"] = labels
+            if priority is not None:
+                updates["priority"] = priority
+            if due_string is not None:
+                updates["due_string"] = due_string
+            if due_date is not None:
+                updates["due_date"] = due_date
+            if due_datetime is not None:
+                updates["due_datetime"] = due_datetime
+            if due_lang is not None:
+                updates["due_lang"] = due_lang
+            if assignee_id is not None:
+                updates["assignee_id"] = assignee_id
+            if section_id is not None:
+                updates["section_id"] = section_id
 
-            success = self.api.update_task(task_id=task_id, **kwargs)
+            success = self.api.update_task(task_id=task_id, **updates)
             return json.dumps({"success": success})
         except Exception as e:
             error_msg = str(e)
