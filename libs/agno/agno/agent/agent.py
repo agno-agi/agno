@@ -553,8 +553,6 @@ class Agent:
         else:
             self.memory = cast(Memory, self.memory)
 
-        log_debug(f"Memory: {self.memory.memories}")
-
         # 1.2 Set streaming and stream intermediate steps
         self.stream = self.stream or (stream and self.is_streamable)
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)

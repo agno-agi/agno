@@ -11,15 +11,6 @@ memory = Memory(db=PostgresMemoryDb(table_name="agent_memories", db_url=db_url))
 session_id = "postgres_memories"
 user_id = "postgres_user"
 
-# memory.add_user_memory(
-#     memory=UserMemory(memory="I like cats", topics=["name"]),
-#     user_id=user_id,
-# )
-
-user_memories = memory.memories.get(user_id, {})
-
-print(user_memories)
-
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     memory=memory,
@@ -34,6 +25,6 @@ agent.print_response(
     session_id=session_id,
 )
 
-# # agent.print_response(
-# #     "What are my hobbies?", stream=True, user_id=user_id, session_id=session_id
-# )
+agent.print_response(
+    "What are my hobbies?", stream=True, user_id=user_id, session_id=session_id
+)
