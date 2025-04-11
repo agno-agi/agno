@@ -30,7 +30,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=xAI(id="grok-3-latest"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=xAI(id="grok-beta"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
