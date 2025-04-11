@@ -16,6 +16,9 @@ from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
+DEFAULT_SPARSE_VECTOR_NAME = "sparse"
+DEFAULT_SPARSE_MODEL = "Qdrant/bm25"
+
 
 class Qdrant(VectorDb):
     def __init__(
@@ -35,6 +38,10 @@ class Qdrant(VectorDb):
         host: Optional[str] = None,
         path: Optional[str] = None,
         reranker: Optional[Reranker] = None,
+        use_hybrid_search: bool = False,
+        sparse_vector_name: str = DEFAULT_SPARSE_VECTOR_NAME,
+        hybrid_fusion_strategy: models.Fusion = models.Fusion.RRF,
+        fastembed_kwargs: Optional[dict] = None,
         **kwargs,
     ):
         # Collection attributes
@@ -46,6 +53,7 @@ class Qdrant(VectorDb):
 
             embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")
+
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -76,6 +84,25 @@ class Qdrant(VectorDb):
 
         # Qdrant client kwargs
         self.kwargs = kwargs
+
+        self.use_hybrid_search = use_hybrid_search
+        self.sparse_vector_name = sparse_vector_name
+        self.hybrid_fusion_strategy = hybrid_fusion_strategy
+
+        if self.use_hybrid_search:
+            try:
+                from fastembed import SparseTextEmbedding
+
+                default_kwargs = {"model_name": DEFAULT_SPARSE_MODEL}
+                if fastembed_kwargs:
+                    default_kwargs.update(fastembed_kwargs)
+
+                self.sparse_encoder = SparseTextEmbedding(**default_kwargs)
+
+            except ImportError as e:
+                raise ImportError(
+                    "To use hybrid search, install the `fastembed` extra with `pip install 'qdrant-client[fastembed]'`."
+                ) from e
 
     @property
     def client(self) -> QdrantClient:
@@ -131,6 +158,9 @@ class Qdrant(VectorDb):
             self.client.create_collection(
                 collection_name=self.collection,
                 vectors_config=models.VectorParams(size=self.dimensions, distance=_distance),
+                sparse_vectors_config={self.sparse_vector_name: models.SparseVectorParams()}
+                if self.use_hybrid_search
+                else None,
             )
 
     async def async_create(self) -> None:
@@ -147,6 +177,9 @@ class Qdrant(VectorDb):
             await self.async_client.create_collection(
                 collection_name=self.collection,
                 vectors_config=models.VectorParams(size=self.dimensions, distance=_distance),
+                sparse_vectors_config={self.sparse_vector_name: models.SparseVectorParams()}
+                if self.use_hybrid_search
+                else None,
             )
 
     def doc_exists(self, document: Document) -> bool:
@@ -233,10 +266,18 @@ class Qdrant(VectorDb):
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
+            vector = (
+                {
+                    "": document.embedding,
+                    self.sparse_vector_name: next(self.sparse_encoder.embed([document.content])).as_object(),
+                }
+                if self.use_hybrid_search
+                else document.embedding
+            )
             points.append(
                 models.PointStruct(
                     id=doc_id,
-                    vector=document.embedding,
+                    vector=vector,
                     payload={
                         "name": document.name,
                         "meta_data": document.meta_data,
@@ -258,10 +299,17 @@ class Qdrant(VectorDb):
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
-            log_debug(f"Inserted document asynchronously: {document.name} ({document.meta_data})")
+            vector = (
+                {
+                    "": document.embedding,
+                    self.sparse_vector_name: next(self.sparse_encoder.embed([document.content])).as_object(),
+                }
+                if self.use_hybrid_search
+                else document.embedding
+            )
             return models.PointStruct(
                 id=doc_id,
-                vector=document.embedding,
+                vector=vector,
                 payload={
                     "name": document.name,
                     "meta_data": document.meta_data,
@@ -309,13 +357,29 @@ class Qdrant(VectorDb):
             logger.error(f"Error getting embedding for Query: {query}")
             return []
 
-        results = self.client.search(
-            collection_name=self.collection,
-            query_vector=query_embedding,
-            with_vectors=True,
-            with_payload=True,
-            limit=limit,
-        )
+        if not self.use_hybrid_search:
+            results = self.client.query_points(
+                collection_name=self.collection,
+                query=query_embedding,
+                with_vectors=True,
+                with_payload=True,
+                limit=limit,
+            ).points
+        else:
+            sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
+            results = self.client.query_points(
+                collection_name=self.collection,
+                prefetch=[
+                    models.Prefetch(
+                        query=models.SparseVector(**sparse_embedding), limit=limit, using=self.sparse_vector_name
+                    ),
+                    models.Prefetch(query=query_embedding, limit=limit),
+                ],
+                query=models.FusionQuery(fusion=self.hybrid_fusion_strategy),
+                with_vectors=True,
+                with_payload=True,
+                limit=limit,
+            ).points
 
         # Build search results
         search_results: List[Document] = []
@@ -347,13 +411,33 @@ class Qdrant(VectorDb):
             logger.error(f"Error getting embedding for Query: {query}")
             return []
 
-        results = await self.async_client.search(
-            collection_name=self.collection,
-            query_vector=query_embedding,
-            with_vectors=True,
-            with_payload=True,
-            limit=limit,
-        )
+        if not self.use_hybrid_search:
+            results = (
+                await self.async_client.query_points(
+                    collection_name=self.collection,
+                    query=query_embedding,
+                    with_vectors=True,
+                    with_payload=True,
+                    limit=limit,
+                )
+            ).points
+        else:
+            sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
+            results = (
+                await self.async_client.query_points(
+                    collection_name=self.collection,
+                    prefetch=[
+                        models.Prefetch(
+                            query=models.SparseVector(**sparse_embedding), limit=limit, using=self.sparse_vector_name
+                        ),
+                        models.Prefetch(query=query_embedding, limit=limit),
+                    ],
+                    query=models.FusionQuery(fusion=self.hybrid_fusion_strategy),
+                    with_vectors=True,
+                    with_payload=True,
+                    limit=limit,
+                )
+            ).points
 
         # Build search results
         search_results: List[Document] = []
@@ -414,4 +498,4 @@ class Qdrant(VectorDb):
         pass
 
     def delete(self) -> bool:
-        return False
+        return self.client.delete_collection(collection_name=self.collection)
