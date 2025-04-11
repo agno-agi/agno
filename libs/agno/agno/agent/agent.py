@@ -696,7 +696,7 @@ class Agent:
                         else:
                             self.run_response.tools = tool_calls_list
                             
-                        # Process all tool calls to update reasoning_content
+                        # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
                         if self.run_response.tools:
                             for tool_call in self.run_response.tools:
                                 tool_name = tool_call.get("tool_name", "")
@@ -748,6 +748,7 @@ class Agent:
                 else:
                     self.run_response.tools.extend(model_response.tool_calls)
                 
+                # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
                 for tool_call in model_response.tool_calls:
                     tool_name = tool_call.get("tool_name", "")
                     if tool_name.lower() in ["think", "analyze"]:
