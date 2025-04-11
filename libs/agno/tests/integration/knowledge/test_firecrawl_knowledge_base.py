@@ -16,6 +16,7 @@ def setup_vector_db():
     # Clean up after test
     vector_db.drop()
 
+
 @pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")
 def test_firecrawl_knowledge_base_directory(setup_vector_db):
     """Test loading multiple URLs into knowledge base"""

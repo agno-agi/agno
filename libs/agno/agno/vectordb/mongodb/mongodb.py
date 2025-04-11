@@ -173,7 +173,7 @@ class MongoDb(VectorDb):
 
     def _create_search_index(self, overwrite: bool = True) -> None:
         """Create or overwrite the Atlas Search index with proper error handling."""
-        index_name = self.search_index_name
+        index_name = self.search_index_name or "vector_index_1"
         max_retries = 3
         retry_delay = 5
 
@@ -516,7 +516,7 @@ class MongoDb(VectorDb):
         if self.exists():
             try:
                 collection = self._get_collection()
-                index_name = self.search_index_name
+                index_name = self.search_index_name or "vector_index_1"
                 if self._search_index_exists():
                     collection.drop_search_index(index_name)
                     time.sleep(2)

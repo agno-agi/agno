@@ -3992,7 +3992,7 @@ class Team:
             system_message_content += (
                 f"<additional_context>\n{self.additional_context.strip()}\n</additional_context>\n\n"
             )
-            
+
         print("HERE", system_message_content)
 
         # Add the JSON output prompt if response_model is provided and structured_outputs is False

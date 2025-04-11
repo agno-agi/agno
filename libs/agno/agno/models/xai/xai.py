@@ -1,20 +1,8 @@
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Iterator, List, Optional
+from typing import Optional
 
-from agno.exceptions import ModelProviderError
-from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
-from agno.utils.log import log_error
-
-try:
-    from openai import APIConnectionError, APIStatusError, RateLimitError
-    from openai.types.chat.chat_completion_chunk import (
-        ChatCompletionChunk,
-    )
-except (ImportError, ModuleNotFoundError):
-    raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
 
 @dataclass
