@@ -27,15 +27,16 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.agent.metrics import SessionMetrics
 from agno.exceptions import ModelProviderError, RunCancelledException
+from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.memory import Memory
 from agno.memory.team import TeamMemory, TeamRun
 from agno.models.base import Model
-from agno.models.message import Citations, Message
+from agno.models.message import Citations, Message, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
-from agno.run.response import RunEvent, RunResponse
+from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
 from agno.run.team import TeamRunResponse
 from agno.storage.base import Storage
 from agno.storage.session.team import TeamSession
@@ -127,13 +128,26 @@ class Team:
     # If True, add the context to the user prompt
     add_context: bool = False
 
+    # --- Agent Knowledge ---
+    knowledge: Optional[AgentKnowledge] = None
+    # Retrieval function to get references
+    # This function, if provided, is used instead of the default search_knowledge function
+    # Signature:
+    # def retriever(team: Team, query: str, num_documents: Optional[int], **kwargs) -> Optional[list[dict]]:
+    #     ...
+    retriever: Optional[Callable[..., Optional[List[Dict]]]] = None
+    references_format: Literal["json", "yaml"] = "json"
+
     # --- Tools ---
     # If True, enable the team agent to update the team context and automatically send the team context to the members
     enable_agentic_context: bool = False
     # If True, send all previous member interactions to members
     share_member_interactions: bool = False
     # If True, add a tool to get information about the team members
-    add_get_member_information: bool = False
+    get_member_information_tool: bool = False
+    # Add a tool to search the knowledge base (aka Agentic RAG)
+    # Only added if knowledge is provided.
+    search_knowledge: bool = True
 
     # If True, read the team history
     read_team_history: bool = False
@@ -213,9 +227,13 @@ class Team:
         add_datetime_to_instructions: bool = False,
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
+        knowledge: Optional[AgentKnowledge] = None,
+        retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
+        references_format: Literal["json", "yaml"] = "json",
         enable_agentic_context: bool = False,
         share_member_interactions: bool = False,
-        add_get_member_information: bool = False,
+        get_member_information_tool: bool = False,
+        search_knowledge: bool = True,
         read_team_history: bool = False,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         show_tool_calls: bool = True,
@@ -264,9 +282,14 @@ class Team:
         self.context = context
         self.add_context = add_context
 
+        self.knowledge = knowledge
+        self.retriever = retriever
+        self.references_format = references_format
+
         self.enable_agentic_context = enable_agentic_context
         self.share_member_interactions = share_member_interactions
-        self.add_get_member_information = add_get_member_information
+        self.get_member_information_tool = get_member_information_tool
+        self.search_knowledge = search_knowledge
         self.read_team_history = read_team_history
 
         self.tools = tools
@@ -502,6 +525,9 @@ class Team:
             if self.read_team_history:
                 _tools.append(self.get_team_history)
 
+            if (self.knowledge is not None or self.retriever is not None) and self.search_knowledge:
+                _tools.append(self.search_knowledge_base)
+
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
                 forward_task_func: Function = self.get_forward_task_function(
@@ -514,7 +540,7 @@ class Team:
                     files=files,  # type: ignore
                 )
                 _tools.append(forward_task_func)
-                if self.add_get_member_information:
+                if self.get_member_information_tool:
                     _tools.append(self.get_member_information)
 
             elif self.mode == "coordinate":
@@ -530,7 +556,7 @@ class Team:
                 )
                 if self.enable_agentic_context:
                     _tools.append(self.set_team_context)
-                if self.add_get_member_information:
+                if self.get_member_information_tool:
                     _tools.append(self.get_member_information)
 
             elif self.mode == "collaborate":
@@ -545,7 +571,7 @@ class Team:
                 _tools.append(run_member_agents_func)
                 if self.enable_agentic_context:
                     _tools.append(self.set_team_context)
-                if self.add_get_member_information:
+                if self.get_member_information_tool:
                     _tools.append(self.get_member_information)
 
             self._add_tools_to_model(self.model, tools=_tools)  # type: ignore
@@ -1097,6 +1123,9 @@ class Team:
 
             if self.read_team_history:
                 _tools.append(self.get_team_history)
+
+            if (self.knowledge is not None or self.retriever is not None) and self.search_knowledge:
+                _tools.append(self.asearch_knowledge_base)
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
@@ -3858,7 +3887,7 @@ class Team:
         system_message_content += "\nHere are the members in your team:\n"
         system_message_content += "<team_members>\n"
         system_message_content += self.get_members_system_message_content()
-        if self.add_get_member_information:
+        if self.get_member_information_tool:
             system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
         system_message_content += "</team_members>\n"
 
@@ -5204,6 +5233,142 @@ class Team:
 
     def get_audio(self) -> Optional[List[AudioArtifact]]:
         return self.audio
+
+    ###########################################################################
+    # Knowledge
+    ###########################################################################
+
+    def get_relevant_docs_from_knowledge(
+        self, query: str, num_documents: Optional[int] = None, **kwargs
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Return a list of references from the knowledge base"""
+        from agno.document import Document
+
+        if self.retriever is not None and callable(self.retriever):
+            from inspect import signature
+
+            try:
+                sig = signature(self.retriever)
+                retriever_kwargs: Dict[str, Any] = {}
+                if "team" in sig.parameters:
+                    retriever_kwargs = {"team": self}
+                retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+                return self.retriever(**retriever_kwargs)
+            except Exception as e:
+                log_warning(f"Retriever failed: {e}")
+                return None
+
+        if self.knowledge is None:
+            return None
+
+        relevant_docs: List[Document] = self.knowledge.search(query=query, num_documents=num_documents, **kwargs)
+        if len(relevant_docs) == 0:
+            return None
+        return [doc.to_dict() for doc in relevant_docs]
+
+    async def aget_relevant_docs_from_knowledge(
+        self, query: str, num_documents: Optional[int] = None, **kwargs
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Get relevant documents from knowledge base asynchronously."""
+        from agno.document import Document
+
+        if self.retriever is not None and callable(self.retriever):
+            from inspect import signature
+
+            try:
+                sig = signature(self.retriever)
+                retriever_kwargs: Dict[str, Any] = {}
+                if "team" in sig.parameters:
+                    retriever_kwargs = {"team": self}
+                retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+                return self.retriever(**retriever_kwargs)
+            except Exception as e:
+                log_warning(f"Retriever failed: {e}")
+                return None
+
+        if self.knowledge is None or self.knowledge.vector_db is None:
+            return None
+
+        relevant_docs: List[Document] = await self.knowledge.async_search(
+            query=query, num_documents=num_documents, **kwargs
+        )
+        if len(relevant_docs) == 0:
+            return None
+        return [doc.to_dict() for doc in relevant_docs]
+
+    def convert_documents_to_string(self, docs: List[Dict[str, Any]]) -> str:
+        if docs is None or len(docs) == 0:
+            return ""
+
+        if self.references_format == "yaml":
+            import yaml
+
+            return yaml.dump(docs)
+
+        import json
+
+        return json.dumps(docs, indent=2)
+
+    def search_knowledge_base(self, query: str) -> str:
+        """Use this function to search the knowledge base for information about a query.
+
+        Args:
+            query: The query to search for.
+
+        Returns:
+            str: A string containing the response from the knowledge base.
+        """
+
+        # Get the relevant documents from the knowledge base
+        self.run_response = cast(TeamRunResponse, self.run_response)
+        retrieval_timer = Timer()
+        retrieval_timer.start()
+        docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query)
+        if docs_from_knowledge is not None:
+            references = MessageReferences(
+                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+            )
+            # Add the references to the run_response
+            if self.run_response.extra_data is None:
+                self.run_response.extra_data = RunResponseExtraData()
+            if self.run_response.extra_data.references is None:
+                self.run_response.extra_data.references = []
+            self.run_response.extra_data.references.append(references)
+        retrieval_timer.stop()
+        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+        if docs_from_knowledge is None:
+            return "No documents found"
+        return self.convert_documents_to_string(docs_from_knowledge)
+
+    async def asearch_knowledge_base(self, query: str) -> str:
+        """Use this function to search the knowledge base for information about a query asynchronously.
+
+        Args:
+            query: The query to search for.
+
+        Returns:
+            str: A string containing the response from the knowledge base.
+        """
+        self.run_response = cast(TeamRunResponse, self.run_response)
+        retrieval_timer = Timer()
+        retrieval_timer.start()
+        docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query)
+        if docs_from_knowledge is not None:
+            references = MessageReferences(
+                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+            )
+            if self.run_response.extra_data is None:
+                self.run_response.extra_data = RunResponseExtraData()
+            if self.run_response.extra_data.references is None:
+                self.run_response.extra_data.references = []
+            self.run_response.extra_data.references.append(references)
+        retrieval_timer.stop()
+        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+        if docs_from_knowledge is None:
+            return "No documents found"
+        return self.convert_documents_to_string(docs_from_knowledge)
 
     ###########################################################################
     # Logging
