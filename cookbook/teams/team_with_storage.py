@@ -56,7 +56,8 @@ multi_language_team = Team(
         "For unsupported languages like Italian, respond in English with the above message.",
     ],
     show_members_responses=True,
-    enable_team_history=True,
+    add_history_to_messages=True,
+    num_of_runs_from_history=2,
 )
 
 multi_language_team.print_response(

@@ -106,10 +106,10 @@ class Agent:
     # --- Agent History ---
     # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_messages: bool = False
-    # Deprecated in favor of num_history_runs: Number of historical responses to add to the messages
+    # Deprecated in favor of num_of_runs_from_history: Number of historical responses to add to the messages
     num_history_responses: Optional[int] = None
     # Number of historical runs to include in the messages
-    num_history_runs: int = 3
+    num_of_runs_from_history: int = 3
 
     # --- Agent Knowledge ---
     knowledge: Optional[AgentKnowledge] = None
@@ -288,7 +288,7 @@ class Agent:
         add_session_summary_references: Optional[bool] = None,
         add_history_to_messages: bool = False,
         num_history_responses: Optional[int] = None,
-        num_history_runs: int = 3,
+        num_of_runs_from_history: int = 3,
         knowledge: Optional[AgentKnowledge] = None,
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
@@ -375,9 +375,9 @@ class Agent:
 
         self.add_history_to_messages = add_history_to_messages
         self.num_history_responses = num_history_responses
-        self.num_history_runs = num_history_runs
+        self.num_of_runs_from_history = num_of_runs_from_history
         if num_history_responses is not None:
-            self.num_history_runs = num_history_responses
+            self.num_of_runs_from_history = num_history_responses
 
         self.knowledge = knowledge
         self.add_references = add_references
@@ -2805,11 +2805,11 @@ class Agent:
             history: List[Message] = []
             if isinstance(self.memory, AgentMemory):
                 history = self.memory.get_messages_from_last_n_runs(
-                    last_n=self.num_history_runs, skip_role=self.system_message_role
+                    last_n=self.num_of_runs_from_history, skip_role=self.system_message_role
                 )
             elif isinstance(self.memory, Memory):
                 history = self.memory.get_messages_from_last_n_runs(
-                    session_id=session_id, last_n=self.num_history_runs, skip_role=self.system_message_role
+                    session_id=session_id, last_n=self.num_of_runs_from_history, skip_role=self.system_message_role
                 )
             if len(history) > 0:
                 # Create a deep copy of the history messages to avoid modifying the original messages

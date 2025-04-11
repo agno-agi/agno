@@ -192,10 +192,14 @@ class Team:
     add_session_summary_references: Optional[bool] = None
 
     # --- Agent History ---
-    # If True, enable the team history
+    # If True, enable the team history. Deprecated in favor of add_history_to_messages
     enable_team_history: bool = False
-    # Number of interactions from history
-    num_of_interactions_from_history: int = 3
+    # Add history to the messages
+    add_history_to_messages: bool = False
+    # Number of interactions from history. Deprecated in favor of num_of_runs_from_history
+    num_of_interactions_from_history: Optional[int] = None
+    # Number of historical runs to include in the messages
+    num_of_runs_from_history: int = 3
 
     # --- Team Storage ---
     storage: Optional[Storage] = None
@@ -262,7 +266,9 @@ class Team:
         enable_session_summaries: bool = False,
         add_session_summary_references: Optional[bool] = None,
         enable_team_history: bool = False,
-        num_of_interactions_from_history: int = 3,
+        add_history_to_messages: bool = False,
+        num_of_interactions_from_history: Optional[int] = None,
+        num_of_runs_from_history: int = 3,
         storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
@@ -335,7 +341,13 @@ class Team:
             self.add_session_summary_references = add_session_summary_references
 
         self.enable_team_history = enable_team_history
+        self.add_history_to_messages = add_history_to_messages
+        if self.enable_team_history:
+            self.add_history_to_messages = True
         self.num_of_interactions_from_history = num_of_interactions_from_history
+        self.num_of_runs_from_history = num_of_runs_from_history
+        if num_of_interactions_from_history is not None:
+            self.num_of_runs_from_history = num_of_interactions_from_history
 
         self.storage = storage
         self.extra_data = extra_data
@@ -4420,17 +4432,17 @@ class Team:
             run_messages.messages.append(system_message)
 
         # 2. Add history to run_messages
-        if self.enable_team_history:
+        if self.add_history_to_messages:
             from copy import deepcopy
 
             history = []
             if isinstance(self.memory, TeamMemory):
                 history = self.memory.get_messages_from_last_n_runs(
-                    last_n=self.num_of_interactions_from_history, skip_role="system"
+                    last_n=self.num_of_runs_from_history, skip_role="system"
                 )
             elif isinstance(self.memory, Memory):
                 history = self.memory.get_messages_from_last_n_runs(
-                    session_id=session_id, last_n=self.num_of_interactions_from_history, skip_role="system"
+                    session_id=session_id, last_n=self.num_of_runs_from_history, skip_role="system"
                 )
 
             if len(history) > 0:

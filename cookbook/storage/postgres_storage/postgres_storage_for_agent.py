@@ -12,6 +12,7 @@ agent = Agent(
     ),
     tools=[DuckDuckGoTools()],
     add_history_to_messages=True,
+    num_of_runs_from_history=2,
     debug_mode=True,
 )
 agent.print_response("How many people live in Canada?")
