@@ -13,7 +13,6 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.thinking import ThinkingTools
 from agno.tools.yfinance import YFinanceTools
-from agno.agent import RunEvent
 
 thinking_agent = Agent(
     model=Gemini(id="gemini-2.0-flash"),
