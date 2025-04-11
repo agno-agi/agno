@@ -195,7 +195,8 @@ class PostgresMemoryDb(MemoryDb):
         memo[id(self)] = copied_obj
 
         # Deep copy attributes
-        for k, v in self.__dict__.items():
+        
+        for k, v in self.__dict__().items():
             if k in {"metadata", "table"}:
                 continue
             # Reuse db_engine and Session without copying
