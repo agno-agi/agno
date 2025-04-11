@@ -1,3 +1,5 @@
+from typing import Optional
+
 import pytest
 from pydantic import BaseModel, Field
 
@@ -127,16 +129,21 @@ def test_with_memory():
     _assert_metrics(response2)
 
 
-def test_structured_output():
+def test_structured_output_json_mode():
     """Test structured output with Pydantic models."""
 
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
+        release_date: Optional[str] = Field(None, description="Release date of the movie")
 
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini"), response_model=MovieScript, telemetry=False, monitoring=False
+        model=OpenAIResponses(id="gpt-4o-mini"),
+        response_model=MovieScript,
+        use_json_mode=True,
+        telemetry=False,
+        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -148,18 +155,18 @@ def test_structured_output():
     assert response.content.plot is not None
 
 
-def test_structured_output_native():
+def test_structured_output():
     """Test native structured output with the responses API."""
 
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
+        release_date: Optional[str] = Field(None, description="Release date of the movie")
 
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
         response_model=MovieScript,
-        structured_outputs=True,
         telemetry=False,
         monitoring=False,
     )

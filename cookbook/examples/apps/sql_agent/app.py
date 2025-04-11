@@ -14,11 +14,9 @@ from utils import (
 )
 
 nest_asyncio.apply()
-
-# Page configuration
 st.set_page_config(
-    page_title="F1 SQL Agent",
-    page_icon=":checkered_flag:",
+    page_title="Reasoning SQL Agent",
+    page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -31,9 +29,11 @@ def main() -> None:
     ####################################################################
     # App header
     ####################################################################
-    st.markdown("<h1 class='main-title'>F1 SQL Agent</h1>", unsafe_allow_html=True)
     st.markdown(
-        "<p class='subtitle'>Your intelligent F1 data analyst powered by Agno</p>",
+        "<h1 class='main-title'>Reasoning SQL Agent</h1>", unsafe_allow_html=True
+    )
+    st.markdown(
+        "<p class='subtitle'>Your intelligent SQL Agent that can think, analyze and reason, powered by Agno</p>",
         unsafe_allow_html=True,
     )
 
@@ -41,9 +41,10 @@ def main() -> None:
     # Model selector
     ####################################################################
     model_options = {
+        "claude-3-7-sonnet": "anthropic:claude-3-7-sonnet-latest",
+        "gemini-2.5-pro": "google:gemini-2.5-pro-preview-03-25",
+        "llama-4-scout": "groq:meta-llama/llama-4-scout-17b-16e-instruct",
         "gpt-4o": "openai:gpt-4o",
-        "gemini-2.0-flash-exp": "google:gemini-2.0-flash-exp",
-        "claude-3-5-sonnet": "anthropic:claude-3-5-sonnet-20241022",
     }
     selected_model = st.sidebar.selectbox(
         "Select a model",
@@ -134,19 +135,25 @@ def main() -> None:
                 response = ""
                 try:
                     # Run the agent and stream the response
-                    run_response = sql_agent.run(question, stream=True)
+                    run_response = sql_agent.run(
+                        question, stream=True, stream_intermediate_steps=True
+                    )
                     for _resp_chunk in run_response:
                         # Display tool calls if available
                         if _resp_chunk.tools and len(_resp_chunk.tools) > 0:
                             display_tool_calls(tool_calls_container, _resp_chunk.tools)
 
-                        # Display response
-                        if _resp_chunk.content is not None:
+                        # Display response if available and event is RunResponse
+                        if (
+                            _resp_chunk.event == "RunResponse"
+                            and _resp_chunk.content is not None
+                        ):
                             response += _resp_chunk.content
                             resp_container.markdown(response)
 
                     add_message("assistant", response, sql_agent.run_response.tools)
                 except Exception as e:
+                    logger.exception(e)
                     error_message = f"Sorry, I encountered an error: {str(e)}"
                     add_message("assistant", error_message)
                     st.error(error_message)

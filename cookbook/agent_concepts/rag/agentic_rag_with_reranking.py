@@ -11,7 +11,7 @@ from agno.models.openai import OpenAIChat
 from agno.reranker.cohere import CohereReranker
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-# Create a knowledge base of PDFs from URLs
+# Create a knowledge base containing information from a URL
 knowledge_base = UrlKnowledge(
     urls=["https://docs.agno.com/llms-full.txt"],
     # Use LanceDB as the vector database and store embeddings in the `agno_docs` table

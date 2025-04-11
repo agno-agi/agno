@@ -15,77 +15,50 @@
 
 ## Introduction
 
-[Agno](https://docs.agno.com) is a lightweight library for building Multimodal Agents. It exposes LLMs as a unified API and gives them superpowers like memory, knowledge, tools and reasoning.
+[Agno](https://docs.agno.com) is a lightweight framework for building Agents with memory, knowledge, tools and reasoning.
 
-- Build lightning-fast Agents that can generate text, image, audio and video.
-- Add memory, knowledge, tools and reasoning as needed.
-- Run anywhere, Agno is open-source.
+Use Agno to build Reasoning Agents, Multimodal Agents, Teams of Agents and Agentic Workflows.
 
-Here's an Agent that can search the web:
+Here's an Agent that writes a financial report by reasoning through each step:
 
-```python websearch_agent.py
+```python reasoning_finance_agent.py
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
-    markdown=True
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    tools=[
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True, company_news=True),
+    ],
+    instructions=[
+        "Use tables to display data",
+        "Only output the report, no other text",
+    ],
+    markdown=True,
 )
-agent.print_response("What's happening in New York?", stream=True)
+agent.print_response("Write a report on NVDA", stream=True, show_full_reasoning=True, stream_intermediate_steps=True)
 ```
 
-## 🚨 Open Source AI Agent Hackathon! 🚨
-
-We're launching a Global AI Agent Hackathon in collaboration with AI Agent ecosystem partners — open to all developers, builders, and startups working on agents, RAG, tool use, or multi-agent systems.
-
-### 💰 Win up to $20,000 in cash by building Agents
-
-- 🏅 10 winners: $300 each
-- 🥉 10 winners: $500 each
-- 🥈 5 winners: $1,000 each
-- 🥇 1 winner: $2,000
-- 🏆 GRAND PRIZE: $5,000 🏆
-
-### 🎁 Bonus
-- Top 5 projects will be featured in the top trending [Awesome LLM Apps](https://github.com/Shubhamsaboo/awesome-llm-apps) repo.
-
-### 🤝 Partners
-
-[Agno](https://www.agno.com), [Unwind AI](https://www.theunwindai.com) and more Agent ecosystem companies joining soon.
-
-### 📅 Here's the timeline:
-
-- April 3rd - Final dates revealed
-- April 10th - Prize and success criteria announced
-- April 15th (tentative) - Hackathon starts
-- May 30th (tentative) - Hackathon ends
-
-Join us for a month of building Agents!
-
-> Prizes will be distributed on an ongoing basis and continue till all prizes are awarded.
-
-⭐ Star this repo and follow along to stay updated.
-
-### 🤝 Want to join us as a partner or judge?
-
-If you're a company in the AI agent ecosystem or would like to judge the hackathon, reach out to [Shubham Saboo](https://x.com/Saboo_Shubham_) or [Ashpreet Bedi](https://x.com/ashpreetbedi) on X to partner. Let’s make this the biggest open source AI Agent hackathon.
+https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
 
 ## Key features
 
-Agno is simple, fast and model agnostic. Here are some key features:
+Agno is simple, fast and model-agnostic. Here are the key features:
 
-- **Lightning Fast**: Agent creation is 10,000x faster than LangGraph (see [performance](#performance)).
+- **Lightning Fast**: Agents instantiate 10,000x faster than LangGraph and use 50x less memory ([benchmarks](#performance)).
 - **Model Agnostic**: Use any model, any provider, no lock-in.
-- **Multi Modal**: Native support for text, image, audio and video.
-- **Multi Agent**: Build teams of specialized agents.
-- **Memory Management**: Store agent sessions and state in a database.
-- **Knowledge Stores**: Use vector databases for RAG or dynamic few-shot learning.
-- **Structured Outputs**: Make Agents respond in a structured format.
+- **Reasoning Agents**: Build agents that can "think" and "analyze" using Reasoning Models, Reasoning Tools or our custom `CoT+Tool-use` approach (see [this example]()).
+- **Natively Multi Modal Support**: Agents can take in text, image, audio and video and generate text, image, audio and video.
+- **Advanced Multi Agent Architecture**: Industry leading multi-agent architecture with 3 different modes: `route`, `collaborate` and `coordinate`.
+- **Long-term Memory**: Built in support for long-term memory with our `Storage` and `Memory` classes.
+- **20+ Vector Databases for Knowledge**: Add domain knowledge to your Agents by integrating with 20+ vector databases. Fully async and highly performant.
+- **Structured Outputs**: First class support for structured outputs using native structured outputs or `json_mode`.
 - **Monitoring**: Track agent sessions and performance in real-time on [agno.com](https://app.agno.com).
 
-## Getting Started
+## Getting Started with Agno
 
 - Start by [building your first Agent](https://docs.agno.com/introduction/agents)
 - Check out the [examples](https://docs.agno.com/examples/introduction)
@@ -101,13 +74,69 @@ pip install -U agno
 
 **Agents** are intelligent programs that solve problems autonomously.
 
-Agents have memory, domain knowledge and the ability to use tools (like searching the web, querying a database, making API calls). Unlike traditional programs that follow a predefined execution path, Agents dynamically adapt their approach based on the context and tool results.
+Agents can reason, have memory, domain knowledge and the ability to use tools (like searching the web, querying a database, making API calls). Unlike traditional programs that follow a predefined execution path, Agents dynamically adapt their approach based on the context and tool results.
 
 Instead of a rigid binary definition, let's think of Agents in terms of agency and autonomy.
 - **Level 0**: Agents with no tools (basic inference tasks).
 - **Level 1**: Agents with tools for autonomous task execution.
 - **Level 2**: Agents with knowledge, combining memory and reasoning.
 - **Level 3**: Teams of specialized agents collaborating on complex workflows.
+
+## Example - Reasoning Agent
+
+Let's start with a Reasoning Agent so we get a sense of Agno's capabilities.
+
+Save this code to a file: `reasoning_agent.py`.
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
+
+agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    tools=[
+        ReasoningTools(add_instructions=True, add_few_shot=True),
+        YFinanceTools(
+            stock_price=True,
+            analyst_recommendations=True,
+            company_info=True,
+            company_news=True,
+        ),
+    ],
+    instructions=[
+        "Use tables to display data",
+        "Only output the report, no other text",
+    ],
+    markdown=True,
+)
+agent.print_response(
+    "Write a report on NVDA",
+    stream=True,
+    show_full_reasoning=True,
+    stream_intermediate_steps=True,
+)
+```
+
+Then create a virtual environment, install dependencies, export your `ANTHROPIC_API_KEY` and run the agent.
+
+```shell
+uv venv --python 3.12
+source .venv/bin/activate
+
+uv pip install agno anthropic yfinance
+
+export ANTHROPIC_API_KEY=sk-ant-api03-xxxx
+
+python reasoning_agent.py
+```
+
+We can see the Agent is reasoning through the task, using the `ReasoningTools` and `YFinanceTools` to gather information. This is how the output looks like:
+
+https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
+
+> Now let's walk through the simple -> tools -> knowledge -> teams of agents flow.
 
 ## Example - Basic Agent
 
@@ -275,6 +304,28 @@ python agent_team.py
 ```
 
 [View this example in the cookbook](./cookbook/getting_started/05_agent_team.py)
+
+## 🚨 Global Agent Hackathon! 🚨
+
+We're thrilled to announce a month long, open source AI Agent Hackathon — open to all builders and dreamers working on agents, RAG, tool use, and multi-agent systems.
+
+### 💰 Build something extordinary, win up to $20,000 in cash
+
+We're giving away $20,000 in prizes for the most ambitious Agent projects
+
+- 🏅 10 winners: $300 each
+- 🥉 10 winners: $500 each
+- 🥈 5 winners: $1,000 each
+- 🥇 1 winner: $2,000
+- 🏆 GRAND PRIZE: $5,000 🏆
+
+> Follow this [post](https://www.agno.com/blog/agent-hackathon-april-2025) for more details and updates
+
+### 🤝 Want to partner or judge?
+
+If you're building in the AI Agent space, or want to help shape the next generation of Agent builders - we'd love to work with you.
+
+Reach out to support@agno.com to get involved.
 
 ## Performance
 
