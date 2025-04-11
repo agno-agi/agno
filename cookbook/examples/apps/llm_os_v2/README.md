@@ -1,29 +1,63 @@
-# Reasoning SQL Agent
+# LLM OS
 
-This advanced example shows how to build a sophisticated text-to-SQL system that leverages Reasoning Agents to provide deep insights into any data. We'll use the F1 dataset as an example, but the system is designed to be easily extensible to other datasets.
+Lets build the LLM OS
 
-The agent uses Reasoning Agents to search for table metadata and rules, enabling it to write and run better SQL queries. This process, called `Dynamic Few Shot Prompting`, is a technique that allows the agent to dynamically search for few shot examples to improve its performance.
+## The LLM OS design:
 
-> Note: Fork and clone the repository if needed
+<img alt="LLM OS" src="https://github.com/agno-agi/agno/assets/22579644/5cab9655-55a9-4027-80ac-badfeefa4c14" width="600" />
+
+- LLMs are the kernel process of an emerging operating system.
+- This process (LLM) can solve problems by coordinating other resources (memory, computation tools).
+- The LLM OS:
+  - [x] Can read/generate text
+  - [x] Has more knowledge than any single human about all subjects
+  - [x] Can browse the internet
+  - [x] Can use existing software infra (calculator, python, mouse/keyboard)
+  - [ ] Can see and generate images and video
+  - [ ] Can hear and speak, and generate music
+  - [ ] Can think for a long time using a system 2
+  - [ ] Can “self-improve” in domains
+  - [ ] Can be customized and fine-tuned for specific tasks
+  - [x] Can communicate with other LLMs
+
+[x] indicates functionality that is implemented in this LLM OS app
+
+## Running the LLM OS:
+
+> Note: Fork and clone this repository if needed
+
 
 ### 1. Create a virtual environment
 
 ```shell
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv ~/.venvs/llmos
+source ~/.venvs/llmos/bin/activate
 ```
 
 ### 2. Install libraries
 
 ```shell
-pip install -r cookbook/examples/apps/sql_agent/requirements.txt
+pip install -r cookbook/use_cases/apps/llm_os/requirements.txt
 ```
 
-### 3. Run PgVector
+### 3. Export credentials
 
-Let's use Postgres for storing our data, but the SQL Agent should work with any database. This will also help us use `PgVector` for vector search.
+- Our initial implementation uses GPT-4o, so export your OpenAI API Key
 
-> Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) first.
+```shell
+export OPENAI_API_KEY=***
+```
+
+- To use Exa for research, export your EXA_API_KEY (get it from [here](https://dashboard.exa.ai/api-keys))
+
+```shell
+export EXA_API_KEY=xxx
+```
+
+### 4. Run PgVector
+
+We use Postgres to provide long-term memory to the LLM OS.
+Please install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) and run Postgres using either the helper script or the `docker run` command.
 
 - Run using a helper script
 
@@ -45,47 +79,27 @@ docker run -d \
   agnohq/pgvector:16
 ```
 
-### 4. Load F1 data
+### 5. Run Qdrant
+
+We use Qdrant as a knowledge base that stores external data like websites, uploaded pdf documents.
+
+run using the docker run command
 
 ```shell
-python cookbook/examples/apps/sql_agent/load_f1_data.py
-```
+docker run -d -p 6333:6333 qdrant/qdrant
+````
 
-### 5. Load the knowledge base
-
-The knowledge base contains table metadata, rules and sample queries, which are used by the Agent to improve responses. This is a dynamic few shot prompting technique. This data, stored in `cookbook/examples/apps/sql_agent/knowledge/` folder, is used by the Agent at run-time to search for sample queries and rules. We only add a minimal amount of data to the knowledge base, but you can add as much as you like.
-
-We recommend adding the following as you go along:
-  - Add `table_rules` and `column_rules` to the table metadata. The Agent is prompted to follow them. This is useful when you want to guide the Agent to always query date in a particular format, or avoid certain columns.
-  - Add sample SQL queries to the `cookbook/examples/apps/sql_agent/knowledge/sample_queries.sql` file. This will give the Assistant a head start on how to write complex queries.
+### 6. Run the LLM OS App
 
 ```shell
-python cookbook/examples/apps/sql_agent/load_knowledge.py
+streamlit run cookbook/use_cases/apps/llm_os/app.py
 ```
 
-### 6. Export API Keys
-
-We recommend using claude-3-7-sonnet for this task, but you can use any Model you like.
-
-```shell
-export ANTHROPIC_API_KEY=***
-```
-
-Other API keys are optional, but if you'd like to test:
-
-```shell
-export OPENAI_API_KEY=***
-export GOOGLE_API_KEY=***
-export GROQ_API_KEY=***
-```
-
-### 7. Run SQL Agent
-
-```shell
-streamlit run cookbook/examples/apps/sql_agent/app.py
-```
-
-- Open [localhost:8501](http://localhost:8501) to view the SQL Agent.
-
-### 8. Message us on [discord](https://agno.link/discord) if you have any questions
-
+- Open [localhost:8501](http://localhost:8501) to view your LLM OS.
+- Add a blog post to knowledge base: https://blog.samaltman.com/gpt-4o
+- Ask: What is gpt-4o?
+- Web search: What is happening in france?
+- Calculator: What is 10!
+- Enable shell tools and ask: Is docker running?
+- Enable the Research Assistant and ask: Write a report on the ibm hashicorp acquisition
+- Enable the Investment Assistant and ask: Shall I invest in nvda?

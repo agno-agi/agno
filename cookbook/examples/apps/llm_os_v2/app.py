@@ -1,5 +1,6 @@
 import nest_asyncio
 import streamlit as st
+import io
 from os_agent import get_llm_os
 from agno.agent import Agent
 from agno.document import Document
@@ -11,8 +12,8 @@ from utils import (
     about_widget,
     add_message,
     display_tool_calls,
-    restart_agent,
     export_chat_history,
+    restart_agent,
     session_selector_widget,
     rename_session_widget,
 )
@@ -48,9 +49,11 @@ def main() -> None:
 
     # Model selector
     model_options = {
-        "GPT-4o": "gpt-4o",
-        "Claude 3 Sonnet": "claude-3-sonnet-20240229",
-        "Gemini 1.5 Pro": "gemini-1.5-pro-latest",
+        "GPT-4o": "openai:gpt-4o",
+        "Claude 3.7 Sonnet": "anthropic:claude-3-7-sonnet-latest",
+        "Gemini 2.5 Pro Exp": "google:gemini-2.5-pro-exp-03-25",
+        "Llama 4 Scout": "groq:meta-llama/llama-4-scout-17b-16e-instruct",
+        "Llama 4 Maverick": "groq:meta-llama/llama-4-maverick-17b-128e-instruct",
     }
     selected_model_key = st.sidebar.selectbox(
         "Select a model",
@@ -62,67 +65,33 @@ def main() -> None:
 
     # Add User ID input
     st.sidebar.subheader("User")
-    user_id_input = st.sidebar.text_input("Set User ID (optional)", value=st.session_state.get("user_id", ""), key="user_id_input")
-    # Store User ID in session state immediately
-    st.session_state["user_id"] = user_id_input if user_id_input else None
+    # Use st.session_state.get to avoid error on first run if key doesn't exist
+    user_id_input = st.sidebar.text_input(
+        "Set User ID (optional)",
+        value=st.session_state.get("user_id_input_value", ""), # Use a separate key for the input value
+        key="user_id_input")
+    # Store/update User ID in session state only when input changes or on first load
+    # This avoids overwriting it during session loading reruns
+    if user_id_input != st.session_state.get("user_id_input_value"):
+        st.session_state["user_id_input_value"] = user_id_input
+        st.session_state["user_id"] = user_id_input if user_id_input else None
+        # No rerun needed here, agent initialization handles it
 
     st.sidebar.subheader("Enable Tools")
     # Add checkboxes for LLM OS tools
-    use_calculator = st.sidebar.checkbox("Calculator", value=True, key="cb_calculator")
-    use_ddg_search = st.sidebar.checkbox("Web Search (DDG)", value=True, key="cb_ddg")
-    use_file_tools = st.sidebar.checkbox("File I/O", value=True, key="cb_file")
-    use_shell_tools = st.sidebar.checkbox("Shell Access", value=True, key="cb_shell")
+    use_calculator = st.sidebar.checkbox("Calculator", value=st.session_state.get("cb_calculator", True), key="cb_calculator")
+    use_ddg_search = st.sidebar.checkbox("Web Search (DDG)", value=st.session_state.get("cb_ddg", True), key="cb_ddg")
+    use_file_tools = st.sidebar.checkbox("File I/O", value=st.session_state.get("cb_file", True), key="cb_file")
+    use_shell_tools = st.sidebar.checkbox("Shell Access", value=st.session_state.get("cb_shell", True), key="cb_shell")
 
     st.sidebar.subheader("Enable Sub-Agents")
     # Add checkboxes for LLM OS sub-agents
-    enable_data_analyst = st.sidebar.checkbox("Data Analyst", value=False, key="cb_data")
-    enable_python_agent = st.sidebar.checkbox("Python Agent", value=False, key="cb_python")
-    enable_research_agent = st.sidebar.checkbox("Research Agent", value=False, key="cb_research")
-    enable_investment_agent = st.sidebar.checkbox("Investment Agent", value=False, key="cb_investment")
+    enable_data_analyst = st.sidebar.checkbox("Data Analyst", value=st.session_state.get("cb_data", False), key="cb_data")
+    enable_python_agent = st.sidebar.checkbox("Python Agent", value=st.session_state.get("cb_python", False), key="cb_python")
+    enable_research_agent = st.sidebar.checkbox("Research Agent", value=st.session_state.get("cb_research", False), key="cb_research")
+    enable_investment_agent = st.sidebar.checkbox("Investment Agent", value=st.session_state.get("cb_investment", False), key="cb_investment")
 
-    # Added section for Knowledge Base Management
-    st.sidebar.subheader("Manage Knowledge Base")
-    uploaded_file = st.sidebar.file_uploader(
-        "Add PDF to Knowledge Base", type="pdf", key="pdf_uploader"
-    )
-    if uploaded_file is not None:
-        if st.sidebar.button("Add PDF", key="add_pdf_button"):
-            agent = st.session_state.get("llm_os_agent")
-            if agent:
-                try:
-                    with st.spinner(f"Processing {uploaded_file.name}..."):
-                        # Save temp file path or use bytes directly
-                        file_bytes = uploaded_file.getvalue()
-                        pdf_doc = PDFReader().load(file_bytes)
-                        agent.add_knowledge(documents=pdf_doc)
-                        st.toast(f"✅ Added {uploaded_file.name} to knowledge base.", icon="📄")
-                        # Clear the uploader after processing
-                        # st.session_state.pdf_uploader = None # May cause issues, test needed
-                except Exception as e:
-                    logger.error(f"Error adding PDF: {e}")
-                    st.toast(f"❌ Error adding PDF: {e}", icon="🔥")
-            else:
-                st.toast("Agent not initialized.", icon="⚠️")
-
-    website_url = st.sidebar.text_input("Add Website URL to Knowledge Base", key="url_input")
-    if website_url:
-        if st.sidebar.button("Add URL", key="add_url_button"):
-            agent = st.session_state.get("llm_os_agent")
-            if agent:
-                try:
-                    with st.spinner(f"Processing {website_url}..."):
-                        web_doc = WebsiteReader().load(website_url)
-                        agent.add_knowledge(documents=web_doc)
-                        st.toast(f"✅ Added {website_url} to knowledge base.", icon="🔗")
-                        # Clear input after adding
-                        # st.session_state.url_input = "" # May need js hack or rerun
-                except Exception as e:
-                    logger.error(f"Error adding URL: {e}")
-                    st.toast(f"❌ Error adding URL: {e}", icon="🔥")
-            else:
-                st.toast("Agent not initialized.", icon="⚠️")
-
-    # Store checkbox states to detect changes
+    # Store current config from sidebar for potential agent re-initialization
     current_config = {
         "model_id": model_id,
         "calculator": use_calculator,
@@ -133,171 +102,213 @@ def main() -> None:
         "python_agent_enable": enable_python_agent,
         "research_agent_enable": enable_research_agent,
         "investment_agent_enable": enable_investment_agent,
-        # Include user_id in the config for agent re-initialization
         "user_id": st.session_state.get("user_id"),
+        "debug_mode": True # Or make this configurable
     }
 
+    # Added section for Knowledge Base Management
+    st.sidebar.subheader("Manage Knowledge Base")
+    uploaded_file = st.sidebar.file_uploader(
+        "Add PDF to Knowledge Base", type="pdf", key="pdf_uploader"
+    )
+    if uploaded_file is not None:
+        # Use the persistent agent instance
+        agent_for_kb = st.session_state.get("llm_os_agent")
+        if st.sidebar.button("Add PDF", key="add_pdf_button"):
+            if agent_for_kb:
+                try:
+                    with st.spinner(f"Processing {uploaded_file.name}..."):
+                        file_bytes = uploaded_file.getvalue()
+                        # Wrap bytes in BytesIO and use read() method
+                        pdf_stream = io.BytesIO(file_bytes)
+                        pdf_stream.name = uploaded_file.name # Optional: provide name for logging within reader
+                        pdf_docs = PDFReader().read(pdf=pdf_stream)
+
+                        # Access the vector_db from the agent's knowledge and insert documents
+                        if agent_for_kb.knowledge and agent_for_kb.knowledge.vector_db:
+                            if pdf_docs: # Ensure there are documents to add
+                                agent_for_kb.knowledge.vector_db.insert(documents=pdf_docs)
+                                st.toast(f"✅ Added {len(pdf_docs)} page(s) from {uploaded_file.name} to knowledge base.", icon="📄")
+                            else:
+                                st.toast(f"⚠️ No readable content found in {uploaded_file.name}.", icon="⚠️")
+                        else:
+                            st.toast("Knowledge base vector store not available.", icon="🔥")
+
+                except Exception as e:
+                    logger.error(f"Error adding PDF: {e}")
+                    st.toast(f"❌ Error adding PDF: {e}", icon="🔥")
+            else:
+                st.toast("Agent not initialized. Please wait or refresh.", icon="⚠️")
+
+    website_url = st.sidebar.text_input("Add Website URL to Knowledge Base", key="url_input")
+    if website_url:
+        # Use the persistent agent instance
+        agent_for_kb = st.session_state.get("llm_os_agent")
+        if st.sidebar.button("Add URL", key="add_url_button"):
+            if agent_for_kb:
+                try:
+                    with st.spinner(f"Processing {website_url}..."):
+                        # Use read() method instead of load
+                        web_docs = WebsiteReader().read(url=website_url)
+
+                        # Access the vector_db from the agent's knowledge and insert documents
+                        if agent_for_kb.knowledge and agent_for_kb.knowledge.vector_db:
+                            if web_docs: # Ensure there are documents to add
+                                agent_for_kb.knowledge.vector_db.insert(documents=web_docs)
+                                st.toast(f"✅ Added content from {website_url} to knowledge base.", icon="🔗")
+                            else:
+                                st.toast(f"⚠️ No readable content found at {website_url}.", icon="⚠️")
+                        else:
+                            st.toast("Knowledge base vector store not available.", icon="🔥")
+
+                except Exception as e:
+                    logger.error(f"Error adding URL: {e}")
+                    st.toast(f"❌ Error adding URL: {e}", icon="🔥")
+            else:
+                st.toast("Agent not initialized. Please wait or refresh.", icon="⚠️")
+
+
     ####################################################################
-    # Initialize Agent
+    # Initialize Agent (with Session Management)
     ####################################################################
-    llm_os_agent: Agent
-    # Check if agent needs re-initialization due to config change
-    config_changed = st.session_state.get("current_config") != current_config
-    logger.debug(f"[App] Checking agent re-initialization conditions:")
-    logger.debug(f"[App]   'llm_os_agent' not in state: {'llm_os_agent' not in st.session_state}")
-    if 'llm_os_agent' in st.session_state:
-        logger.debug(f"[App]   st.session_state['llm_os_agent'] is None: {st.session_state['llm_os_agent'] is None}")
-    logger.debug(f"[App]   config_changed: {config_changed}")
-    if (
+    # Remove detailed logging before the check
+    # logger.debug(f"Checking agent initialization: has agent? {"llm_os_agent" in st.session_state and st.session_state["llm_os_agent"] is not None}")
+    # logger.debug(f"Stored config: {st.session_state.get('current_config')}")
+    # logger.debug(f"Current config: {current_config}")
+    # config_comparison = st.session_state.get("current_config") != current_config
+    # logger.debug(f"Config changed? {config_comparison}")
+
+    llm_os_agent: Optional[Agent] = None
+    # Simplify the re-initialization check: only re-init if agent doesn't exist or model changes
+    agent_should_initialize = (
         "llm_os_agent" not in st.session_state
         or st.session_state["llm_os_agent"] is None
-        or config_changed
-    ):
-        # Updated agent creation logic
-        logger.info("---*--- Creating/Loading LLM OS agent ---*---")
-        # Session ID is now handled by the session_selector_widget on change
-        # This block now only handles initial creation or config changes
-        # target_session_id = st.session_state.get("selected_session_id") # Removed
-        logger.debug(f"Initializing agent with User: {st.session_state.get('user_id')}") # Removed target session log
-        llm_os_agent = get_llm_os(
-            # Pass the correct model_id format
-            model_id=model_id,
-            calculator=use_calculator,
-            ddg_search=use_ddg_search,
-            file_tools=use_file_tools,
-            shell_tools=use_shell_tools,
-            data_analyst=enable_data_analyst,
-            python_agent_enable=enable_python_agent,
-            research_agent_enable=enable_research_agent,
-            investment_agent_enable=enable_investment_agent,
-            # Pass user_id to the agent
-            user_id=st.session_state.get("user_id"),
-            # session_id is no longer passed here, handled by widget
-            # session_id=target_session_id,
-            debug_mode=True # Keep debug on for now
-        )
-        # Renamed session state key
+        or st.session_state.get("current_model_id") != model_id
+    )
+
+    # Also consider other critical config changes if needed, but start simple
+    # agent_config_changed = (
+    #     st.session_state.get("current_config") != current_config
+    # )
+
+    if agent_should_initialize:
+        # logger.info(f"---*--- Creating/Re-initializing LLM OS agent (Config changed: {agent_config_changed}) ---*---")
+        logger.info(f"---*--- Creating/Re-initializing LLM OS agent (Model changed or first run) ---*---")
+        # Always create a new agent instance if config changes or no agent exists
+        # We pass the full current_config here, but the trigger is simplified
+        llm_os_agent = get_llm_os(**current_config) # Pass current config
         st.session_state["llm_os_agent"] = llm_os_agent
-        # Store the current config
-        st.session_state["current_config"] = current_config
-        # Clear messages on re-initialization
-        logger.debug("[App] Clearing st.session_state['messages'] due to agent re-initialization.")
-        st.session_state["messages"] = []
-        # <<< MODIFIED LOG vvv (Show ID from agent object)
-        logger.info(f"LLM OS Agent created/loaded. Agent Session ID from agent object: {llm_os_agent.session_id}")
-        # <<< MODIFIED LOG ^^^
-        # Removed comparison logic as it's handled by the widget now
-        # if target_session_id and llm_os_agent.session_id != target_session_id:
-        #     logger.warning(f"Agent session ID {llm_os_agent.session_id} does NOT match target session ID {target_session_id} after initialization.")
-        # elif target_session_id:
-        #     logger.debug("Agent session ID matches target session ID.")
-
+        st.session_state["current_model_id"] = model_id # Store the model ID used
+        # st.session_state["current_config"] = current_config # Store the config used (optional, maybe remove if comparison is simplified)
+        st.session_state["messages"] = [] # Clear UI messages on re-init
+        logger.info(f"New LLM OS Agent created/re-initialized. Instance: {id(llm_os_agent)}")
+        # Attempt to load session after creating agent
+        try:
+            if hasattr(llm_os_agent, 'load_session') and callable(llm_os_agent.load_session):
+                session_id = llm_os_agent.load_session()
+                st.session_state["llm_os_session_id"] = session_id
+                logger.info(f"Loaded session ID: {session_id}")
+            else:
+                 logger.warning("Agent does not have a load_session method.")
+                 st.session_state["llm_os_session_id"] = None # Ensure it's set
+        except Exception as e:
+            logger.error(f"Could not load agent session: {e}")
+            st.warning(f"Could not load agent session: {e}")
+            st.session_state["llm_os_session_id"] = None # Ensure it's set
     else:
-        # Renamed variable
+        # Use existing agent from session state
         llm_os_agent = st.session_state["llm_os_agent"]
+        logger.debug(f"Using existing LLM OS agent. Instance: {id(llm_os_agent)}, Session ID: {llm_os_agent.session_id}")
 
-    # Removed agent session loading, handled internally by llm_os_agent storage
 
     ####################################################################
-    # Load runs from memory (keep this part, might still be relevant)
+    # Load runs from memory IF messages list is empty (e.g., after session load/app restart)
     ####################################################################
-    # Use the new agent variable
-    logger.debug(f"[App] Attempting to load runs. Agent in state: {'llm_os_agent' in st.session_state and st.session_state['llm_os_agent'] is not None}")
-    if 'llm_os_agent' in st.session_state and st.session_state['llm_os_agent']:
-        current_agent_session_id = st.session_state['llm_os_agent'].session_id
-        logger.debug(f"[App] Agent ID for run loading: {current_agent_session_id}")
-        if current_agent_session_id is None:
-            logger.error("[App] Agent Session ID is None before loading runs! Cannot load history.")
-            agent_runs = []
-        else:
-            # Only attempt to load runs if session_id is valid
-            agent_runs = llm_os_agent.memory.runs if hasattr(llm_os_agent.memory, 'runs') else []
-            logger.debug(f"Retrieved agent {llm_os_agent.session_id}. Found {len(agent_runs)} runs in memory.")
-    else:
-        logger.warning("[App] Agent not found in session state before loading runs.")
-        agent_runs = [] # Ensure agent_runs is defined
+    logger.debug(f"Checking history load: Agent exists? {llm_os_agent is not None}. Messages empty? {not st.session_state.get('messages')}")
+    if llm_os_agent and not st.session_state.get("messages"): # Only load if messages are empty
+        logger.info("Attempting to load chat history from agent memory...")
+        try:
+            if hasattr(llm_os_agent, 'memory') and hasattr(llm_os_agent.memory, 'runs'):
+                agent_runs = llm_os_agent.memory.runs
+                if agent_runs:
+                    logger.info(f"Loading {len(agent_runs)} runs from agent memory into UI history.")
+                    st.session_state["messages"] = [] # Ensure it's clear before loading
+                    for _run in agent_runs:
+                        if _run.message is not None:
+                            add_message(_run.message.role, _run.message.content)
+                            logger.debug(f"Loaded user message: {_run.message.content[:50]}...")
+                        if _run.response is not None:
+                            # Use 'assistant' role for agent responses in UI
+                            add_message("assistant", _run.response.content, _run.response.tools)
+                            logger.debug(f"Loaded assistant message: {_run.response.content[:50]}...")
+                    # Temporarily comment out the rerun to see if it helps
+                    logger.info(f"Finished loading {len(st.session_state['messages'])} messages into UI state. Triggering rerun.")
+                    st.rerun() # Rerun to display loaded history immediately
+                else:
+                    logger.debug("Agent memory has no runs to load.")
+                    st.session_state["messages"] = [] # Ensure messages is an empty list
+            else:
+                logger.warning("Agent has no memory or runs attribute.")
+                st.session_state["messages"] = [] # Ensure messages is an empty list
+        except Exception as e:
+            logger.error(f"Error loading runs from agent memory: {e}")
+            st.session_state["messages"] = [] # Reset messages on error
 
-    # Initialize messages if not present or if agent was re-initialized
+
+    # Initialize messages list in session state if it doesn't exist (fallback)
     if "messages" not in st.session_state:
-        logger.debug(f"[App] Initializing st.session_state['messages'] because it was not found.")
         st.session_state["messages"] = []
 
-    logger.debug(f"UI messages count before loading history: {len(st.session_state['messages'])}")
-    # Load history only if messages are empty and runs exist (prevents duplication on rerun)
-    logger.debug(f"[App] Checking history load condition: not st.session_state['messages'] = {not st.session_state['messages']}, agent_runs = {bool(agent_runs)}")
-    if not st.session_state["messages"] and agent_runs:
-        logger.debug("Loading run history from agent memory into UI messages")
-        for _run in agent_runs:
-            if _run.message is not None:
-                add_message(_run.message.role, _run.message.content)
-            if _run.response is not None:
-                add_message("assistant", _run.response.content, _run.response.tools)
 
     ####################################################################
     # Sidebar - Utilities & Session Management
     ####################################################################
     st.sidebar.markdown("---")
-    st.sidebar.markdown("#### 🛠️ Utilities")
+    st.sidebar.markdown("#### 🛠️ Utilities & Sessions")
+
+    # Add New Chat button
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        if st.button("🔄 New Chat", key="new_chat_button"):
-            restart_agent() # Call the updated restart_agent function
+        if st.button("🔄 New Chat", key="new_chat_button", help="Start a new chat session"):
+            restart_agent() # This function handles clearing state and rerun
+
+    # Export Chat button using the persistent agent's session ID
     with col2:
-        if llm_os_agent.session_id:
-            fn = f"llm_os_chat_{llm_os_agent.session_id}.md"
-        else:
-            fn = "llm_os_chat_history.md"
+        export_filename = "llm_os_chat_history.md"
+        if llm_os_agent and hasattr(llm_os_agent, 'session_id') and llm_os_agent.session_id:
+             export_filename = f"llm_os_chat_{llm_os_agent.session_id}.md"
+
         st.download_button(
             "💾 Export Chat",
-            export_chat_history(), # Call the updated export function
-            file_name=fn,
+            export_chat_history(), # Reads from st.session_state["messages"]
+            file_name=export_filename,
             mime="text/markdown",
-            key="export_chat_button"
+            key="export_chat_button",
+            help="Download the current chat history as a markdown file."
         )
 
-    # Add Delete Sessions button
-    st.sidebar.markdown("", unsafe_allow_html=True) # Add some space
-    if st.sidebar.button("⚠️ Delete All My Sessions", key="delete_sessions_button", type="primary"):
-        current_user_id = st.session_state.get("user_id")
-        if llm_os_agent and llm_os_agent.storage:
-            try:
-                # Attempt to delete sessions for the current user
-                # NOTE: Assumes a delete_all_sessions method exists on the storage object
-                logger.info(f"Attempting to delete all sessions for user: {current_user_id}")
-                # Placeholder: Replace with actual method if different or add direct SQL execution if needed
-                if hasattr(llm_os_agent.storage, "delete_all_sessions"):
-                    llm_os_agent.storage.delete_all_sessions(user_id=current_user_id)
-                    st.toast(f"Deleted all sessions for user '{current_user_id or 'default'}'.", icon="🗑️")
-                    logger.info(f"Successfully deleted sessions for user: {current_user_id}")
-                    # Restart agent to reflect the cleared state
-                    # <<< ADDED LOG BEFORE RESTART vvv
-                    logger.debug("[App] Triggering restart_agent after deleting sessions.")
-                    # <<< ADDED LOG BEFORE RESTART ^^^
-                    restart_agent()
-                else:
-                     logger.warning("Agent storage does not have a 'delete_all_sessions' method.")
-                     st.error("Deletion feature not implemented for this storage type.")
+    # Add Session Selector and Renamer Widgets
+    if llm_os_agent:
+        # Pass the current config needed by the session_selector_widget for re-initialization
+        session_selector_widget(llm_os_agent, current_config)
+        rename_session_widget(llm_os_agent)
+    else:
+        st.sidebar.warning("Agent not ready for session management.")
 
-            except Exception as e:
-                logger.error(f"Error deleting sessions for user {current_user_id}: {e}", exc_info=True)
-                st.error(f"Failed to delete sessions: {e}")
-        else:
-            st.warning("Agent or storage not initialized.")
 
-    # Add Session Selector and Renamer
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("#### 🔄 Sessions")
-    session_selector_widget(llm_os_agent, current_config)
-    rename_session_widget(llm_os_agent)
+    # --- REMOVED Simplified Agent Initialization ---
+    # logger.info("---*--- Creating new LLM OS agent (No Session Management) ---*---")
+    # llm_os_agent_temp = get_llm_os(...)
+    # st.session_state["llm_os_agent_temp"] = llm_os_agent_temp
+    # logger.info(f"New LLM OS Agent created. Instance: {id(llm_os_agent_temp)}")
+    # --- REMOVED Temporary Agent Usage ---
 
-    ####################################################################
-    # Sidebar - General (keep if useful, e.g., clearing chat)
-    ####################################################################
-    # Removed redundant Clear Chat button
-    # if st.sidebar.button("Clear Chat History", key="clear_chat"):
-    #     llm_os_agent.clear_session() # Use agent's method if available
+    # --- REMOVED Simplified History Management ---
+    # if "messages" not in st.session_state:
+    #     logger.debug("Initializing st.session_state['messages'] for UI display.")
     #     st.session_state["messages"] = []
-    #     st.rerun()
+    # logger.debug("Chat history is now managed solely by st.session_state['messages'] for the UI session.")
+
 
     ####################################################################
     # Get user input
@@ -305,6 +316,9 @@ def main() -> None:
     # Updated chat input prompt
     if prompt := st.chat_input("🧠 Ask LLM OS anything!"):
         add_message("user", prompt)
+        # Rerun needed to process the new message immediately
+        st.rerun()
+
 
     ####################################################################
     # Display chat history
@@ -317,8 +331,9 @@ def main() -> None:
                     # Display tool calls if they exist in the message
                     if "tool_calls" in message and message["tool_calls"]:
                         # Pass the existing container creation function
-                        display_tool_calls(st.empty(), message["tool_calls"])
+                        display_tool_calls(st.empty(), message["tool_calls"]) # Create new container each time
                     st.markdown(_content)
+
 
     ####################################################################
     # Generate response for user message
@@ -326,8 +341,12 @@ def main() -> None:
     last_message = (
         st.session_state["messages"][-1] if st.session_state["messages"] else None
     )
-    if last_message and last_message.get("role") == "user":
+    # Ensure agent is initialized before attempting to run
+    if llm_os_agent and last_message and last_message.get("role") == "user":
         question = last_message["content"]
+        # Use the persistent agent instance from session state
+        # current_run_agent = st.session_state.get("llm_os_agent") # Redundant check, use llm_os_agent directly
+
         with st.chat_message("assistant"):
             # Create container for tool calls *before* the streaming loop
             tool_calls_container = st.empty()
@@ -335,8 +354,7 @@ def main() -> None:
             with st.spinner("🤔 Thinking..."):
                 response = ""
                 try:
-                    # Use the new agent variable and remove previous log
-                    # Run the agent and stream the response
+                    # Use the persistent agent instance
                     run_response = llm_os_agent.run(
                         question, stream=True, stream_intermediate_steps=True
                     )
@@ -352,17 +370,19 @@ def main() -> None:
                         ):
                             response += _resp_chunk.content
                             resp_container.markdown(response)
-                    # Use the new agent variable
+
+                    # Add final message with tool calls from the persistent agent's last run
                     add_message("assistant", response, llm_os_agent.run_response.tools)
+                    # No explicit rerun needed here, message added to state, Streamlit handles update.
                 except Exception as e:
                     logger.exception(e)
                     error_message = f"Sorry, I encountered an error: {str(e)}"
                     add_message("assistant", error_message)
-                    st.error(error_message)
+                    resp_container.error(error_message) # Display error in response container
 
-    # Removed SQL-specific session widgets
-    # session_selector_widget(sql_agent, model_id)
-    # rename_session_widget(sql_agent)
+    elif not llm_os_agent and last_message and last_message.get("role") == "user":
+         st.error("Agent not initialized. Please wait or refresh the page.")
+
 
     ####################################################################
     # About section

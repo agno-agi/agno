@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge import AgentKnowledge
 from agno.models.openai import OpenAIChat
-from agno.storage.agent.postgres import PostgresAgentStorage
+from agno.storage.sqlite import SqliteStorage
 from agno.tools import Toolkit
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckdb import DuckDbTools
@@ -21,20 +21,30 @@ from agno.tools.yfinance import YFinanceTools
 from agno.utils.log import logger
 from agno.vectordb.qdrant import Qdrant
 from dotenv import load_dotenv
+import streamlit as st
+from agno.models.anthropic import Claude
+from agno.models.google import Gemini
+from agno.models.groq import Groq
 
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+# db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai" # Removed DB URL
 cwd = Path(__file__).parent.resolve()
 scratch_dir = cwd.joinpath("scratch")
-if not scratch_dir.exists():
-    scratch_dir.mkdir(exist_ok=True, parents=True)
+tmp_dir = cwd.joinpath("tmp") # Define tmp directory path
+# Ensure scratch and tmp directories exist (tmp might be used by PythonTools)
+scratch_dir.mkdir(exist_ok=True, parents=True)
+tmp_dir.mkdir(exist_ok=True, parents=True)
 
+# Define paths for SQLite
+SQLITE_DB_PATH = cwd.joinpath("llm_os_sessions.db")
+# QDRANT_PATH = tmp_dir.joinpath("llm_os_qdrant") # No longer needed for in-memory
+QDRANT_COLLECTION = "llm_os_knowledge"
 
 def get_llm_os(
-    model_id: str = "gpt-4o",
+    model_id: str = "openai:gpt-4o",
     calculator: bool = False,
     ddg_search: bool = False,
     file_tools: bool = False,
@@ -43,15 +53,53 @@ def get_llm_os(
     python_agent_enable: bool = False,
     research_agent_enable: bool = False,
     investment_agent_enable: bool = False,
+    # Pass user_id and session_id again
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     debug_mode: bool = True,
 ) -> Agent:
+    # Use provided session_id or generate a new one
     final_session_id = session_id if session_id is not None else str(uuid.uuid4())
-    logger.info(f"-*- Creating {model_id} LLM OS -*- Session: {final_session_id} User: {user_id}")
+    logger.info(f"-*- Creating/Loading {model_id} LLM OS -*-")
+    logger.info(f"Session: {final_session_id} User: {user_id}")
 
     tools: List[Toolkit] = []
     extra_instructions: List[str] = []
+
+    # --- Dynamically select the LLM based on model_id prefix ---
+    llm_instance = None
+    provider_prefix = "openai:" # Default
+    actual_model_id = model_id
+
+    if ":" in model_id:
+        parts = model_id.split(":", 1)
+        provider_prefix = parts[0] + ":"
+        actual_model_id = parts[1]
+    else:
+        # Assume openai if no prefix (or handle as error)
+        logger.warning(f"No provider prefix found in model_id '{model_id}'. Assuming 'openai:'.")
+        provider_prefix = "openai:"
+        actual_model_id = model_id
+
+    logger.info(f"Selected LLM Provider: {provider_prefix}, Model ID: {actual_model_id}")
+
+    if provider_prefix == "openai:":
+        llm_instance = OpenAIChat(id=actual_model_id)
+    elif provider_prefix == "anthropic:":
+        llm_instance = Claude(id=actual_model_id)
+    elif provider_prefix == "google:":
+        llm_instance = Gemini(id=actual_model_id)
+    elif provider_prefix == "groq:":
+        llm_instance = Groq(id=actual_model_id)
+    else:
+        logger.error(f"Unsupported LLM provider prefix in model_id: {provider_prefix}")
+        st.error(f"Unsupported LLM provider: {provider_prefix}")
+        return None # Cannot proceed
+
+    if llm_instance is None:
+        logger.error(f"LLM instance could not be created for model_id: {model_id}")
+        st.error(f"Failed to create LLM instance for {model_id}")
+        return None
 
     if calculator:
         tools.append(
@@ -102,7 +150,7 @@ def get_llm_os(
         research_agent = Agent(
             name="Research Agent",
             role="Write a research report on a given topic",
-            model=OpenAIChat(id=model_id),
+            model=llm_instance,
             description="You are a Senior New York Times researcher tasked with writing a cover story research report.",
             instructions=[
                 "For a given topic, use the `search_exa` to get the top 10 search results.",
@@ -151,7 +199,7 @@ def get_llm_os(
         investment_agent = Agent(
             name="Investment Agent",
             role="Write an investment report on a given company (stock) symbol",
-            model=OpenAIChat(id=model_id),
+            model=llm_instance,
             description="You are a Senior Investment Analyst for Goldman Sachs tasked with writing an investment report for a very important client.",
             instructions=[
                 "For a given stock symbol, get the stock price, company information, analyst recommendations, and company news",
@@ -222,18 +270,46 @@ def get_llm_os(
         )
 
     # Create the LLM OS Agent
-    logger.debug(f"Creating Agent with session_id: {final_session_id}")
+    # logger.debug(f"Creating Agent with session_id: {final_session_id}") # Removed
+
+    # --- Use SQLiteAgentStorage for session persistence ---
+    # Uses the SQLITE_DB_PATH defined earlier
+    logger.debug(f"Initializing SQLite storage at: {SQLITE_DB_PATH}")
+    agent_storage = SqliteStorage(
+        db_file=str(SQLITE_DB_PATH),
+        table_name="llm_os_sessions", # Specify a table name
+        mode="agent" # Explicitly set mode
+    )
+
+    # --- Knowledge Base Setup using In-Memory Qdrant ---
+    logger.debug(f"Initializing In-Memory Qdrant for collection: {QDRANT_COLLECTION}")
+    try:
+        # Use location=":memory:" - no path or explicit create needed
+        vector_db = Qdrant(location=":memory:", collection=QDRANT_COLLECTION)
+        # Ensure the in-memory collection exists
+        vector_db.create()
+        logger.info(f"In-memory Qdrant collection '{vector_db.collection}' ensured.")
+    except Exception as e:
+        logger.error(f"Fatal error getting In-Memory Qdrant: {e}")
+        st.error(f"Failed to initialize Knowledge Base storage: {e}")
+        # Cannot proceed without vector_db in this setup
+        return None # Or raise an exception to halt execution
+
+    knowledge = AgentKnowledge(vector_db=vector_db, embedder=OpenAIEmbedder())
+
     llm_os = Agent(
         name="llm_os",
-        model=OpenAIChat(id=model_id),
-        user_id=user_id,
-        session_id=final_session_id,
+        model=llm_instance, # Use the dynamically selected model instance
+        user_id=user_id, # Pass user_id to agent
+        session_id=final_session_id, # Pass session_id to agent
+        storage=agent_storage, # Use SQLite storage
+        knowledge=knowledge, # Keep knowledge base if desired
         tools=tools,
         team=team,
         description=dedent("""\
         You are the most advanced AI system in the world called `LLM-OS`.
         You have access to a set of tools and a team of AI Agents at your disposal.
-        Your goal is to assist the user in the best way possible.\
+        Your goal is to assist the user in the best way possible.
         """),
         instructions=[
             "When the user sends a message, first **think** and determine if:\n"
@@ -244,34 +320,28 @@ def get_llm_os(
             " - You need to ask a clarifying question",
             "If the user asks about a topic, first ALWAYS search your knowledge base using the `search_knowledge_base` tool.",
             "If you dont find relevant information in your knowledge base, use the `duckduckgo_search` tool to search the internet.",
-            "If the user asks to summarize the conversation or if you need to reference your chat history with the user, use the `get_chat_history` tool.",
+            # "If the user asks to summarize the conversation or if you need to reference your chat history with the user, use the `get_chat_history` tool.", # Removed chat history tool instruction
             "If the users message is unclear, ask clarifying questions to get more information.",
             "Carefully read the information you have gathered and provide a clear and concise answer to the user.",
             "Do not use phrases like 'based on my knowledge' or 'depending on the information'.",
-            "You can delegate tasks to an AI Agent in your team depending of their role and the tools available to them.",
-            extra_instructions,
+
+            "Remember you are stateless, your memory resets often. Do not refer to previous interactions unless the history is explicitly provided in the current turn.",
+            "If the user asks to get investment report, delegate the task to the `Investment Agent`.",
+            *extra_instructions,
+            # Re-adding parameters from previous version
+            search_knowledge=True,
+            read_chat_history=True,
+            add_history_to_messages=True,
+            num_history_responses=5,
+            markdown=True,
+            add_datetime_to_instructions=True,
+            # Add an introductory Agent message
+            introduction=dedent("""\
+            Hi, I'm your LLM OS.
+            I have access to a set of tools and AI Agents to assist you.
+            Let's solve some problems together!\
+            """),
         ],
-        storage=PostgresAgentStorage(db_url=db_url, table_name="llm_os_runs"),
-        # Define the knowledge base
-        knowledge=AgentKnowledge(
-            vector_db=Qdrant(
-                collection="llm_os_documents",
-                embedder=OpenAIEmbedder(),
-            ),
-            num_documents=3,  # Retrieve 3 most relevant documents
-        ),
-        search_knowledge=True,  # This setting gives the LLM a tool to search the knowledge base for information
-        read_chat_history=True,  # This setting gives the LLM a tool to get chat history
-        add_history_to_messages=True,  # This setting adds chat history to the messages
-        num_history_responses=5,
-        markdown=True,
-        add_datetime_to_instructions=True,  # This setting adds the current datetime to the instructions
-        # Add an introductory Agent message
-        introduction=dedent("""\
-        Hi, I'm your LLM OS.
-        I have access to a set of tools and AI Agents to assist you.
-        Let's solve some problems together!\
-        """),
         debug_mode=debug_mode,
     )
 

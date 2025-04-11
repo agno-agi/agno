@@ -103,6 +103,46 @@ def display_tool_calls(tool_calls_container, tools):
         tool_calls_container.error("Failed to display tool results")
 
 
+def restart_agent():
+    """Reset the agent and clear chat history"""
+    logger.debug("---*--- Restarting LLM OS agent ---*---")
+    st.session_state["llm_os_agent"] = None
+    st.session_state["llm_os_session_id"] = None
+    st.session_state["messages"] = []
+    # Clear relevant config keys to force reinitialization with sidebar values
+    # This ensures the new agent uses the current sidebar settings
+    keys_to_clear = [
+        "cb_calculator", "cb_ddg", "cb_file", "cb_shell",
+        "cb_data", "cb_python", "cb_research", "cb_investment",
+        "model_selector", "user_id_input" # Clear these to re-read on rerun
+    ]
+    # for key in keys_to_clear:
+    #     if key in st.session_state:
+    #         del st.session_state[key] # Consider if clearing is needed vs. just re-reading in app.py
+    st.rerun()
+
+
+def export_chat_history():
+    """Export chat history as markdown"""
+    if "messages" in st.session_state:
+        chat_text = "# LLM OS - Chat History\n\n"
+        for msg in st.session_state["messages"]:
+            role = "🤖 Assistant" if msg["role"] == "assistant" else "👤 User" # Adjusted role check
+            # Safely handle content, could be None
+            content = msg.get('content', "*No content*")
+            chat_text += f"### {role}\n{content}\n\n"
+            # Optionally include tool calls (basic representation)
+            if msg.get("tool_calls"):
+                chat_text += "**Tool Calls:**\n"
+                for tc in msg["tool_calls"]:
+                    tool_name = tc.get("name", "Unknown Tool")
+                    tool_args = tc.get("args", {})
+                    chat_text += f"- `{tool_name}`: `{tool_args}`\n"
+                chat_text += "\n"
+        return chat_text
+    return ""
+
+
 def about_widget() -> None:
     """Display an about section in the sidebar"""
     st.sidebar.markdown("---")
@@ -114,6 +154,7 @@ def about_widget() -> None:
     - 🚀 Agno
     - 💫 Streamlit
     """)
+    st.sidebar.markdown("Build your own agents using [Agno](https://github.com/agytech/agno)!")
 
 
 CUSTOM_CSS = """
@@ -153,7 +194,7 @@ CUSTOM_CSS = """
     .stChatMessage {
         border-radius: 10px;
         padding: 15px;
-        margin-bottom: 10px;
+        margin-bottom: 20px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
     [data-testid="stChatMessageContent"] p {
@@ -246,139 +287,142 @@ CUSTOM_CSS = """
     </style>
 """
 
-def restart_agent():
-    """Reset the agent and clear chat history, tailored for llm_os_agent"""
-    logger.debug("---*--- Restarting LLM OS agent ---*---")
-    st.session_state["llm_os_agent"] = None
-    st.session_state["current_config"] = None # Reset config to trigger re-init
-    st.session_state["messages"] = []
-    st.rerun()
 
-def export_chat_history():
-    """Export chat history as markdown, tailored for llm_os_agent"""
-    if "messages" in st.session_state:
-        # Use LLM OS in title
-        chat_text = "# LLM OS - Chat History\n\n"
-        for msg in st.session_state["messages"]:
-            role = "🤖 Assistant" if msg["role"] == "assistant" else "👤 User"
-            chat_text += f"### {role}\n{msg['content']}\n\n"
-            # Optionally include tool calls in export
-            if msg.get("tool_calls"):
-                # Use str() for safer representation instead of json.dumps
-                # This avoids errors with non-serializable objects like MessageMetrics
-                try:
-                    tool_calls_repr = str(msg["tool_calls"])
-                    chat_text += "```\nTool Calls:\n" + tool_calls_repr + "\n```\n\n"
-                except Exception as e:
-                    logger.error(f"Error representing tool_calls for export: {e}")
-                    chat_text += "```\nError representing tool calls.\n```\n\n"
-        return chat_text
-    return ""
+# ---- NEW SESSION MANAGEMENT WIDGETS ----
 
-def session_selector_widget(agent: Agent, current_config: Dict[str, Any]) -> None:
-    """Display a session selector in the sidebar for LLM OS"""
-    if agent.storage:
-        # Add user_id filter if available in current_config
-        user_id_filter = current_config.get("user_id")
-        agent_sessions = agent.storage.get_all_sessions(user_id=user_id_filter)
+def session_selector_widget(agent: Agent, config: Dict[str, Any]) -> None:
+    """Display a session selector in the sidebar and handle session loading"""
+    # Ensure storage is available
+    if not hasattr(agent, 'storage') or not agent.storage:
+        st.sidebar.warning("Session storage not configured.")
+        return
 
+    try:
+        agent_sessions = agent.storage.get_all_sessions()
         if not agent_sessions:
-             st.sidebar.caption("No sessions yet for this user.")
-             return
+            st.sidebar.info("No previous sessions found.")
+            return
 
-        # Get session names if available, otherwise use IDs
         session_options = []
         for session in agent_sessions:
             session_id = session.session_id
-            session_name = (
-                session.session_data.get("session_name", None)
-                if session.session_data
-                else None
-            )
-            display_name = session_name if session_name else session_id
-            session_options.append({"id": session_id, "display": display_name})
+            # Fetch session name from metadata if available
+            session_name = session.session_data.get("session_name", session_id) if session.session_data else session_id
+            session_options.append({"id": session_id, "display": session_name})
 
-        # Display session selector
+        # Display session selector using the display names
+        current_session_display = agent.session_name if agent.session_name else agent.session_id
+        current_index = next((i for i, s in enumerate(session_options) if s["display"] == current_session_display), 0)
+
         selected_session_display = st.sidebar.selectbox(
-            "Select Session",
+            "Load Session",
             options=[s["display"] for s in session_options],
-            index=0, # Default to the first/most recent session
+            index=current_index,
             key="session_selector",
+            help="Select a previous chat session to load."
         )
-        # Find the selected session ID
-        selected_session_id = next((
-            s["id"] for s in session_options if s["display"] == selected_session_display
-        ), None)
 
-        # Only reload if the selected session ID is different from the current agent's
+        # Find the selected session ID based on the display name
+        selected_session_id = next(
+            (s["id"] for s in session_options if s["display"] == selected_session_display),
+            None
+        )
+
+        # If a different session is selected, reload the agent
         if selected_session_id and agent.session_id != selected_session_id:
             logger.info(
-                f"---*--- Session selection changed to: {selected_session_id} (User: {current_config.get('user_id')}) ---*---"
+                f"---*--- Loading LLM OS session: {selected_session_id} ({selected_session_display}) ---*---"
             )
-            # Re-initialize the agent with the selected session ID (mirroring sql_agent pattern)
+            # Re-initialize agent with the selected session ID and current config
+            st.session_state["llm_os_agent"] = get_llm_os(
+                model_id=config.get("model_id"), # Use current config
+                calculator=config.get("calculator"),
+                ddg_search=config.get("ddg_search"),
+                file_tools=config.get("file_tools"),
+                shell_tools=config.get("shell_tools"),
+                data_analyst=config.get("data_analyst"),
+                python_agent_enable=config.get("python_agent_enable"),
+                research_agent_enable=config.get("research_agent_enable"),
+                investment_agent_enable=config.get("investment_agent_enable"),
+                user_id=config.get("user_id"), # Include user_id if needed
+                session_id=selected_session_id, # Load specific session
+                debug_mode=config.get("debug_mode", True)
+            )
+            # Explicitly load the session data for the newly created agent
             try:
-                logger.debug(f"[Widget] Attempting to re-initialize agent for selected session: {selected_session_id}")
-                new_agent = get_llm_os(
-                    session_id=selected_session_id,
-                    **current_config # Pass other relevant config including user_id
-                )
-                logger.debug(f"[Widget] Re-initialized agent. New agent session_id: {new_agent.session_id}, Memory runs count: {len(new_agent.memory.runs) if hasattr(new_agent.memory, 'runs') else 'N/A'}")
-                st.session_state["llm_os_agent"] = new_agent
-                st.session_state["current_config"] = current_config # Ensure config remains consistent
-                st.session_state["messages"] = [] # Clear messages for the new session
-                logger.info(f"Session Selector: Re-initialized agent for session {selected_session_id}. Cleared UI messages. Triggering rerun.")
-                if "llm_os_agent" in st.session_state and st.session_state["llm_os_agent"]:
-                    agent_in_state = st.session_state['llm_os_agent']
-                    logger.debug(f"[Widget] State before rerun - Agent ID: {agent_in_state.session_id}, Memory runs: {len(agent_in_state.memory.runs) if hasattr(agent_in_state.memory, 'runs') else 'N/A'}")
+                loaded_agent = st.session_state["llm_os_agent"]
+                if hasattr(loaded_agent, 'load_session') and callable(loaded_agent.load_session):
+                    loaded_agent.load_session()
+                    logger.info(f"Session {selected_session_id} loaded successfully by widget.")
                 else:
-                    logger.debug("[Widget] State before rerun - Agent not found in session state.")
-                st.rerun()
+                    logger.warning("Agent created by widget has no load_session method.")
             except Exception as e:
-                logger.error(f"Failed to re-initialize agent for session {selected_session_id}: {e}", exc_info=True)
-                st.error(f"Failed to load session: {e}")
+                logger.error(f"Error calling load_session in widget: {e}")
+                st.toast(f"Error loading session details: {e}", icon="🔥")
+
+            # Update session ID in state
+            st.session_state["llm_os_session_id"] = selected_session_id
+            # Clear messages to load history from the new agent
+            st.session_state["messages"] = []
+            st.rerun()
+
+    except Exception as e:
+        logger.error(f"Error loading/displaying sessions: {e}")
+        st.sidebar.error("Failed to load sessions.")
+
 
 def rename_session_widget(agent: Agent) -> None:
-    """Rename the current session of the agent and save to storage"""
-    if not agent.session_id:
-        st.sidebar.caption("Session not yet saved.")
-        return
+    """Allow renaming the current agent session"""
+    # Ensure storage is available
+    if not hasattr(agent, 'storage') or not agent.storage:
+        return # Don't show if storage isn't used
 
     container = st.sidebar.container()
+    # Use columns for layout: input field takes more space
     session_row = container.columns([3, 1], vertical_alignment="bottom")
 
-    # Initialize session_edit_mode if needed
+    # Initialize edit mode state if it doesn't exist
     if "session_edit_mode" not in st.session_state:
         st.session_state.session_edit_mode = False
 
+    # Display current name or input field
     with session_row[0]:
-        # Display current name or input field
-        current_name = agent.session_name or agent.session_id
+        current_name = agent.session_name if agent.session_name else agent.session_id
         if st.session_state.session_edit_mode:
+            # Text input for renaming
             new_session_name = st.text_input(
-                "Rename Session:",
-                value=current_name, # Show current name/ID as default
+                "Edit Session Name:",
+                value=current_name, # Show current name/ID initially
                 key="session_name_input",
-                label_visibility="collapsed",
+                label_visibility="collapsed", # Hide the label "Edit Session Name:"
             )
         else:
-            st.markdown(f"**Session:** {current_name}")
+            # Display current session name (or ID if no name)
+            st.markdown(f"**Session:** `{current_name}`")
 
+    # Display Edit/Save button
     with session_row[1]:
         if st.session_state.session_edit_mode:
-            if st.button("✓", key="save_session_name", help="Save name"):
-                if new_session_name and new_session_name != agent.session_id:
+            # Save button
+            if st.button("💾", key="save_session_name", help="Save session name"):
+                if new_session_name and new_session_name != current_name:
                     try:
                         agent.rename_session(new_session_name)
                         st.session_state.session_edit_mode = False
+                        st.toast(f"✅ Session renamed to '{new_session_name}'", icon="📝")
                         st.rerun() # Rerun to update display
                     except Exception as e:
-                        logger.error(f"Failed to rename session: {e}")
-                        st.error(f"Failed to rename: {e}")
+                        logger.error(f"Error renaming session: {e}")
+                        st.toast(f"❌ Error renaming session: {e}", icon="🔥")
                 else:
-                    # If name is empty or same as ID, just exit edit mode
+                    # If name is empty or unchanged, just exit edit mode
                     st.session_state.session_edit_mode = False
-                    st.rerun()
+                    st.rerun() # Rerun to switch back view
         else:
-            if st.button("✎", key="edit_session_name", help="Rename session"):
+            # Edit button
+            if st.button("✏️", key="edit_session_name", help="Rename session"):
                 st.session_state.session_edit_mode = True
-                st.rerun()
+                st.rerun() # Rerun to show the input field
+
+
+# ---- END SESSION MANAGEMENT WIDGETS ----
