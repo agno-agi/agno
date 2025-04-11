@@ -57,7 +57,6 @@ class SessionSummarizer:
         else:
             model.response_format = {"type": "json_object"}
 
-
     def get_system_message(self, conversation: List[Message], model: Model) -> Message:
         if self.system_prompt is not None:
             return Message(role="system", content=self.system_prompt)

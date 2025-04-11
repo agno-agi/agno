@@ -501,7 +501,7 @@ class Agent:
             self.memory = Memory()
         # Default to the agent's model if no model is provided
         if isinstance(self.memory, Memory):
-            if self.memory.model is None:
+            if self.memory.model is None and self.model is not None:
                 self.memory.set_model(self.model)
 
         if self._formatter is None:
@@ -2027,7 +2027,9 @@ class Agent:
                 memory_dict = self.memory.to_dict()
                 # We only persist the runs for the current session ID (not all runs in memory)
                 memory_dict["runs"] = [
-                    agent_run.to_dict() for agent_run in self.memory.runs if agent_run.response.session_id == session_id
+                    agent_run.to_dict()
+                    for agent_run in self.memory.runs
+                    if agent_run.response is not None and agent_run.response.session_id == session_id
                 ]
             else:
                 self.memory = cast(Memory, self.memory)
@@ -3253,7 +3255,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(user_id=self.user_id, session_id=session_id)
+        self.read_from_storage(user_id=self.user_id, session_id=session_id)  # type: ignore
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage

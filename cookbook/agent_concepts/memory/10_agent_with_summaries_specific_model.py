@@ -17,8 +17,9 @@ agent_storage = SqliteStorage(
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
-memory = Memory(db=memory_db,
-                summarizer=SessionSummarizer(model=OpenAIChat(id="gpt-4o-mini")))
+memory = Memory(
+    db=memory_db, summarizer=SessionSummarizer(model=OpenAIChat(id="gpt-4o-mini"))
+)
 
 # Reset the memory for this example
 memory.clear()

@@ -99,7 +99,6 @@ def print_agent_memory(agent):
         message_dict = m.to_dict()
         messages.append(message_dict)
 
-
     # Print chat history
     console.print(
         Panel(
@@ -120,10 +119,12 @@ def print_agent_memory(agent):
             Panel(
                 JSON(
                     json.dumps(
-                    [
-                        user_memory.to_dict()
-                        for user_memory in agent.memory.get_user_memories(user_id=user_id)
-                    ],
+                        [
+                            user_memory.to_dict()
+                            for user_memory in agent.memory.get_user_memories(
+                                user_id=user_id
+                            )
+                        ],
                         indent=4,
                     ),
                 ),
@@ -140,7 +141,9 @@ def print_agent_memory(agent):
                     json.dumps(
                         [
                             summary.to_dict()
-                            for summary in agent.memory.get_session_summaries(user_id=user_id)
+                            for summary in agent.memory.get_session_summaries(
+                                user_id=user_id
+                            )
                         ],
                         indent=4,
                     ),
@@ -149,7 +152,6 @@ def print_agent_memory(agent):
                 expand=True,
             )
         )
-
 
 
 def main(user: str = "user"):

@@ -464,7 +464,7 @@ class Team:
             if not (self.session_id is None or self.session_id == ""):
                 session_id = self.session_id
             else:
-                # Generate a new session_id and store it in the agent   
+                # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
 
@@ -486,7 +486,7 @@ class Team:
 
         # Default to the team's model if no model is provided
         if isinstance(self.memory, Memory):
-            if self.memory.model is None:
+            if self.memory.model is None and self.model is not None:
                 self.memory.set_model(self.model)
 
         # Read existing session from storage
@@ -496,7 +496,7 @@ class Team:
         if self.response_model is not None and self.parse_response and stream is True:
             # Disable stream if response_model is set
             stream = False
-            log_warning("Disabling stream as response_model is set")
+            log_debug("Disabling stream as response_model is set")
 
         # Configure the model for runs
         self._configure_model(show_tool_calls=show_tool_calls)
@@ -1160,7 +1160,7 @@ class Team:
 
         # Default to the team's model if no model is provided
         if isinstance(self.memory, Memory):
-            if self.memory.model is None:
+            if self.memory.model is None and self.model is not None:
                 self.memory.set_model(self.model)
 
         # Read existing session from storage
@@ -5494,18 +5494,21 @@ class Team:
             )
         return self.team_session
 
-    def rename_session(self, session_name: str) -> None:
+    def rename_session(self, session_name: str, session_id: Optional[str] = None) -> None:
         """Rename the current session and save to storage"""
-        if self.session_id is None:
+        if self.session_id is None and session_id is None:
             raise ValueError("Session ID is not initialized")
+
+        session_id = session_id or self.session_id
+
         # -*- Read from storage
-        self.read_from_storage(session_id=self.session_id, user_id=self.user_id)
+        self.read_from_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage
-        self.write_to_storage(session_id=self.session_id, user_id=self.user_id)
+        self.write_to_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
         # -*- Log Agent session
-        self._log_team_session(session_id=self.session_id, user_id=self.user_id)
+        self._log_team_session(session_id=session_id, user_id=self.user_id)  # type: ignore
 
     def delete_session(self, session_id: str) -> None:
         """Delete the current session and save to storage"""
@@ -5638,6 +5641,7 @@ class Team:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "team_context" in session.memory:
                     from agno.memory.v2.memory import TeamContext
+
                     try:
                         self.memory.team_context = {
                             session_id: TeamContext.from_dict(team_context)
@@ -5654,7 +5658,8 @@ class Team:
                         try:
                             self.memory.memories = {
                                 user_id: {
-                                    memory_id: UserMemoryV2.from_dict(memory) for memory_id, memory in user_memories.items()
+                                    memory_id: UserMemoryV2.from_dict(memory)
+                                    for memory_id, memory in user_memories.items()
                                 }
                                 for user_id, user_memories in session.memory["memories"].items()
                             }

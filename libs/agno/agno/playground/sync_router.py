@@ -804,7 +804,7 @@ def get_sync_playground_router(
         raise HTTPException(status_code=404, detail="Session not found")
 
     @playground_router.delete("/teams/{team_id}/sessions/{session_id}")
-    def delete_team_session(team_id: str, session_id: str):
+    def delete_team_session(team_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         team = get_team_by_id(team_id, teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
