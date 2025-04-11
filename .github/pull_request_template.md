@@ -1,6 +1,8 @@
 ## Summary
 
-Describe key changes, mention related issues or motivation for the changes. (If applicable, issue number: #____)
+Describe key changes, mention related issues or motivation for the changes.
+
+(If applicable, issue number: #____)
 
 ## Type of change
 
