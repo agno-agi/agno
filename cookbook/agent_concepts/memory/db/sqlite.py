@@ -13,7 +13,8 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     memory=memory,
     storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/memory.db"),
-    enable_agentic_memory=True,
+    enable_user_memories=True,
+    enable_session_summaries=True,
 )
 
 agent.print_response(

@@ -16,7 +16,7 @@ agent = Agent(
     memory=memory,
     storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
     enable_user_memories=True,
-    # enable_session_summaries=True,
+    enable_session_summaries=True,
 )
 
 agent.print_response(
@@ -27,5 +27,5 @@ agent.print_response(
 )
 
 agent.print_response(
-    "What are my hobbies?", stream=True, user_id="test", session_id=session_id
+    "What are my hobbies?", stream=True, user_id=user_id, session_id=session_id
 )
