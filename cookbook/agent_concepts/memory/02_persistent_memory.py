@@ -28,7 +28,7 @@ memory.add_user_memory(
 
 # Run this the 2nd time
 # memory.add_user_memory(
-#     memory=UserMemory(memory="The user works at a softward company called Agno", topics=["name"]),
+#     memory=UserMemory(memory="The user works at a software company called Agno", topics=["name"]),
 #     user_id=john_doe_id,
 # )
 

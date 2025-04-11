@@ -69,6 +69,7 @@ class MemoryManager:
             "Memories should be a brief, third-person statement that encapsulates the most important aspect of the user's input, without adding any extraneous information. "
             "Don't make a single memory too long, but do create multiple memories if needed to capture all the information. "
             "When updating a memory, append the existing memory with new information rather than completely overwriting it. "
+            "If there is no new information, do not update the memory. "
             "Memories should include details that could personalize ongoing interactions with the user, such as:"
             "  - Personal facts: name, age, occupation, location, interests, preferences, etc."
             "  - Significant life events or experiences shared by the user"

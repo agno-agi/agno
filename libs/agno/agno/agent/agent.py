@@ -4378,6 +4378,7 @@ class Agent:
                         )
                         panels.append(memory_panel)
                         live_log.update(Group(*panels))
+                        self.memory.memory_manager.memories_updated = False
 
                     if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
                         summary_panel = create_panel(
@@ -4386,6 +4387,8 @@ class Agent:
                             border_style="green",
                         )
                         panels.append(summary_panel)
+                        live_log.update(Group(*panels))
+                        self.memory.summary_manager.summary_updated = False
 
                 response_timer.stop()
 
@@ -4546,6 +4549,7 @@ class Agent:
                         )
                         panels.append(memory_panel)
                         live_log.update(Group(*panels))
+                        self.memory.memory_manager.memories_updated = False
 
                     if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
                         summary_panel = create_panel(
@@ -4555,6 +4559,7 @@ class Agent:
                         )
                         panels.append(summary_panel)
                         live_log.update(Group(*panels))
+                        self.memory.summary_manager.summary_updated = False
 
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]
@@ -4770,6 +4775,7 @@ class Agent:
                         )
                         panels.append(memory_panel)
                         live_log.update(Group(*panels))
+                        self.memory.memory_manager.memories_updated = False
 
                     if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
                         summary_panel = create_panel(
@@ -4778,6 +4784,8 @@ class Agent:
                             border_style="green",
                         )
                         panels.append(summary_panel)
+                        live_log.update(Group(*panels))
+                        self.memory.summary_manager.summary_updated = False
 
                 response_timer.stop()
 
@@ -4936,6 +4944,7 @@ class Agent:
                         )
                         panels.append(memory_panel)
                         live_log.update(Group(*panels))
+                        self.memory.memory_manager.memories_updated = False
 
                     if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
                         summary_panel = create_panel(
@@ -4944,6 +4953,8 @@ class Agent:
                             border_style="green",
                         )
                         panels.append(summary_panel)
+                        live_log.update(Group(*panels))
+                        self.memory.summary_manager.summary_updated = False
 
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]
