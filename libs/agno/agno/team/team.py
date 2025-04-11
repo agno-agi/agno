@@ -599,13 +599,8 @@ class Team:
                         files=files,  # type: ignore
                     )
                 )
-<<<<<<< HEAD
-=======
-                if self.enable_agentic_context:
-                    _tools.append(self.set_team_context)
                 if self.get_member_information_tool:
                     _tools.append(self.get_member_information)
->>>>>>> 8ee6301486e995da200107c75979cf1d7579d7a5
 
             elif self.mode == "collaborate":
                 run_member_agents_func = self.get_run_member_agents_function(
@@ -618,13 +613,9 @@ class Team:
                     files=files,  # type: ignore
                 )
                 _tools.append(run_member_agents_func)
-<<<<<<< HEAD
-=======
-                if self.enable_agentic_context:
-                    _tools.append(self.set_team_context)
+                
                 if self.get_member_information_tool:
                     _tools.append(self.get_member_information)
->>>>>>> 8ee6301486e995da200107c75979cf1d7579d7a5
 
             self._add_tools_to_model(self.model, tools=_tools)  # type: ignore
 
@@ -4185,7 +4176,7 @@ class Team:
             )
             system_message_content += "Use this shared context to improve inter-agent communication and coordination.\n"
             system_message_content += "It is important that you update the shared context as often as possible.\n"
-            system_message_content += "To update the shared context, use the `set_team_context` tool.\n"
+            system_message_content += "To update the shared context, use the `set_shared_context` tool.\n"
             system_message_content += "</shared_context>\n\n"
 
         if self.name is not None:
@@ -4592,20 +4583,14 @@ class Team:
             response = await self.memory.aupdate_memory_task(task=task, user_id=user_id)
             return response
 
-<<<<<<< HEAD
         if async_mode:
             return aupdate_user_memory
         else:
             return update_user_memory
-=======
+
     def get_member_information(self) -> str:
         """Get information about the members of the team, including their IDs, names, and roles."""
         return self.get_members_system_message_content(indent=0)
-
-    def set_team_context(self, state: Union[str, dict]) -> str:
-        """
-        Set the team's shared context with the given state.
->>>>>>> 8ee6301486e995da200107c75979cf1d7579d7a5
 
     def get_team_history_function(self, session_id: str) -> Callable:
         def get_team_history(num_chats: Optional[int] = None) -> str:
@@ -5298,15 +5283,10 @@ class Team:
         """
         # First check direct members
         for i, member in enumerate(self.members):
-<<<<<<< HEAD
-            if member.name == agent_name:
-                return i, member
-=======
             if member.name is not None:
                 url_safe_member_id = member.name.lower().replace(" ", "-").replace("_", "-")
                 if url_safe_member_id == member_id:
                     return (i, member)
->>>>>>> 8ee6301486e995da200107c75979cf1d7579d7a5
 
             # If this member is a team, search its members recursively
             if isinstance(member, Team):
