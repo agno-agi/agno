@@ -195,7 +195,9 @@ def test_search(qdrant_db, mock_qdrant_client):
         }
         result2.vector = [0.2] * 768
 
-        mock_qdrant_client.search.return_value = [result1, result2]
+        query_response = Mock()
+        query_response.points = [result1, result2]
+        mock_qdrant_client.query_points.return_value = query_response
 
         # Test search
         results = qdrant_db.search("Thai food", limit=2)
@@ -204,10 +206,10 @@ def test_search(qdrant_db, mock_qdrant_client):
         assert results[1].name == "green_curry"
 
         # Verify search was called with correct parameters
-        mock_qdrant_client.search.assert_called_once()
-        args, kwargs = mock_qdrant_client.search.call_args
+        mock_qdrant_client.query_points.assert_called_once()
+        args, kwargs = mock_qdrant_client.query_points.call_args
         assert kwargs["collection_name"] == "test_collection"
-        assert kwargs["query_vector"] == [0.1] * 768
+        assert kwargs["query"] == [0.1] * 768
         assert kwargs["limit"] == 2
 
 
