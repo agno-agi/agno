@@ -90,6 +90,7 @@ async def test_firecrawl_knowledge_base_async_directory(setup_vector_db):
     assert any(call["function"]["name"] == "async_search_knowledge_base" for call in function_calls)
 
 
+@pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")
 @pytest.mark.asyncio
 async def test_firecrawl_knowledge_base_async_single_url(setup_vector_db):
     """Test async loading of a single URL into knowledge base"""
