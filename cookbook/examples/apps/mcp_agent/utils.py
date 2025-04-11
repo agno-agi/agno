@@ -1,13 +1,21 @@
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import streamlit as st
-from agents import get_mcp_agent
 from agno.agent import Agent
-from agno.tools.mcp import MCPTools
 from agno.utils.log import logger
 from mcp_client import MCPServerConfig
+
+
+async def initialize_agent_session_state(agent_name: str):
+    logger.info(f"---*--- Initializing session state for {agent_name} ---*---")
+    if agent_name not in st.session_state:
+        st.session_state[agent_name] = {
+            "agent": None,
+            "session_id": None,
+            "messages": [],
+        }
 
 
 def get_selected_model() -> str:
@@ -67,7 +75,7 @@ def get_mcp_server_config() -> Optional[MCPServerConfig]:
         # Use radio button for single selection
         selected_tool = st.radio(
             "Select a tool to use:",
-            options=["GitHub", "Filesystem"],
+            options=["Filesystem", "GitHub"],
             key="selected_mcp_tool",
             label_visibility="collapsed",
         )
@@ -91,7 +99,7 @@ def get_mcp_server_config() -> Optional[MCPServerConfig]:
             else:
                 st.error("GitHub Token is required to use GitHub MCP Tools")
 
-        elif selected_tool == "Filesystem":
+        if selected_tool == "Filesystem":
             # Get the repository root
             cwd = Path(__file__).parent
             repo_root = cwd.parent.parent.parent.parent.resolve()
@@ -106,15 +114,14 @@ def get_mcp_server_config() -> Optional[MCPServerConfig]:
     return None
 
 
-def add_message(
-    role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None
+async def add_message(
+    agent_name: str,
+    role: str,
+    content: str,
+    tool_calls: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
-    """Safely add a message to the session state."""
-    if "messages" not in st.session_state or not isinstance(
-        st.session_state["messages"], list
-    ):
-        st.session_state["messages"] = []
-    st.session_state["messages"].append(
+    """Safely add a message to the Agent's session state."""
+    st.session_state[agent_name]["messages"].append(
         {"role": role, "content": content, "tool_calls": tool_calls}
     )
 
@@ -180,28 +187,32 @@ def display_tool_calls(tool_calls_container, tools):
         tool_calls_container.error(f"Failed to display tool results: {str(e)}")
 
 
-def example_inputs(server_id: str) -> None:
+async def example_inputs(server_id: str, agent_name: str = "mcp_agent") -> None:
     """Show example inputs for the MCP Agent."""
     with st.sidebar:
         st.markdown("#### :thinking_face: Try me!")
         if st.button("Who are you?"):
-            add_message(
+            await add_message(
+                agent_name,
                 "user",
                 "Who are you?",
             )
         if st.button("What is your purpose?"):
-            add_message(
+            await add_message(
+                agent_name,
                 "user",
                 "What is your purpose?",
             )
         # Common examples for all server types
         if st.button("What can you help me with?"):
-            add_message(
+            await add_message(
+                agent_name,
                 "user",
                 "What can you help me with?",
             )
         if st.button("How do MCP tools work?"):
-            add_message(
+            await add_message(
+                agent_name,
                 "user",
                 "How do MCP tools work? Explain the Model Context Protocol.",
             )
@@ -209,29 +220,32 @@ def example_inputs(server_id: str) -> None:
         # Server-specific examples
         if server_id == "github":
             if st.button("Tell me about Agno"):
-                add_message(
+                await add_message(
+                    agent_name,
                     "user",
                     "Tell me about Agno. Github repo: https://github.com/agno-agi/agno. You can read the README for more information.",
                 )
             if st.button("Find issues in the Agno repo"):
-                add_message(
+                await add_message(
+                    agent_name,
                     "user",
                     "Find open issues in the agno-agi/agno repository and summarize the top 3 most recent ones.",
                 )
         elif server_id == "filesystem":
             if st.button("Summarize the README"):
-                add_message(
+                await add_message(
+                    agent_name,
                     "user",
                     "If there is a README file in the current directory, summarize it.",
                 )
 
 
-def session_selector_widget(
+async def session_selector(
+    agent_name: str,
     agent: Agent,
-    model_str: str,
-    num_history_responses: int,
-    mcp_tools: List[MCPTools],
-    mcp_server_ids: List[str],
+    get_agent: Callable,
+    model_id: str,
+    user_id: Optional[str] = None,
 ) -> None:
     """Display a session selector in the sidebar, if a new session is selected, the agent is restarted with the new session."""
 
@@ -239,14 +253,13 @@ def session_selector_widget(
         return
 
     try:
-        # -*- Get all agent sessions.
+        # Get all agent sessions.
         agent_sessions = agent.storage.get_all_sessions()
-
         if not agent_sessions:
             st.sidebar.info("No saved sessions found.")
             return
 
-        # -*- Get session names if available, otherwise use IDs.
+        # Get session names if available, otherwise use IDs.
         sessions_list = []
         for session in agent_sessions:
             session_id = session.session_id
@@ -258,7 +271,7 @@ def session_selector_widget(
             display_name = session_name if session_name else session_id
             sessions_list.append({"id": session_id, "display_name": display_name})
 
-        # -*- Display session selector.
+        # Display session selector.
         st.sidebar.markdown("#### 💬 Session")
         selected_session = st.sidebar.selectbox(
             "Session",
@@ -266,33 +279,31 @@ def session_selector_widget(
             key="session_selector",
             label_visibility="collapsed",
         )
-        # -*- Find the selected session ID.
+        # Find the selected session ID.
         selected_session_id = next(
             s["id"] for s in sessions_list if s["display_name"] == selected_session
         )
-        # -*- Update the selected session if it has changed.
-        if st.session_state.get("mcp_agent_session_id") != selected_session_id:
+        # Update the agent session if it has changed.
+        if st.session_state[agent_name]["session_id"] != selected_session_id:
             logger.info(
-                f"---*--- Loading {model_str} run: {selected_session_id} ---*---"
+                f"---*--- Loading {agent_name} session: {selected_session_id} ---*---"
             )
-            st.session_state["mcp_agent"] = get_mcp_agent(
-                model_str=model_str,
+            st.session_state[agent_name]["agent"] = get_agent(
+                user_id=user_id,
+                model_id=model_id,
                 session_id=selected_session_id,
-                num_history_responses=num_history_responses,
-                mcp_tools=mcp_tools,
-                mcp_server_ids=mcp_server_ids,
             )
             st.rerun()
 
-        # -*- Show the rename session widget.
+        # Show the rename session widget.
         container = st.sidebar.container()
         session_row = container.columns([3, 1], vertical_alignment="center")
 
-        # -*- Initialize session_edit_mode if needed.
+        # Initialize session_edit_mode if needed.
         if "session_edit_mode" not in st.session_state:
             st.session_state.session_edit_mode = False
 
-        # -*- Show the session name.
+        # Show the session name.
         with session_row[0]:
             if st.session_state.session_edit_mode:
                 new_session_name = st.text_input(
@@ -304,7 +315,7 @@ def session_selector_widget(
             else:
                 st.markdown(f"Session Name: **{agent.session_name}**")
 
-        # -*- Show the rename session button.
+        # Show the rename session button.
         with session_row[1]:
             if st.session_state.session_edit_mode:
                 if st.button("✓", key="save_session_name", type="primary"):
@@ -322,26 +333,52 @@ def session_selector_widget(
         st.sidebar.error("Failed to load sessions")
 
 
-def restart_agent():
-    """Reset the agent and clear chat history."""
-    logger.debug("---*--- Restarting agent ---*---")
-    st.session_state["mcp_agent"] = None
-    st.session_state["mcp_agent_session_id"] = None
-    st.session_state["messages"] = []
+async def utilities_widget(agent_name: str, agent: Agent) -> None:
+    """Display a utilities widget in the sidebar."""
+    st.sidebar.markdown("#### 🛠️ Utilities")
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        if st.button("🔄 Start New Chat"):
+            restart_agent(agent_name)
+    with col2:
+        fn = f"{agent_name}_chat_history.md"
+        if "session_id" in st.session_state[agent_name]:
+            fn = f"{agent_name}_{st.session_state[agent_name]['session_id']}.md"
+        if st.download_button(
+            ":file_folder: Export Chat History",
+            export_chat_history(agent_name),
+            file_name=fn,
+            mime="text/markdown",
+        ):
+            st.sidebar.success("Chat history exported!")
+
+
+def restart_agent(agent_name: str):
+    logger.debug("---*--- Restarting Agent ---*---")
+    st.session_state[agent_name]["agent"] = None
+    st.session_state[agent_name]["session_id"] = None
+    st.session_state[agent_name]["messages"] = []
+    if "url_scrape_key" in st.session_state[agent_name]:
+        st.session_state[agent_name]["url_scrape_key"] += 1
+    if "file_uploader_key" in st.session_state[agent_name]:
+        st.session_state[agent_name]["file_uploader_key"] += 1
     st.rerun()
 
 
-def export_chat_history():
-    """Export chat history as markdown.
+def export_chat_history(agent_name: str):
+    """Export chat history in markdown format.
 
     Returns:
         str: Formatted markdown string of the chat history
     """
-    if "messages" not in st.session_state or not st.session_state["messages"]:
-        return "# MCP Agent - Chat History\n\nNo messages to export."
+    if (
+        "messages" not in st.session_state[agent_name]
+        or not st.session_state[agent_name]["messages"]
+    ):
+        return f"# {agent_name} - Chat History\n\nNo messages to export."
 
-    chat_text = "# MCP Agent - Chat History\n\n"
-    for msg in st.session_state["messages"]:
+    chat_text = f"# {agent_name} - Chat History\n\n"
+    for msg in st.session_state[agent_name]["messages"]:
         role_label = "🤖 Assistant" if msg["role"] == "assistant" else "👤 User"
         chat_text += f"### {role_label}\n{msg['content']}\n\n"
 
@@ -359,31 +396,6 @@ def export_chat_history():
                     chat_text += f"Results: ```\n{tool_call['content']}\n```\n\n"
 
     return chat_text
-
-
-def utilities_widget(agent: Agent) -> None:
-    """Display a utilities widget in the sidebar."""
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("#### 🛠️ Utilities")
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        if st.button("🔄 New Chat"):
-            restart_agent()
-    with col2:
-        fn = "mcp_agent_chat_history.md"
-        if "mcp_agent_session_id" in st.session_state:
-            fn = f"mcp_agent_{st.session_state.mcp_agent_session_id}.md"
-        if st.download_button(
-            ":file_folder: Export Chat",
-            export_chat_history(),
-            file_name=fn,
-            mime="text/markdown",
-        ):
-            st.sidebar.success("Chat history exported!")
-    if agent is not None and agent.knowledge is not None:
-        if st.sidebar.button("📚 Load Knowledge"):
-            agent.knowledge.load()
-            st.sidebar.success("Knowledge loaded!")
 
 
 def about_widget() -> None:
