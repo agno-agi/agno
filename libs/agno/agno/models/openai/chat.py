@@ -189,6 +189,10 @@ class OpenAIChat(Model):
             "extra_query": self.extra_query,
             "metadata": self.metadata,
         }
+        
+        if self.response_format is not None:
+            if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+                pass
 
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}

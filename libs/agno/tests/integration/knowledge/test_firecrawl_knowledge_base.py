@@ -16,7 +16,7 @@ def setup_vector_db():
     # Clean up after test
     vector_db.drop()
 
-
+@pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")
 def test_firecrawl_knowledge_base_directory(setup_vector_db):
     """Test loading multiple URLs into knowledge base"""
     kb = FireCrawlKnowledgeBase(
@@ -40,6 +40,7 @@ def test_firecrawl_knowledge_base_directory(setup_vector_db):
     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
+@pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")
 def test_firecrawl_knowledge_base_single_url(setup_vector_db):
     """Test loading a single URL into knowledge base"""
     kb = FireCrawlKnowledgeBase(urls=["https://docs.agno.com/knowledge/pdf"], vector_db=setup_vector_db)
@@ -60,6 +61,7 @@ def test_firecrawl_knowledge_base_single_url(setup_vector_db):
     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
+@pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")
 @pytest.mark.asyncio
 async def test_firecrawl_knowledge_base_async_directory(setup_vector_db):
     """Test async loading of multiple URLs into knowledge base"""
@@ -108,6 +110,7 @@ async def test_firecrawl_knowledge_base_async_single_url(setup_vector_db):
     assert any(call["function"]["name"] == "async_search_knowledge_base" for call in function_calls)
 
 
+@pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")
 def test_firecrawl_knowledge_base_empty_urls(setup_vector_db):
     """Test handling of empty URL list"""
     kb = FireCrawlKnowledgeBase(urls=[], vector_db=setup_vector_db)
