@@ -1,7 +1,6 @@
 from agno.agent import Agent
 from agno.memory.v2.memory import Memory
-from agno.models.anthropic import Claude
-from agno.models.openai import OpenAIChat
+from agno.models.anthropic.claude import Claude
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
@@ -20,7 +19,7 @@ class StockAnalysis(BaseModel):
 
 stock_searcher = Agent(
     name="Stock Searcher",
-    model=OpenAIChat("gpt-4o"),
+    model=Claude(id="claude-3-5-sonnet-20241022"),
     role="Searches the web for information on a stock.",
     tools=[YFinanceTools()],
     memory=memory,
@@ -28,7 +27,7 @@ stock_searcher = Agent(
 
 web_searcher = Agent(
     name="Web Searcher",
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-3-5-sonnet-20241022"),
     tools=[DuckDuckGoTools()],
     role="Searches the web for information on a company.",
     memory=memory,
@@ -40,7 +39,7 @@ user_id = "john_doe@example.com"
 team = Team(
     name="Stock Team",
     mode="coordinate",
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-3-7-latest"),
     members=[stock_searcher, web_searcher],
     instructions=[
         "First, search the stock market for information about a particular company's stock.",

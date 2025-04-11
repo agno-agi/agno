@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 try:
     from sqlalchemy.dialects import postgresql
@@ -53,7 +53,7 @@ class PostgresMemoryDb(MemoryDb):
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
         self.table: Table = self.get_table()
 
-    def __dict__(self) -> Dict[str, any]:
+    def __dict__(self) -> Dict[str, Any]:
         return {
             "name": "PostgresMemoryDb",
             "table_name": self.table_name,

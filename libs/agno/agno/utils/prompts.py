@@ -24,7 +24,7 @@ def get_json_output_prompt(response_model: Union[str, list, BaseModel]) -> str:
             json_output_prompt += "\n</json_fields>"
         elif (
             issubclass(type(response_model), BaseModel)
-            or issubclass(response_model, BaseModel)
+            or issubclass(response_model, BaseModel)  # type: ignore
             or isinstance(response_model, BaseModel)
         ):  # type: ignore
             json_schema = response_model.model_json_schema()

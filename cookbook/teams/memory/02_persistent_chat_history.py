@@ -8,7 +8,7 @@ Steps:
 
 from agno.agent import Agent
 from agno.memory.v2.memory import Memory
-from agno.models.openai import OpenAIChat
+from agno.models.anthropic.claude import Claude
 from agno.models.perplexity.perplexity import Perplexity
 from agno.storage.sqlite import SqliteStorage
 from agno.team.team import Team
@@ -19,9 +19,9 @@ memory = Memory()
 
 stock_searcher = Agent(
     name="Stock Searcher",
-    model=OpenAIChat("gpt-4o"),
+    model=Claude(id="claude-3-5-sonnet-20241022"),
     role="Searches the web for information on a stock.",
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(cache_results=True)],
     storage=SqliteStorage(
         table_name="agent_sessions", db_file="tmp/persistent_memory.db"
     ),
@@ -41,7 +41,7 @@ web_searcher = Agent(
 team = Team(
     name="Stock Team",
     mode="coordinate",
-    model=OpenAIChat("gpt-4o"),
+    model=Claude(id="claude-3-5-sonnet-20241022"),
     # Store team sessions in a database
     storage=SqliteStorage(
         table_name="team_sessions", db_file="tmp/persistent_memory.db"

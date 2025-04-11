@@ -179,7 +179,7 @@ def get_async_playground_router(
                             provider=agent.memory.model.provider,
                         )
                     if agent.memory.db is not None:
-                        memory_dict["db"] = agent.memory.db.__dict__()
+                        memory_dict["db"] = agent.memory.db.__dict__()  # type: ignore
 
                 else:
                     memory_dict = None

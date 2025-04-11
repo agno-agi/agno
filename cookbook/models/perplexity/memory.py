@@ -6,8 +6,7 @@ Steps:
 3. Run: `python cookbook/agents/personalized_memories_and_summaries.py` to run the agent
 """
 
-from agno.agent import Agent, AgentMemory
-from agno.memory.db.postgres import PgMemoryDb
+from agno.agent import Agent
 from agno.memory.v2.db.postgres import PostgresMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.perplexity import Perplexity
