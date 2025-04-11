@@ -11,17 +11,16 @@ User 3 has 1 session.
 import asyncio
 
 from agno.agent.agent import Agent
-from agno.memory.v2.db.postgres import PostgresMemoryDb
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.anthropic.claude import Claude
 from agno.models.google.gemini import Gemini
-from agno.models.openai import OpenAIChat
-from agno.storage.postgres import PostgresStorage
+from agno.storage.sqlite import SqliteStorage
 
-agent_storage = PostgresStorage(
-    table_name="agent_sessions", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+agent_storage = SqliteStorage(
+    table_name="agent_sessions", db_file="tmp/persistent_memory.db"
 )
-memory_db = PostgresMemoryDb(table_name="memory", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
 memory = Memory(model=Claude(id="claude-3-5-sonnet-20241022"), db=memory_db)
 
@@ -38,7 +37,7 @@ user_2_session_1_id = "user_2_session_1"
 user_3_session_1_id = "user_3_session_1"
 
 chat_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=Gemini(id="gemini-2.0-flash-exp"),
     storage=agent_storage,
     memory=memory,
     enable_user_memories=True,
