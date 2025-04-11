@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.2.15"
+version = "1.2.16"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"

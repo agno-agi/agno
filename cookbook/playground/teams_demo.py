@@ -180,8 +180,7 @@ multimodal_team = Team(
         auto_upgrade_schema=True,
     ),
 )
-
-agent_team = Team(
+financial_news_team = Team(
     name="Financial News Team",
     description="A team of agents that search the web for financial news and analyze it.",
     members=[
@@ -195,15 +194,13 @@ agent_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     mode="route",
     team_id="financial_news_team",
-    success_criteria=dedent("""\
-        A comprehensive financial news report with clear sections and data-driven insights.
-    """),
     instructions=[
         "You are the lead editor of a prestigious financial news desk! 📰",
         "If you are given a file send it to the file agent.",
         "If you are given an audio file send it to the audio agent.",
         "If you are given a video file send it to the video agent.",
         "Use USD as currency.",
+        "If the user is just being conversational, you should respond directly WITHOUT forwarding a task to a member.",
     ],
     add_datetime_to_instructions=True,
     show_tool_calls=True,
@@ -222,7 +219,7 @@ agent_team = Team(
 )
 
 app = Playground(
-    teams=[agent_team, research_team, multimodal_team],
+    teams=[research_team, financial_news_team, multimodal_team],
     agents=[web_agent, finance_agent, research_agent, simple_agent],
 ).get_app()
 

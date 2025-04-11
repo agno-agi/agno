@@ -654,16 +654,12 @@ class Gemini(Model):
                 citations.raw = grounding_metadata
 
                 # Extract url and title
-                chunks = grounding_metadata.pop("grounding_chunks", [])
-                citation_pairs = (
-                    [
-                        (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
-                        for chunk in chunks
-                        if chunk.get("web", {}).get("uri")
-                    ]
-                    if chunks
-                    else []
-                )
+                chunks = grounding_metadata.pop("grounding_chunks", None) or []
+                citation_pairs = [
+                    (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
+                    for chunk in chunks
+                    if chunk.get("web", {}).get("uri")
+                ]
 
                 # Create citation objects from filtered pairs
                 citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
@@ -721,7 +717,7 @@ class Gemini(Model):
             citations.raw = grounding_metadata
 
             # Extract url and title
-            chunks = grounding_metadata.pop("grounding_chunks", [])
+            chunks = grounding_metadata.pop("grounding_chunks", None) or []
             citation_pairs = [
                 (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
                 for chunk in chunks
