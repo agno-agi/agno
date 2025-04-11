@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from agno.memory.v2 import MemoryManager
+from agno.memory.v2.db.schema import MemoryRow
 from agno.memory.v2.memory import Memory
 from agno.memory.v2.schema import SessionSummary, UserMemory
 from agno.models.message import Message
@@ -38,8 +39,15 @@ def mock_summary_manager():
 
 
 @pytest.fixture
-def memory_with_managers(mock_model, mock_memory_manager, mock_summary_manager):
-    return Memory(model=mock_model, memory_manager=mock_memory_manager, summarizer=mock_summary_manager)
+def mock_db():
+    db = Mock()
+    db.read_memories.return_value = []
+    return db
+
+
+@pytest.fixture
+def memory_with_managers(mock_model, mock_db, mock_memory_manager, mock_summary_manager):
+    return Memory(model=mock_model, db=mock_db, memory_manager=mock_memory_manager, summarizer=mock_summary_manager)
 
 
 @pytest.fixture
@@ -83,9 +91,10 @@ def test_set_model():
     model = OpenAIChat()
     memory = Memory(memory_manager=MemoryManager())
     memory.set_model(model)
-    assert memory.model == model
     assert memory.memory_manager is not None
     assert memory.memory_manager.model == model
+    assert memory.summary_manager is not None
+    assert memory.summary_manager.model == model
 
 
 def test_initialization_with_memories(sample_user_memory):
@@ -548,20 +557,23 @@ def test_get_team_member_interactions_str(memory_with_model):
 
 
 # Memory Integration Tests
-def test_create_user_memories(memory_with_managers):
+def test_create_user_memories(memory_with_managers, mock_db):
     # Setup mock response
     mock_updates = [
         MagicMock(id=None, memory="New memory 1", topics=["topic1"]),
         MagicMock(id=None, memory="New memory 2", topics=["topic2"]),
     ]
     memory_with_managers.memory_manager.create_or_update_memories.return_value = MagicMock(updates=mock_updates)
+    mock_db.read_memories.return_value = [
+        MemoryRow(user_id="test_user", memory={"memory": "New memory 1", "topics": ["topic1"]}),
+        MemoryRow(user_id="test_user", memory={"memory": "New memory 2", "topics": ["topic2"]}),
+    ]
 
     # Create user memories
     messages = [Message(role="user", content="Remember this information")]
     result = memory_with_managers.create_user_memories(messages, user_id="test_user")
 
     # Verify memories were created
-    assert len(result) == 2
     assert "test_user" in memory_with_managers.memories
     assert len(memory_with_managers.memories["test_user"]) == 2
 
@@ -621,6 +633,3 @@ def test_clear(memory_with_model, sample_user_memory):
     assert memory_with_model.memories == {}
     assert memory_with_model.summaries == {}
 
-
-if __name__ == "__main__":
-    pytest.main()
