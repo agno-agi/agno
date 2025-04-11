@@ -93,7 +93,6 @@ class Memory:
     # Team context per session
     team_context: Optional[Dict[str, TeamContext]] = None
 
-    monitoring: bool = False
     debug_mode: bool = False
 
     def __init__(
@@ -105,14 +104,12 @@ class Memory:
         memories: Optional[Dict[str, Dict[str, UserMemory]]] = None,
         summaries: Optional[Dict[str, Dict[str, SessionSummary]]] = None,
         runs: Optional[Dict[str, List[Union[RunResponse, TeamRunResponse]]]] = None,
-        monitoring: bool = False,
         debug_mode: bool = False,
     ):
         self.memories = memories or {}
         self.summaries = summaries or {}
         self.runs = runs or {}
 
-        self.monitoring = monitoring
         self.debug_mode = debug_mode
 
         self.model = model
@@ -142,29 +139,20 @@ class Memory:
             elif self.summary_manager.model is None:
                 self.summary_manager.model = deepcopy(self.model)
 
-        # Initialize the memory and summary databases
-        if self.db:
-            self.initialize()
-
-        self.monitoring = monitoring
         self.debug_mode = debug_mode
-        if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
-            self.debug_mode = True
-            set_log_level_to_debug()
-        else:
-            set_log_level_to_info()
+        
+        if self.db is not None:
+            self.hydrate_from_db()
 
     def set_model(self, model: Model) -> None:
-        self.model = deepcopy(model)
-
         if self.memory_manager is None:
-            self.memory_manager = MemoryManager(model=deepcopy(self.model))
+            self.memory_manager = MemoryManager(model=deepcopy(model))
         if self.memory_manager.model is None:
-            self.memory_manager.model = deepcopy(self.model)
+            self.memory_manager.model = deepcopy(model)
         if self.summary_manager is None:
-            self.summary_manager = SessionSummarizer(model=deepcopy(self.model))
+            self.summary_manager = SessionSummarizer(model=deepcopy(model))
         if self.summary_manager.model is None:
-            self.summary_manager.model = deepcopy(self.model)
+            self.summary_manager.model = deepcopy(model)
 
     def get_model(self) -> Model:
         if self.model is None:
@@ -179,7 +167,7 @@ class Memory:
             self.model = OpenAIChat(id="gpt-4o")
         return self.model
 
-    def initialize(self):
+    def hydrate_from_db(self):
         if self.db:
             all_memories = self.db.read_memories()
             # Reset the memories
@@ -187,6 +175,15 @@ class Memory:
             for memory in all_memories:
                 if memory.user_id is not None and memory.id is not None:
                     self.memories.setdefault(memory.user_id, {})[memory.id] = UserMemory.from_dict(memory.memory)
+
+    def initialize(self):
+        if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
+            self.debug_mode = True
+            set_log_level_to_debug()
+        else:
+            set_log_level_to_info()
+
+        self.hydrate_from_db()
 
     def to_dict(self) -> Dict[str, Any]:
         _memory_dict = {}
@@ -256,6 +253,8 @@ class Memory:
             str: The id of the memory
         """
         from uuid import uuid4
+        
+        self.initialize()
 
         memory_id = memory.memory_id or str(uuid4())
         if memory.memory_id is None:
@@ -293,6 +292,9 @@ class Memory:
         Returns:
             str: The id of the memory
         """
+
+        self.initialize()
+
         if user_id is None:
             user_id = "default"
 
@@ -322,6 +324,8 @@ class Memory:
             user_id (str): The user id to delete the memory from
             memory_id (str): The id of the memory to delete
         """
+        self.initialize()
+
         del self.memories[user_id][memory_id]  # type: ignore
         if self.db:
             self._delete_db_memory(memory_id=memory_id)
@@ -332,16 +336,26 @@ class Memory:
             user_id (str): The user id to delete the memory from
             session_id (str): The id of the session to delete
         """
+        self.initialize()
         del self.summaries[user_id][session_id]  # type: ignore
+
+    def get_runs(self, session_id: str) -> List[Union[RunResponse, TeamRunResponse]]:
+        """Get all runs for a given session id"""
+        if self.runs is None:
+            return []
+        return self.runs.get(session_id, [])
 
     # -*- Agent Functions
     def create_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
-        if user_id is None:
-            user_id = "default"
 
         if not self.summary_manager:
             raise ValueError("Summarizer not initialized")
+
+        self.initialize()
+
+        if user_id is None:
+            user_id = "default"
 
         summary_response = self.summary_manager.run(conversation=self.get_messages_for_session(session_id=session_id))
         if summary_response is None:
@@ -355,11 +369,13 @@ class Memory:
 
     async def acreate_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
-        if user_id is None:
-            user_id = "default"
-
         if not self.summary_manager:
             raise ValueError("Summarizer not initialized")
+
+        self.initialize()
+
+        if user_id is None:
+            user_id = "default"
 
         summary_response = await self.summary_manager.arun(
             conversation=self.get_messages_for_session(session_id=session_id)
@@ -373,12 +389,16 @@ class Memory:
 
         return session_summary
 
-    def create_user_memory(self, message: str, user_id: Optional[str] = None) -> str:
-        """Creates a memory from a message and adds it to the memory db."""
-        return self.create_user_memories(messages=[Message(role="user", content=message)], user_id=user_id)
-
-    def create_user_memories(self, messages: List[Message], user_id: Optional[str] = None) -> str:
+    def create_user_memories(
+        self, message: Optional[str] = None, messages: Optional[List[Message]] = None, user_id: Optional[str] = None
+    ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
+        if not messages and not message:
+            raise ValueError("You must provide either a message or a list of messages")
+
+        if message:
+            messages = [Message(role="user", content=message)]
+
         if not messages or not isinstance(messages, list):
             raise ValueError("Invalid messages list")
 
@@ -388,6 +408,8 @@ class Memory:
         if self.db is None:
             log_warning("MemoryDb not provided.")
             return "Please provide a db to store memories"
+
+        self.initialize()
 
         if user_id is None:
             user_id = "default"
@@ -401,16 +423,19 @@ class Memory:
         )
 
         # We refresh from the DB
-        self.initialize()
-
+        self.hydrate_from_db()
         return response
 
-    async def acreate_user_memory(self, message: str, user_id: Optional[str] = None) -> str:
-        """Creates a memory from a message and adds it to the memory db."""
-        return await self.acreate_user_memories(messages=[Message(role="user", content=message)], user_id=user_id)
-
-    async def acreate_user_memories(self, messages: List[Message], user_id: Optional[str] = None) -> str:
+    async def acreate_user_memories(
+        self, message: Optional[str] = None, messages: Optional[List[Message]] = None, user_id: Optional[str] = None
+    ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
+        if not messages and not message:
+            raise ValueError("You must provide either a message or a list of messages")
+
+        if message:
+            messages = [Message(role="user", content=message)]
+
         if not messages or not isinstance(messages, list):
             raise ValueError("Invalid messages list")
 
@@ -420,6 +445,8 @@ class Memory:
         if self.db is None:
             log_warning("MemoryDb not provided.")
             return "Please provide a db to store memories"
+
+        self.initialize()
 
         if user_id is None:
             user_id = "default"
@@ -434,7 +461,7 @@ class Memory:
         )
 
         # We refresh from the DB
-        self.initialize()
+        self.hydrate_from_db()
 
         return response
 
@@ -444,8 +471,14 @@ class Memory:
         if not self.memory_manager:
             raise ValueError("Memory manager not initialized")
 
+        if not self.db:
+            log_warning("MemoryDb not provided.")
+            return "Please provide a db to store memories"
+
         if user_id is None:
             user_id = "default"
+
+        self.initialize()
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
@@ -457,7 +490,7 @@ class Memory:
         )
 
         # We refresh from the DB
-        self.initialize()
+        self.hydrate_from_db()
 
         return response
 
@@ -467,8 +500,14 @@ class Memory:
         if not self.memory_manager:
             raise ValueError("Memory manager not initialized")
 
+        if not self.db:
+            log_warning("MemoryDb not provided.")
+            return "Please provide a db to store memories"
+
         if user_id is None:
             user_id = "default"
+
+        self.initialize()
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
@@ -480,7 +519,7 @@ class Memory:
         )
 
         # We refresh from the DB
-        self.initialize()
+        self.hydrate_from_db()
 
         return response
 
@@ -636,6 +675,8 @@ class Memory:
 
         if user_id is None:
             user_id = "default"
+
+        self.initialize()
 
         # Use default retrieval method if not specified
         retrieval_method = retrieval_method
@@ -856,9 +897,9 @@ class Memory:
         if session_id not in self.team_context:
             self.team_context[session_id] = TeamContext()
         if isinstance(text, dict):
-            if self.team_context[session_id].text:
+            if self.team_context[session_id].text is not None:
                 try:
-                    current_context = json.loads(self.team_context[session_id].text)
+                    current_context = json.loads(self.team_context[session_id].text)  # type: ignore
                 except Exception:
                     current_context = {}
             else:

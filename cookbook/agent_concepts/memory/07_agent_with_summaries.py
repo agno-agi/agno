@@ -7,12 +7,14 @@ To enable this, set `enable_session_summaries=True` in the Agent config.
 from agno.agent.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
+from agno.memory.v2.summarizer import SessionSummarizer
 from agno.models.openai.chat import OpenAIChat
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
-# No need to set the model, it gets set by the agent to the agent's model
-memory = Memory(db=memory_db)
+memory = Memory(
+    db=memory_db, summarizer=SessionSummarizer(model=OpenAIChat(id="gpt-4o-mini"))
+)
 
 # Reset the memory for this example
 memory.clear()

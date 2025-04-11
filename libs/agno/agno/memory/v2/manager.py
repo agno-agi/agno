@@ -8,7 +8,7 @@ from agno.memory.v2.schema import UserMemory
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 # class MemoryUpdate(BaseModel):
 #     """Model for updates to the user's memory."""
@@ -240,7 +240,7 @@ class MemoryManager:
             self.memories_updated = True
         log_debug("MemoryManager End", center=True)
 
-        return response.content
+        return response.content or "No response from model"
 
     async def acreate_or_update_memories(
         self,
@@ -283,7 +283,7 @@ class MemoryManager:
             self.memories_updated = True
         log_debug("MemoryManager End", center=True)
 
-        return response.content
+        return response.content or "No response from model"
 
     def run_memory_task(
         self,
@@ -316,7 +316,7 @@ class MemoryManager:
             self.memories_updated = True
         log_debug("MemoryManager End", center=True)
 
-        return response.content
+        return response.content or "No response from model"
 
     async def arun_memory_task(
         self,
@@ -349,7 +349,7 @@ class MemoryManager:
             self.memories_updated = True
         log_debug("MemoryManager End", center=True)
 
-        return response.content
+        return response.content or "No response from model"
 
     # -*- DB Functions
     def _get_db_tools(
@@ -452,7 +452,7 @@ class MemoryManager:
             log_debug("Memory cleared")
             return "Memory cleared successfully"
 
-        functions = []
+        functions: List[Callable] = []
         if enable_add_memory:
             functions.append(add_memory)
         if enable_update_memory:

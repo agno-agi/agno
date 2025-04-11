@@ -115,8 +115,8 @@ class Agent:
     knowledge: Optional[AgentKnowledge] = None
     # Enable RAG by adding references from AgentKnowledge to the user prompt.
     add_references: bool = False
-    # Function to get references to add to the user_message
-    # This function, if provided, is called when add_references is True
+    # Retrieval function to get references
+    # This function, if provided, is used instead of the default search_knowledge function
     # Signature:
     # def retriever(agent: Agent, query: str, num_documents: Optional[int], **kwargs) -> Optional[list[dict]]:
     #     ...
@@ -212,7 +212,7 @@ class Agent:
     # --- Agent Response Settings ---
     # Number of retries to attempt
     retries: int = 0
-    # Delay between retries
+    # Delay between retries (in seconds)
     delay_between_retries: int = 1
     # Exponential backoff: if True, the delay between retries is doubled each time
     exponential_backoff: bool = False
@@ -511,11 +511,10 @@ class Agent:
         log_debug(f"Agent ID: {self.agent_id}", center=True)
 
         if self.memory is None:
-            # A new instance of Memory (v2) is created if no memory is provided
-            self.memory = Memory()
+            self.memory = AgentMemory()
         # Default to the agent's model if no model is provided
         if isinstance(self.memory, Memory):
-            if self.memory.model is None:
+            if self.memory.model is None and self.model is not None:
                 self.memory.set_model(self.model)
 
         if self._formatter is None:
@@ -994,7 +993,9 @@ class Agent:
             if not (self.session_id is None or self.session_id == ""):
                 session_id = self.session_id
             else:
+                # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
+                self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1007,8 +1008,9 @@ class Agent:
                 # If a response_model is set, return the response as a structured output
                 if self.response_model is not None and self.parse_response:
                     # Set stream=False and run the agent
-                    log_debug("Setting stream=False as response_model is set")
-                    self.stream = False
+                    if self.stream and self.stream is True:
+                        log_debug("Setting stream=False as response_model is set")
+                        self.stream = False
                     run_response: RunResponse = next(
                         self._run(
                             message=message,
@@ -1538,7 +1540,9 @@ class Agent:
             if not (self.session_id is None or self.session_id == ""):
                 session_id = self.session_id
             else:
+                # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
+                self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1552,7 +1556,9 @@ class Agent:
                 # If a response_model is set, return the response as a structured output
                 if self.response_model is not None and self.parse_response:
                     # Set stream=False and run the agent
-                    log_debug("Setting stream=False as response_model is set")
+                    if self.stream and self.stream is True:
+                        log_debug("Setting stream=False as response_model is set")
+                        self.stream = False
                     run_response = await self._arun(
                         message=message,
                         stream=False,
@@ -1700,7 +1706,7 @@ class Agent:
         session_messages: List[Message] = []
         self.memory = cast(Memory, self.memory)
         if self.enable_user_memories and run_messages.user_message is not None:
-            self.memory.create_user_memory(message=run_messages.user_message.get_content_string(), user_id=user_id)
+            self.memory.create_user_memories(message=run_messages.user_message.get_content_string(), user_id=user_id)
 
             # TODO: Possibly do both of these in one step
             if messages is not None and len(messages) > 0:
@@ -1743,7 +1749,7 @@ class Agent:
         self.memory = cast(Memory, self.memory)
         session_messages: List[Message] = []
         if self.enable_user_memories and run_messages.user_message is not None:
-            await self.memory.acreate_user_memory(
+            await self.memory.acreate_user_memories(
                 message=run_messages.user_message.get_content_string(), user_id=user_id
             )
 
@@ -2026,7 +2032,9 @@ class Agent:
                 memory_dict = self.memory.to_dict()
                 # We only persist the runs for the current session ID (not all runs in memory)
                 memory_dict["runs"] = [
-                    agent_run.to_dict() for agent_run in self.memory.runs if agent_run.response.session_id == session_id
+                    agent_run.to_dict()
+                    for agent_run in self.memory.runs
+                    if agent_run.response is not None and agent_run.response.session_id == session_id
                 ]
             else:
                 self.memory = cast(Memory, self.memory)
@@ -3260,7 +3268,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(user_id=self.user_id, session_id=session_id)
+        self.read_from_storage(user_id=self.user_id, session_id=session_id)  # type: ignore
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 try:
     from sqlalchemy import (
@@ -76,8 +76,12 @@ class SqliteMemoryDb(MemoryDb):
         # Database table for memories
         self.table: Table = self.get_table()
 
-    def __str__(self) -> str:
-        return f"SqliteMemoryDb(table_name={self.table_name}, db_file={self.db_file})"
+    def __dict__(self) -> Dict[str, Any]:
+        return {
+            "name": "SqliteMemoryDb",
+            "table_name": self.table_name,
+            "db_file": self.db_file,
+        }
 
     def get_table(self) -> Table:
         return Table(

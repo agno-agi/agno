@@ -9,7 +9,7 @@ from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory, MemoryManager, SessionSummarizer
 from agno.models.anthropic.claude import Claude
 from agno.models.google.gemini import Gemini
-from agno.models.openai import OpenAIChat
+from agno.models.openrouter.openrouter import OpenRouter
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
@@ -17,7 +17,7 @@ memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 # You can also set the model for Memory Manager and Summarizer individually
 memory = Memory(
     db=memory_db,
-    memory_manager=MemoryManager(model=OpenAIChat(id="gpt-4o")),
+    memory_manager=MemoryManager(model=OpenRouter(id="meta-llama/llama-3.3-70b-instruct")),
     summarizer=SessionSummarizer(model=Claude(id="claude-3-5-sonnet-20241022")),
 )
 

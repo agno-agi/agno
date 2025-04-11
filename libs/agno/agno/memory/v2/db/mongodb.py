@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 try:
     from pymongo import MongoClient
@@ -43,8 +43,12 @@ class MongoMemoryDb(MemoryDb):
         self.db: Database = self._client[self.db_name]
         self.collection: Collection = self.db[self.collection_name]
 
-    def __str__(self) -> str:
-        return f"MongoMemoryDb(collection_name={self.collection_name}, db_name={self.db_name})"
+    def __dict__(self) -> Dict[str, Any]:
+        return {
+            "name": "MongoMemoryDb",
+            "collection_name": self.collection_name,
+            "db_name": self.db_name,
+        }
 
     def create(self) -> None:
         """Create indexes for the collection"""
