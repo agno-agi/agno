@@ -126,7 +126,17 @@ class LiteLLM(Model):
         completion_kwargs = self.request_kwargs
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
-        return self.get_client().completion(**completion_kwargs)
+        
+        try:
+            iterator = self.get_client().completion(**completion_kwargs)
+            tool_call_buffer = None
+            
+            for chunk in iterator:
+                chunk, tool_call_buffer = self._process_tool_call_chunk(chunk, tool_call_buffer)
+                yield chunk
+        except Exception as e:
+            log_error(f"Error in streaming response: {e}")
+            raise
 
     async def ainvoke(self, messages: List[Message]) -> Mapping[str, Any]:
         """Sends an asynchronous chat completion request to the LiteLLM API."""
@@ -135,17 +145,22 @@ class LiteLLM(Model):
         return await self.get_client().acompletion(**completion_kwargs)
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
-        """Sends an asynchronous streaming chat request to the LiteLLM API."""
+        """Sends an asynchronous streaming chat request to the LiteLLM API and handles tool calls."""
         completion_kwargs = self.request_kwargs
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
 
         try:
-            # litellm.acompletion returns a coroutine that resolves to an async iterator
-            # We need to await it first to get the actual async iterator
+            # Get the async iterator from the LiteLLM client
             async_stream = await self.get_client().acompletion(**completion_kwargs)
+            
+            # Buffer to accumulate tool call fragments
+            tool_call_buffer = None
+            
             async for chunk in async_stream:
+                chunk, tool_call_buffer = self._process_tool_call_chunk(chunk, tool_call_buffer)
                 yield chunk
+                
         except Exception as e:
             log_error(f"Error in streaming response: {e}")
             raise
@@ -205,3 +220,49 @@ class LiteLLM(Model):
                         )
 
         return model_response
+    
+    def _process_tool_call_chunk(self, chunk: Any, tool_call_buffer: Any) -> tuple[Any, Any]:
+        """Process a chunk with tool calls and manage the tool call buffer.
+        
+        Args:
+            chunk: The current response chunk
+            tool_call_buffer: The current tool call buffer
+            
+        Returns:
+            tuple: (processed_chunk, updated_tool_call_buffer)
+        """
+        delta = chunk.choices[0].delta
+        
+        # Handle case with no tool calls or stream is finished
+        if delta.tool_calls is None or chunk.choices[0].finish_reason is not None:
+            # If there's a pending tool call, send it
+            if tool_call_buffer is not None:
+                chunk.choices[0].delta.tool_calls = [tool_call_buffer]
+                tool_call_buffer = None
+            return chunk, tool_call_buffer
+            
+        # Handle exception case: multiple tool calls
+        if len(delta.tool_calls) > 1:
+            log_error(f"Multiple tool calls detected in the chunk: {chunk}")
+            return chunk, tool_call_buffer
+            
+        # Handle single tool call
+        current_tool_call = delta.tool_calls[0]
+        # Clean up the tool call in current chunk to prevent duplication
+        delta.tool_calls = None
+        
+        # Handle start of a new tool call (has ID)
+        if current_tool_call.id is not None and current_tool_call.id != '':
+            # If there's a previous tool call buffer, include it in this chunk
+            if tool_call_buffer is not None:
+                chunk.choices[0].delta.tool_calls = [tool_call_buffer]
+                tool_call_buffer = None
+            
+            # Start a new tool call buffer
+            tool_call_buffer = current_tool_call
+        # Handle streaming of tool call arguments (no ID)
+        elif tool_call_buffer is not None:
+            # Accumulate arguments
+            tool_call_buffer.function.arguments += current_tool_call.function.arguments
+        
+        return chunk, tool_call_buffer
