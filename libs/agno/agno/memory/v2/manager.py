@@ -10,27 +10,6 @@ from agno.models.message import Message
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
 
-# class MemoryUpdate(BaseModel):
-#     """Model for updates to the user's memory."""
-
-#     memory: str = Field(
-#         ...,
-#         description="The user memory to be stored or updated.",
-#     )
-#     topics: Optional[List[str]] = Field(None, description="The topics of the memory.")
-#     id: Optional[str] = Field(
-#         None, description="The id of the memory to update. ONLY use if you want to update an existing memory."
-#     )
-
-
-# class MemoryUpdatesResponse(BaseModel):
-#     """Model for updates to the user's memory."""
-
-#     updates: List[MemoryUpdate] = Field(
-#         ...,
-#         description="The updates to the user's memory.",
-#     )
-
 
 @dataclass
 class MemoryManager:
@@ -74,74 +53,6 @@ class MemoryManager:
         model.set_tools(tools=_tools_for_model)
         # Set functions on the model
         model.set_functions(functions=_functions_for_model)
-
-    # def update_model(self) -> None:
-    #     self.model = cast(Model, self.model)
-    #     self.model.reset_tools_and_functions()
-
-    #     if self.use_json_mode is not None and self.use_json_mode is True:
-    #         self.model.response_format = {"type": "json_object"}
-
-    #     elif self.model.supports_native_structured_outputs:
-    #         self.model.response_format = MemoryUpdatesResponse
-    #         self.model.structured_outputs = True
-
-    #     elif self.model.supports_json_schema_outputs:
-    #         self.model.response_format = {
-    #             "type": "json_schema",
-    #             "json_schema": {
-    #                 "name": MemoryUpdatesResponse.__name__,
-    #                 "schema": MemoryUpdatesResponse.model_json_schema(),
-    #             },
-    #         }
-    #     else:
-    #         self.model.response_format = {"type": "json_object"}
-
-    # def get_update_memories_system_message(
-    #     self, messages: List[Message], existing_memories: Optional[List[Dict[str, Any]]] = None
-    # ) -> Message:
-    #     if self.system_prompt is not None:
-    #         return Message(role="system", content=self.system_prompt)
-    #     self.model = cast(Model, self.model)
-
-    #     # -*- Return a system message for the memory manager
-    #     system_prompt_lines = [
-    #         "Your task is to generate concise memories for the user's messages. "
-    #         "You can also decide that no new memories are needed."
-    #         "If you do create new memories, create one or more memories that captures the key information provided by the user, as if you were storing it for future reference. "
-    #         "Each memory should be a brief, third-person statement that encapsulates the most important aspect of the user's input, without adding any extraneous information. "
-    #         "Memories should include details that could personalize ongoing interactions with the user, such as:\n"
-    #         "  - Personal facts: name, age, occupation, location, interests, preferences, etc.\n"
-    #         "  - Significant life events or experiences shared by the user\n"
-    #         "  - Important context about the user's current situation, challenges or goals\n"
-    #         "  - What the user likes or dislikes, their opinions, beliefs, values, etc.\n"
-    #         "  - Any other details that provide valuable insights into the user's personality, perspective or needs",
-    #         "You will also be provided with a list of existing memories. You may:",
-    #         "  1. Decide to make no changes to the existing memories.",
-    #         "  2. Decide to add new memories.",
-    #         "  3. Decide to update existing memories.",
-    #     ]
-
-    #     system_prompt_lines.append("<user_messages>")
-    #     user_messages = []
-    #     for message in messages:
-    #         if message.role == "user":
-    #             user_messages.append(message.get_content_string())
-    #     system_prompt_lines.append("\n".join(user_messages))
-    #     system_prompt_lines.append("</user_messages>")
-
-    #     if existing_memories and len(existing_memories) > 0:
-    #         system_prompt_lines.append("<existing_memories>")
-    #         for existing_memory in existing_memories:
-    #             system_prompt_lines.append(f"ID: {existing_memory['memory_id']}")
-    #             system_prompt_lines.append(f"Memory: {existing_memory['memory']}")
-    #             system_prompt_lines.append("\n")
-    #         system_prompt_lines.append("</existing_memories>")
-
-    #     if self.model.response_format == {"type": "json_object"}:
-    #         system_prompt_lines.append(get_json_output_prompt(MemoryUpdatesResponse))  # type: ignore
-
-    #     return Message(role="system", content="\n".join(system_prompt_lines))
 
     def get_system_message(
         self,
@@ -368,7 +279,7 @@ class MemoryManager:
             """Use this function to add a memory to the database.
             Args:
                 memory (str): The memory to be added.
-                topics (Optional[List[str]]): The topics of the memory.
+                topics (Optional[List[str]]): The topics of the memory (e.g. ["name", "hobbies", "location"]).
             Returns:
                 str: A message indicating if the memory was added successfully or not.
             """
@@ -402,7 +313,7 @@ class MemoryManager:
             Args:
                 memory_id (str): The id of the memory to be updated.
                 memory (str): The updated memory.
-                topics (Optional[List[str]]): The topics of the memory.
+                topics (Optional[List[str]]): The topics of the memory (e.g. ["name", "hobbies", "location"]).
             Returns:
                 str: A message indicating if the memory was updated successfully or not.
             """

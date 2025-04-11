@@ -9,7 +9,7 @@ To enable this, set `enable_agentic_memory=True` in the Agent config.
 from agno.agent.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
-from agno.models.openai.chat import OpenAIChat
+from agno.models.anthropic.claude import Claude
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
@@ -22,7 +22,7 @@ memory.clear()
 john_doe_id = "john_doe@example.com"
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-3-5-sonnet-20241022"),
     memory=memory,
     enable_agentic_memory=True,
 )

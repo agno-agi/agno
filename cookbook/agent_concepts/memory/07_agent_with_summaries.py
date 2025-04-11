@@ -8,12 +8,13 @@ from agno.agent.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.memory.v2.summarizer import SessionSummarizer
-from agno.models.openai.chat import OpenAIChat
+from agno.models.anthropic.claude import Claude
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
 memory = Memory(
-    db=memory_db, summarizer=SessionSummarizer(model=OpenAIChat(id="gpt-4o-mini"))
+    db=memory_db, 
+    summarizer=SessionSummarizer(model=Claude(id="claude-3-5-sonnet-20241022"))
 )
 
 # Reset the memory for this example
@@ -23,7 +24,7 @@ session_id_1 = "1001"
 john_doe_id = "john_doe@example.com"
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-3-5-sonnet-20241022"),
     memory=memory,
     enable_user_memories=True,
     enable_session_summaries=True,
