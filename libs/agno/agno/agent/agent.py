@@ -197,7 +197,7 @@ class Agent:
     # --- Agent Response Settings ---
     # Number of retries to attempt
     retries: int = 0
-    # Delay between retries
+    # Delay between retries (in seconds)
     delay_between_retries: int = 1
     # Exponential backoff: if True, the delay between retries is doubled each time
     exponential_backoff: bool = False
