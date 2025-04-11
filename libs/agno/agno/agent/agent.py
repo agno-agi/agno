@@ -51,6 +51,7 @@ from agno.utils.log import (
 from agno.utils.message import get_text_from_message
 from agno.utils.response import create_panel, escape_markdown_tags, format_tool_calls
 from agno.utils.safe_formatter import SafeFormatter
+from agno.utils.session_search import vector_match_message
 from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
 
@@ -95,6 +96,10 @@ class Agent:
     num_history_responses: Optional[int] = None
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
+    # Search the chat history for the most similar messages to the user message
+    search_history: bool = False
+    # Number of similar messages to search for
+    num_search_history: int = 3
 
     # --- Agent Knowledge ---
     knowledge: Optional[AgentKnowledge] = None
@@ -269,6 +274,8 @@ class Agent:
         add_history_to_messages: bool = False,
         num_history_responses: Optional[int] = None,
         num_history_runs: int = 3,
+        search_history: bool = False,
+        num_search_history: int = 3,
         knowledge: Optional[AgentKnowledge] = None,
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
@@ -344,6 +351,8 @@ class Agent:
         self.add_history_to_messages = add_history_to_messages
         self.num_history_responses = num_history_responses
         self.num_history_runs = num_history_runs
+        self.search_history = search_history
+        self.num_search_history = num_search_history
         if num_history_responses is not None:
             self.num_history_runs = num_history_responses
 
@@ -2123,7 +2132,7 @@ class Agent:
         )
         return self._formatter.format(msg, **format_variables)  # type: ignore
 
-    def get_system_message(self) -> Optional[Message]:
+    def get_system_message(self, message: Optional[Message] = None) -> Optional[Message]:
         """Return the system message for the Agent.
 
         1. If the system_message is provided, use that.
@@ -2313,6 +2322,15 @@ class Agent:
                         "Note: this information is from previous interactions and may be outdated. "
                         "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
                     )
+            if self.search_history:
+                system_message_content += (
+                    f"Here are the most relevant messages from your previous interactions with the user:\n\n"
+                )
+                system_message_content += "<relevant_messages_from_previous_interactions>\n"
+                system_message_content += vector_match_message(
+                    storage=self.storage, session_id=self.session_id, query=message, top_k=self.num_search_history
+                )
+                system_message_content += "\n</relevant_messages_from_previous_interactions>\n\n"
 
         # Add the JSON output prompt if response_model is provided and structured_outputs is False (only applicable if the model supports structured outputs)
         if self.response_model is not None and not (
@@ -2487,7 +2505,7 @@ class Agent:
         self.run_response = cast(RunResponse, self.run_response)
 
         # 1. Add system message to run_messages
-        system_message = self.get_system_message()
+        system_message = self.get_system_message(message)
         if system_message is not None:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)

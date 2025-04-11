@@ -539,6 +539,46 @@ class PostgresStorage(Storage):
             self.metadata = MetaData(schema=self.schema)
             self.table = self.get_table()
 
+    def create_vectors(self, session_id: str) -> None:
+        """
+        Create and attach embeddings (vectors) to each message in the session.
+        """
+        from agno.embedder.openai import OpenAIEmbedder
+
+        session = self.read(session_id=session_id)
+        if session is None:
+            log_warning(f"Session not found: {session_id}")
+            return
+
+        embedder = OpenAIEmbedder()
+        updated_messages = []
+
+        # Assuming messages are stored in session.session_data["messages"]
+        messages = session.memory.get("messages", [])
+        for msg in messages:
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content")
+            log_info(f"Embedding message: {content}")
+            if not content:
+                continue
+
+            try:
+                embedding = embedder.get_embedding(content)
+                msg["vector"] = embedding  # Add new field
+            except Exception as e:
+                log_warning(f"Failed to embed message: {e}")
+                msg["vector"] = None
+
+            updated_messages.append(msg)
+
+        # Update the session with modified messages
+        session.memory["messages"] = updated_messages
+
+        # Write back to Postgres
+        self.upsert(session)
+        log_info(f"Created vectors for session: {session_id}")
+
     def __deepcopy__(self, memo):
         """
         Create a deep copy of the PostgresStorage instance, handling unpickleable attributes.
