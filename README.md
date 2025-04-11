@@ -46,12 +46,12 @@ https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
 
 ## Key features
 
-Agno is simple, fast and model-agnostic. Here are the key features:
+Agno is simple, fast and model-agnostic. Here are some key features:
 
+- **Model Agnostic**: Agno provides a unified interface for 23+ model providers, no lock-in.
 - **Lightning Fast**: Agents instantiate 10,000x faster than LangGraph and use 50x less memory ([benchmarks](#performance)).
-- **Model Agnostic**: Use any model, any provider, no lock-in.
-- **Reasoning Agents**: Build agents that can "think" and "analyze" using Reasoning Models, Reasoning Tools or our custom `CoT+Tool-use` approach (see [this example]()).
-- **Natively Multi Modal Support**: Agents can take in text, image, audio and video and generate text, image, audio and video.
+- **First class support for Reasoning**: Build Agents that can "think" and "analyze" using Reasoning Models, Reasoning Tools or our custom `CoT+Tool-use` approach (see [this example](#example---reasoning-agent)).
+- **Natively Multi Modal**: Agents can take in text, image, audio and video and generate text, image, audio and video as output.
 - **Advanced Multi Agent Architecture**: Industry leading multi-agent architecture with 3 different modes: `route`, `collaborate` and `coordinate`.
 - **Long-term Memory**: Built in support for long-term memory with our `Storage` and `Memory` classes.
 - **20+ Vector Databases for Knowledge**: Add domain knowledge to your Agents by integrating with 20+ vector databases. Fully async and highly performant.
