@@ -695,6 +695,14 @@ class Agent:
                                     self.run_response.tools[index] = tool_call_dict
                         else:
                             self.run_response.tools = tool_calls_list
+                            
+                        # Process all tool calls to update reasoning_content
+                        if self.run_response.tools:
+                            for tool_call in self.run_response.tools:
+                                tool_name = tool_call.get("tool_name", "")
+                                if tool_name.lower() in ["think", "analyze"]:
+                                    tool_args = tool_call.get("tool_args", {})
+                                    self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                     if self.stream_intermediate_steps:
                         yield self.create_run_response(
@@ -739,6 +747,12 @@ class Agent:
                     self.run_response.tools = model_response.tool_calls
                 else:
                     self.run_response.tools.extend(model_response.tool_calls)
+                
+                for tool_call in model_response.tool_calls:
+                    tool_name = tool_call.get("tool_name", "")
+                    if tool_name.lower() in ["think", "analyze"]:
+                        tool_args = tool_call.get("tool_args", {})
+                        self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
             # Update the run_response audio with the model response audio
             if model_response.audio is not None:
@@ -763,14 +777,6 @@ class Agent:
         # Update the run_response audio if streaming
         if self.stream and model_response.audio is not None:
             self.run_response.response_audio = model_response.audio
-
-        # Process all tool calls to update reasoning_content
-        if self.run_response.tools:
-            for tool_call in self.run_response.tools:
-                tool_name = tool_call.get("tool_name", "")
-                if tool_name.lower() in ["think", "analyze"]:
-                    tool_args = tool_call.get("tool_args", {})
-                    self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
         # 9. Update Agent Memory
         # Add the system message to the memory
