@@ -184,8 +184,12 @@ class Team:
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
     enable_user_memories: bool = False
+    # If True, the agent adds a reference to the user memories in the response
+    add_memory_references: Optional[bool] = None
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
+    # If True, the agent adds a reference to the session summaries in the response
+    add_session_summary_references: Optional[bool] = None
 
     # --- Agent History ---
     # If True, enable the team history
@@ -254,7 +258,9 @@ class Team:
         memory: Optional[Union[TeamMemory, Memory]] = None,
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
+        add_memory_references: Optional[bool] = None,
         enable_session_summaries: bool = False,
+        add_session_summary_references: Optional[bool] = None,
         enable_team_history: bool = False,
         num_of_interactions_from_history: int = 3,
         storage: Optional[Storage] = None,
@@ -317,7 +323,16 @@ class Team:
 
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
+        if add_memory_references is None:
+            self.add_memory_references = enable_user_memories or enable_agentic_memory
+        else:
+            self.add_memory_references = add_memory_references
+
         self.enable_session_summaries = enable_session_summaries
+        if add_session_summary_references is None:
+            self.add_session_summary_references = enable_session_summaries
+        else:
+            self.add_session_summary_references = add_session_summary_references
 
         self.enable_team_history = enable_team_history
         self.num_of_interactions_from_history = num_of_interactions_from_history
@@ -507,7 +522,7 @@ class Team:
         show_tool_calls = self.show_tool_calls
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
+        self.read_from_storage(session_id=session_id)
 
         # Initialize memory if not yet set
         if self.memory is None:
@@ -613,7 +628,7 @@ class Team:
                     files=files,  # type: ignore
                 )
                 _tools.append(run_member_agents_func)
-                
+
                 if self.get_member_information_tool:
                     _tools.append(self.get_member_information)
 
@@ -1190,7 +1205,7 @@ class Team:
         show_tool_calls = self.show_tool_calls
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
+        self.read_from_storage(session_id=session_id)
 
         # Initialize memory if not yet set
         if self.memory is None:
@@ -2151,6 +2166,23 @@ class Team:
                         )
                         panels.append(citations_panel)
 
+                if self.memory is not None and isinstance(self.memory, Memory):
+                    if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
+                        memory_panel = create_panel(
+                            content=Text("Memories updated"),
+                            title="Memories",
+                            border_style="green",
+                        )
+                        panels.append(memory_panel)
+
+                    if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
+                        summary_panel = create_panel(
+                            content=Text("Session summary updated"),
+                            title="Session Summary",
+                            border_style="green",
+                        )
+                        panels.append(summary_panel)
+
             # Final update to remove the "Thinking..." status
             panels = [p for p in panels if not isinstance(p, Status)]
             live_console.update(Group(*panels))
@@ -2443,6 +2475,25 @@ class Team:
                         border_style="green",
                     )
                     panels.append(citations_panel)
+                    live_console.update(Group(*panels))
+
+            if self.memory is not None and isinstance(self.memory, Memory):
+                if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
+                    memory_panel = create_panel(
+                        content=Text("Memories updated"),
+                        title="Memories",
+                        border_style="green",
+                    )
+                    panels.append(memory_panel)
+                    live_console.update(Group(*panels))
+
+                if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
+                    summary_panel = create_panel(
+                        content=Text("Session summary updated"),
+                        title="Session Summary",
+                        border_style="green",
+                    )
+                    panels.append(summary_panel)
                     live_console.update(Group(*panels))
 
             # Final update to remove the "Thinking..." status
@@ -2957,6 +3008,23 @@ class Team:
                         )
                         panels.append(citations_panel)
 
+                if self.memory is not None and isinstance(self.memory, Memory):
+                    if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
+                        memory_panel = create_panel(
+                            content=Text("Memories updated"),
+                            title="Memories",
+                            border_style="green",
+                        )
+                        panels.append(memory_panel)
+
+                    if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
+                        summary_panel = create_panel(
+                            content=Text("Session summary updated"),
+                            title="Session Summary",
+                            border_style="green",
+                        )
+                        panels.append(summary_panel)
+
             # Final update to remove the "Thinking..." status
             panels = [p for p in panels if not isinstance(p, Status)]
             live_console.update(Group(*panels))
@@ -3183,6 +3251,25 @@ class Team:
                         border_style="green",
                     )
                     panels.append(citations_panel)
+                    live_console.update(Group(*panels))
+
+            if self.memory is not None and isinstance(self.memory, Memory):
+                if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
+                    memory_panel = create_panel(
+                        content=Text("Memories updated"),
+                        title="Memories",
+                        border_style="green",
+                    )
+                    panels.append(memory_panel)
+                    live_console.update(Group(*panels))
+
+                if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
+                    summary_panel = create_panel(
+                        content=Text("Session summary updated"),
+                        title="Session Summary",
+                        border_style="green",
+                    )
+                    panels.append(summary_panel)
                     live_console.update(Group(*panels))
 
             # Final update to remove the "Thinking..." status
@@ -4205,7 +4292,7 @@ class Team:
 
         # Then add memories to the system prompt
         if self.memory:
-            if isinstance(self.memory, Memory) and (self.enable_user_memories or self.enable_agentic_memory):
+            if isinstance(self.memory, Memory) and (self.add_memory_references):
                 if not user_id:
                     user_id = "default"
                 user_memories = self.memory.memories.get(user_id, {})  # type: ignore
@@ -4225,21 +4312,25 @@ class Team:
                     system_message_content += (
                         "You have the capability to retain memories from previous interactions with the user, "
                         "but have not had any interactions with the user yet.\n"
-                        "If the user asks about previous memories, you can let them know that you dont have any memory about the user because you haven't had any interactions yet.\n\n"
                     )
 
                 if self.enable_agentic_memory:
                     system_message_content += (
-                        "You can add new memories using the `update_memory` tool.\n"
-                        "If you use the `update_memory` tool, remember to pass on the response to the user.\n\n"
+                        "You have access to the `update_user_memory` tool.\n"
+                        "You can use the `update_user_memory` tool to add new memories, update existing memories, delete memories, or clear all memories.\n"
+                        "Memories should include details that could personalize ongoing interactions with the user.\n"
+                        "Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
+                        "Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
+                        "If you use the `update_user_memory` tool, remember to pass on the response to the user.\n\n"
                     )
+
             # Then add a summary of the interaction to the system prompt
-            if isinstance(self.memory, Memory) and self.enable_session_summaries:
+            if isinstance(self.memory, Memory) and self.add_session_summary_references:
                 if not user_id:
                     user_id = "default"
                 session_summary: SessionSummary = self.memory.summaries.get(user_id, {}).get(session_id, None)  # type: ignore
                 if session_summary is not None:
-                    system_message_content += "Here is a brief summary of your previous interactions if it helps:\n\n"
+                    system_message_content += "Here is a brief summary of your previous interactions:\n\n"
                     system_message_content += "<summary_of_previous_interactions>\n"
                     system_message_content += session_summary.summary
                     system_message_content += "\n</summary_of_previous_interactions>\n\n"
@@ -4278,7 +4369,6 @@ class Team:
         if self.expected_output is not None:
             system_message_content += f"<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n"
 
-                    
         if self.additional_context is not None:
             system_message_content += (
                 f"<additional_context>\n{self.additional_context.strip()}\n</additional_context>\n\n"
@@ -5527,19 +5617,7 @@ class Team:
     # Storage
     ###########################################################################
 
-    def load_user_memories(self, user_id: Optional[str] = None) -> None:
-        if isinstance(self.memory, TeamMemory):
-            if self.memory and self.memory.create_user_memories:
-                if user_id is not None:
-                    self.memory.user_id = user_id
-
-            self.memory.load_user_memories()
-            if user_id is not None:
-                log_debug(f"Memories loaded for user: {user_id}")
-            else:
-                log_debug("Memories loaded")
-
-    def read_from_storage(self, session_id: str, user_id: Optional[str] = None) -> Optional[TeamSession]:
+    def read_from_storage(self, session_id: str) -> Optional[TeamSession]:
         """Load the TeamSession from storage
 
         Returns:
@@ -5549,7 +5627,9 @@ class Team:
             self.team_session = cast(TeamSession, self.storage.read(session_id=session_id))
             if self.team_session is not None:
                 self.load_team_session(session=self.team_session)
-            self.load_user_memories(user_id=user_id)
+            else:
+                # New session, just reset the state
+                self.session_name = None
         return self.team_session
 
     def write_to_storage(self, session_id: str, user_id: Optional[str] = None) -> Optional[TeamSession]:
@@ -5572,7 +5652,7 @@ class Team:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
+        self.read_from_storage(session_id=session_id)  # type: ignore
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage
@@ -5693,6 +5773,17 @@ class Team:
                             self.memory.memories = [UserMemoryV1.model_validate(m) for m in session.memory["memories"]]
                         except Exception as e:
                             log_warning(f"Failed to load user memories: {e}")
+
+                    if self.memory.create_user_memories:
+                        if self.user_id is not None and self.memory.user_id is None:
+                            self.memory.user_id = self.user_id
+
+                        self.memory.load_user_memories()
+                        if self.user_id is not None:
+                            log_debug(f"Memories loaded for user: {self.user_id}")
+                        else:
+                            log_debug("Memories loaded")
+
                 except Exception as e:
                     log_warning(f"Failed to load TeamMemory: {e}")
             elif isinstance(self.memory, Memory):

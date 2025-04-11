@@ -140,7 +140,7 @@ class Memory:
                 self.summary_manager.model = deepcopy(self.model)
 
         self.debug_mode = debug_mode
-        
+
         if self.db is not None:
             self.hydrate_from_db()
 
@@ -253,7 +253,7 @@ class Memory:
             str: The id of the memory
         """
         from uuid import uuid4
-        
+
         self.initialize()
 
         memory_id = memory.memory_id or str(uuid4())
