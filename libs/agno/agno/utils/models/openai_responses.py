@@ -91,3 +91,34 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
             continue
 
     return image_messages
+
+
+def sanitize_response_schema(schema: dict):
+    """
+    Recursively sanitize a Pydantic-generated JSON schema to comply with OpenAI's response_format rules:
+
+    - Sets "additionalProperties": false for all object types to disallow extra fields.
+    - Removes "default": null from optional fields.
+    - Ensures that all fields defined in "properties" are listed in "required",
+      making every property explicitly required as per OpenAI's expectations.
+    """
+    if isinstance(schema, dict):
+        # Enforce additionalProperties: false
+        if schema.get("type") == "object":
+            schema["additionalProperties"] = False
+
+            # Ensure all properties are required
+            if "properties" in schema:
+                schema["required"] = list(schema["properties"].keys())
+
+        # Remove only default: null
+        if "default" in schema and schema["default"] is None:
+            schema.pop("default")
+
+        # Recurse into all values
+        for value in schema.values():
+            sanitize_response_schema(value)
+
+    elif isinstance(schema, list):
+        for item in schema:
+            sanitize_response_schema(item)

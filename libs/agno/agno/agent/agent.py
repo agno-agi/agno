@@ -100,8 +100,8 @@ class Agent:
     knowledge: Optional[AgentKnowledge] = None
     # Enable RAG by adding references from AgentKnowledge to the user prompt.
     add_references: bool = False
-    # Function to get references to add to the user_message
-    # This function, if provided, is called when add_references is True
+    # Retrieval function to get references
+    # This function, if provided, is used instead of the default search_knowledge function
     # Signature:
     # def retriever(agent: Agent, query: str, num_documents: Optional[int], **kwargs) -> Optional[list[dict]]:
     #     ...
