@@ -31,10 +31,11 @@ View the README for instructions on how to run the application.
 
 from typing import Optional
 
-from agno.agent import Agent, AgentMemory
+from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge import AgentKnowledge
-from agno.memory.db.postgres import PgMemoryDb
+from agno.memory.v2.db.postgres import PostgresMemoryDb
+from agno.memory.v2.memory import Memory
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
@@ -68,12 +69,10 @@ def get_agentic_rag_agent(
     else:
         raise ValueError(f"Unsupported model provider: {provider}")
     # Define persistent memory for chat history
-    memory = AgentMemory(
-        db=PgMemoryDb(
+    memory = Memory(
+        db=PostgresMemoryDb(
             table_name="agent_memory", db_url=db_url
         ),  # Persist memory in Postgres
-        create_user_memories=True,  # Store user preferences
-        create_session_summary=True,  # Store conversation summaries
     )
 
     # Define the knowledge base
@@ -97,6 +96,8 @@ def get_agentic_rag_agent(
             table_name="agentic_rag_agent_sessions", db_url=db_url
         ),  # Persist session data
         memory=memory,  # Add memory to the agent
+        enable_user_memories=True,
+        enable_session_summaries=True,
         knowledge=knowledge_base,  # Add knowledge base
         description="You are a helpful Agent called 'Agentic RAG' and your goal is to assist the user in the best way possible.",
         instructions=[
