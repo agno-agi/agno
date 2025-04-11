@@ -3896,11 +3896,11 @@ class Team:
             system_message_content += (
                 "- You can either respond directly or transfer tasks to members in your team with the highest likelihood of completing the user's request.\n"
                 "- Carefully analyze the tools available to the members and their roles before transferring tasks.\n"
-                "- When you forward a task to another member, make sure to include:\n"
+                "- When you transfer a task to another member, make sure to include:\n"
                 "  - member_id (str): The ID of the member to forward the task to.\n"
                 "  - task_description (str): A clear description of the task.\n"
                 "  - expected_output (str): The expected output.\n"
-                "- You can forward tasks to multiple members at once.\n"
+                "- You can transfer tasks to multiple members at once.\n"
                 "- You must always analyze the responses from members before responding to the user.\n"
                 "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
                 "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
@@ -3908,6 +3908,7 @@ class Team:
         elif self.mode == "route":
             system_message_content += (
                 "- You can either respond directly or forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                "- You should not forward a task to a member if the user is just being conversational. You can respond directly.\n"
                 "- Carefully analyze the tools available to the members and their roles before forwarding tasks.\n"
                 "- When you forward a task to another Agent, make sure to include:\n"
                 "  - member_id (str): The ID of the member to forward the task to.\n"
@@ -3943,6 +3944,20 @@ class Team:
             system_message_content += "</success_criteria>\n"
             system_message_content += "Stop the team run when the success_criteria is met.\n\n"
 
+        # Attached media
+        if audio is not None or images is not None or videos is not None or files is not None:
+            system_message_content += "<attached_media>\n"
+            system_message_content += "You have the following media attached to your message:\n"
+            if audio is not None and len(audio) > 0:
+                system_message_content += " - Audio\n"
+            if images is not None and len(images) > 0:
+                system_message_content += " - Images\n"
+            if videos is not None and len(videos) > 0:
+                system_message_content += " - Videos\n"
+            if files is not None and len(files) > 0:
+                system_message_content += " - Files\n"
+            system_message_content += "</attached_media>\n\n"
+
         if self.description is not None:
             system_message_content += f"<description>\n{self.description}\n</description>\n\n"
 
@@ -3962,20 +3977,6 @@ class Team:
                 system_message_content += f"\n- {_ai}"
             system_message_content += "\n</additional_information>\n\n"
 
-        # 3.3.7 Attached media
-        if audio is not None or images is not None or videos is not None or files is not None:
-            system_message_content += "<attached_media>\n"
-            system_message_content += "You have the following media attached to your message:\n"
-            if audio is not None and len(audio) > 0:
-                system_message_content += " - Audio\n"
-            if images is not None and len(images) > 0:
-                system_message_content += " - Images\n"
-            if videos is not None and len(videos) > 0:
-                system_message_content += " - Videos\n"
-            if files is not None and len(files) > 0:
-                system_message_content += " - Files\n"
-            system_message_content += "</attached_media>\n\n"
-
         # Format the system message with the session state variables
         if self.add_state_in_messages:
             system_message_content = self._format_message_with_state_variables(system_message_content)
@@ -3991,6 +3992,8 @@ class Team:
             system_message_content += (
                 f"<additional_context>\n{self.additional_context.strip()}\n</additional_context>\n\n"
             )
+            
+        print("HERE", system_message_content)
 
         # Add the JSON output prompt if response_model is provided and structured_outputs is False
         if (
