@@ -359,6 +359,9 @@ def main() -> None:
                         question, stream=True, stream_intermediate_steps=True
                     )
                     for _resp_chunk in run_response:
+                        # Log the received chunk for debugging
+                        logger.debug(f"Received chunk: Event={_resp_chunk.event}, Content Type={type(_resp_chunk.content)}, Content={_resp_chunk.content}, Tools={_resp_chunk.tools}")
+
                         # Display tool calls if available, updating the single container
                         if _resp_chunk.tools and len(_resp_chunk.tools) > 0:
                             display_tool_calls(tool_calls_container, _resp_chunk.tools)

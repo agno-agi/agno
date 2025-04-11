@@ -328,20 +328,20 @@ def get_llm_os(
             "Remember you are stateless, your memory resets often. Do not refer to previous interactions unless the history is explicitly provided in the current turn.",
             "If the user asks to get investment report, delegate the task to the `Investment Agent`.",
             *extra_instructions,
-            # Re-adding parameters from previous version
-            search_knowledge=True,
-            read_chat_history=True,
-            add_history_to_messages=True,
-            num_history_responses=5,
-            markdown=True,
-            add_datetime_to_instructions=True,
-            # Add an introductory Agent message
-            introduction=dedent("""\
-            Hi, I'm your LLM OS.
-            I have access to a set of tools and AI Agents to assist you.
-            Let's solve some problems together!\
-            """),
         ],
+        # Re-adding parameters from previous version
+        search_knowledge=True,
+        read_chat_history=True,
+        add_history_to_messages=True,
+        num_history_responses=5,
+        markdown=True,
+        add_datetime_to_instructions=True,
+        # Add an introductory Agent message
+        introduction=dedent("""\
+        Hi, I'm your LLM OS.
+        I have access to a set of tools and AI Agents to assist you.
+        Let's solve some problems together!\
+        """),
         debug_mode=debug_mode,
     )
 
