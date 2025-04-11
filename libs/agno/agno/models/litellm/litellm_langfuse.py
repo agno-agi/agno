@@ -1,6 +1,6 @@
 from typing import Any, Dict
 
-from agno.models.litellm.chat import LiteLLM
+from agno.models.litellm import LiteLLM
 
 try:
     from langfuse.decorators import langfuse_context
@@ -10,13 +10,12 @@ except ImportError:
 
 class LiteLLMLangfuse(LiteLLM):
     def __post_init__(self):
-        super.__post_init__()
+        super().__post_init__()
 
         import litellm
 
-        litellm.success_callback.append('langfuse')
-        litellm.failure_callback.append('langfuse')
-
+        litellm.success_callback.append("langfuse")
+        litellm.failure_callback.append("langfuse")
 
     @property
     def request_kwargs(self) -> Dict[str, Any]:
