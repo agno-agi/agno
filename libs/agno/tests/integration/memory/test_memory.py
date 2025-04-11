@@ -69,7 +69,7 @@ def test_create_user_memory_with_db(memory_with_db):
     # Create messages to generate memories from
     message = "My name is John Doe and I like to play basketball"
     # Create memories from the messages
-    result = memory_with_db.create_user_memory(message, user_id="test_user")
+    result = memory_with_db.create_user_memories(message, user_id="test_user")
 
     # Verify memories were created
     assert len(result) > 0
@@ -119,7 +119,7 @@ async def test_acreate_user_memory_with_db(memory_with_db):
     message = "My name is John Doe and I like to play basketball"
 
     # Create memory from the message
-    result = await memory_with_db.acreate_user_memory(message, user_id="test_user")
+    result = await memory_with_db.acreate_user_memories(message, user_id="test_user")
 
     # Verify memory was created
     assert len(result) > 0

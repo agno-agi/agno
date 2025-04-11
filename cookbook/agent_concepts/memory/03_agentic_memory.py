@@ -11,7 +11,7 @@ memory = Memory(model=Gemini(id="gemini-2.0-flash-exp"), db=memory_db)
 
 john_doe_id = "john_doe@example.com"
 
-memory.create_user_memory(
+memory.create_user_memories(
     message="""
     I enjoy hiking in the mountains on weekends,
     reading science fiction novels before bed,

@@ -460,10 +460,13 @@ class Team:
             user_id = self.user_id
 
         if session_id is None or session_id == "":
+            # Default to the team's session_id if no session_id is provided
             if not (self.session_id is None or self.session_id == ""):
                 session_id = self.session_id
             else:
+                # Generate a new session_id and store it in the agent   
                 session_id = str(uuid4())
+                self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1131,10 +1134,13 @@ class Team:
             user_id = self.user_id
 
         if session_id is None or session_id == "":
+            # Default to the team's session_id if no session_id is provided
             if not (self.session_id is None or self.session_id == ""):
                 session_id = self.session_id
             else:
+                # Generate a new session_id and store it in the team
                 session_id = str(uuid4())
+                self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1755,7 +1761,7 @@ class Team:
     ) -> None:
         self.memory = cast(Memory, self.memory)
         if self.enable_user_memories and run_messages.user_message is not None:
-            self.memory.create_user_memory(message=run_messages.user_message.get_content_string(), user_id=user_id)
+            self.memory.create_user_memories(message=run_messages.user_message.get_content_string(), user_id=user_id)
 
         # Update the session summary if needed
         if self.enable_session_summaries:
@@ -1766,7 +1772,7 @@ class Team:
     ) -> None:
         self.memory = cast(Memory, self.memory)
         if self.enable_user_memories and run_messages.user_message is not None:
-            await self.memory.acreate_user_memory(
+            await self.memory.acreate_user_memories(
                 message=run_messages.user_message.get_content_string(), user_id=user_id
             )
 
@@ -4488,31 +4494,37 @@ class Team:
     ###########################################################################
 
     def get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Callable:
-        def update_user_memory(message: str) -> str:
-            """Use this function to update the user's memory.
+        def update_user_memory(task: str) -> str:
+            """
+            Use this function to submit a task to modify the Agent's memory.
+            Describe the task in detail and be specific.
+            The task can include adding a memory, updating a memory, deleting a memory, or clearing all memories.
 
             Args:
-                message: The message to update the user's memory with.
+                task: The task to update the memory. Be specific and describe the task in detail.
 
             Returns:
                 str: A string indicating the status of the update.
             """
             self.memory = cast(Memory, self.memory)
-            self.memory.create_user_memory(message=message, user_id=user_id)
-            return "Memory updated successfully"
+            response = self.memory.update_memory_task(task=task, user_id=user_id)
+            return response
 
-        async def aupdate_user_memory(message: str) -> str:
-            """Use this function to update the user's memory.
+        async def aupdate_user_memory(task: str) -> str:
+            """
+            Use this function to submit a task to modify the Agent's memory.
+            Describe the task in detail and be specific.
+            The task can include adding a memory, updating a memory, deleting a memory, or clearing all memories.
 
             Args:
-                message: The message to update the user's memory with.
+                task: The task to update the memory. Be specific and describe the task in detail.
 
             Returns:
                 str: A string indicating the status of the update.
             """
             self.memory = cast(Memory, self.memory)
-            await self.memory.acreate_user_memory(message=message, user_id=user_id)
-            return "Memory updated successfully"
+            response = await self.memory.aupdate_memory_task(task=task, user_id=user_id)
+            return response
 
         if async_mode:
             return aupdate_user_memory

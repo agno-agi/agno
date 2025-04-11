@@ -1,6 +1,6 @@
 from agno.agent.agent import Agent
 from agno.memory.v2.db.postgres import PostgresMemoryDb
-from agno.memory.v2.memory import Memory, UserMemory
+from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
 

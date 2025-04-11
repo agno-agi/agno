@@ -980,7 +980,9 @@ class Agent:
             if not (self.session_id is None or self.session_id == ""):
                 session_id = self.session_id
             else:
+                # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
+                self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1524,7 +1526,9 @@ class Agent:
             if not (self.session_id is None or self.session_id == ""):
                 session_id = self.session_id
             else:
+                # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
+                self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1686,7 +1690,7 @@ class Agent:
         session_messages: List[Message] = []
         self.memory = cast(Memory, self.memory)
         if self.enable_user_memories and run_messages.user_message is not None:
-            self.memory.create_user_memory(message=run_messages.user_message.get_content_string(), user_id=user_id)
+            self.memory.create_user_memories(message=run_messages.user_message.get_content_string(), user_id=user_id)
 
             # TODO: Possibly do both of these in one step
             if messages is not None and len(messages) > 0:
@@ -1729,7 +1733,7 @@ class Agent:
         self.memory = cast(Memory, self.memory)
         session_messages: List[Message] = []
         if self.enable_user_memories and run_messages.user_message is not None:
-            await self.memory.acreate_user_memory(
+            await self.memory.acreate_user_memories(
                 message=run_messages.user_message.get_content_string(), user_id=user_id
             )
 
