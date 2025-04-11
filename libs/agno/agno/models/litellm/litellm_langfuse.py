@@ -1,17 +1,14 @@
-from agno.models.litellm.chat import LiteLLM
 from typing import Any, Dict
 
+from agno.models.litellm.chat import LiteLLM
 
 try:
     from langfuse.decorators import langfuse_context
 except ImportError:
-    raise ImportError(
-        "`langfuse` not installed. Please install it via `pip install langfuse`"
-    )
+    raise ImportError("`langfuse` not installed. Please install it via `pip install langfuse`")
 
 
 class LiteLLMLangfuse(LiteLLM):
-
     @property
     def request_kwargs(self) -> Dict[str, Any]:
         """Get the request kwargs for the LiteLLM API."""
