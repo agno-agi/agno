@@ -3908,7 +3908,6 @@ class Team:
         elif self.mode == "route":
             system_message_content += (
                 "- You can either respond directly or forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
-                "- You should not forward a task to a member if the user is just being conversational. You can respond directly.\n"
                 "- Carefully analyze the tools available to the members and their roles before forwarding tasks.\n"
                 "- When you forward a task to another Agent, make sure to include:\n"
                 "  - member_id (str): The ID of the member to forward the task to.\n"
