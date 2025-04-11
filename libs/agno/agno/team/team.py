@@ -481,8 +481,7 @@ class Team:
 
         # Initialize memory if not yet set
         if self.memory is None:
-            # A new instance of Memory (v2) is created if no memory is provided
-            self.memory = Memory()
+            self.memory = TeamMemory()
 
         # Default to the team's model if no model is provided
         if isinstance(self.memory, Memory):
@@ -1155,8 +1154,7 @@ class Team:
 
         # Initialize memory if not yet set
         if self.memory is None:
-            # A new instance of Memory (v2) is created if no memory is provided
-            self.memory = Memory()
+            self.memory = TeamMemory()
 
         # Default to the team's model if no model is provided
         if isinstance(self.memory, Memory):

@@ -497,8 +497,7 @@ class Agent:
         log_debug(f"Agent ID: {self.agent_id}", center=True)
 
         if self.memory is None:
-            # A new instance of Memory (v2) is created if no memory is provided
-            self.memory = Memory()
+            self.memory = AgentMemory()
         # Default to the agent's model if no model is provided
         if isinstance(self.memory, Memory):
             if self.memory.model is None and self.model is not None:
