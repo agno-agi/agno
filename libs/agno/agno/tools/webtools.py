@@ -16,7 +16,6 @@ class WebTools(Toolkit):
         self.register(self.expand_url)
 
 
-
     def expand_url(self, url: str) -> str:
         """
         Expands a shortened URL to its final destination using HTTP HEAD requests with retries.
