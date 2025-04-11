@@ -1,6 +1,6 @@
 from agno.agent.agent import Agent
 from agno.memory.v2.db.postgres import PostgresMemoryDb
-from agno.memory.v2.memory import Memory, UserMemory
+from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
 
@@ -12,10 +12,11 @@ session_id = "postgres_memories"
 user_id = "postgres_user"
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-4o"),
     memory=memory,
     storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
-    enable_agentic_memory=True,
+    enable_user_memories=True,
+    # enable_session_summaries=True,
 )
 
 agent.print_response(
@@ -26,5 +27,5 @@ agent.print_response(
 )
 
 agent.print_response(
-    "What are my hobbies?", stream=True, user_id=user_id, session_id=session_id
+    "What are my hobbies?", stream=True, user_id="test", session_id=session_id
 )

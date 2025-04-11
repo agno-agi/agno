@@ -1,7 +1,5 @@
 """
-This example shows how to use the Memory class to create a persistent memory.
-
-Every time you run this, the `Memory` object will be re-initialized from the DB.
+In this example, we have two agents that share the same memory.
 """
 
 from agno.agent.agent import Agent
@@ -51,6 +49,7 @@ research_agent.print_response(
 )
 
 memories = memory.get_user_memories(user_id=john_doe_id)
+
 print("John Doe's memories:")
 for i, m in enumerate(memories):
     print(f"{i}: {m.memory}")

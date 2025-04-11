@@ -129,6 +129,7 @@ class Playground:
 
         self.endpoints_created.add(endpoint)
 
+
 def generate_id(name: Optional[str] = None) -> str:
     if name:
         return name.lower().replace(" ", "-").replace("_", "-")

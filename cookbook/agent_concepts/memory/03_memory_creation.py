@@ -1,17 +1,17 @@
+"""
+Create user memories with an Agent by providing a either text or a list of messages.
+"""
+
 from agno.memory.v2 import Memory
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
-from agno.models.openrouter.openrouter import OpenRouter
+from agno.models.google import Gemini
+from agno.models.message import Message
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
-
 # Reset for this example
 memory_db.clear()
 
-memory = Memory(
-    model=OpenRouter(id="meta-llama/llama-3.3-70b-instruct"),
-    db=memory_db,
-    debug_mode=True,
-)
+memory = Memory(model=Gemini(id="gemini-2.0-flash-exp"), db=memory_db)
 
 john_doe_id = "john_doe@example.com"
 
@@ -32,4 +32,22 @@ memory.create_user_memory(
 memories = memory.get_user_memories(user_id=john_doe_id)
 print("John Doe's memories:")
 for i, m in enumerate(memories):
-    print(f"{i}: {m.memory}")
+    print(f"{i}: {m.memory} - {m.topics}")
+
+
+jane_doe_id = "jane_doe@example.com"
+# Send a history of messages and add memories
+memory.create_user_memories(
+    messages=[
+        Message(role="user", content="My name is Jane Doe"),
+        Message(role="assistant", content="That is great!"),
+        Message(role="user", content="I like to play chess"),
+        Message(role="assistant", content="That is great!"),
+    ],
+    user_id=jane_doe_id,
+)
+
+memories = memory.get_user_memories(user_id=jane_doe_id)
+print("Jane Doe's memories:")
+for i, m in enumerate(memories):
+    print(f"{i}: {m.memory} - {m.topics}")

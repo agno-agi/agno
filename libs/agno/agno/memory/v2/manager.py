@@ -36,11 +36,14 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 class MemoryManager:
     """Model for Memory Manager"""
 
+    # Model used for memory management
     model: Optional[Model] = None
 
-    # Provide the system prompt for the manager as a string
+    # Provide the system prompt for the manager as a string. If not provided, a default prompt will be used.
     system_prompt: Optional[str] = None
-    
+
+    # Whether memories were created in the last run
+    memories_updated: bool = False
 
     def __init__(self, model: Optional[Model] = None, system_prompt: Optional[str] = None):
         self.model = model
@@ -141,15 +144,20 @@ class MemoryManager:
     #     return Message(role="system", content="\n".join(system_prompt_lines))
 
     def get_system_message(
-        self, existing_memories: Optional[List[Dict[str, Any]]] = None, messages: Optional[List[Message]] = None
+        self,
+        existing_memories: Optional[List[Dict[str, Any]]] = None,
+        messages: Optional[List[Message]] = None,
+        enable_delete_memory: bool = True,
+        enable_clear_memory: bool = True,
     ) -> Message:
         # -*- Return a system message for the memory manager
         system_prompt_lines = [
-            "Your task is to add, update, or delete memories based on the user's task."
-            "You can also decide that no new memories or other changes are needed."
-            "If you do create new memories, create one or more memories that captures the key information provided by the user, as if you were storing it for future reference."
-            "Memories should be a brief, third-person statement that encapsulates the most important aspect of the user's input, without adding any extraneous information."
-            "Don't make a single memory too long, but do create multiple memories if needed to capture all the information."
+            "Your task is to add, update, or delete memories based on the user's task. "
+            "You can also decide that no new memories or other changes are needed. "
+            "If you do create new memories, create one or more memories that captures the key information provided by the user, as if you were storing it for future reference. "
+            "Memories should be a brief, third-person statement that encapsulates the most important aspect of the user's input, without adding any extraneous information. "
+            "Don't make a single memory too long, but do create multiple memories if needed to capture all the information. "
+            "When updating a memory, append the existing memory with new information rather than completely overwriting it. "
             "Memories should include details that could personalize ongoing interactions with the user, such as:"
             "  - Personal facts: name, age, occupation, location, interests, preferences, etc."
             "  - Significant life events or experiences shared by the user"
@@ -160,9 +168,13 @@ class MemoryManager:
             "  1. Decide to make no changes to the existing memories.",
             "  2. Decide to add a new memory using the `add_memory` tool.",
             "  3. Decide to update an existing memory using the `update_memory` tool.",
-            "  4. Decide to delete an existing memory using the `delete_memory` tool.",
-            "  5. Decide to clear all memories using the `clear_memory` tool. Use this with extreme caution, as it will remove all memories from the database.",
-            "You can call multiple of these tools in a single response if needed.",
+        ]
+        if enable_delete_memory:
+            system_prompt_lines.append("  4. Decide to delete an existing memory using the `delete_memory` tool.")
+        if enable_clear_memory:
+            system_prompt_lines.append("  5. Decide to clear all memories using the `clear_memory` tool.")
+        system_prompt_lines += [
+            "You can call multiple of these tools in a single response if needed. ",
             "Only add or update memories if it is necessary to capture key information provided by the user.",
         ]
 
@@ -214,13 +226,18 @@ class MemoryManager:
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
-            self.get_system_message(existing_memories, messages=messages),
+            self.get_system_message(
+                existing_memories, messages=messages, enable_delete_memory=False, enable_clear_memory=False
+            ),
             # For models that require a non-system message
             Message(role="user", content="Create or update memories based on the user's messages."),
         ]
 
         # Generate a response from the Model (includes running function calls)
         response = model_copy.response(messages=messages_for_model)
+
+        if response.tool_calls is not None and len(response.tool_calls) > 0:
+            self.memories_updated = True
         log_debug("MemoryManager End", center=True)
 
         return response.content
@@ -261,6 +278,9 @@ class MemoryManager:
 
         # Generate a response from the Model (includes running function calls)
         response = await model_copy.aresponse(messages=messages_for_model)
+
+        if response.tool_calls is not None and len(response.tool_calls) > 0:
+            self.memories_updated = True
         log_debug("MemoryManager End", center=True)
 
         return response.content
@@ -291,6 +311,9 @@ class MemoryManager:
 
         # Generate a response from the Model (includes running function calls)
         response = model_copy.response(messages=messages_for_model)
+
+        if response.tool_calls is not None and len(response.tool_calls) > 0:
+            self.memories_updated = True
         log_debug("MemoryManager End", center=True)
 
         return response.content
@@ -321,6 +344,9 @@ class MemoryManager:
 
         # Generate a response from the Model (includes running function calls)
         response = await model_copy.aresponse(messages=messages_for_model)
+
+        if response.tool_calls is not None and len(response.tool_calls) > 0:
+            self.memories_updated = True
         log_debug("MemoryManager End", center=True)
 
         return response.content

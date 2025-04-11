@@ -1,7 +1,11 @@
 """
-This example shows how to use the Memory class to create a persistent memory.
+This example demonstrates how to run a multi-user, multi-session chat.
 
-Every time you run this, the `Memory` object will be re-initialized from the DB.
+In this example, we have 3 users and 4 sessions.
+
+User 1 has 2 sessions.
+User 2 has 1 session.
+User 3 has 1 session.
 """
 
 import asyncio

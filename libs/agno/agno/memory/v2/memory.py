@@ -1,7 +1,7 @@
+import json
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
-import json
 from os import getenv
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -116,7 +116,7 @@ class Memory:
         self.debug_mode = debug_mode
 
         self.model = model
-        
+
         if self.model is not None and isinstance(self.model, str):
             raise ValueError("Model must be a Model object, not a string")
 

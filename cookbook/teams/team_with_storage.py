@@ -41,7 +41,11 @@ multi_language_team = Team(
         table_name="agent_team_sessions",
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     ),
-    memory=Memory(db=PostgresMemoryDb(table_name="memories", db_url="postgres://ai:ai@localhost:5532/ai")),
+    memory=Memory(
+        db=PostgresMemoryDb(
+            table_name="memories", db_url="postgres://ai:ai@localhost:5532/ai"
+        )
+    ),
     show_tool_calls=True,
     markdown=True,
     instructions=[

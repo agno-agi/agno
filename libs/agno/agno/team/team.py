@@ -5626,6 +5626,7 @@ class Team:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "team_context" in session.memory:
                     from agno.memory.v2.memory import TeamContext
+
                     try:
                         self.memory.team_context = {
                             session_id: TeamContext.from_dict(team_context)
@@ -5642,7 +5643,8 @@ class Team:
                         try:
                             self.memory.memories = {
                                 user_id: {
-                                    memory_id: UserMemoryV2.from_dict(memory) for memory_id, memory in user_memories.items()
+                                    memory_id: UserMemoryV2.from_dict(memory)
+                                    for memory_id, memory in user_memories.items()
                                 }
                                 for user_id, user_memories in session.memory["memories"].items()
                             }

@@ -96,8 +96,12 @@ class Agent:
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
     enable_user_memories: bool = False
+    # If True, the agent adds a reference to the user memories in the response
+    add_memory_references: Optional[bool] = None
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
+    # If True, the agent adds a reference to the session summaries in the response
+    add_session_summary_references: Optional[bool] = None
 
     # --- Agent History ---
     # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
@@ -279,7 +283,9 @@ class Agent:
         memory: Optional[Union[AgentMemory, Memory]] = None,
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
+        add_memory_references: Optional[bool] = None,
         enable_session_summaries: bool = False,
+        add_session_summary_references: Optional[bool] = None,
         add_history_to_messages: bool = False,
         num_history_responses: Optional[int] = None,
         num_history_runs: int = 3,
@@ -357,7 +363,15 @@ class Agent:
         self.memory = memory
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
+        if add_memory_references is None:
+            self.add_memory_references = enable_user_memories or enable_agentic_memory
+        else:
+            self.add_memory_references = add_memory_references
         self.enable_session_summaries = enable_session_summaries
+        if add_session_summary_references is None:
+            self.add_session_summary_references = enable_session_summaries
+        else:
+            self.add_session_summary_references = add_session_summary_references
 
         self.add_history_to_messages = add_history_to_messages
         self.num_history_responses = num_history_responses
@@ -1974,17 +1988,6 @@ class Agent:
             else:
                 log_warning("Context is not a dict")
 
-    def load_user_memories(self, user_id: Optional[str] = None) -> None:
-        if isinstance(self.memory, AgentMemory) and self.memory.create_user_memories:
-            if user_id is not None and self.memory.user_id is None:
-                self.memory.user_id = user_id
-
-            self.memory.load_user_memories()
-            if user_id is not None:
-                log_debug(f"Memories loaded for user: {user_id}")
-            else:
-                log_debug("Memories loaded")
-
     def get_agent_data(self) -> Dict[str, Any]:
         agent_data: Dict[str, Any] = {}
         if self.name is not None:
@@ -2164,6 +2167,15 @@ class Agent:
                             self.memory.memories = [UserMemory.model_validate(m) for m in session.memory["memories"]]
                         except Exception as e:
                             log_warning(f"Failed to load user memories: {e}")
+                    if self.memory.create_user_memories:
+                        if self.user_id is not None and self.memory.user_id is None:
+                            self.memory.user_id = self.user_id
+
+                        self.memory.load_user_memories()
+                        if self.user_id is not None:
+                            log_debug(f"Memories loaded for user: {self.user_id}")
+                        else:
+                            log_debug("Memories loaded")
                 except Exception as e:
                     log_warning(f"Failed to load AgentMemory: {e}")
             elif isinstance(self.memory, Memory):
@@ -2184,8 +2196,10 @@ class Agent:
                     from agno.memory.v2.memory import UserMemory as UserMemoryV2
 
                     try:
+                        # If memories are already loaded, use them as is for the current session
                         if self.memory.memories is not None:
                             pass
+                        # If memories do not exist, we load them from the session memory for the current user
                         else:
                             self.memory.memories = {
                                 user_id: {
@@ -2230,7 +2244,6 @@ class Agent:
             else:
                 # New session, just reset the state
                 self.session_name = None
-            self.load_user_memories(user_id=user_id)
         return self.agent_session
 
     def write_to_storage(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
@@ -2505,14 +2518,13 @@ class Agent:
                 else:
                     system_message_content += (
                         "You have the capability to retain memories from previous interactions with the user, "
-                        "but have not had any interactions with the user yet.\n"
-                        "If the user asks about previous memories, you can let them know that you dont have any memory about the user because you haven't had any interactions yet.\n\n"
+                        "but have not had any interactions with the current user yet.\n"
                     )
                 system_message_content += (
                     "You can add new memories using the `update_memory` tool.\n"
                     "If you use the `update_memory` tool, remember to pass on the response to the user.\n\n"
                 )
-            elif isinstance(self.memory, Memory) and (self.enable_user_memories or self.enable_agentic_memory):
+            elif isinstance(self.memory, Memory) and (self.add_memory_references):
                 if not user_id:
                     user_id = "default"
                 user_memories = self.memory.memories.get(user_id, {})  # type: ignore
@@ -2531,8 +2543,7 @@ class Agent:
                 else:
                     system_message_content += (
                         "You have the capability to retain memories from previous interactions with the user, "
-                        "but have not had any interactions with the user yet.\n"
-                        "If the user asks about previous memories, you can let them know that you dont have any memory about the user because you haven't had any interactions yet.\n\n"
+                        "but have not had any interactions with the current user yet.\n"
                     )
 
                 if self.enable_agentic_memory:
@@ -2548,7 +2559,7 @@ class Agent:
             # 3.3.12 Then add a summary of the interaction to the system prompt
             if isinstance(self.memory, AgentMemory) and self.memory.create_session_summary:
                 if self.memory.summary is not None:
-                    system_message_content += "Here is a brief summary of your previous interactions if it helps:\n\n"
+                    system_message_content += "Here is a brief summary of your previous interactions:\n\n"
                     system_message_content += "<summary_of_previous_interactions>\n"
                     system_message_content += str(self.memory.summary)
                     system_message_content += "\n</summary_of_previous_interactions>\n\n"
@@ -2556,12 +2567,12 @@ class Agent:
                         "Note: this information is from previous interactions and may be outdated. "
                         "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
                     )
-            elif isinstance(self.memory, Memory) and self.enable_session_summaries:
+            elif isinstance(self.memory, Memory) and self.add_session_summary_references:
                 if not user_id:
                     user_id = "default"
                 session_summary: SessionSummary = self.memory.summaries.get(user_id, {}).get(session_id, None)  # type: ignore
                 if session_summary is not None:
-                    system_message_content += "Here is a brief summary of your previous interactions if it helps:\n\n"
+                    system_message_content += "Here is a brief summary of your previous interactions:\n\n"
                     system_message_content += "<summary_of_previous_interactions>\n"
                     system_message_content += session_summary.summary
                     system_message_content += "\n</summary_of_previous_interactions>\n\n"
@@ -4349,6 +4360,25 @@ class Agent:
                             )
                             panels.append(citations_panel)
                             live_log.update(Group(*panels))
+
+                if self.memory is not None and isinstance(self.memory, Memory):
+                    if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
+                        memory_panel = create_panel(
+                            content=Text("Memories updated"),
+                            title="Memories",
+                            border_style="green",
+                        )
+                        panels.append(memory_panel)
+                        live_log.update(Group(*panels))
+
+                    if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
+                        summary_panel = create_panel(
+                            content=Text("Session summary updated"),
+                            title="Session Summary",
+                            border_style="green",
+                        )
+                        panels.append(summary_panel)
+
                 response_timer.stop()
 
                 # Final update to remove the "Thinking..." status
@@ -4497,6 +4527,25 @@ class Agent:
                             border_style="green",
                         )
                         panels.append(citations_panel)
+                        live_log.update(Group(*panels))
+
+                if self.memory is not None and isinstance(self.memory, Memory):
+                    if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
+                        memory_panel = create_panel(
+                            content=Text("Memories updated"),
+                            title="Memories",
+                            border_style="green",
+                        )
+                        panels.append(memory_panel)
+                        live_log.update(Group(*panels))
+
+                    if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
+                        summary_panel = create_panel(
+                            content=Text("Session summary updated"),
+                            title="Session Summary",
+                            border_style="green",
+                        )
+                        panels.append(summary_panel)
                         live_log.update(Group(*panels))
 
                 # Final update to remove the "Thinking..." status
@@ -4703,6 +4752,25 @@ class Agent:
                             )
                             panels.append(citations_panel)
                             live_log.update(Group(*panels))
+
+                if self.memory is not None and isinstance(self.memory, Memory):
+                    if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
+                        memory_panel = create_panel(
+                            content=Text("Memories updated"),
+                            title="Memories",
+                            border_style="green",
+                        )
+                        panels.append(memory_panel)
+                        live_log.update(Group(*panels))
+
+                    if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
+                        summary_panel = create_panel(
+                            content=Text("Session summary updated"),
+                            title="Session Summary",
+                            border_style="green",
+                        )
+                        panels.append(summary_panel)
+
                 response_timer.stop()
 
                 # Final update to remove the "Thinking..." status
@@ -4849,6 +4917,16 @@ class Agent:
                             border_style="green",
                         )
                         panels.append(citations_panel)
+                        live_log.update(Group(*panels))
+
+                if self.memory is not None and isinstance(self.memory, Memory):
+                    if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
+                        memory_panel = create_panel(
+                            content=Text("Memories updated"),
+                            title="Memories",
+                            border_style="green",
+                        )
+                        panels.append(memory_panel)
                         live_log.update(Group(*panels))
 
                 # Final update to remove the "Thinking..." status

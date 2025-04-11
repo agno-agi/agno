@@ -1,7 +1,7 @@
 """
-This example shows how to use the Memory class to create a persistent memory.
+This example demonstrates how to create session summaries.
 
-Every time you run this, the `Memory` object will be re-initialized from the DB.
+To enable this, set `enable_session_summaries=True` in the Agent config.
 """
 
 from agno.agent.agent import Agent

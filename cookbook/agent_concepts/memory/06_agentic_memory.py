@@ -1,7 +1,9 @@
 """
-This example shows how to use the Memory class to create a persistent memory.
+This example shows you how to use persistent memory with an Agent.
 
-Every time you run this, the `Memory` object will be re-initialized from the DB.
+During each run the Agent can create/update/delete user memories.
+
+To enable this, set `enable_agentic_memory=True` in the Agent config.
 """
 
 from agno.agent.agent import Agent
