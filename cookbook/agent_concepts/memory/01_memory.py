@@ -1,3 +1,7 @@
+"""
+How to add, get, delete, and replace user memories manually
+"""
+
 from agno.memory.v2 import Memory, UserMemory
 
 memory = Memory()
@@ -38,6 +42,7 @@ memories = memory.get_user_memories(user_id=jane_doe_id)
 for m in memories:
     print(m.memory)
 print()
+
 # Replace a memory
 memory.replace_user_memory(
     memory_id=memory_id_1,
@@ -45,6 +50,7 @@ memory.replace_user_memory(
     user_id=jane_doe_id,
 )
 print("Memory replaced\n")
+
 memories = memory.get_user_memories(user_id=jane_doe_id)
 for m in memories:
     print(m.memory)

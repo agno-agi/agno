@@ -1,3 +1,11 @@
+"""
+How to search for user memories using different retrieval methods
+
+- last_n: Retrieves the last n memories
+- first_n: Retrieves the first n memories
+- semantic: Retrieves memories using semantic search
+"""
+
 from agno.memory.v2 import Memory, UserMemory
 
 memory = Memory()
@@ -27,5 +35,14 @@ memories = memory.search_user_memories(
     user_id=john_doe_id, limit=1, retrieval_method="first_n"
 )
 print("John Doe's first_n memories:")
+for i, m in enumerate(memories):
+    print(f"{i}: {m.memory}")
+
+memories = memory.search_user_memories(
+    user_id=john_doe_id,
+    query="What does the user like to do on weekends?",
+    retrieval_method="semantic",
+)
+print("John Doe's found memories:")
 for i, m in enumerate(memories):
     print(f"{i}: {m.memory}")

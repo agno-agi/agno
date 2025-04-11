@@ -1,7 +1,9 @@
 """
-This example shows how to use the Memory class to create a persistent memory.
+This example shows you how to use persistent memory with an Agent.
 
-Every time you run this, the `Memory` object will be re-initialized from the DB.
+After each run, user memories are created/updated.
+
+To enable this, set `enable_user_memories=True` in the Agent config.
 """
 
 from agno.agent.agent import Agent
@@ -17,7 +19,7 @@ memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 memory = Memory(db=memory_db)
 
 # Reset the memory for this example
-memory.clear()
+# memory.clear()
 
 session_id = "session_1"
 john_doe_id = "john_doe@example.com"
@@ -41,7 +43,6 @@ agent.print_response(
 agent.print_response(
     "What are my hobbies?", stream=True, user_id=john_doe_id, session_id=session_id
 )
-
 
 # -*- Print the chat history
 session_run = memory.runs[session_id][-1]

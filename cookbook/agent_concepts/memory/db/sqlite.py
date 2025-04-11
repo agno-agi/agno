@@ -1,20 +1,18 @@
 from agno.agent.agent import Agent
-from agno.memory.v2.db.postgres import PostgresMemoryDb
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
-from agno.storage.postgres import PostgresStorage
+from agno.storage.sqlite import SqliteStorage
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+memory = Memory(db=SqliteMemoryDb(table_name="agent_memories", db_file="tmp/memory.db"))
 
-memory = Memory(db=PostgresMemoryDb(table_name="agent_memories", db_url=db_url))
-
-session_id = "postgres_memories"
-user_id = "postgres_user"
+session_id = "sqlite_memories"
+user_id = "sqlite_user"
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     memory=memory,
-    storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
+    storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/memory.db"),
     enable_user_memories=True,
     enable_session_summaries=True,
 )

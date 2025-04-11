@@ -30,9 +30,14 @@ class SessionSummaryResponse(BaseModel):
 
 @dataclass
 class SessionSummarizer:
+    # Model used for summarization
     model: Optional[Model] = None
 
+    # System prompt for the summarizer. If not provided, a default prompt will be used.
     system_prompt: Optional[str] = None
+
+    # Whether the summarizer has created a summary
+    summary_updated: bool = False
 
     def __init__(self, model: Optional[Model] = None, system_prompt: Optional[str] = None):
         self.model = model
@@ -109,6 +114,10 @@ class SessionSummarizer:
 
         # Generate a response from the Model (includes running function calls)
         response = model_copy.response(messages=messages_for_model)
+
+        if response.content is not None:
+            self.summary_updated = True
+
         log_debug("SessionSummarizer End", center=True)
 
         # If the model natively supports structured outputs, the parsed value is already in the structured format
@@ -162,6 +171,10 @@ class SessionSummarizer:
 
         # Generate a response from the Model (includes running function calls)
         response = await model_copy.aresponse(messages=messages_for_model)
+
+        if response.content is not None:
+            self.summary_updated = True
+
         log_debug("SessionSummarizer End", center=True)
 
         # If the model natively supports structured outputs, the parsed value is already in the structured format

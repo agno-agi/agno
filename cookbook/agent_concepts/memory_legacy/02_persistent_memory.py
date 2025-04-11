@@ -8,6 +8,7 @@ Steps:
 import json
 
 from agno.agent import Agent
+from agno.memory import AgentMemory
 from agno.models.openai import OpenAIChat
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from rich.console import Console
@@ -16,6 +17,7 @@ from rich.panel import Panel
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
+    memory=AgentMemory(),
     # Store agent sessions in a database
     storage=SqliteAgentStorage(
         table_name="agent_sessions", db_file="tmp/agent_storage.db"

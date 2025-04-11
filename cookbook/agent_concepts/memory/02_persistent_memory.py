@@ -28,7 +28,6 @@ memory.add_user_memory(
 #     user_id=john_doe_id,
 # )
 
-
 memories: List[MemoryRow] = memory_db.read_memories()
 print("All the DB memories:")
 for i, m in enumerate(memories):
