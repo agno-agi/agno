@@ -40,7 +40,7 @@ agent.print_response(
     "My name is John Doe and I like to swim and play soccer.", stream=True
 )
 
-# agent.print_response("What are my hobbies?", stream=True)
+agent.print_response("I dont like to swim", stream=True)
 
 
 memories = memory.get_user_memories(user_id=john_doe_id)
