@@ -1147,6 +1147,7 @@ class Agent:
             yield self.create_run_response("Run started", event=RunEvent.run_started)
 
         # 7. Generate a response from the Model (includes running function calls)
+        reasoning_started = False
         model_response: ModelResponse
         self.model = cast(Model, self.model)
         if stream and self.is_streamable:
@@ -1269,6 +1270,22 @@ class Agent:
                             self.run_response.tools = tool_calls_list
 
                     if self.stream_intermediate_steps:
+
+                        for t in self.run_response.tools:
+                            if t.get("tool_name") == "think":
+                                if not reasoning_started:
+                                    yield self.create_run_response(
+                                        content="",
+                                        event=RunEvent.reasoning_started,
+                                    )
+                                    reasoning_started = True
+                            
+                                content = t.get("tool_args", {}).get("thought", "")
+                                yield self.create_run_response(
+                                    content=content,
+                                    event=RunEvent.reasoning_step
+                                )
+
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             event=RunEvent.tool_call_completed,
@@ -1322,7 +1339,12 @@ class Agent:
             self.run_response.messages = run_messages.messages
             # Update the run_response created_at with the model response created_at
             self.run_response.created_at = model_response.created_at
-
+            
+        if self.stream_intermediate_steps and reasoning_started:
+            yield self.create_run_response(
+                content="Reasoning completed",
+                event=RunEvent.reasoning_completed,
+            )
         # 8. Update RunResponse
         # Build a list of messages that should be added to the RunResponse
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
