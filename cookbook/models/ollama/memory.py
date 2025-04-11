@@ -20,7 +20,7 @@ agent = Agent(
         db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url),
     ),
     enable_user_memories=True,
-    enable_session_summaries=True,  
+    enable_session_summaries=True,
     # Store agent sessions in a database
     storage=PostgresStorage(table_name="personalized_agent_sessions", db_url=db_url),
     # Show debug logs so, you can see the memory being created

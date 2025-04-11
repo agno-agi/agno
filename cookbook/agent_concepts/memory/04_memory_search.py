@@ -7,8 +7,14 @@ How to search for user memories using different retrieval methods
 """
 
 from agno.memory.v2 import Memory, UserMemory
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.models.google.gemini import Gemini
 
-memory = Memory()
+memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
+# Reset for this example
+memory_db.clear()
+
+memory = Memory(model=Gemini(id="gemini-2.0-flash-exp"), db=memory_db)
 
 john_doe_id = "john_doe@example.com"
 

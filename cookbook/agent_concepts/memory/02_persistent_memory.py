@@ -12,6 +12,10 @@ from agno.memory.v2.memory import Memory
 from agno.memory.v2.schema import UserMemory
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
+
+# Clear the DB
+memory_db.clear()
+
 memory = Memory(db=memory_db)
 
 john_doe_id = "john_doe@example.com"
