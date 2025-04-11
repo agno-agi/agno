@@ -166,7 +166,6 @@ agent_team = Team(
     ],
     show_tool_calls=True,
     markdown=True,
-    # debug_mode=True,
     show_members_responses=True,
 )
 
