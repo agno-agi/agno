@@ -179,7 +179,7 @@ def get_sync_playground_router(
                             provider=agent.memory.model.provider,
                         )
                     if agent.memory.db is not None:
-                        memory_dict["db"] = str(agent.memory.db)
+                        memory_dict["db"] = agent.memory.db.__dict__()
 
                 else:
                     memory_dict = None
