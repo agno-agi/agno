@@ -13,8 +13,8 @@ from agno.models.anthropic.claude import Claude
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
 memory = Memory(
-    db=memory_db, 
-    summarizer=SessionSummarizer(model=Claude(id="claude-3-5-sonnet-20241022"))
+    db=memory_db,
+    summarizer=SessionSummarizer(model=Claude(id="claude-3-5-sonnet-20241022")),
 )
 
 # Reset the memory for this example
