@@ -4929,6 +4929,14 @@ class Agent:
                         panels.append(memory_panel)
                         live_log.update(Group(*panels))
 
+                    if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
+                        summary_panel = create_panel(
+                            content=Text("Session summary updated"),
+                            title="Session Summary",
+                            border_style="green",
+                        )
+                        panels.append(summary_panel)
+
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]
                 live_log.update(Group(*panels))
