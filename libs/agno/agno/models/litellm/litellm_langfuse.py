@@ -9,6 +9,15 @@ except ImportError:
 
 
 class LiteLLMLangfuse(LiteLLM):
+    def __post_init__(self):
+        super.__post_init__()
+
+        import litellm
+
+        litellm.success_callback.append('langfuse')
+        litellm.failure_callback.append('langfuse')
+
+
     @property
     def request_kwargs(self) -> Dict[str, Any]:
         """Get the request kwargs for the LiteLLM API."""
