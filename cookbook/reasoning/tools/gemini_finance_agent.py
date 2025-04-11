@@ -34,13 +34,3 @@ thinking_agent = Agent(
 thinking_agent.print_response(
     "Write a report comparing NVDA to TSLA in detail", stream=True, show_reasoning=True
 )
-
-# response = thinking_agent.run(
-#     "Write a report comparing NVDA to TSLA in detail", stream=True
-# )
-
-# for chunk in response:
-#     if chunk.event != "RunResponse":
-#         print(chunk.event)
-#         print(chunk.content)
-#         print(" ")

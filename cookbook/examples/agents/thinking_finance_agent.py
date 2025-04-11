@@ -72,29 +72,29 @@ finance_agent.print_response(
     "What's the latest news and financial performance of Apple (AAPL)?", stream=True
 )
 
-# # Semiconductor market analysis example
-# finance_agent.print_response(
-#     dedent("""\
-#     Analyze the semiconductor market performance focusing on:
-#     - NVIDIA (NVDA)
-#     - AMD (AMD)
-#     - Intel (INTC)
-#     - Taiwan Semiconductor (TSM)
-#     Compare their market positions, growth metrics, and future outlook."""),
-#     stream=True,
-# )
+# Semiconductor market analysis example
+finance_agent.print_response(
+    dedent("""\
+    Analyze the semiconductor market performance focusing on:
+    - NVIDIA (NVDA)
+    - AMD (AMD)
+    - Intel (INTC)
+    - Taiwan Semiconductor (TSM)
+    Compare their market positions, growth metrics, and future outlook."""),
+    stream=True,
+)
 
-# # Automotive market analysis example
-# finance_agent.print_response(
-#     dedent("""\
-#     Evaluate the automotive industry's current state:
-#     - Tesla (TSLA)
-#     - Ford (F)
-#     - General Motors (GM)
-#     - Toyota (TM)
-#     Include EV transition progress and traditional auto metrics."""),
-#     stream=True,
-# )
+# Automotive market analysis example
+finance_agent.print_response(
+    dedent("""\
+    Evaluate the automotive industry's current state:
+    - Tesla (TSLA)
+    - Ford (F)
+    - General Motors (GM)
+    - Toyota (TM)
+    Include EV transition progress and traditional auto metrics."""),
+    stream=True,
+)
 
 # More example prompts to explore:
 """
