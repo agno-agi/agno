@@ -39,7 +39,7 @@ from agno.run.response import RunEvent, RunResponse
 from agno.run.team import TeamRunResponse
 from agno.storage.base import Storage
 from agno.storage.session.team import TeamSession
-from agno.tools.function import Function, get_entrypoint_docstring
+from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import (
     log_debug,
@@ -109,6 +109,8 @@ class Team:
     instructions: Optional[Union[str, List[str], Callable]] = None
     # Provide the expected output from the Team.
     expected_output: Optional[str] = None
+    # Additional context added to the end of the system message.
+    additional_context: Optional[str] = None
     # If markdown=true, add instructions to format the output using markdown
     markdown: bool = False
     # If True, add the current datetime to the instructions to give the team a sense of time
@@ -130,6 +132,8 @@ class Team:
     enable_agentic_context: bool = False
     # If True, send all previous member interactions to members
     share_member_interactions: bool = False
+    # If True, add a tool to get information about the team members
+    add_get_member_information: bool = False
 
     # If True, read the team history
     read_team_history: bool = False
@@ -203,6 +207,7 @@ class Team:
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         expected_output: Optional[str] = None,
+        additional_context: Optional[str] = None,
         success_criteria: Optional[str] = None,
         markdown: bool = False,
         add_datetime_to_instructions: bool = False,
@@ -210,6 +215,7 @@ class Team:
         add_context: bool = False,
         enable_agentic_context: bool = False,
         share_member_interactions: bool = False,
+        add_get_member_information: bool = False,
         read_team_history: bool = False,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         show_tool_calls: bool = True,
@@ -250,6 +256,7 @@ class Team:
         self.description = description
         self.instructions = instructions
         self.expected_output = expected_output
+        self.additional_context = additional_context
         self.markdown = markdown
         self.add_datetime_to_instructions = add_datetime_to_instructions
         self.success_criteria = success_criteria
@@ -259,7 +266,7 @@ class Team:
 
         self.enable_agentic_context = enable_agentic_context
         self.share_member_interactions = share_member_interactions
-
+        self.add_get_member_information = add_get_member_information
         self.read_team_history = read_team_history
 
         self.tools = tools
@@ -507,8 +514,8 @@ class Team:
                     files=files,  # type: ignore
                 )
                 _tools.append(forward_task_func)
-
-                _tools.append(self.get_members_information)
+                if self.add_get_member_information:
+                    _tools.append(self.get_member_information)
 
             elif self.mode == "coordinate":
                 _tools.append(
@@ -521,11 +528,11 @@ class Team:
                         files=files,  # type: ignore
                     )
                 )
-
                 if self.enable_agentic_context:
                     _tools.append(self.set_team_context)
+                if self.add_get_member_information:
+                    _tools.append(self.get_member_information)
 
-                _tools.append(self.get_members_information)
             elif self.mode == "collaborate":
                 run_member_agents_func = self.get_run_member_agents_function(
                     stream=stream,
@@ -536,11 +543,10 @@ class Team:
                     files=files,  # type: ignore
                 )
                 _tools.append(run_member_agents_func)
-
                 if self.enable_agentic_context:
                     _tools.append(self.set_team_context)
-
-                _tools.append(self.get_members_information)
+                if self.add_get_member_information:
+                    _tools.append(self.get_member_information)
 
             self._add_tools_to_model(self.model, tools=_tools)  # type: ignore
 
@@ -1600,7 +1606,7 @@ class Team:
         stream_intermediate_steps: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
-        show_reasoning_verbose: bool = False,
+        show_full_reasoning: bool = False,
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -1627,7 +1633,7 @@ class Team:
                 console=console,
                 show_message=show_message,
                 show_reasoning=show_reasoning,
-                show_reasoning_verbose=show_reasoning_verbose,
+                show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 audio=audio,
                 images=images,
@@ -1643,7 +1649,7 @@ class Team:
                 console=console,
                 show_message=show_message,
                 show_reasoning=show_reasoning,
-                show_reasoning_verbose=show_reasoning_verbose,
+                show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 audio=audio,
                 images=images,
@@ -1659,7 +1665,7 @@ class Team:
         console: Optional[Any] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
-        show_reasoning_verbose: bool = False,
+        show_full_reasoning: bool = False,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -1745,7 +1751,7 @@ class Team:
             if len(reasoning_steps) > 0 and show_reasoning:
                 # Create panels for reasoning steps
                 for i, step in enumerate(reasoning_steps, 1):
-                    reasoning_panel = self._build_reasoning_step_panel(i, step, show_reasoning_verbose)
+                    reasoning_panel = self._build_reasoning_step_panel(i, step, show_full_reasoning)
                     panels.append(reasoning_panel)
                 live_console.update(Group(*panels))
 
@@ -1776,7 +1782,7 @@ class Team:
                             # Create panels for reasoning steps
                             for i, step in enumerate(reasoning_steps, 1):
                                 member_reasoning_panel = self._build_reasoning_step_panel(
-                                    i, step, show_reasoning_verbose, color="magenta"
+                                    i, step, show_full_reasoning, color="magenta"
                                 )
                                 panels.append(member_reasoning_panel)
 
@@ -1918,7 +1924,7 @@ class Team:
         console: Optional[Any] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
-        show_reasoning_verbose: bool = False,
+        show_full_reasoning: bool = False,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -2067,7 +2073,7 @@ class Team:
                     render = True
                     # Create panels for reasoning steps
                     for i, step in enumerate(reasoning_steps, 1):
-                        reasoning_panel = self._build_reasoning_step_panel(i, step, show_reasoning_verbose)
+                        reasoning_panel = self._build_reasoning_step_panel(i, step, show_full_reasoning)
                         panels.append(reasoning_panel)
 
                 if len(_response_thinking) > 0:
@@ -2230,7 +2236,7 @@ class Team:
             # Add reasoning steps
             if reasoning_steps and show_reasoning:
                 for i, step in enumerate(reasoning_steps, 1):
-                    reasoning_panel = self._build_reasoning_step_panel(i, step, show_reasoning_verbose)
+                    reasoning_panel = self._build_reasoning_step_panel(i, step, show_full_reasoning)
                     final_panels.append(reasoning_panel)
 
             # Add thinking panel if available
@@ -2283,7 +2289,7 @@ class Team:
                     if reasoning_steps and show_reasoning:
                         for j, step in enumerate(reasoning_steps, 1):
                             member_reasoning_panel = self._build_reasoning_step_panel(
-                                j, step, show_reasoning_verbose, color="magenta"
+                                j, step, show_full_reasoning, color="magenta"
                             )
                             final_panels.append(member_reasoning_panel)
 
@@ -2394,7 +2400,7 @@ class Team:
         stream_intermediate_steps: bool = False,
         show_message: bool = True,
         show_reasoning: bool = True,
-        show_reasoning_verbose: bool = False,
+        show_full_reasoning: bool = False,
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -2421,7 +2427,7 @@ class Team:
                 console=console,
                 show_message=show_message,
                 show_reasoning=show_reasoning,
-                show_reasoning_verbose=show_reasoning_verbose,
+                show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 audio=audio,
                 images=images,
@@ -2437,7 +2443,7 @@ class Team:
                 console=console,
                 show_message=show_message,
                 show_reasoning=show_reasoning,
-                show_reasoning_verbose=show_reasoning_verbose,
+                show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 audio=audio,
                 images=images,
@@ -2453,7 +2459,7 @@ class Team:
         console: Optional[Any] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
-        show_reasoning_verbose: bool = False,
+        show_full_reasoning: bool = False,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -2539,7 +2545,7 @@ class Team:
             if len(reasoning_steps) > 0 and show_reasoning:
                 # Create panels for reasoning steps
                 for i, step in enumerate(reasoning_steps, 1):
-                    reasoning_panel = self._build_reasoning_step_panel(i, step, show_reasoning_verbose)
+                    reasoning_panel = self._build_reasoning_step_panel(i, step, show_full_reasoning)
                     panels.append(reasoning_panel)
                 live_console.update(Group(*panels))
 
@@ -2570,7 +2576,7 @@ class Team:
                             # Create panels for reasoning steps
                             for i, step in enumerate(reasoning_steps, 1):
                                 member_reasoning_panel = self._build_reasoning_step_panel(
-                                    i, step, show_reasoning_verbose, color="magenta"
+                                    i, step, show_full_reasoning, color="magenta"
                                 )
                                 panels.append(member_reasoning_panel)
 
@@ -2710,7 +2716,7 @@ class Team:
         console: Optional[Any] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
-        show_reasoning_verbose: bool = False,
+        show_full_reasoning: bool = False,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -2859,7 +2865,7 @@ class Team:
                     render = True
                     # Create panels for reasoning steps
                     for i, step in enumerate(reasoning_steps, 1):
-                        reasoning_panel = self._build_reasoning_step_panel(i, step, show_reasoning_verbose)
+                        reasoning_panel = self._build_reasoning_step_panel(i, step, show_full_reasoning)
                         panels.append(reasoning_panel)
                 if render:
                     live_console.update(Group(*panels))
@@ -2956,7 +2962,7 @@ class Team:
             # Add reasoning steps
             if reasoning_steps and show_reasoning:
                 for i, step in enumerate(reasoning_steps, 1):
-                    reasoning_panel = self._build_reasoning_step_panel(i, step, show_reasoning_verbose)
+                    reasoning_panel = self._build_reasoning_step_panel(i, step, show_full_reasoning)
                     final_panels.append(reasoning_panel)
 
             # Add thinking panel if available
@@ -3014,7 +3020,7 @@ class Team:
                     if reasoning_steps and show_reasoning:
                         for j, step in enumerate(reasoning_steps, 1):
                             member_reasoning_panel = self._build_reasoning_step_panel(
-                                j, step, show_reasoning_verbose, color="magenta"
+                                j, step, show_full_reasoning, color="magenta"
                             )
                             final_panels.append(member_reasoning_panel)
 
@@ -3118,7 +3124,7 @@ class Team:
             live_console.update(Group(*final_panels))
 
     def _build_reasoning_step_panel(
-        self, step_idx: int, step: ReasoningStep, show_reasoning_verbose: bool = False, color: str = "green"
+        self, step_idx: int, step: ReasoningStep, show_full_reasoning: bool = False, color: str = "green"
     ):
         from rich.text import Text
 
@@ -3127,11 +3133,11 @@ class Team:
         if step.title is not None:
             step_content.append(f"{step.title}\n", "bold")
         if step.action is not None:
-            step_content.append(f"{step.action}\n", "dim")
+            step_content.append(Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim"))
         if step.result is not None:
             step_content.append(Text.from_markup(step.result, style="dim"))
 
-        if show_reasoning_verbose:
+        if show_full_reasoning:
             # Add detailed reasoning information if available
             if step.reasoning is not None:
                 step_content.append(Text.from_markup(f"\n[bold]Reasoning:[/bold] {step.reasoning}", style="dim"))
@@ -3773,7 +3779,7 @@ class Team:
             # Set functions on the model
             model.set_functions(functions=self._functions_for_model)
 
-    def get_members_system_message_content(self, indent: int = 0, minimal: bool = False) -> str:
+    def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
         for idx, member in enumerate(self.members):
             url_safe_member_id = (
@@ -3783,7 +3789,6 @@ class Team:
             if isinstance(member, Team):
                 system_message_content += f"{indent * ' '} - Team: {member.name}\n"
                 system_message_content += f"{indent * ' '} - ID: {url_safe_member_id}\n"
-
                 if member.members is not None:
                     system_message_content += member.get_members_system_message_content(indent=indent + 2)
             else:
@@ -3793,26 +3798,17 @@ class Team:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
-                if member.description is not None and not minimal:
-                    system_message_content += f"{indent * ' '}   - Description: {member.description}\n"
-                if member.tools is not None and not minimal:
+                if member.tools is not None:
                     system_message_content += f"{indent * ' '}   - Available tools:\n"
-                    tool_name_and_description = []
-
                     for _tool in member.tools:
                         if isinstance(_tool, Toolkit):
                             for _func in _tool.functions.values():
                                 if _func.entrypoint:
-                                    tool_name_and_description.append(
-                                        (_func.name, get_entrypoint_docstring(_func.entrypoint))
-                                    )
+                                    system_message_content += f"{indent * ' '}    - {_func.name}\n"
                         elif isinstance(_tool, Function) and _tool.entrypoint:
-                            tool_name_and_description.append((_tool.name, get_entrypoint_docstring(_tool.entrypoint)))
+                            system_message_content += f"{indent * ' '}    - {_tool.name}\n"
                         elif callable(_tool):
-                            tool_name_and_description.append((_tool.__name__, get_entrypoint_docstring(_tool)))
-
-                    for _tool_name, _tool_description in tool_name_and_description:
-                        system_message_content += f"{indent * ' '}    - {_tool_name}: {_tool_description}\n"
+                            system_message_content += f"{indent * ' '}    - {_tool.__name__}\n"
 
         return system_message_content
 
@@ -3824,7 +3820,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
     ) -> Optional[Message]:
         """Get the system message for the team."""
-        # 1. Build and return the default system message for the Agent.
+        # 1. Build and return the default system message for the Team.
         # 1.1 Build the list of instructions for the system message
         self.model = cast(Model, self.model)
         instructions: List[str] = []
@@ -3856,54 +3852,67 @@ class Team:
 
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
-        if self.mode == "coordinate":
-            system_message_content += "You are the leader of a team of AI Agents and possible Sub-Teams:\n"
-            system_message_content += self.get_members_system_message_content()
+        system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
+        system_message_content += "Your task is to coordinate the team to complete the user's request.\n"
 
+        system_message_content += "\nHere are the members in your team:\n"
+        system_message_content += "<team_members>\n"
+        system_message_content += self.get_members_system_message_content()
+        if self.add_get_member_information:
+            system_message_content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
+        system_message_content += "</team_members>\n"
+
+        system_message_content += "\n<how_to_respond>\n"
+        if self.mode == "coordinate":
             system_message_content += (
-                "\n"
-                "- You can either respond directly or transfer tasks to other Agents in your team depending on the tools available to them and their roles.\n"
-                "- If you transfer a task to another Agent, make sure to include:\n"
-                "  - agent_name (str): The name of the Agent to transfer the task to.\n"
+                "- You can either respond directly or transfer tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                "- Carefully analyze the tools available to the members and their roles before transferring tasks.\n"
+                "- When you forward a task to another member, make sure to include:\n"
+                "  - member_id (str): The ID of the member to forward the task to.\n"
                 "  - task_description (str): A clear description of the task.\n"
                 "  - expected_output (str): The expected output.\n"
-                "- You can pass tasks to multiple members at once.\n"
-                "- You must always validate the output of the other Agents before responding to the user.\n"
-                "- Evaluate the response from other agents. If you feel the task has been completed, you can stop and respond to the user.\n"
-                "- You can re-assign the task if you are not satisfied with the result.\n"
-                "\n"
+                "- You can forward tasks to multiple members at once.\n"
+                "- You must always analyze the responses from members before responding to the user.\n"
+                "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
+                "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
             )
         elif self.mode == "route":
-            system_message_content += "You are the leader of a team of AI Agents and possible Sub-Teams:\n"
-            system_message_content += self.get_members_system_message_content()
             system_message_content += (
-                "- You act as a router for the user's request. You have to choose the correct agent(s) to forward the user's request to. This should be the agent that has the highest likelihood of completing the task.\n"
+                "- You can either respond directly or forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                "- Carefully analyze the tools available to the members and their roles before forwarding tasks.\n"
                 "- When you forward a task to another Agent, make sure to include:\n"
-                "  - agent_name (str): The name of the Agent to transfer the task to.\n"
+                "  - member_id (str): The ID of the member to forward the task to.\n"
                 "  - expected_output (str): The expected output.\n"
-                "- You should do your best to forward the task to a single agent.\n"
-                "- If the user request requires it (e.g. if they are asking for multiple things), you can forward to multiple agents at once.\n"
-                "\n"
+                "- You can forward tasks to multiple members at once.\n"
             )
-
         elif self.mode == "collaborate":
-            system_message_content += "You are leading a collaborative team of Agents and possible Sub-Teams:\n"
-            system_message_content += self.get_members_system_message_content()
             system_message_content += (
-                "- Only call run_member_agent once for all agents in the team.\n"
-                "- Take all the responses from the other Agents into account and evaluate whether the task has been completed.\n"
+                "- You can either respond directly or use the `run_member_agents` tool to run all members in your team to get a collaborative response.\n"
+                "- To run the members in your team, call `run_member_agents` ONLY once. This will run all members in your team.\n"
+                "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
                 "- If you feel the task has been completed, you can stop and respond to the user.\n"
             )
-            system_message_content += "\n"
+        system_message_content += "</how_to_respond>\n\n"
 
         if self.enable_agentic_context:
-            system_message_content += "You can and should update the context of the team. Use the `set_team_context` tool to update the shared team context.\n"
+            system_message_content += "<shared_context>\n"
+            system_message_content += (
+                "You have access to a shared context that will be shared with all members of the team.\n"
+            )
+            system_message_content += "Use this shared context to improve inter-agent communication and coordination.\n"
+            system_message_content += "It is important that you update the shared context as often as possible.\n"
+            system_message_content += "To update the shared context, use the `set_team_context` tool.\n"
+            system_message_content += "</shared_context>\n\n"
 
         if self.name is not None:
-            system_message_content += f"Your name is: {self.name}.\n\n"
+            system_message_content += f"Your name is: {self.name}\n\n"
 
         if self.success_criteria:
-            system_message_content += f"<success_criteria>\nThe team will be considered successful if the following criteria are met: {self.success_criteria}\nStop the team run when the criteria are met.\n</success_criteria>\n\n"
+            system_message_content += "Your task is successful when the following criteria is met:\n"
+            system_message_content += "<success_criteria>\n"
+            system_message_content += f"{self.success_criteria}\n"
+            system_message_content += "</success_criteria>\n"
+            system_message_content += "Stop the team run when the success_criteria is met.\n\n"
 
         if self.description is not None:
             system_message_content += f"<description>\n{self.description}\n</description>\n\n"
@@ -3948,6 +3957,11 @@ class Team:
 
         if self.expected_output is not None:
             system_message_content += f"<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n"
+
+        if self.additional_context is not None:
+            system_message_content += (
+                f"<additional_context>\n{self.additional_context.strip()}\n</additional_context>\n\n"
+            )
 
         # Add the JSON output prompt if response_model is provided and structured_outputs is False
         if (
@@ -4240,10 +4254,8 @@ class Team:
                 break
         return json.dumps(history)
 
-    def get_members_information(self) -> str:
-        """
-        Get information about the members of the team, including their IDs, names, and roles.
-        """
+    def get_member_information(self) -> str:
+        """Get information about the members of the team, including their IDs, names, and roles."""
         return self.get_members_system_message_content(indent=0)
 
     def set_team_context(self, state: Union[str, dict]) -> str:
@@ -4311,6 +4323,7 @@ class Team:
 
             # 3. Create the member agent task
             member_agent_task = "You are a member of a team of agents that collaborate to complete a task."
+            member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
 
             if expected_output is not None:
                 member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
@@ -4319,8 +4332,6 @@ class Team:
                 member_agent_task += f"\n\n{team_context_str}"
             if team_member_interactions_str:
                 member_agent_task += f"\n\n{team_member_interactions_str}"
-
-            member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
 
             for member_agent_index, member_agent in enumerate(self.members):
                 if stream:
@@ -4418,6 +4429,7 @@ class Team:
 
             # 3. Create the member agent task
             member_agent_task = "You are a member of a team of agents that collaborate to complete a task."
+            member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
 
             if expected_output is not None:
                 member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
@@ -4426,8 +4438,6 @@ class Team:
                 member_agent_task += f"\n\n{team_context_str}"
             if team_member_interactions_str:
                 member_agent_task += f"\n\n{team_member_interactions_str}"
-
-            member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
 
             # Create tasks for all member agents
             tasks = []
@@ -4517,13 +4527,13 @@ class Team:
         def transfer_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
         ) -> Iterator[str]:
-            """
-            Use this function to transfer a task to the nominated agent.
-            You must provide a clear and concise description of the task the agent should achieve AND the expected output.
+            """Use this function to transfer a task to the selected team member.
+            You must provide a clear and concise description of the task the member should achieve AND the expected output.
+
             Args:
-                member_id (str): The ID of the agent to transfer the task to.
-                task_description (str): A clear and concise description of the task the agent should achieve.
-                expected_output (str): The expected output from the agent (optional).
+                member_id (str): The ID of the member to transfer the task to.
+                task_description (str): A clear and concise description of the task the member should achieve.
+                expected_output (str): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
             """
@@ -4532,7 +4542,7 @@ class Team:
             # Find the member agent using the helper function
             result = self._find_member_by_id(member_id)
             if result is None:
-                yield f"Agent with ID {member_id} not found in the team or any subteams. Please choose the correct agent from the list of agents:\n{self.get_members_system_message_content(indent=0, minimal=True)}"
+                yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{self.get_members_system_message_content(indent=0)}"
                 return
 
             member_agent_index, member_agent = result
@@ -4554,9 +4564,12 @@ class Team:
                     audio.extend([Audio.from_artifact(aud) for aud in context_audio])
 
             # 3. Create the member agent task
-            member_agent_task = f"You are a member of a team of agents. Your goal is to complete the following task:\n\n{task_description}"
+            member_agent_task = "You are a member of a team of agents. Your goal is to complete the following task:"
+            member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
+
             if expected_output is not None:
                 member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
+
             if team_context_str:
                 member_agent_task += f"\n\n{team_context_str}"
             if team_member_interactions_str:
@@ -4632,13 +4645,13 @@ class Team:
         async def atransfer_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
         ) -> AsyncIterator[str]:
-            """
-            Use this function to transfer a task to the nominated agent.
-            You must provide a clear and concise description of the task the agent should achieve AND the expected output.
+            """Use this function to transfer a task to the selected team member.
+            You must provide a clear and concise description of the task the member should achieve AND the expected output.
+
             Args:
-                member_id (str): The ID of the agent to transfer the task to.
-                task_description (str): A clear and concise description of the task the agent should achieve.
-                expected_output (str): The expected output from the agent (optional).
+                member_id (str): The ID of the member to transfer the task to.
+                task_description (str): A clear and concise description of the task the member should achieve.
+                expected_output (str): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
             """
@@ -4647,7 +4660,7 @@ class Team:
             # Find the member agent using the helper function
             result = self._find_member_by_id(member_id)
             if result is None:
-                yield f"Agent with ID {member_id} not found in the team or any subteams. Please choose the correct agent from the list of agents:\n{self.get_members_system_message_content(indent=0, minimal=True)}"
+                yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{self.get_members_system_message_content(indent=0)}"
                 return
 
             member_agent_index, member_agent = result
@@ -4669,7 +4682,8 @@ class Team:
                     audio.extend([Audio.from_artifact(aud) for aud in context_audio])
 
             # 3. Create the member agent task
-            member_agent_task = f"You are a member of a team of agents. Your goal is to complete the following task:\n\n{task_description}"
+            member_agent_task = "You are a member of a team of agents. Your goal is to complete the following task:"
+            member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
 
             if expected_output is not None:
                 member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
@@ -4800,11 +4814,10 @@ class Team:
             files = []
 
         def forward_task_to_member(member_id: str, expected_output: Optional[str] = None) -> Iterator[str]:
-            """
-            Use this function to forward the request to the nominated agent.
+            """Use this function to forward the request to the selected team member.
             Args:
-                member_id (str): The ID of the agent to transfer the task to.
-                expected_output (str): The expected output from the agent (optional).
+                member_id (str): The ID of the member to transfer the task to.
+                expected_output (str): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
             """
@@ -4814,7 +4827,7 @@ class Team:
             # Find the member agent using the helper function
             result = self._find_member_by_id(member_id)
             if result is None:
-                yield f"Agent with ID {member_id} not found in the team or any subteams. Please choose the correct agent from the list of agents:\n{self.get_members_system_message_content(indent=0, minimal=True)}"
+                yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{self.get_members_system_message_content(indent=0)}"
                 return
 
             member_agent_index, member_agent = result
@@ -4889,11 +4902,11 @@ class Team:
             self._update_team_state(member_agent.run_response)  # type: ignore
 
         async def aforward_task_to_member(member_id: str, expected_output: Optional[str] = None) -> AsyncIterator[str]:
-            """
-            Use this function to forward a message to the nominated agent.
+            """Use this function to forward a message to the selected team member.
+
             Args:
-                member_id (str): The ID of the agent to transfer the task to.
-                expected_output (str): The expected output from the agent (optional).
+                member_id (str): The ID of the member to transfer the task to.
+                expected_output (str): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
             """
@@ -4904,7 +4917,7 @@ class Team:
             # Find the member agent using the helper function
             result = self._find_member_by_id(member_id)
             if result is None:
-                yield f"Agent with ID {member_id} not found in the team or any subteams. Please choose the correct agent from the list of agents:\n{self.get_members_system_message_content(indent=0, minimal=True)}"
+                yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{self.get_members_system_message_content(indent=0)}"
                 return
 
             member_agent_index, member_agent = result

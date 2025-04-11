@@ -10,7 +10,9 @@ from agno.utils.timer import Timer
 
 
 def pprint_run_response(
-    run_response: Union[RunResponse, Iterable[RunResponse], TeamRunResponse, Iterable[TeamRunResponse]], markdown: bool = False, show_time: bool = False
+    run_response: Union[RunResponse, Iterable[RunResponse], TeamRunResponse, Iterable[TeamRunResponse]],
+    markdown: bool = False,
+    show_time: bool = False,
 ) -> None:
     from rich.box import ROUNDED
     from rich.json import JSON
@@ -50,7 +52,9 @@ def pprint_run_response(
             response_timer = Timer()
             response_timer.start()
             for resp in run_response:
-                if (isinstance(resp, RunResponse) or isinstance(resp, TeamRunResponse)) and isinstance(resp.content, str):
+                if (isinstance(resp, RunResponse) or isinstance(resp, TeamRunResponse)) and isinstance(
+                    resp.content, str
+                ):
                     streaming_response_content += resp.content
 
                 formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore
