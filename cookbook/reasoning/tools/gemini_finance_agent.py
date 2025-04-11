@@ -13,6 +13,7 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.thinking import ThinkingTools
 from agno.tools.yfinance import YFinanceTools
+from agno.agent import RunEvent
 
 thinking_agent = Agent(
     model=Gemini(id="gemini-2.0-flash"),
@@ -28,7 +29,18 @@ thinking_agent = Agent(
     instructions="Use tables where possible",
     show_tool_calls=True,
     markdown=True,
+    stream_intermediate_steps=True,
 )
 thinking_agent.print_response(
-    "Write a report comparing NVDA to TSLA in detail", stream=True
+    "Write a report comparing NVDA to TSLA in detail", stream=True, show_reasoning=True
 )
+
+# response = thinking_agent.run(
+#     "Write a report comparing NVDA to TSLA in detail", stream=True
+# )
+
+# for chunk in response:
+#     if chunk.event != "RunResponse":
+#         print(chunk.event)
+#         print(chunk.content)
+#         print(" ")

@@ -578,6 +578,7 @@ class Agent:
         # 7. Generate a response from the Model (includes running function calls)
         model_response: ModelResponse
         self.model = cast(Model, self.model)
+        reasoning_started = False
         if self.stream:
             model_response = ModelResponse()
             for model_response_chunk in self.model.response_stream(messages=run_messages.messages):
@@ -655,8 +656,7 @@ class Agent:
                         yield self.run_response
 
                 # If the model response is a tool_call_started, add the tool call to the run_response
-                elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
-                    # Add tool calls to the run_response
+                elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:                    # Add tool calls to the run_response
                     tool_calls_list = model_response_chunk.tool_calls
                     if tool_calls_list is not None:
                         # Add tool calls to the agent.run_response
@@ -670,6 +670,7 @@ class Agent:
 
                     # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                     if self.stream_intermediate_steps:
+
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             event=RunEvent.tool_call_started,
@@ -705,6 +706,22 @@ class Agent:
                                     self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                     if self.stream_intermediate_steps:
+
+                        for t in self.run_response.tools:
+                            if t.get("tool_name") == "think":
+                                if not reasoning_started:
+                                    yield self.create_run_response(
+                                        content="",
+                                        event=RunEvent.reasoning_started,
+                                    )
+                                    reasoning_started = True
+                            
+                                content = t.get("tool_args", {}).get("thought", "")
+                                yield self.create_run_response(
+                                    content=content,
+                                    event=RunEvent.reasoning_step
+                                )
+
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             event=RunEvent.tool_call_completed,
@@ -766,6 +783,12 @@ class Agent:
             self.run_response.messages = run_messages.messages
             # Update the run_response created_at with the model response created_at
             self.run_response.created_at = model_response.created_at
+
+        if self.stream_intermediate_steps and reasoning_started:
+            yield self.create_run_response(
+                content="Reasoning completed",
+                event=RunEvent.reasoning_completed,
+            )
 
         # 8. Update RunResponse
         # Build a list of messages that should be added to the RunResponse
@@ -839,6 +862,7 @@ class Agent:
                 else:
                     log_warning("Unable to add message to memory")
         # Add AgentRun to memory
+
         self.memory.add_run(agent_run)
         # Update the session summary if needed
         if self.memory.create_session_summary and self.memory.update_session_summary_after_run:
@@ -940,7 +964,9 @@ class Agent:
         for attempt in range(num_attempts):
             try:
                 # If a response_model is set, return the response as a structured output
+
                 if self.response_model is not None and self.parse_response:
+     
                     # Set stream=False and run the agent
                     log_debug("Setting stream=False as response_model is set")
                     self.stream = False

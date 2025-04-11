@@ -24,7 +24,10 @@ from agno.tools.yfinance import YFinanceTools
 
 finance_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[ThinkingTools(add_instructions=True), YFinanceTools(enable_all=True)],
+    tools=[
+        ThinkingTools(add_instructions=True), 
+        YFinanceTools(enable_all=True)
+    ],
     instructions=dedent("""\
         You are a seasoned Wall Street analyst with deep expertise in market analysis! 📊
 
@@ -61,6 +64,7 @@ finance_agent = Agent(
     add_datetime_to_instructions=True,
     show_tool_calls=True,
     markdown=True,
+    stream_intermediate_steps=True,
 )
 
 # Example usage with detailed market analysis request
@@ -68,29 +72,29 @@ finance_agent.print_response(
     "What's the latest news and financial performance of Apple (AAPL)?", stream=True
 )
 
-# Semiconductor market analysis example
-finance_agent.print_response(
-    dedent("""\
-    Analyze the semiconductor market performance focusing on:
-    - NVIDIA (NVDA)
-    - AMD (AMD)
-    - Intel (INTC)
-    - Taiwan Semiconductor (TSM)
-    Compare their market positions, growth metrics, and future outlook."""),
-    stream=True,
-)
+# # Semiconductor market analysis example
+# finance_agent.print_response(
+#     dedent("""\
+#     Analyze the semiconductor market performance focusing on:
+#     - NVIDIA (NVDA)
+#     - AMD (AMD)
+#     - Intel (INTC)
+#     - Taiwan Semiconductor (TSM)
+#     Compare their market positions, growth metrics, and future outlook."""),
+#     stream=True,
+# )
 
-# Automotive market analysis example
-finance_agent.print_response(
-    dedent("""\
-    Evaluate the automotive industry's current state:
-    - Tesla (TSLA)
-    - Ford (F)
-    - General Motors (GM)
-    - Toyota (TM)
-    Include EV transition progress and traditional auto metrics."""),
-    stream=True,
-)
+# # Automotive market analysis example
+# finance_agent.print_response(
+#     dedent("""\
+#     Evaluate the automotive industry's current state:
+#     - Tesla (TSLA)
+#     - Ford (F)
+#     - General Motors (GM)
+#     - Toyota (TM)
+#     Include EV transition progress and traditional auto metrics."""),
+#     stream=True,
+# )
 
 # More example prompts to explore:
 """
