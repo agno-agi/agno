@@ -61,7 +61,7 @@ if __name__ == "__main__":
 
     asyncio.run(
         team.aprint_response(
-            "What is the weather in New York City?",
+            "How is the weather in New York City?",
             stream=True,
             stream_intermediate_steps=True,
             session_id=session_id_1,
