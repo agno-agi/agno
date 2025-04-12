@@ -303,6 +303,7 @@ module = [
   "pytz.*",
   "qdrant_client.*",
   "rapidocr_onnxruntime.*",
+  "redis.*",
   "replicate.*",
   "requests.*",
   "scrapegraph_py.*",
