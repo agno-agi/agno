@@ -17,7 +17,7 @@ try:
                 "Incompatible NumPy version detected. Please install NumPy 1.x by running 'pip install numpy<2'."
             )
 except ImportError:
-    raise ImportError("sentence-transformers not installed, please run pip install sentence-transformers")
+    raise ImportError("`sentence-transformers` not installed, please run `pip install sentence-transformers`")
 
 
 @dataclass
