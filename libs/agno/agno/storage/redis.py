@@ -170,7 +170,7 @@ class RedisStorage(Storage):
                     if _session:
                         sessions.append(_session)
                 else:
-                    _session: Optional[Session] = None
+                    _session = None
                     # No filters applied, add all sessions
                     if self.mode == "agent":
                         _session = AgentSession.from_dict(data)
