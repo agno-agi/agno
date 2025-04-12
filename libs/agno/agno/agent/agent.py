@@ -38,6 +38,7 @@ from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
 from agno.run.team import TeamRunResponse
 from agno.storage.base import Storage
+from agno.storage.message_store import MessageStore
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
@@ -110,6 +111,14 @@ class Agent:
     num_history_responses: Optional[int] = None
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
+
+    # --- Search History ---
+    # Message Store
+    message_store: Optional[MessageStore] = None
+    # If True, the agent will search the history of runs to find the most relevant ones
+    search_message_store: bool = False
+    # Number of runs to retrieve from the message store
+    num_of_runs_from_message_store: int = 3
 
     # --- Agent Knowledge ---
     knowledge: Optional[AgentKnowledge] = None
@@ -289,6 +298,9 @@ class Agent:
         add_history_to_messages: bool = False,
         num_history_responses: Optional[int] = None,
         num_history_runs: int = 3,
+        message_store: Optional[MessageStore] = None,
+        search_message_store: bool = False,
+        num_of_runs_from_message_store: int = 3,
         knowledge: Optional[AgentKnowledge] = None,
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
@@ -378,6 +390,10 @@ class Agent:
         self.num_history_runs = num_history_runs
         if num_history_responses is not None:
             self.num_history_runs = num_history_responses
+
+        self.message_store = message_store
+        self.search_message_store = search_message_store
+        self.num_of_runs_from_message_store = num_of_runs_from_message_store
 
         self.knowledge = knowledge
         self.add_references = add_references
@@ -2823,17 +2839,31 @@ class Agent:
 
                 run_messages.messages += history_copy
 
-        # 4.Add user message to run_messages
+        # 4. Add messages from search history
+        if self.message_store is not None and self.search_message_store:
+            query: str = ""
+            if message is None:
+                query = message
+            elif messages is not None and len(messages) > 0:
+                for _m in messages:
+                    if _m.role == "user":
+                        query = _m.content
+                        break
+            search_results = self.message_store.search(query=query, limit=self.num_of_runs_from_message_store)
+            if len(search_results) > 0:
+                run_messages.messages += search_results
+
+        # 5.Add user message to run_messages
         user_message: Optional[Message] = None
         # 4.1 Build user message if message is None, str or list
         if message is None or isinstance(message, str) or isinstance(message, list):
             user_message = self.get_user_message(
                 message=message, audio=audio, images=images, videos=videos, files=files, **kwargs
             )
-        # 4.2 If message is provided as a Message, use it directly
+        # 5.2 If message is provided as a Message, use it directly
         elif isinstance(message, Message):
             user_message = message
-        # 4.3 If message is provided as a dict, try to validate it as a Message
+        # 5.3 If message is provided as a dict, try to validate it as a Message
         elif isinstance(message, dict):
             try:
                 user_message = Message.model_validate(message)
@@ -2844,7 +2874,7 @@ class Agent:
             run_messages.user_message = user_message
             run_messages.messages.append(user_message)
 
-        # 5. Add messages to run_messages if provided
+        # 6. Add messages to run_messages if provided
         if messages is not None and len(messages) > 0:
             for _m in messages:
                 if isinstance(_m, Message):
