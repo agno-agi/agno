@@ -78,6 +78,7 @@ sql = ["sqlalchemy"]
 postgres = ["psycopg-binary", "psycopg"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
+redis = ["redis"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
@@ -149,6 +150,7 @@ storage = [
   "agno[postgres]",
   "agno[sqlite]",
   "agno[gcs]",
+  "agno[redis]",
 ]
 
 # All vector databases
