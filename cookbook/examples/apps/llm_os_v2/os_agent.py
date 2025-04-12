@@ -9,6 +9,7 @@ from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge import AgentKnowledge
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
+from agno.team import Team
 from agno.tools import Toolkit
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckdb import DuckDbTools
@@ -25,6 +26,8 @@ import streamlit as st
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
+from agno.memory.v2 import Memory
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
 
 load_dotenv()
 
@@ -32,15 +35,13 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai" # Removed DB URL
 cwd = Path(__file__).parent.resolve()
-scratch_dir = cwd.joinpath("scratch")
 tmp_dir = cwd.joinpath("tmp") # Define tmp directory path
 # Ensure scratch and tmp directories exist (tmp might be used by PythonTools)
-scratch_dir.mkdir(exist_ok=True, parents=True)
 tmp_dir.mkdir(exist_ok=True, parents=True)
 
 # Define paths for SQLite
 SQLITE_DB_PATH = cwd.joinpath("llm_os_sessions.db")
-# QDRANT_PATH = tmp_dir.joinpath("llm_os_qdrant") # No longer needed for in-memory
+SQLITE_MEMORY_DB_PATH = cwd.joinpath("tmp/llm_os_memory.db") # Path for memory DB
 QDRANT_COLLECTION = "llm_os_knowledge"
 
 def get_llm_os(
@@ -57,14 +58,34 @@ def get_llm_os(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     debug_mode: bool = True,
-) -> Agent:
+) -> Team:
     # Use provided session_id or generate a new one
     final_session_id = session_id if session_id is not None else str(uuid.uuid4())
-    logger.info(f"-*- Creating/Loading {model_id} LLM OS -*-")
+    logger.info(f"-*- Creating/Loading {model_id} LLM OS Team -*-")
     logger.info(f"Session: {final_session_id} User: {user_id}")
 
-    tools: List[Toolkit] = []
-    extra_instructions: List[str] = []
+    leader_tools: List[Toolkit] = []
+    leader_instructions: List[str] = [
+        "You are the coordinator of a team of AI Agents called `LLM-OS`.",
+        "Your goal is to coordinate the team to assist the user in the best way possible.",
+        "When the user sends a message, first **think** and determine if:\n"
+        " - You can answer by using a tool available to you\n"
+        " - You need to search the knowledge base\n"
+        " - You need to search the internet\n"
+        " - You need to delegate the task to a team member\n"
+        " - You need to ask a clarifying question",
+        "If the user asks about a topic, first ALWAYS search your knowledge base using the `search_knowledge_base` tool.",
+        "If you dont find relevant information in your knowledge base, use the `duckduckgo_search` tool to search the internet.",
+        "If the users message is unclear, ask clarifying questions to get more information.",
+        "Based on the user request and the available team members, decide which member(s) should handle the task.",
+        "If the user asks for an investment report, delegate the task to the `Investment_Agent`.",
+        "If the user asks for a research report, delegate the task to the `Research_Agent`.",
+        "Coordinate the execution of the task among the selected team members.",
+        "Synthesize the results from the team members and provide a final, coherent answer to the user.",
+        "Do not use phrases like 'based on my knowledge' or 'depending on the information'.",
+        "Remember you are stateless, your memory resets often. Do not refer to previous interactions unless the history is explicitly provided in the current turn.",
+    ]
+    members: List[Agent] = []
 
     # --- Dynamically select the LLM based on model_id prefix ---
     llm_instance = None
@@ -101,54 +122,48 @@ def get_llm_os(
         st.error(f"Failed to create LLM instance for {model_id}")
         return None
 
+    # Add leader tools
     if calculator:
-        tools.append(
-            CalculatorTools(
-                enable_all=True
-                # enables addition, subtraction, multiplication, division, check prime, exponential, factorial, square root
-            )
-        )
+        leader_tools.append(CalculatorTools(enable_all=True))
+        leader_instructions.append("You have access to Calculator tools for basic arithmetic.")
     if ddg_search:
-        tools.append(DuckDuckGoTools(fixed_max_results=3))
+        leader_tools.append(DuckDuckGoTools(fixed_max_results=3))
+        leader_instructions.append("You can use `duckduckgo_search` for general web searches and `duckduckgo_news` for recent news.")
     if shell_tools:
-        tools.append(ShellTools())
-        extra_instructions.append(
-            "You can use the `run_shell_command` tool to run shell commands. For example, `run_shell_command(args='ls')`."
-        )
+        leader_tools.append(ShellTools())
+        leader_instructions.append("You can use the `run_shell_command` tool to run shell commands.")
     if file_tools:
-        tools.append(FileTools(base_dir=cwd))
-        extra_instructions.append(
-            "You can use the `read_file` tool to read a file, `save_file` to save a file, and `list_files` to list files in the working directory."
-        )
+        leader_tools.append(FileTools(base_dir=cwd))
+        leader_instructions.append("You can use the `read_file`, `save_file`, and `list_files` tools.")
 
-    # Add team members available to the LLM OS
-    team: List[Agent] = []
-
+    # Create team members
     if data_analyst:
         data_analyst_agent: Agent = Agent(
+            name="Data_Analyst",
+            model=llm_instance,
             tools=[DuckDbTools()],
             show_tool_calls=True,
-            instructions="Use this file for Movies data: https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
+            instructions=["You are a Data Analyst. Your goal is to answer questions about movie data.", "Use the provided DuckDbTools to query the data.", "The data is located at: https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv"],
+            debug_mode=debug_mode,
         )
-        team.append(data_analyst_agent)
-        extra_instructions.append(
-            "To answer questions about my favorite movies, delegate the task to the `Data Analyst`."
-        )
+        members.append(data_analyst_agent)
+        leader_instructions.append("To answer questions about movies, delegate the task to the `Data_Analyst`.")
 
     if python_agent_enable:
         python_agent: Agent = Agent(
+            name="Python_Agent",
+            model=llm_instance,
             tools=[PythonTools(base_dir=Path("tmp/python"))],
             show_tool_calls=True,
-            instructions="To write and run Python code, delegate the task to the `Python Agent`.",
+            instructions=["You are a Python code execution specialist.","Write and run Python code using the provided tool to fulfill the user's request."],
+            debug_mode=debug_mode,
         )
+        members.append(python_agent)
+        leader_instructions.append("To write and run Python code, delegate the task to the `Python_Agent`.")
 
-        team.append(python_agent)
-        extra_instructions.append(
-            "To write and run Python code, delegate the task to the `Python Agent`."
-        )
     if research_agent_enable:
         research_agent = Agent(
-            name="Research Agent",
+            name="Research_Agent",
             role="Write a research report on a given topic",
             model=llm_instance,
             description="You are a Senior New York Times researcher tasked with writing a cover story research report.",
@@ -160,7 +175,6 @@ def get_llm_os(
             ],
             expected_output=dedent(
                 """\
-            An engaging, informative, and well-structured report in the following format:
             <report_format>
             ## Title
 
@@ -189,20 +203,16 @@ def get_llm_os(
             markdown=True,
             debug_mode=debug_mode,
         )
-        team.append(research_agent)
-        extra_instructions.append(
-            "To write a research report, delegate the task to the `Research Agent`. "
-            "Return the report in the <report_format> to the user as is, without any additional text like 'here is the report'."
-        )
+        members.append(research_agent)
 
     if investment_agent_enable:
         investment_agent = Agent(
-            name="Investment Agent",
+            name="Investment_Agent",
             role="Write an investment report on a given company (stock) symbol",
             model=llm_instance,
             description="You are a Senior Investment Analyst for Goldman Sachs tasked with writing an investment report for a very important client.",
             instructions=[
-                "For a given stock symbol, get the stock price, company information, analyst recommendations, and company news",
+                "For a given stock symbol, get the stock price, company information, analyst recommendations, and company news using the available tools.",
                 "Carefully read the research and generate a final - Goldman Sachs worthy investment report in the <report_format> provided below.",
                 "Provide thoughtful insights and recommendations based on the research.",
                 "When you share numbers, make sure to include the units (e.g., millions/billions) and currency.",
@@ -259,90 +269,57 @@ def get_llm_os(
             debug_mode=debug_mode,
             add_datetime_to_instructions=True,
         )
-        team.append(investment_agent)
-        extra_instructions.extend(
-            [
-                "To get an investment report on a stock, delegate the task to the `Investment Agent`. "
-                "Return the report in the <report_format> to the user without any additional text like 'here is the report'.",
-                "Answer any questions they may have using the information in the report.",
-                "Never provide investment advise without the investment report.",
-            ]
-        )
+        members.append(investment_agent)
 
-    # Create the LLM OS Agent
-    # logger.debug(f"Creating Agent with session_id: {final_session_id}") # Removed
-
-    # --- Use SQLiteAgentStorage for session persistence ---
-    # Uses the SQLITE_DB_PATH defined earlier
+    # --- Storage and Knowledge Base setup ---
     logger.debug(f"Initializing SQLite storage at: {SQLITE_DB_PATH}")
     agent_storage = SqliteStorage(
         db_file=str(SQLITE_DB_PATH),
-        table_name="llm_os_sessions", # Specify a table name
-        mode="agent" # Explicitly set mode
+        table_name="llm_os_team_sessions",
+        mode="agent"
     )
 
-    # --- Knowledge Base Setup using In-Memory Qdrant ---
     logger.debug(f"Initializing In-Memory Qdrant for collection: {QDRANT_COLLECTION}")
     try:
-        # Use location=":memory:" - no path or explicit create needed
         vector_db = Qdrant(location=":memory:", collection=QDRANT_COLLECTION)
-        # Ensure the in-memory collection exists
         vector_db.create()
         logger.info(f"In-memory Qdrant collection '{vector_db.collection}' ensured.")
     except Exception as e:
         logger.error(f"Fatal error getting In-Memory Qdrant: {e}")
         st.error(f"Failed to initialize Knowledge Base storage: {e}")
-        # Cannot proceed without vector_db in this setup
-        return None # Or raise an exception to halt execution
+        return None
 
     knowledge = AgentKnowledge(vector_db=vector_db, embedder=OpenAIEmbedder())
 
-    llm_os = Agent(
-        name="llm_os",
-        model=llm_instance, # Use the dynamically selected model instance
-        user_id=user_id, # Pass user_id to agent
-        session_id=final_session_id, # Pass session_id to agent
-        storage=agent_storage, # Use SQLite storage
-        knowledge=knowledge, # Keep knowledge base if desired
-        tools=tools,
-        team=team,
-        description=dedent("""\
-        You are the most advanced AI system in the world called `LLM-OS`.
-        You have access to a set of tools and a team of AI Agents at your disposal.
-        Your goal is to assist the user in the best way possible.
-        """),
-        instructions=[
-            "When the user sends a message, first **think** and determine if:\n"
-            " - You can answer by using a tool available to you\n"
-            " - You need to search the knowledge base\n"
-            " - You need to search the internet\n"
-            " - You need to delegate the task to a team member\n"
-            " - You need to ask a clarifying question",
-            "If the user asks about a topic, first ALWAYS search your knowledge base using the `search_knowledge_base` tool.",
-            "If you dont find relevant information in your knowledge base, use the `duckduckgo_search` tool to search the internet.",
-            # "If the user asks to summarize the conversation or if you need to reference your chat history with the user, use the `get_chat_history` tool.", # Removed chat history tool instruction
-            "If the users message is unclear, ask clarifying questions to get more information.",
-            "Carefully read the information you have gathered and provide a clear and concise answer to the user.",
-            "Do not use phrases like 'based on my knowledge' or 'depending on the information'.",
+    # Initialize Memory V2 with Sqlite backend
+    logger.debug(f"Initializing Memory V2 with SQLite backend at: {SQLITE_MEMORY_DB_PATH}")
+    SQLITE_MEMORY_DB_PATH.parent.mkdir(parents=True, exist_ok=True) # Ensure tmp directory exists
+    memory_db = SqliteMemoryDb(table_name="llm_os_memory", db_file=str(SQLITE_MEMORY_DB_PATH))
+    team_memory = Memory(db=memory_db)
 
-            "Remember you are stateless, your memory resets often. Do not refer to previous interactions unless the history is explicitly provided in the current turn.",
-            "If the user asks to get investment report, delegate the task to the `Investment Agent`.",
-            *extra_instructions,
-        ],
-        # Re-adding parameters from previous version
-        search_knowledge=True,
-        read_chat_history=True,
-        add_history_to_messages=True,
-        num_history_responses=5,
+    # --- Create the Team instance ---
+    llm_os_team = Team(
+        name="LLM_OS_Team",
+        team_id=final_session_id,
+        user_id=user_id,
+        model=llm_instance,
+        mode="coordinate",
+        members=members,
+        tools=leader_tools,
+        instructions=leader_instructions,
+        storage=agent_storage,
+        knowledge=knowledge,
+        memory=team_memory,
+        enable_team_history=True,
+        num_of_interactions_from_history=5,
+        show_tool_calls=True,
+        show_members_responses=True,
         markdown=True,
-        add_datetime_to_instructions=True,
-        # Add an introductory Agent message
-        introduction=dedent("""\
-        Hi, I'm your LLM OS.
-        I have access to a set of tools and AI Agents to assist you.
-        Let's solve some problems together!\
-        """),
         debug_mode=debug_mode,
     )
 
-    return llm_os
+    # Log the names of the members being added to the team
+    member_names = [member.name for member in members] if members else []
+    logger.info(f"LLM OS Team created with members: {member_names}")
+
+    return llm_os_team

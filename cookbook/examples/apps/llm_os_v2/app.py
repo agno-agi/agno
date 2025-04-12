@@ -3,6 +3,7 @@ import streamlit as st
 import io
 from os_agent import get_llm_os
 from agno.agent import Agent
+from agno.team import Team
 from agno.document import Document
 from agno.document.reader.pdf_reader import PDFReader
 from agno.document.reader.website_reader import WebsiteReader
@@ -179,80 +180,74 @@ def main() -> None:
     # logger.debug(f"Config changed? {config_comparison}")
 
     llm_os_agent: Optional[Agent] = None
-    # Simplify the re-initialization check: only re-init if agent doesn't exist or model changes
-    agent_should_initialize = (
-        "llm_os_agent" not in st.session_state
-        or st.session_state["llm_os_agent"] is None
+    llm_os_team: Optional[Team] = None
+
+    # Simplify the re-initialization check: only re-init if agent/team doesn't exist or model changes
+    team_should_initialize = (
+        "llm_os_team" not in st.session_state
+        or st.session_state["llm_os_team"] is None
         or st.session_state.get("current_model_id") != model_id
     )
 
-    # Also consider other critical config changes if needed, but start simple
-    # agent_config_changed = (
-    #     st.session_state.get("current_config") != current_config
-    # )
-
-    if agent_should_initialize:
-        # logger.info(f"---*--- Creating/Re-initializing LLM OS agent (Config changed: {agent_config_changed}) ---*---")
-        logger.info(f"---*--- Creating/Re-initializing LLM OS agent (Model changed or first run) ---*---")
-        # Always create a new agent instance if config changes or no agent exists
-        # We pass the full current_config here, but the trigger is simplified
-        llm_os_agent = get_llm_os(**current_config) # Pass current config
-        st.session_state["llm_os_agent"] = llm_os_agent
-        st.session_state["current_model_id"] = model_id # Store the model ID used
-        # st.session_state["current_config"] = current_config # Store the config used (optional, maybe remove if comparison is simplified)
+    if team_should_initialize:
+        logger.info(f"---*--- Creating/Re-initializing LLM OS Team (Model changed or first run) ---*---")
+        logger.debug(f"Passing config to get_llm_os: {current_config}") # Log the config
+        llm_os_team = get_llm_os(**current_config) # Call the refactored function
+        st.session_state["llm_os_team"] = llm_os_team # Store the Team instance
+        st.session_state["current_model_id"] = model_id
         st.session_state["messages"] = [] # Clear UI messages on re-init
-        logger.info(f"New LLM OS Agent created/re-initialized. Instance: {id(llm_os_agent)}")
-        # Attempt to load session after creating agent
+        logger.info(f"New LLM OS Team created/re-initialized. Instance: {id(llm_os_team)}")
+        # Attempt to load session after creating team
         try:
-            if hasattr(llm_os_agent, 'load_session') and callable(llm_os_agent.load_session):
-                session_id = llm_os_agent.load_session()
+            # Use the team instance to load session
+            if hasattr(llm_os_team, 'load_session') and callable(llm_os_team.load_session):
+                session_id = llm_os_team.load_session()
                 st.session_state["llm_os_session_id"] = session_id
                 logger.info(f"Loaded session ID: {session_id}")
             else:
-                 logger.warning("Agent does not have a load_session method.")
-                 st.session_state["llm_os_session_id"] = None # Ensure it's set
+                 logger.warning("Team does not have a load_session method.")
+                 st.session_state["llm_os_session_id"] = None
         except Exception as e:
-            logger.error(f"Could not load agent session: {e}")
-            st.warning(f"Could not load agent session: {e}")
-            st.session_state["llm_os_session_id"] = None # Ensure it's set
+            logger.error(f"Could not load team session: {e}")
+            st.warning(f"Could not load team session: {e}")
+            st.session_state["llm_os_session_id"] = None
     else:
-        # Use existing agent from session state
-        llm_os_agent = st.session_state["llm_os_agent"]
-        logger.debug(f"Using existing LLM OS agent. Instance: {id(llm_os_agent)}, Session ID: {llm_os_agent.session_id}")
+        # Use existing team from session state
+        llm_os_team = st.session_state["llm_os_team"]
+        logger.debug(f"Using existing LLM OS Team. Instance: {id(llm_os_team)}, Session ID: {llm_os_team.session_id}") # Assuming Team has session_id
 
 
     ####################################################################
-    # Load runs from memory IF messages list is empty (e.g., after session load/app restart)
+    # Load runs from memory IF messages list is empty
     ####################################################################
-    logger.debug(f"Checking history load: Agent exists? {llm_os_agent is not None}. Messages empty? {not st.session_state.get('messages')}")
-    if llm_os_agent and not st.session_state.get("messages"): # Only load if messages are empty
-        logger.info("Attempting to load chat history from agent memory...")
+    logger.debug(f"Checking history load: Team exists? {llm_os_team is not None}. Messages empty? {not st.session_state.get('messages')}")
+    if llm_os_team and not st.session_state.get("messages"): # Only load if messages are empty
+        logger.info("Attempting to load chat history from team memory...")
         try:
-            if hasattr(llm_os_agent, 'memory') and hasattr(llm_os_agent.memory, 'runs'):
-                agent_runs = llm_os_agent.memory.runs
-                if agent_runs:
-                    logger.info(f"Loading {len(agent_runs)} runs from agent memory into UI history.")
-                    st.session_state["messages"] = [] # Ensure it's clear before loading
-                    for _run in agent_runs:
+            # Assuming Team has a memory attribute similar to Agent
+            if hasattr(llm_os_team, 'memory') and hasattr(llm_os_team.memory, 'runs'):
+                team_runs = llm_os_team.memory.runs
+                if team_runs:
+                    logger.info(f"Loading {len(team_runs)} runs from team memory into UI history.")
+                    st.session_state["messages"] = []
+                    for _run in team_runs:
                         if _run.message is not None:
                             add_message(_run.message.role, _run.message.content)
                             logger.debug(f"Loaded user message: {_run.message.content[:50]}...")
                         if _run.response is not None:
-                            # Use 'assistant' role for agent responses in UI
                             add_message("assistant", _run.response.content, _run.response.tools)
                             logger.debug(f"Loaded assistant message: {_run.response.content[:50]}...")
-                    # Temporarily comment out the rerun to see if it helps
                     logger.info(f"Finished loading {len(st.session_state['messages'])} messages into UI state. Triggering rerun.")
-                    st.rerun() # Rerun to display loaded history immediately
+                    st.rerun() # Re-enable rerun after history loading
                 else:
-                    logger.debug("Agent memory has no runs to load.")
-                    st.session_state["messages"] = [] # Ensure messages is an empty list
+                    logger.debug("Team memory has no runs to load.")
+                    st.session_state["messages"] = []
             else:
-                logger.warning("Agent has no memory or runs attribute.")
-                st.session_state["messages"] = [] # Ensure messages is an empty list
+                logger.warning("Team has no memory or runs attribute.")
+                st.session_state["messages"] = []
         except Exception as e:
-            logger.error(f"Error loading runs from agent memory: {e}")
-            st.session_state["messages"] = [] # Reset messages on error
+            logger.error(f"Error loading runs from team memory: {e}")
+            st.session_state["messages"] = []
 
 
     # Initialize messages list in session state if it doesn't exist (fallback)
@@ -275,8 +270,8 @@ def main() -> None:
     # Export Chat button using the persistent agent's session ID
     with col2:
         export_filename = "llm_os_chat_history.md"
-        if llm_os_agent and hasattr(llm_os_agent, 'session_id') and llm_os_agent.session_id:
-             export_filename = f"llm_os_chat_{llm_os_agent.session_id}.md"
+        if llm_os_team and hasattr(llm_os_team, 'session_id') and llm_os_team.session_id:
+             export_filename = f"llm_os_chat_{llm_os_team.session_id}.md"
 
         st.download_button(
             "💾 Export Chat",
@@ -288,26 +283,14 @@ def main() -> None:
         )
 
     # Add Session Selector and Renamer Widgets
-    if llm_os_agent:
+    if llm_os_team:
         # Pass the current config needed by the session_selector_widget for re-initialization
-        session_selector_widget(llm_os_agent, current_config)
-        rename_session_widget(llm_os_agent)
+        # Also pass the current session ID from state explicitly for reliable comparison
+        current_session_id = st.session_state.get("llm_os_session_id")
+        session_selector_widget(llm_os_team, current_config, current_session_id)
+        rename_session_widget(llm_os_team)
     else:
-        st.sidebar.warning("Agent not ready for session management.")
-
-
-    # --- REMOVED Simplified Agent Initialization ---
-    # logger.info("---*--- Creating new LLM OS agent (No Session Management) ---*---")
-    # llm_os_agent_temp = get_llm_os(...)
-    # st.session_state["llm_os_agent_temp"] = llm_os_agent_temp
-    # logger.info(f"New LLM OS Agent created. Instance: {id(llm_os_agent_temp)}")
-    # --- REMOVED Temporary Agent Usage ---
-
-    # --- REMOVED Simplified History Management ---
-    # if "messages" not in st.session_state:
-    #     logger.debug("Initializing st.session_state['messages'] for UI display.")
-    #     st.session_state["messages"] = []
-    # logger.debug("Chat history is now managed solely by st.session_state['messages'] for the UI session.")
+        st.sidebar.warning("Team not ready for session management.")
 
 
     ####################################################################
@@ -341,50 +324,80 @@ def main() -> None:
     last_message = (
         st.session_state["messages"][-1] if st.session_state["messages"] else None
     )
-    # Ensure agent is initialized before attempting to run
-    if llm_os_agent and last_message and last_message.get("role") == "user":
+    # Add logging to check the last message before the condition
+    logger.debug(f"Checking for response generation. Last message: {last_message}")
+    # Check if the Team is initialized
+    if llm_os_team and last_message and last_message.get("role") == "user":
         question = last_message["content"]
-        # Use the persistent agent instance from session state
-        # current_run_agent = st.session_state.get("llm_os_agent") # Redundant check, use llm_os_agent directly
 
         with st.chat_message("assistant"):
-            # Create container for tool calls *before* the streaming loop
             tool_calls_container = st.empty()
             resp_container = st.empty()
-            with st.spinner("🤔 Thinking..."):
+            intermediate_steps_container = st.container() # New container for intermediate steps
+            with st.spinner("🤔 Coordinating Team..."): # Updated spinner text
                 response = ""
                 try:
-                    # Use the persistent agent instance
-                    run_response = llm_os_agent.run(
+                    # Use the Team instance to run
+                    run_response = llm_os_team.run(
                         question, stream=True, stream_intermediate_steps=True
                     )
                     for _resp_chunk in run_response:
-                        # Log the received chunk for debugging
-                        logger.debug(f"Received chunk: Event={_resp_chunk.event}, Content Type={type(_resp_chunk.content)}, Content={_resp_chunk.content}, Tools={_resp_chunk.tools}")
+                        logger.debug(f"Received chunk: Event={_resp_chunk.event}, Content Type={type(_resp_chunk.content)}, Content={_resp_chunk.content}, Tools={_resp_chunk.tools}, Raw Chunk: {_resp_chunk}") # Keep detailed logging
 
-                        # Display tool calls if available, updating the single container
-                        if _resp_chunk.tools and len(_resp_chunk.tools) > 0:
-                            display_tool_calls(tool_calls_container, _resp_chunk.tools)
+                        # --- Enhanced Event Handling for Team Observability ---
+                        event_type = _resp_chunk.event.lower() if _resp_chunk.event else None
 
-                        # Display response if available and event is RunResponse
-                        if (
-                            _resp_chunk.event == "RunResponse"
-                            and _resp_chunk.content is not None
-                        ):
+                        if event_type == 'thinking':
+                            with intermediate_steps_container.expander("Coordinator Reasoning", expanded=False):
+                                st.markdown(_resp_chunk.content)
+                        elif event_type == 'toolcallstarted':
+                             # Check if it's a delegation call (member name = tool name)
+                             member_names = [m.name for m in llm_os_team.members] if llm_os_team.members else []
+                             tool_name = _resp_chunk.tools[0].get('tool_name') if _resp_chunk.tools else None
+                             if tool_name in member_names:
+                                 intermediate_steps_container.info(f"⏳ Delegating to `{tool_name}`...")
+                             else:
+                                 with intermediate_steps_container.expander(f"Coordinator Tool Call: `{tool_name}`", expanded=False):
+                                     st.code(str(_resp_chunk.tools[0].get('tool_args', '')), language='json')
+                        elif event_type == 'toolcallcompleted':
+                             member_names = [m.name for m in llm_os_team.members] if llm_os_team.members else []
+                             tool_name = _resp_chunk.tools[0].get('tool_name') if _resp_chunk.tools else None
+                             if tool_name not in member_names: # Only show non-member tool results here
+                                with intermediate_steps_container.expander(f"Coordinator Tool Result: `{tool_name}`", expanded=False):
+                                    st.code(str(_resp_chunk.tools[0].get('content', '')), language='json') # Assuming content is JSON-like
+                        elif event_type == 'memberrunstarted':
+                            member_name = _resp_chunk.extra_data.get('member_name', 'Unknown Agent') if _resp_chunk.extra_data else 'Unknown Agent'
+                            intermediate_steps_container.info(f"🚀 Starting task execution by `{member_name}`...")
+                        elif event_type == 'memberresponse':
+                            member_name = _resp_chunk.extra_data.get('member_name', 'Unknown Agent') if _resp_chunk.extra_data else 'Unknown Agent'
+                            with intermediate_steps_container.expander(f"Response from `{member_name}`", expanded=True):
+                                if _resp_chunk.tools:
+                                    display_tool_calls(st.empty(), _resp_chunk.tools)
+                                if _resp_chunk.content:
+                                    st.markdown(_resp_chunk.content)
+                        elif event_type == 'memberruncompleted':
+                            member_name = _resp_chunk.extra_data.get('member_name', 'Unknown Agent') if _resp_chunk.extra_data else 'Unknown Agent'
+                            intermediate_steps_container.success(f"✅ Task execution by `{member_name}` completed.")
+                        # Display final response stream
+                        elif event_type == 'runresponse' and _resp_chunk.content is not None:
                             response += _resp_chunk.content
                             resp_container.markdown(response)
+                        # Fallback for other/unexpected tool displays
+                        elif _resp_chunk.tools and event_type not in ['toolcallstarted', 'toolcallcompleted', 'memberresponse']:
+                            display_tool_calls(tool_calls_container, _resp_chunk.tools)
 
-                    # Add final message with tool calls from the persistent agent's last run
-                    add_message("assistant", response, llm_os_agent.run_response.tools)
-                    # No explicit rerun needed here, message added to state, Streamlit handles update.
+                    # Add final message using Team's run_response
+                    # Assuming Team also has a run_response attribute
+                    final_tools = llm_os_team.run_response.tools if hasattr(llm_os_team, 'run_response') else None
+                    add_message("assistant", response, final_tools)
                 except Exception as e:
                     logger.exception(e)
-                    error_message = f"Sorry, I encountered an error: {str(e)}"
+                    error_message = f"Sorry, the team encountered an error: {str(e)}"
                     add_message("assistant", error_message)
-                    resp_container.error(error_message) # Display error in response container
+                    resp_container.error(error_message)
 
-    elif not llm_os_agent and last_message and last_message.get("role") == "user":
-         st.error("Agent not initialized. Please wait or refresh the page.")
+    elif not llm_os_team and last_message and last_message.get("role") == "user":
+         st.error("Team not initialized. Please wait or refresh the page.")
 
 
     ####################################################################
