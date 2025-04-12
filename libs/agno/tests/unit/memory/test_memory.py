@@ -571,7 +571,7 @@ def test_create_user_memories(memory_with_managers, mock_db):
 
     # Create user memories
     messages = [Message(role="user", content="Remember this information")]
-    memory_with_managers.create_user_memories(messages, user_id="test_user")
+    memory_with_managers.create_user_memories(messages=messages, user_id="test_user")
 
     # Verify memories were created
     assert "test_user" in memory_with_managers.memories
