@@ -4,11 +4,12 @@ import tempfile
 import time
 from os import fdopen, getenv
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import ImageArtifact
+from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
@@ -171,7 +172,9 @@ class E2BTools(Toolkit):
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error uploading file: {str(e)}"})
 
-    def download_png_result(self, agent: Agent, result_index: int = 0, output_path: Optional[str] = None) -> str:
+    def download_png_result(
+        self, agent: Union[Agent, Team], result_index: int = 0, output_path: Optional[str] = None
+    ) -> str:
         """
         Add a PNG image result from the last code execution as an ImageArtifact to the agent.
 

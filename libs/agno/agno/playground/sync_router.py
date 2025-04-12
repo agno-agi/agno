@@ -1,7 +1,8 @@
 import json
 from dataclasses import asdict
 from io import BytesIO
-from typing import Generator, List, Optional, cast
+from typing import Any, Dict, Generator, List, Optional, cast
+from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -9,6 +10,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from agno.agent.agent import Agent, RunResponse
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.memory.agent import AgentMemory
+from agno.memory.v2 import Memory
 from agno.playground.operator import (
     format_tools,
     get_agent_by_id,
@@ -23,6 +26,7 @@ from agno.playground.schemas import (
     AgentModel,
     AgentRenameRequest,
     AgentSessionsResponse,
+    MemoryResponse,
     TeamGetResponse,
     TeamRenameRequest,
     TeamSessionResponse,
@@ -32,6 +36,7 @@ from agno.playground.schemas import (
     WorkflowSessionResponse,
     WorkflowsGetResponse,
 )
+from agno.playground.utils import process_audio, process_document, process_image, process_video
 from agno.run.response import RunEvent
 from agno.run.team import TeamRunResponse
 from agno.storage.session.agent import AgentSession
@@ -42,12 +47,92 @@ from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
 
+def chat_response_streamer(
+    agent: Agent,
+    message: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    images: Optional[List[Image]] = None,
+    audio: Optional[List[Audio]] = None,
+    videos: Optional[List[Video]] = None,
+) -> Generator:
+    try:
+        run_response = agent.run(
+            message,
+            session_id=session_id,
+            user_id=user_id,
+            images=images,
+            audio=audio,
+            videos=videos,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+        for run_response_chunk in run_response:
+            run_response_chunk = cast(RunResponse, run_response_chunk)
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        error_response = RunResponse(
+            content=str(e),
+            event=RunEvent.run_error,
+        )
+        yield error_response.to_json()
+        return
+
+
+def team_chat_response_streamer(
+    team: Team,
+    message: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    images: Optional[List[Image]] = None,
+    audio: Optional[List[Audio]] = None,
+    videos: Optional[List[Video]] = None,
+    files: Optional[List[FileMedia]] = None,
+) -> Generator:
+    try:
+        run_response = team.run(
+            message,
+            session_id=session_id,
+            user_id=user_id,
+            images=images,
+            audio=audio,
+            videos=videos,
+            files=files,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+        for run_response_chunk in run_response:
+            run_response_chunk = cast(TeamRunResponse, run_response_chunk)
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        error_response = TeamRunResponse(
+            content=str(e),
+            event=RunEvent.run_error,
+        )
+        yield error_response.to_json()
+        return
+
+
 def get_sync_playground_router(
     agents: Optional[List[Agent]] = None, workflows: Optional[List[Workflow]] = None, teams: Optional[List[Team]] = None
 ) -> APIRouter:
     playground_router = APIRouter(prefix="/playground", tags=["Playground"])
     if agents is None and workflows is None and teams is None:
         raise ValueError("Either agents, teams or workflows must be provided.")
+
+    # Generate IDs if they were not explicitly set on agents/teams/workflows
+    if agents:
+        for agent in agents:
+            if agent.agent_id is None:
+                agent.agent_id = str(uuid4())
+    if teams:
+        for team in teams:
+            if team.team_id is None:
+                team.team_id = str(uuid4())
+    if workflows:
+        for workflow in workflows:
+            if workflow.workflow_id is None:
+                workflow.workflow_id = str(uuid4())
 
     @playground_router.get("/status")
     def playground_status():
@@ -60,7 +145,8 @@ def get_sync_playground_router(
             return agent_list
 
         for agent in agents:
-            agent_tools = agent.get_tools()
+            # We can make up a session_id here because we aren't really using the tools
+            agent_tools = agent.get_tools(session_id=str(uuid4()))
             formatted_tools = format_tools(agent_tools)
 
             name = agent.model.name or agent.model.__class__.__name__ if agent.model else None
@@ -80,6 +166,26 @@ def get_sync_playground_router(
             else:
                 provider = ""
 
+            if agent.memory:
+                memory_dict: Optional[Dict[str, Any]] = {}
+                if isinstance(agent.memory, AgentMemory) and agent.memory.db:
+                    memory_dict = {"name": agent.memory.db.__class__.__name__}
+                elif isinstance(agent.memory, Memory) and agent.memory.db:
+                    memory_dict = {"name": "Memory"}
+                    if agent.memory.model is not None:
+                        memory_dict["model"] = AgentModel(
+                            name=agent.memory.model.name,
+                            model=agent.memory.model.id,
+                            provider=agent.memory.model.provider,
+                        )
+                    if agent.memory.db is not None:
+                        memory_dict["db"] = agent.memory.db.__dict__()  # type: ignore
+
+                else:
+                    memory_dict = None
+            else:
+                memory_dict = None
+
             agent_list.append(
                 AgentGetResponse(
                     agent_id=agent.agent_id,
@@ -91,7 +197,7 @@ def get_sync_playground_router(
                     ),
                     add_context=agent.add_context,
                     tools=formatted_tools,
-                    memory={"name": agent.memory.db.__class__.__name__} if agent.memory and agent.memory.db else None,
+                    memory=memory_dict,
                     storage={"name": agent.storage.__class__.__name__} if agent.storage else None,
                     knowledge={"name": agent.knowledge.__class__.__name__} if agent.knowledge else None,
                     description=agent.description,
@@ -100,68 +206,6 @@ def get_sync_playground_router(
             )
 
         return agent_list
-
-    def chat_response_streamer(
-        agent: Agent,
-        message: str,
-        images: Optional[List[Image]] = None,
-        audio: Optional[List[Audio]] = None,
-        videos: Optional[List[Video]] = None,
-    ) -> Generator:
-        try:
-            run_response = agent.run(
-                message,
-                images=images,
-                audio=audio,
-                videos=videos,
-                stream=True,
-                stream_intermediate_steps=True,
-            )
-            for run_response_chunk in run_response:
-                run_response_chunk = cast(RunResponse, run_response_chunk)
-                yield run_response_chunk.to_json()
-        except Exception as e:
-            error_response = RunResponse(
-                content=str(e),
-                event=RunEvent.run_error,
-            )
-            yield error_response.to_json()
-            return
-
-    def process_image(file: UploadFile) -> Image:
-        content = file.file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty file")
-        return Image(content=content)
-
-    def process_audio(file: UploadFile) -> Audio:
-        content = file.file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty file")
-        format = None
-        if file.filename and "." in file.filename:
-            format = file.filename.split(".")[-1].lower()
-        elif file.content_type:
-            format = file.content_type.split("/")[-1]
-
-        return Audio(content=content, format=format)
-
-    def process_video(file: UploadFile) -> Video:
-        content = file.file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty file")
-        return Video(content=content, format=file.content_type)
-
-    def process_document(file: UploadFile) -> Optional[FileMedia]:
-        try:
-            content = file.file.read()
-            if not content:
-                raise HTTPException(status_code=400, detail="Empty file")
-
-            return FileMedia(content=content, mime_type=file.content_type)
-        except Exception as e:
-            logger.error(f"Error processing document {file.filename}: {e}")
-            return None
 
     @playground_router.post("/agents/{agent_id}/runs")
     def create_agent_run(
@@ -178,22 +222,16 @@ def get_sync_playground_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        if session_id is not None:
+        if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
         else:
             logger.debug("Creating new session")
-
-        # Create a new instance of this agent
-        new_agent_instance = agent.deep_copy(update={"session_id": session_id})
-        new_agent_instance.session_name = None
-
-        if user_id is not None:
-            new_agent_instance.user_id = user_id
+            session_id = str(uuid4())
 
         if monitor:
-            new_agent_instance.monitoring = True
+            agent.monitoring = True
         else:
-            new_agent_instance.monitoring = False
+            agent.monitoring = False
 
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
@@ -236,7 +274,7 @@ def get_sync_playground_router(
                         continue
                 else:
                     # Check for knowledge base before processing documents
-                    if new_agent_instance.knowledge is None:
+                    if agent.knowledge is None:
                         raise HTTPException(status_code=404, detail="KnowledgeBase not found")
 
                     if file.content_type == "application/pdf":
@@ -246,8 +284,8 @@ def get_sync_playground_router(
                         pdf_file = BytesIO(contents)
                         pdf_file.name = file.filename
                         file_content = PDFReader().read(pdf_file)
-                        if new_agent_instance.knowledge is not None:
-                            new_agent_instance.knowledge.load_documents(file_content)
+                        if agent.knowledge is not None:
+                            agent.knowledge.load_documents(file_content)
                     elif file.content_type == "text/csv":
                         from agno.document.reader.csv_reader import CSVReader
 
@@ -255,8 +293,8 @@ def get_sync_playground_router(
                         csv_file = BytesIO(contents)
                         csv_file.name = file.filename
                         file_content = CSVReader().read(csv_file)
-                        if new_agent_instance.knowledge is not None:
-                            new_agent_instance.knowledge.load_documents(file_content)
+                        if agent.knowledge is not None:
+                            agent.knowledge.load_documents(file_content)
                     elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
                         from agno.document.reader.docx_reader import DocxReader
 
@@ -264,8 +302,8 @@ def get_sync_playground_router(
                         docx_file = BytesIO(contents)
                         docx_file.name = file.filename
                         file_content = DocxReader().read(docx_file)
-                        if new_agent_instance.knowledge is not None:
-                            new_agent_instance.knowledge.load_documents(file_content)
+                        if agent.knowledge is not None:
+                            agent.knowledge.load_documents(file_content)
                     elif file.content_type == "text/plain":
                         from agno.document.reader.text_reader import TextReader
 
@@ -273,8 +311,8 @@ def get_sync_playground_router(
                         text_file = BytesIO(contents)
                         text_file.name = file.filename
                         file_content = TextReader().read(text_file)
-                        if new_agent_instance.knowledge is not None:
-                            new_agent_instance.knowledge.load_documents(file_content)
+                        if agent.knowledge is not None:
+                            agent.knowledge.load_documents(file_content)
                     elif file.content_type == "application/json":
                         from agno.document.reader.json_reader import JSONReader
 
@@ -282,16 +320,18 @@ def get_sync_playground_router(
                         json_file = BytesIO(contents)
                         json_file.name = file.filename
                         file_content = JSONReader().read(json_file)
-                        if new_agent_instance.knowledge is not None:
-                            new_agent_instance.knowledge.load_documents(file_content)
+                        if agent.knowledge is not None:
+                            agent.knowledge.load_documents(file_content)
                     else:
                         raise HTTPException(status_code=400, detail="Unsupported file type")
 
         if stream:
             return StreamingResponse(
                 chat_response_streamer(
-                    new_agent_instance,
+                    agent,
                     message,
+                    session_id=session_id,
+                    user_id=user_id,
                     images=base64_images if base64_images else None,
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
@@ -301,8 +341,10 @@ def get_sync_playground_router(
         else:
             run_response = cast(
                 RunResponse,
-                new_agent_instance.run(
+                agent.run(
                     message=message,
+                    session_id=session_id,
+                    user_id=user_id,
                     images=base64_images if base64_images else None,
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
@@ -312,7 +354,7 @@ def get_sync_playground_router(
             return run_response.to_dict()
 
     @playground_router.get("/agents/{agent_id}/sessions")
-    def get_user_agent_sessions(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+    def get_agent_sessions(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         logger.debug(f"AgentSessionsRequest: {agent_id} {user_id}")
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
@@ -336,7 +378,7 @@ def get_sync_playground_router(
         return agent_sessions
 
     @playground_router.get("/agents/{agent_id}/sessions/{session_id}")
-    def get_user_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+    def get_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         logger.debug(f"AgentSessionsRequest: {agent_id} {user_id} {session_id}")
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
@@ -349,7 +391,29 @@ def get_sync_playground_router(
         if agent_session is None:
             return JSONResponse(status_code=404, content="Session not found.")
 
-        return agent_session
+        agent_session_dict = agent_session.to_dict()
+        if agent_session.memory is not None:
+            runs = agent_session.memory.get("runs")
+            if runs is not None:
+                first_run = runs[0]
+                if "content" in first_run:
+                    agent_session_dict["runs"] = []
+                    for run in runs:
+                        first_user_message = None
+                        for msg in run.get("messages", []):
+                            if msg.get("role") == "user" and msg.get("from_history", False) is False:
+                                first_user_message = msg
+                                break
+                        # Remove the memory from the response
+                        run.pop("memory", None)
+                        agent_session_dict["runs"].append(
+                            {
+                                "message": first_user_message,
+                                "response": run,
+                            }
+                        )
+
+        return agent_session_dict
 
     @playground_router.post("/agents/{agent_id}/sessions/{session_id}/rename")
     def rename_agent_session(agent_id: str, session_id: str, body: AgentRenameRequest):
@@ -363,8 +427,7 @@ def get_sync_playground_router(
         all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=body.user_id)  # type: ignore
         for session in all_agent_sessions:
             if session.session_id == session_id:
-                agent.session_id = session_id
-                agent.rename_session(body.name)
+                agent.rename_session(body.name, session_id=session_id)
                 return JSONResponse(content={"message": f"successfully renamed agent {agent.name}"})
 
         return JSONResponse(status_code=404, content="Session not found.")
@@ -385,6 +448,24 @@ def get_sync_playground_router(
                 return JSONResponse(content={"message": f"successfully deleted agent {agent.name}"})
 
         return JSONResponse(status_code=404, content="Session not found.")
+
+    @playground_router.get("/agents/{agent_id}/memories")
+    async def get_agent_memories(agent_id: str, user_id: str = Query(..., min_length=1)):
+        agent = get_agent_by_id(agent_id, agents)
+        if agent is None:
+            return JSONResponse(status_code=404, content="Agent not found.")
+
+        if agent.memory is None:
+            return JSONResponse(status_code=404, content="Agent does not have memory enabled.")
+
+        if isinstance(agent.memory, Memory):
+            memories = agent.memory.get_user_memories(user_id=user_id)
+            return [
+                MemoryResponse(memory=memory.memory, topics=memory.topics, last_updated=memory.last_updated)
+                for memory in memories
+            ]
+        else:
+            return []
 
     @playground_router.get("/workflows", response_model=List[WorkflowsGetResponse])
     def get_workflows():
@@ -532,35 +613,6 @@ def get_sync_playground_router(
 
         return TeamGetResponse.from_team(team)
 
-    def team_chat_response_streamer(
-        team: Team,
-        message: str,
-        images: Optional[List[Image]] = None,
-        audio: Optional[List[Audio]] = None,
-        videos: Optional[List[Video]] = None,
-        files: Optional[List[FileMedia]] = None,
-    ) -> Generator:
-        try:
-            run_response = team.run(
-                message,
-                images=images,
-                audio=audio,
-                videos=videos,
-                files=files,
-                stream=True,
-                stream_intermediate_steps=True,
-            )
-            for run_response_chunk in run_response:
-                run_response_chunk = cast(TeamRunResponse, run_response_chunk)
-                yield run_response_chunk.to_json()
-        except Exception as e:
-            error_response = TeamRunResponse(
-                content=str(e),
-                event=RunEvent.run_error,
-            )
-            yield error_response.to_json()
-            return
-
     @playground_router.post("/teams/{team_id}/runs")
     def create_team_run(
         team_id: str,
@@ -576,21 +628,16 @@ def get_sync_playground_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        if session_id is not None:
+        if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
         else:
             logger.debug("Creating new session")
-
-        new_team_instance = team.deep_copy(update={"team_id": team_id, "session_id": session_id})
-        new_team_instance.session_name = None
-
-        if user_id is not None:
-            team.user_id = user_id
+            session_id = str(uuid4())
 
         if monitor:
-            new_team_instance.monitoring = True
+            team.monitoring = True
         else:
-            new_team_instance.monitoring = False
+            team.monitoring = False
 
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
@@ -648,8 +695,10 @@ def get_sync_playground_router(
         if stream:
             return StreamingResponse(
                 team_chat_response_streamer(
-                    new_team_instance,
+                    team,
                     message,
+                    session_id=session_id,
+                    user_id=user_id,
                     images=base64_images if base64_images else None,
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
@@ -660,6 +709,8 @@ def get_sync_playground_router(
         else:
             run_response = team.run(
                 message=message,
+                session_id=session_id,
+                user_id=user_id,
                 images=base64_images if base64_images else None,
                 audio=base64_audios if base64_audios else None,
                 videos=base64_videos if base64_videos else None,
@@ -712,7 +763,28 @@ def get_sync_playground_router(
         if not team_session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        return team_session
+        team_session_dict = team_session.to_dict()
+        if team_session.memory is not None:
+            runs = team_session.memory.get("runs")
+            if runs is not None:
+                first_run = runs[0]
+                if "content" in first_run:
+                    team_session_dict["runs"] = []
+                    for run in runs:
+                        first_user_message = None
+                        for msg in run.get("messages", []):
+                            if msg.get("role") == "user" and msg.get("from_history", False) is False:
+                                first_user_message = msg
+                                break
+                        # Remove the memory from the response
+                        run.pop("memory", None)
+                        team_session_dict["runs"].append(
+                            {
+                                "message": first_user_message,
+                                "response": run,
+                            }
+                        )
+        return team_session_dict
 
     @playground_router.post("/teams/{team_id}/sessions/{session_id}/rename")
     def rename_team_session(team_id: str, session_id: str, body: TeamRenameRequest):
@@ -720,17 +792,50 @@ def get_sync_playground_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        team.session_id = session_id
-        team.rename_session(body.name)
-        return JSONResponse(content={"message": f"successfully renamed team {team.name}"})
+        if team.storage is None:
+            raise HTTPException(status_code=404, detail="Team does not have storage enabled")
+
+        all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=body.user_id, entity_id=team_id)  # type: ignore
+        for session in all_team_sessions:
+            if session.session_id == session_id:
+                team.rename_session(body.name, session_id=session_id)
+                return JSONResponse(content={"message": f"successfully renamed team session {body.name}"})
+
+        raise HTTPException(status_code=404, detail="Session not found")
 
     @playground_router.delete("/teams/{team_id}/sessions/{session_id}")
-    def delete_team_session(team_id: str, session_id: str):
+    def delete_team_session(team_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         team = get_team_by_id(team_id, teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        team.delete_session(session_id)
-        return JSONResponse(content={"message": f"successfully deleted team {team.name}"})
+        if team.storage is None:
+            raise HTTPException(status_code=404, detail="Team does not have storage enabled")
+
+        all_team_sessions: List[TeamSession] = team.storage.get_all_sessions(user_id=user_id, entity_id=team_id)  # type: ignore
+        for session in all_team_sessions:
+            if session.session_id == session_id:
+                team.delete_session(session_id)
+                return JSONResponse(content={"message": f"successfully deleted team session {session_id}"})
+
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    @playground_router.get("/team/{team_id}/memories")
+    async def get_team_memories(team_id: str, user_id: str = Query(..., min_length=1)):
+        team = get_team_by_id(team_id, teams)
+        if team is None:
+            return JSONResponse(status_code=404, content="Teem not found.")
+
+        if team.memory is None:
+            return JSONResponse(status_code=404, content="Team does not have memory enabled.")
+
+        if isinstance(team.memory, Memory):
+            memories = team.memory.get_user_memories(user_id=user_id)
+            return [
+                MemoryResponse(memory=memory.memory, topics=memory.topics, last_updated=memory.last_updated)
+                for memory in memories
+            ]
+        else:
+            return []
 
     return playground_router

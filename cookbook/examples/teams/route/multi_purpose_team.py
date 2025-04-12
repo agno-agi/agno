@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.media import Audio, File, Image
+from agno.media import Audio, File, Image  # type: ignore
 from agno.models.anthropic import Claude
 from agno.models.deepseek import DeepSeek
 from agno.models.google.gemini import Gemini
@@ -11,6 +11,7 @@ from agno.tools.calculator import CalculatorTools
 from agno.tools.dalle import DalleTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.e2b import E2BTools
+from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.media import download_file
 
@@ -128,7 +129,7 @@ reasoning_agent = Agent(
 code_execution_agent = Agent(
     name="Code Execution Sandbox",
     agent_id="e2b-sandbox",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[E2BTools()],
     markdown=True,
     show_tool_calls=True,
@@ -146,7 +147,7 @@ code_execution_agent = Agent(
 agent_team = Team(
     name="Agent Team",
     mode="route",
-    model=OpenAIChat("gpt-4o"),
+    model=Claude(id="claude-3-5-sonnet-latest"),
     members=[
         web_agent,
         finance_agent,
@@ -161,25 +162,26 @@ agent_team = Team(
         "You are a team of agents that can answer questions about the web, finance, images, audio, and files.",
         "You can use your member agents to answer the questions.",
         "if you are asked about a file, use the file analysis agent to analyze the file.",
+        "You can also answer directly, you don't HAVE to forward the question to a member agent.",
     ],
     show_tool_calls=True,
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
 )
 
 # Use the reasoning agent to reason about the result
-
 agent_team.print_response(
     "What is the square root of 6421123 times the square root of 9485271", stream=True
 )
+agent_team.print_response(
+    "Calculate the sum of 10 and 20 and give write something about how you did the calculation",
+    stream=True,
+)
+
 # Use web and finance agents to answer the question
-# agent_team.print_response(
-#     "Summarize analyst recommendations and share the latest news for NVDA", stream=True
-# )
-# agent_team.print_response(
-#     "Calculate the sum of 10 and 20 and give write something about how you did the calculation", stream=True
-# )
+agent_team.print_response(
+    "Summarize analyst recommendations and share the latest news for NVDA", stream=True
+)
 
 # image_path = Path(__file__).parent.joinpath("sample.jpg")
 # # # Use image agent to analyze the image
@@ -219,18 +221,18 @@ agent_team.print_response(
 # agent_team.print_response("9.11 and 9.9 -- which is bigger?", stream=True)
 
 
-pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")
+# pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")
 
-# Download the file using the download_file function
-download_file(
-    "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf", str(pdf_path)
-)
-# Use file analysis agent to analyze the file
-agent_team.print_response(
-    "Summarize the contents of the attached file.",
-    files=[
-        File(
-            filepath=pdf_path,
-        ),
-    ],
-)
+# # Download the file using the download_file function
+# download_file(
+#     "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf", str(pdf_path)
+# )
+# # Use file analysis agent to analyze the file
+# agent_team.print_response(
+#     "Summarize the contents of the attached file.",
+#     files=[
+#         File(
+#             filepath=pdf_path,
+#         ),
+#     ],
+# )

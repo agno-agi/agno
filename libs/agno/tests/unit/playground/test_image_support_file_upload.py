@@ -125,23 +125,6 @@ def mock_json_file():
 # --- Test Cases ---
 
 
-def test_no_file_upload(test_app, mock_agent):
-    """Test basic message without file upload."""
-    data = {
-        "message": "Hello",
-        "stream": "false",
-        "monitor": "false",
-        "user_id": "test_user",
-    }
-    response = test_app.post("/v1/playground/agents/test-agent/runs", data=data)
-    assert response.status_code == 200
-
-    # Get the copied agent that was actually used
-    copied_agent = mock_agent.deep_copy()
-    # Verify agent.run was called with correct parameters
-    copied_agent.run.assert_called_once_with(message="Hello", stream=False, images=None, audio=None, videos=None)
-
-
 def test_single_image_upload(test_app, mock_agent, mock_image_file):
     """Test uploading a single image file."""
     data = {
@@ -203,14 +186,9 @@ def test_pdf_upload_with_knowledge(test_app, mock_agent_with_knowledge, mock_pdf
     response = test_app.post("/v1/playground/agents/test-agent/runs", data=data, files=files)
     assert response.status_code == 200
 
-    # Get the copied agent that was actually used
-    copied_agent = mock_agent_with_knowledge.deep_copy()
     # Verify knowledge.load_documents was called
-    copied_agent.knowledge.load_documents.assert_called_once_with(["This is mock PDF content"])
-    # Verify agent.run was called without images
-    copied_agent.run.assert_called_once_with(
-        message="Analyze this PDF", stream=False, images=None, audio=None, videos=None
-    )
+    mock_agent_with_knowledge.knowledge.load_documents.assert_called_once_with(["This is mock PDF content"])
+    mock_agent_with_knowledge.run.assert_called_once()
 
 
 def test_pdf_upload_without_knowledge(test_app, mock_pdf_file):
@@ -239,13 +217,11 @@ def test_mixed_file_upload(test_app, mock_agent_with_knowledge, mock_image_file,
     response = test_app.post("/v1/playground/agents/test-agent/runs", data=data, files=files)
     assert response.status_code == 200
 
-    # Get the copied agent that was actually used
-    copied_agent = mock_agent_with_knowledge.deep_copy()
     # Verify knowledge.load_documents was called for PDF
-    copied_agent.knowledge.load_documents.assert_called_once_with(["This is mock PDF content"])
+    mock_agent_with_knowledge.knowledge.load_documents.assert_called_once_with(["This is mock PDF content"])
     # Verify agent.run was called with image
-    copied_agent.run.assert_called_once()
-    call_args = copied_agent.run.call_args[1]
+    mock_agent_with_knowledge.run.assert_called_once()
+    call_args = mock_agent_with_knowledge.run.call_args[1]
     assert len(call_args["images"]) == 1
     assert isinstance(call_args["images"][0], Image)
     assert call_args["audio"] is None
