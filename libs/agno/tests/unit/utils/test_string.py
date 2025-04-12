@@ -2,7 +2,47 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from agno.utils.string import parse_response_model_str
+from agno.utils.string import parse_response_model_str, url_safe_string
+
+
+def test_url_safe_string_spaces():
+    """Test conversion of spaces to dashes"""
+    assert url_safe_string("hello world") == "hello-world"
+
+
+def test_url_safe_string_camel_case():
+    """Test conversion of camelCase to kebab-case"""
+    assert url_safe_string("helloWorld") == "hello-world"
+
+
+def test_url_safe_string_snake_case():
+    """Test conversion of snake_case to kebab-case"""
+    assert url_safe_string("hello_world") == "hello-world"
+
+
+def test_url_safe_string_special_chars():
+    """Test removal of special characters"""
+    assert url_safe_string("hello@world!") == "helloworld"
+
+
+def test_url_safe_string_consecutive_dashes():
+    """Test handling of consecutive dashes"""
+    assert url_safe_string("hello--world") == "hello-world"
+
+
+def test_url_safe_string_mixed_cases():
+    """Test a mix of different cases and separators"""
+    assert url_safe_string("hello_World Test") == "hello-world-test"
+
+
+def test_url_safe_string_preserve_dots():
+    """Test preservation of dots"""
+    assert url_safe_string("hello.world") == "hello.world"
+
+
+def test_url_safe_string_complex():
+    """Test a complex string with multiple transformations"""
+    assert url_safe_string("Hello World_Example-String.With@Special#Chars") == "hello-world-example-string.withspecialchars"
 
 
 class MockModel(BaseModel):

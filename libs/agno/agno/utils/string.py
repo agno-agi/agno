@@ -7,6 +7,23 @@ from pydantic import BaseModel, ValidationError
 
 from agno.utils.log import logger
 
+def url_safe_string(input_string):
+    # Replace spaces with dashes
+    safe_string = input_string.replace(" ", "-")
+    
+    # Convert camelCase to kebab-case
+    safe_string = re.sub(r'([a-z0-9])([A-Z])', r'\1-\2', safe_string).lower()
+    
+    # Convert snake_case to kebab-case
+    safe_string = safe_string.replace("_", "-")
+    
+    # Remove special characters, keeping alphanumeric, dashes, and dots
+    safe_string = re.sub(r'[^\w\-.]', '', safe_string)
+    
+    # Ensure no consecutive dashes
+    safe_string = re.sub(r'-+', '-', safe_string)
+    
+    return safe_string
 
 def hash_string_sha256(input_string):
     # Encode the input string to bytes
