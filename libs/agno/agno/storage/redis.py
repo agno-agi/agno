@@ -1,5 +1,6 @@
 import json
 import time
+from dataclasses import asdict
 from typing import List, Literal, Optional
 
 from agno.storage.base import Storage
@@ -169,6 +170,7 @@ class RedisStorage(Storage):
                     if _session:
                         sessions.append(_session)
                 else:
+                    _session: Optional[Session] = None
                     # No filters applied, add all sessions
                     if self.mode == "agent":
                         _session = AgentSession.from_dict(data)
@@ -187,7 +189,7 @@ class RedisStorage(Storage):
     def upsert(self, session: Session) -> Optional[Session]:
         """Insert or update a Session in Redis."""
         try:
-            data = session.__dict__.copy()
+            data = asdict(session)
             data["updated_at"] = int(time.time())
             if "created_at" not in data:
                 data["created_at"] = data["updated_at"]
