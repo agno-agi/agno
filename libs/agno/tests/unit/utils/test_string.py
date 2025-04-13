@@ -42,7 +42,10 @@ def test_url_safe_string_preserve_dots():
 
 def test_url_safe_string_complex():
     """Test a complex string with multiple transformations"""
-    assert url_safe_string("Hello World_Example-String.With@Special#Chars") == "hello-world-example-string.withspecialchars"
+    assert (
+        url_safe_string("Hello World_Example-String.With@Special#Chars")
+        == "hello-world-example-string.withspecialchars"
+    )
 
 
 class MockModel(BaseModel):
