@@ -12,32 +12,41 @@ The team consists of:
 - A code execution agent that can execute code in a secure E2B sandbox
 """
 import asyncio
+from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
 from agno.document.reader.firecrawl_reader import FirecrawlReader
 from agno.embedder.google import GeminiEmbedder
+from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.firecrawl import FireCrawlKnowledgeBase
+from agno.knowledge.url import UrlKnowledge
 from agno.knowledge.website import WebsiteKnowledgeBase
 from agno.models.anthropic import Claude
+from agno.models.openai.chat import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.e2b import E2BTools
 from agno.tools.exa import ExaTools
+from agno.tools.file import FileTools
+from agno.tools.github import GithubTools
 from agno.tools.knowledge import KnowledgeTools
+from agno.tools.python import PythonTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb.lance_db import LanceDb
 from agno.vectordb.search import SearchType
+
+cwd = Path(__file__).parent.resolve()
 
 # Agent that can search the web for information
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
     model=Claude(id="claude-3-5-sonnet-latest"),
-    tools=[ExaTools(cache_results=True)],
+    tools=[DuckDuckGoTools(cache_results=True)],
     instructions=["Always include sources"],
 )
 
@@ -101,36 +110,28 @@ calculator_agent = Agent(
             square_root=True,
         )
     ],
-    show_tool_calls=True,
-    markdown=True,
 )
 
-# FastAPI assistant that can explain how to write FastAPI code
-fastapi_knowledge = WebsiteKnowledgeBase(
-    urls=["https://fastapi.tiangolo.com/"],
-    max_links=20,
-    vector_db=LanceDb(
+agno_assist_knowledge = UrlKnowledge(
+        urls=["https://docs.agno.com/llms-full.txt"],
+        vector_db=LanceDb(
             uri="tmp/lancedb",
-            table_name="fastapi_assist_knowledge",
+            table_name="agno_assist_knowledge",
             search_type=SearchType.hybrid,
-            embedder=GeminiEmbedder(),
+            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),
     )
-fastapi_assist = Agent(
-    name="FastAPI Assist",
-    role="Explain how to write FastAPI code",
-    model=Claude(id="claude-3-5-sonnet-latest"),
-    description="You help answer questions about the FastAPI framework.",
-    instructions="Search your knowledge before answering the question.",
+agno_assist = Agent(
+    name="Agno Assist",
+    role="You help answer questions about the Agno framework.",
+    model=OpenAIChat(id="gpt-4o"),
+    instructions="Search your knowledge before answering the question. Help me to write working code for Agno Agents.",
     tools=[
-        KnowledgeTools(knowledge=fastapi_knowledge, add_instructions=True, add_few_shot=True),
+        KnowledgeTools(knowledge=agno_assist_knowledge, add_instructions=True, add_few_shot=True),
     ],
-    storage=SqliteStorage(table_name="agno_assist_sessions", db_file="tmp/agents.db"),
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
-    markdown=True,
 )
-
 
 code_execution_agent = Agent(
     name="Code Execution Sandbox",
@@ -138,7 +139,6 @@ code_execution_agent = Agent(
     model=Claude(id="claude-3-5-sonnet-latest"),
     tools=[E2BTools()],
     markdown=True,
-    show_tool_calls=True,
     instructions=[
         "You are an expert at writing and validating Python code using a secure E2B sandbox environment.",
         "Your primary purpose is to:",
@@ -149,6 +149,35 @@ code_execution_agent = Agent(
         "",
     ],
 )
+
+github_agent = Agent(
+    name="Github Agent",
+    role="Do analysis on Github repositories",
+    instructions=[
+        "Use your tools to answer questions about the repo: agno-agi/agno",
+        "Do not create any issues or pull requests unless explicitly asked to do so",
+    ],
+    tools=[GithubTools(list_pull_requests=True, 
+                       list_issues=True, 
+                       list_issue_comments=True, 
+                       get_pull_request=True, 
+                       get_issue=True,
+                       get_pull_request_comments=True,
+                       )],
+)
+
+local_python_agent = Agent(
+    name="Local Python Agent",
+    role="Run Python code locally",
+    instructions=[
+        "Use your tools to run Python code locally",
+    ],
+    tools=[FileTools(base_dir=cwd), PythonTools(base_dir=Path(f"{cwd}/python"), 
+                                                list_files=True, 
+                                                run_files=True, 
+                                                uv_pip_install=True)],
+)
+
 
 agent_team = Team(
     name="Multi-Purpose Team",
@@ -162,8 +191,10 @@ agent_team = Team(
         finance_agent,
         writer_agent,
         calculator_agent,
-        fastapi_assist,
+        agno_assist,
         code_execution_agent,
+        github_agent,
+        local_python_agent,
     ],
     instructions=[
         "You are a team of agents that can answer a variety of questions.",
@@ -173,19 +204,29 @@ agent_team = Team(
         "If the user is only being conversational, don't use any tools, just answer directly.",
     ],
     markdown=True,
+    show_tool_calls=True,
     show_members_responses=True,
 )
 
 if __name__ == "__main__":
     # Load the knowledge base (comment out after first run)
-    asyncio.run(fastapi_knowledge.aload())
+    # asyncio.run(agno_assist_knowledge.aload())
     
-    asyncio.run(agent_team.aprint_response("Hi! What are you capable of doing?"))
+    # asyncio.run(agent_team.aprint_response("Hi! What are you capable of doing?"))
     
-    # # FastAPI endpoint
-    # asyncio.run(agent_team.aprint_response("What is the right way to implement a simple FastAPI endpoint with middleware? Create a minimal example for me and test it to ensure it won't immediately crash."))
+    # Python code execution
+    asyncio.run(agent_team.aprint_response(dedent("""What is the right way to implement an Agno Agent that searches Hacker News for good articles? 
+                                           Create a minimal example for me and test it locally to ensure it won't immediately crash.
+                                           Make sure to include the code in a file called `./python/hacker_news_agent.py`.
+                                           You don't have to mock tools, use real tools."""), stream=True))
+    
     
     # # Reddit research
-    # asyncio.run(agent_team.aprint_response("""What should I be investing in right now? 
+    # asyncio.run(agent_team.aprint_response(dedent("""What should I be investing in right now? 
     #                                        Find some popular subreddits and do some reseach of your own. 
-    #                                        Write a detailed report about your findings that could be given to a financial advisor."""))
+    #                                        Write a detailed report about your findings that could be given to a financial advisor."""), stream=True))
+    
+    # Github analysis
+    # asyncio.run(agent_team.aprint_response(dedent("""List open pull requests in the agno-agi/agno repository. 
+    #                                        Find an issue that you think you can resolve and give me the issue number, 
+    #                                        your suggested solution and some code snippets."""), stream=True))
