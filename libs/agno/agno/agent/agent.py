@@ -582,7 +582,7 @@ class Agent:
             self.resolve_run_context()
 
         # 3. Read existing session from storage
-        self.read_from_storage(user_id=user_id, session_id=session_id)
+        self.read_from_storage(session_id=session_id, user_id=user_id)
 
         # 4. Prepare run messages
         run_messages: RunMessages = self.get_run_messages(
@@ -1167,7 +1167,7 @@ class Agent:
             self.resolve_run_context()
 
         # 3. Read existing session from storage
-        self.read_from_storage(user_id=user_id, session_id=session_id)
+        self.read_from_storage(session_id=session_id, user_id=user_id)
 
         # 4. Prepare run messages
         run_messages: RunMessages = self.get_run_messages(
@@ -2493,22 +2493,18 @@ class Agent:
         if self.add_state_in_messages:
             system_message_content = self.format_message_with_state_variables(system_message_content)
 
-        # 3.3.7 Then add the system message from the Model
-        system_message_from_model = self.model.get_system_message_for_model()
-        if system_message_from_model is not None:
-            system_message_content += system_message_from_model
-        # 3.3.8 Then add the expected output
+        # 3.3.7 Then add the expected output
         if self.expected_output is not None:
             system_message_content += f"<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n"
-        # 3.3.9 Then add additional context
+        # 3.3.8 Then add additional context
         if self.additional_context is not None:
             system_message_content += f"{self.additional_context}\n"
-        # 3.3.10 Then add information about the team members
+        # 3.3.9 Then add information about the team members
         if self.has_team and self.add_transfer_instructions:
             system_message_content += (
                 f"<transfer_instructions>\n{self.get_transfer_instructions().strip()}\n</transfer_instructions>\n\n"
             )
-        # 3.3.11 Then add memories to the system prompt
+        # 3.3.10 Then add memories to the system prompt
         if self.memory:
             if isinstance(self.memory, AgentMemory) and self.memory.create_user_memories:
                 if self.memory.memories and len(self.memory.memories) > 0:
@@ -2526,7 +2522,7 @@ class Agent:
                 else:
                     system_message_content += (
                         "You have the capability to retain memories from previous interactions with the user, "
-                        "but have not had any interactions with the current user yet.\n"
+                        "but have not had any interactions with the user yet.\n"
                     )
                 system_message_content += (
                     "You can add new memories using the `update_memory` tool.\n"
@@ -2546,25 +2542,27 @@ class Agent:
                     system_message_content += "\n</memories_from_previous_interactions>\n\n"
                     system_message_content += (
                         "Note: this information is from previous interactions and may be updated in this conversation. "
-                        "You should always prefer information from this conversation over the past memories.\n\n"
+                        "You should always prefer information from this conversation over the past memories.\n"
                     )
                 else:
                     system_message_content += (
                         "You have the capability to retain memories from previous interactions with the user, "
-                        "but have not had any interactions with the current user yet.\n"
+                        "but have not had any interactions with the user yet.\n"
                     )
 
                 if self.enable_agentic_memory:
                     system_message_content += (
-                        "You have access to the `update_user_memory` tool.\n"
-                        "You can use the `update_user_memory` tool to add new memories, update existing memories, delete memories, or clear all memories.\n"
-                        "Memories should include details that could personalize ongoing interactions with the user.\n"
-                        "Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
-                        "Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
-                        "If you use the `update_user_memory` tool, remember to pass on the response to the user.\n\n"
+                        "\n<updating_user_memories>\n"
+                        "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
+                        "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
+                        "- Memories should include details that could personalize ongoing interactions with the user.\n"
+                        "- Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
+                        "- Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
+                        "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
+                        "</updating_user_memories>\n\n"
                     )
 
-            # 3.3.12 Then add a summary of the interaction to the system prompt
+            # 3.3.11 Then add a summary of the interaction to the system prompt
             if isinstance(self.memory, AgentMemory) and self.memory.create_session_summary:
                 if self.memory.summary is not None:
                     system_message_content += "Here is a brief summary of your previous interactions:\n\n"
@@ -2588,6 +2586,11 @@ class Agent:
                         "Note: this information is from previous interactions and may be outdated. "
                         "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
                     )
+
+        # 3.3.12 Finally, add the system message from the Model
+        system_message_from_model = self.model.get_system_message_for_model()
+        if system_message_from_model is not None:
+            system_message_content += system_message_from_model
 
         # Add the JSON output prompt if response_model is provided and structured_outputs is False (only applicable if the model supports structured outputs)
         if self.response_model is not None and not (
@@ -3251,7 +3254,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(user_id=self.user_id, session_id=session_id)  # type: ignore
+        self.read_from_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
         # -*- Rename Agent
         self.name = name
         # -*- Save to storage
@@ -3268,7 +3271,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(user_id=self.user_id, session_id=session_id)  # type: ignore
+        self.read_from_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage
@@ -3324,7 +3327,7 @@ class Agent:
             raise Exception("Session ID is not set")
 
         # -*- Read from storage
-        self.read_from_storage(user_id=self.user_id, session_id=self.session_id)  # type: ignore
+        self.read_from_storage(session_id=self.session_id, user_id=self.user_id)  # type: ignore
         # -*- Generate name for session
         generated_session_name = self.generate_session_name(session_id=self.session_id)
         log_debug(f"Generated Session Name: {generated_session_name}")
@@ -3341,6 +3344,29 @@ class Agent:
             return
         # -*- Delete session
         self.storage.delete_session(session_id=session_id)
+
+    def get_messages_for_session(
+        self, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> List[Message]:
+        """Get messages for a session"""
+        _session_id = session_id or self.session_id
+        _user_id = user_id or self.user_id
+        if _session_id is None:
+            log_warning("Session ID is not set, cannot get messages for session")
+            return []
+
+        if self.memory is None:
+            self.read_from_storage(session_id=_session_id, user_id=_user_id)
+
+        if self.memory is None:
+            return []
+
+        if isinstance(self.memory, AgentMemory):
+            return self.memory.messages
+        elif isinstance(self.memory, Memory):
+            return self.memory.get_messages_for_session(session_id=_session_id)
+        else:
+            return []
 
     ###########################################################################
     # Handle images, videos and audio
@@ -3830,8 +3856,7 @@ class Agent:
 
     def get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Callable:
         def update_user_memory(task: str) -> str:
-            """
-            Use this function to submit a task to modify the Agent's memory.
+            """Use this function to submit a task to modify the Agent's memory.
             Describe the task in detail and be specific.
             The task can include adding a memory, updating a memory, deleting a memory, or clearing all memories.
 
@@ -3846,8 +3871,7 @@ class Agent:
             return response
 
         async def aupdate_user_memory(task: str) -> str:
-            """
-            Use this function to update the Agent's memory of a user.
+            """Use this function to update the Agent's memory of a user.
             Describe the task in detail and be specific.
             The task can include adding a memory, updating a memory, deleting a memory, or clearing all memories.
 

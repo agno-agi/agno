@@ -57,54 +57,62 @@ class MemoryManager:
     def get_system_message(
         self,
         existing_memories: Optional[List[Dict[str, Any]]] = None,
-        messages: Optional[List[Message]] = None,
         enable_delete_memory: bool = True,
         enable_clear_memory: bool = True,
     ) -> Message:
         # -*- Return a system message for the memory manager
         system_prompt_lines = [
-            "Your task is to add, update, or delete memories based on the user's task. "
-            "You can also decide that no new memories or other changes are needed. "
-            "If you do create new memories, create one or more memories that captures the key information provided by the user, as if you were storing it for future reference. "
-            "Memories should be a brief, third-person statement that encapsulates the most important aspect of the user's input, without adding any extraneous information. "
-            "Don't make a single memory too long, but do create multiple memories if needed to capture all the information. "
-            "When updating a memory, append the existing memory with new information rather than completely overwriting it. "
-            "If there is no new information, do not update the memory. "
-            "Memories should include details that could personalize ongoing interactions with the user, such as:"
-            "  - Personal facts: name, age, occupation, location, interests, preferences, etc."
-            "  - Significant life events or experiences shared by the user"
-            "  - Important context about the user's current situation, challenges or goals"
-            "  - What the user likes or dislikes, their opinions, beliefs, values, etc."
+            "You are a MemoryManager that is responsible for manging key information about the user. "
+            "You will be provided with a criteria for memories to capture in the <memories_to_capture> section and a list of existing memories in the <existing_memories> section.",
+            "",
+            "## When to add or update memories",
+            "- Your first task is to decide if a memory needs to be added, updated, or deleted based on the user's message OR if no changes are needed.",
+            "- If the user's message meets the criteria in the <memories_to_capture> section and that information is not already captured in the <existing_memories> section, you should capture it as a memory.",
+            "- If the users messages does not meet the criteria in the <memories_to_capture> section, no memory updates are needed.",
+            "- If the existing memories in the <existing_memories> section capture all relevant information, no memory updates are needed.",
+            "",
+            "## How to add or update memories",
+            "- If you decide to add a new memory, create memories that captures key information, as if you were storing it for future reference.",
+            "- Memories should be a brief, third-person statements that encapsulate the most important aspect of the user's input, without adding any extraneous information.",
+            "  - Example: If the user's message is 'I'm going to the gym', a memory could be 'John Doe goes to the gym regularly'.",
+            "  - Example: If the user's message is 'My name is John Doe', a memory could be 'User's name is John Doe'.",
+            "- Don't make a single memory too long or complex, create multiple memories if needed to capture all the information.",
+            "- When updating a memory, append the existing memory with new information rather than completely overwriting it.",
+            "- When a user's preferences change, update the relevant memories to reflect the new preferences but also capture what the user's preferences used to be and what has changed.",
+            "",
+            "## Criteria for creating memories",
+            "Use the following criteria to determine if a user's message should be captured as a memory.",
+            "",
+            "<memories_to_capture>",
+            "Memories should include details that could personalize ongoing interactions with the user, such as:",
+            "  - Personal facts: name, age, occupation, location, interests, preferences, etc.",
+            "  - Significant life events or experiences shared by the user",
+            "  - Important context about the user's current situation, challenges or goals",
+            "  - What the user likes or dislikes, their opinions, beliefs, values, etc.",
             "  - Any other details that provide valuable insights into the user's personality, perspective or needs",
-            "You will also be provided with a list of existing memories. You may:",
-            "  1. Decide to make no changes to the existing memories.",
-            "  2. Decide to add a new memory using the `add_memory` tool.",
-            "  3. Decide to update an existing memory using the `update_memory` tool.",
+            "</memories_to_capture>",
+            "",
+            "## Updating memories",
+            "You will also be provided with a list of existing memories in the <existing_memories> section. You can:",
+            "  1. Decide to make no changes.",
+            "  2. Decide to add a new memory, using the `add_memory` tool.",
+            "  3. Decide to update an existing memory, using the `update_memory` tool.",
         ]
         if enable_delete_memory:
-            system_prompt_lines.append("  4. Decide to delete an existing memory using the `delete_memory` tool.")
+            system_prompt_lines.append("  4. Decide to delete an existing memory, using the `delete_memory` tool.")
         if enable_clear_memory:
-            system_prompt_lines.append("  5. Decide to clear all memories using the `clear_memory` tool.")
+            system_prompt_lines.append("  5. Decide to clear all memories, using the `clear_memory` tool.")
         system_prompt_lines += [
-            "You can call multiple of these tools in a single response if needed. ",
+            "You can call multiple tools in a single response if needed. ",
             "Only add or update memories if it is necessary to capture key information provided by the user.",
         ]
 
-        if messages:
-            system_prompt_lines.append("\n<user_messages>")
-            user_messages = []
-            for message in messages:
-                if message.role == "user":
-                    user_messages.append(message.get_content_string())
-            system_prompt_lines.append("\n".join(user_messages))
-            system_prompt_lines.append("</user_messages>")
-
         if existing_memories and len(existing_memories) > 0:
-            system_prompt_lines.append("<existing_memories>")
+            system_prompt_lines.append("\n<existing_memories>")
             for existing_memory in existing_memories:
                 system_prompt_lines.append(f"ID: {existing_memory['memory_id']}")
                 system_prompt_lines.append(f"Memory: {existing_memory['memory']}")
-                system_prompt_lines.append("\n")
+                system_prompt_lines.append("")
             system_prompt_lines.append("</existing_memories>")
 
         return Message(role="system", content="\n".join(system_prompt_lines))
@@ -115,6 +123,8 @@ class MemoryManager:
         existing_memories: List[Dict[str, Any]],
         user_id: str,
         db: MemoryDb,
+        delete_memories: bool = True,
+        clear_memories: bool = True,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")
@@ -133,16 +143,19 @@ class MemoryManager:
         # Update the Model (set defaults, add logit etc.)
         self.add_tools_to_model(
             model_copy,
-            self._get_db_tools(user_id, db, input_string, enable_delete_memory=False, enable_clear_memory=False),
+            self._get_db_tools(
+                user_id, db, input_string, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+            ),
         )
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
             self.get_system_message(
-                existing_memories, messages=messages, enable_delete_memory=False, enable_clear_memory=False
+                existing_memories=existing_memories,
+                enable_delete_memory=delete_memories,
+                enable_clear_memory=clear_memories,
             ),
-            # For models that require a non-system message
-            Message(role="user", content="Create or update memories based on the user's messages."),
+            *messages,
         ]
 
         # Generate a response from the Model (includes running function calls)
@@ -160,6 +173,8 @@ class MemoryManager:
         existing_memories: List[Dict[str, Any]],
         user_id: str,
         db: MemoryDb,
+        delete_memories: bool = True,
+        clear_memories: bool = True,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")
@@ -178,14 +193,19 @@ class MemoryManager:
         # Update the Model (set defaults, add logit etc.)
         self.add_tools_to_model(
             model_copy,
-            self._get_db_tools(user_id, db, input_string, enable_delete_memory=False, enable_clear_memory=False),
+            self._get_db_tools(
+                user_id, db, input_string, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+            ),
         )
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
-            self.get_system_message(existing_memories, messages=messages),
-            # For models that require a non-system message
-            Message(role="user", content="Create or update memories based on the user's messages."),
+            self.get_system_message(
+                existing_memories=existing_memories,
+                enable_delete_memory=delete_memories,
+                enable_clear_memory=clear_memories,
+            ),
+            *messages,
         ]
 
         # Generate a response from the Model (includes running function calls)
@@ -203,6 +223,8 @@ class MemoryManager:
         existing_memories: List[Dict[str, Any]],
         user_id: str,
         db: MemoryDb,
+        delete_memories: bool = True,
+        clear_memories: bool = True,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")
@@ -212,11 +234,18 @@ class MemoryManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.add_tools_to_model(model_copy, self._get_db_tools(user_id, db, task))
+        self.add_tools_to_model(
+            model_copy,
+            self._get_db_tools(
+                user_id, db, task, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+            ),
+        )
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
-            self.get_system_message(existing_memories),
+            self.get_system_message(
+                existing_memories, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+            ),
             # For models that require a non-system message
             Message(role="user", content=task),
         ]
@@ -236,6 +265,8 @@ class MemoryManager:
         existing_memories: List[Dict[str, Any]],
         user_id: str,
         db: MemoryDb,
+        delete_memories: bool = True,
+        clear_memories: bool = True,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")
@@ -245,11 +276,18 @@ class MemoryManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.add_tools_to_model(model_copy, self._get_db_tools(user_id, db, task))
+        self.add_tools_to_model(
+            model_copy,
+            self._get_db_tools(
+                user_id, db, task, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+            ),
+        )
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
-            self.get_system_message(existing_memories),
+            self.get_system_message(
+                existing_memories, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+            ),
             # For models that require a non-system message
             Message(role="user", content=task),
         ]
