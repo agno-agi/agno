@@ -2448,7 +2448,7 @@ class Agent:
         system_message_content: str = ""
         # 3.3.1 First add the Agent description if provided
         if self.description is not None:
-            system_message_content += f"{self.description}\n\n"
+            system_message_content += f"{self.description}\n"
         # 3.3.2 Then add the Agent goal if provided
         if self.goal is not None:
             system_message_content += f"\n<your_goal>\n{self.goal}\n</your_goal>\n\n"
