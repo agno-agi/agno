@@ -21,6 +21,8 @@ DEFAULT_SPARSE_MODEL = "Qdrant/bm25"
 
 
 class Qdrant(VectorDb):
+    """Vector DB implementation powered by Qdrant - https://qdrant.tech/"""
+
     def __init__(
         self,
         collection: str,
@@ -44,6 +46,29 @@ class Qdrant(VectorDb):
         fastembed_kwargs: Optional[dict] = None,
         **kwargs,
     ):
+        """
+        Args:
+            collection (str): Name of the Qdrant collection.
+            embedder (Optional[Embedder]): Optional embedder for automatic vector generation.
+            distance (Distance): Distance metric to use (default: cosine).
+            location (Optional[str]): `":memory:"` for in-memory, or str used as `url`. If `None`, use default host/port.
+            url (Optional[str]): Full URL (scheme, host, port, prefix). Overrides host/port if provided.
+            port (Optional[int]): REST API port (default: 6333).
+            grpc_port (int): gRPC interface port (default: 6334).
+            prefer_grpc (bool): Prefer gRPC over REST if True.
+            https (Optional[bool]): Use HTTPS if True.
+            api_key (Optional[str]): API key for Qdrant Cloud authentication.
+            prefix (Optional[str]): URL path prefix (e.g., "service/v1").
+            timeout (Optional[float]): Request timeout (REST: default 5s, gRPC: unlimited).
+            host (Optional[str]): Qdrant host (default: "localhost" if not specified).
+            path (Optional[str]): Path for local persistence (QdrantLocal).
+            reranker (Optional[Reranker]): Optional reranker for result refinement.
+            use_hybrid_search (bool): Enable hybrid search if `True`.
+            sparse_vector_name (str): Sparse vector name.
+            hybrid_fusion_strategy (models.Fusion): Strategy for hybrid fusion.
+            fastembed_kwargs (Optional[dict]): Keyword args for `fastembed.SparseTextEmbedding.__init__()`.
+            **kwargs: Keyword args for `qdrant_client.QdrantClient.__init__()`.
+        """
         # Collection attributes
         self.collection: str = collection
 
