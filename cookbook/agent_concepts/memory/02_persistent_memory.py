@@ -10,6 +10,7 @@ from agno.memory.v2.db.schema import MemoryRow
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.memory.v2.schema import UserMemory
+from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
@@ -27,12 +28,13 @@ memory.add_user_memory(
 )
 
 # Run this the 2nd time
-# memory.add_user_memory(
-#     memory=UserMemory(memory="The user works at a software company called Agno", topics=["name"]),
-#     user_id=john_doe_id,
-# )
+memory.add_user_memory(
+    memory=UserMemory(
+        memory="The user works at a software company called Agno", topics=["work"]
+    ),
+    user_id=john_doe_id,
+)
 
 memories: List[MemoryRow] = memory_db.read_memories()
-print("All the DB memories:")
-for i, m in enumerate(memories):
-    print(f"{i}: {m.memory['memory']} ({m.last_updated})")
+print("All memories:")
+pprint(memories)

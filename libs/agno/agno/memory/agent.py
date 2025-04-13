@@ -65,6 +65,8 @@ class AgentMemory(BaseModel):
     # True when memory is being updated
     updating_memory: bool = False
 
+    version: int = 1
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def to_dict(self) -> Dict[str, Any]:

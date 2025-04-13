@@ -71,17 +71,18 @@ class SessionSummarizer:
         Analyze the following conversation between a user and an assistant, and extract the following details:
           - Summary (str): Provide a concise summary of the session, focusing on important information that would be helpful for future interactions.
           - Topics (Optional[List[str]]): List the topics discussed in the session.
-        Please ignore any frivolous information.
-        Conversation:
+        Keep the summary concise and to the point. Only include relevant information.
+
+        <conversation>
         """)
         conversation_messages = []
         for message in conversation:
             if message.role == "user":
                 conversation_messages.append(f"User: {message.content}")
             elif message.role in ["assistant", "model"]:
-                conversation_messages.append(f"Assistant: {message.content}")
-
+                conversation_messages.append(f"Assistant: {message.content}\n")
         system_prompt += "\n".join(conversation_messages)
+        system_prompt += "</conversation>"
 
         if model.response_format == {"type": "json_object"}:
             system_prompt += "\n" + get_json_output_prompt(SessionSummaryResponse)  # type: ignore
