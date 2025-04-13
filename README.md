@@ -17,7 +17,7 @@
 
 [Agno](https://docs.agno.com) is a lightweight library for building Agents with memory, knowledge, tools and reasoning.
 
-Developers use Agno to build Reasoning Agents, Multimodal Agents, Teams of Agents and Agentic Workflows. Agno provides a beautiful UI to chat with Agents and tools to monitor and evaluate their performance.
+Developers use Agno to build Reasoning Agents, Multimodal Agents, Teams of Agents and Agentic Workflows. Agno also provides a beautiful UI to chat with Agents and tools to monitor and evaluate their performance.
 
 Here's an Agent that researches and writes a report on a stock, reasoning through each step:
 
@@ -80,10 +80,10 @@ pip install -U agno
 
 Agents also have **memory**, **knowledge**, **storage** and the ability to **reason**:
 
+- **reasoning:** enables Agents to "think" before responding and "analyze" the results of their actions (i.e. tool calls), this improves the Agents' ability to solve problems that require sequential tool calls.
 - **knowledge:** is domain-specific information the Agent can **_search on demand_** to make better decisions and provide accurate responses. Knowledge is stored in a vector database and this **_search on demand_** pattern is known as Agentic RAG.
-- **storage:** is used by Agents to save session history and state in a database. Model APIs are stateless and storage makes Agents stateful, enabling long-term multi-turn conversations.
+- **storage:** is used by Agents to save session history and state in a database. Model APIs are stateless and storage enables us to continue conversations from where they left off. This makes Agents stateful, enabling multi-turn conversations.
 - **memory:** gives Agents the ability to store and recall information from previous interactions, allowing them to learn user preferences and personalize their responses.
-- **reasoning:** enables Agents to "think" before responding and "analyze" the results of their actions (i.e. tool calls), this greatly improves the Agents ability to solve complex problems.
 
 > Let's build a few Agents to see how they work.
 
