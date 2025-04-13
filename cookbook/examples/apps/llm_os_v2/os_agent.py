@@ -298,10 +298,10 @@ def get_llm_os(
             "To generate an investment report, delegate the task to the `Investment_Agent`."
         )
 
-    team_storage = SqliteStorage(  
+    team_storage = SqliteStorage(
         db_file=str(SQLITE_DB_PATH),
-        table_name="team_sessions",  
-        mode="agent", 
+        table_name="team_sessions",
+        mode="agent",
     )
 
     try:
@@ -324,7 +324,7 @@ def get_llm_os(
         members=members,
         tools=leader_tools,
         instructions=leader_instructions,
-        storage=team_storage,  
+        storage=team_storage,
         knowledge=knowledge,
         enable_team_history=True,
         num_of_interactions_from_history=5,
@@ -332,9 +332,9 @@ def get_llm_os(
         show_members_responses=True,
         markdown=True,
         debug_mode=debug_mode,
-        memory=memory,  
-        enable_agentic_memory=True,  
-        enable_session_summaries=True,  
+        memory=memory,
+        enable_agentic_memory=True,
+        enable_session_summaries=True,
     )
 
     # Log the names of the members being added to the team

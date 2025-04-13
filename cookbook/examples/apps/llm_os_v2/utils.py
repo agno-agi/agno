@@ -477,4 +477,4 @@ def rename_session_widget(team: Team) -> None:
         else:
             if st.button("✎", key="edit_session_name", help="Rename chat"):
                 st.session_state.session_edit_mode = True
-                st.rerun()  
+                st.rerun()
