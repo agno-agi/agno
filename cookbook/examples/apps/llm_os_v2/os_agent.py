@@ -4,9 +4,15 @@ from pathlib import Path
 from textwrap import dedent
 from typing import List, Optional
 
+import streamlit as st
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge import AgentKnowledge
+from agno.memory.v2 import Memory
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.models.anthropic import Claude
+from agno.models.google import Gemini
+from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
@@ -22,27 +28,16 @@ from agno.tools.yfinance import YFinanceTools
 from agno.utils.log import logger
 from agno.vectordb.qdrant import Qdrant
 from dotenv import load_dotenv
-import streamlit as st
-from agno.models.anthropic import Claude
-from agno.models.google import Gemini
-from agno.models.groq import Groq
-from agno.memory.v2 import Memory
-from agno.memory.v2.db.sqlite import SqliteMemoryDb
 
-load_dotenv()
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai" # Removed DB URL
 cwd = Path(__file__).parent.resolve()
-tmp_dir = cwd.joinpath("tmp") # Define tmp directory path
-# Ensure scratch and tmp directories exist (tmp might be used by PythonTools)
+tmp_dir = cwd.joinpath("tmp")
 tmp_dir.mkdir(exist_ok=True, parents=True)
 
 # Define paths for SQLite
-SQLITE_DB_PATH = cwd.joinpath("llm_os_sessions.db")
-SQLITE_MEMORY_DB_PATH = cwd.joinpath("tmp/llm_os_memory.db") # Path for memory DB
+SQLITE_DB_PATH = cwd.joinpath("tmp/llm_os_sessions.db")
+SQLITE_MEMORY_DB_PATH = cwd.joinpath("tmp/llm_os_memory.db")
 QDRANT_COLLECTION = "llm_os_knowledge"
+
 
 def get_llm_os(
     model_id: str = "openai:gpt-4o",
@@ -50,16 +45,15 @@ def get_llm_os(
     ddg_search: bool = False,
     file_tools: bool = False,
     shell_tools: bool = False,
-    data_analyst: bool = False,
-    python_agent_enable: bool = False,
+    data_analyst: bool = True,
+    python_agent_enable: bool = True,
     research_agent_enable: bool = False,
-    investment_agent_enable: bool = False,
+    investment_agent_enable: bool = True,
     # Pass user_id and session_id again
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     debug_mode: bool = True,
 ) -> Team:
-    # Use provided session_id or generate a new one
     final_session_id = session_id if session_id is not None else str(uuid.uuid4())
     logger.info(f"-*- Creating/Loading {model_id} LLM OS Team -*-")
     logger.info(f"Session: {final_session_id} User: {user_id}")
@@ -87,9 +81,8 @@ def get_llm_os(
     ]
     members: List[Agent] = []
 
-    # --- Dynamically select the LLM based on model_id prefix ---
     llm_instance = None
-    provider_prefix = "openai:" # Default
+    provider_prefix = "openai:"  # Default
     actual_model_id = model_id
 
     if ":" in model_id:
@@ -97,12 +90,15 @@ def get_llm_os(
         provider_prefix = parts[0] + ":"
         actual_model_id = parts[1]
     else:
-        # Assume openai if no prefix (or handle as error)
-        logger.warning(f"No provider prefix found in model_id '{model_id}'. Assuming 'openai:'.")
+        logger.warning(
+            f"No provider prefix found in model_id '{model_id}'. Assuming 'openai:'."
+        )
         provider_prefix = "openai:"
         actual_model_id = model_id
 
-    logger.info(f"Selected LLM Provider: {provider_prefix}, Model ID: {actual_model_id}")
+    logger.info(
+        f"Selected LLM Provider: {provider_prefix}, Model ID: {actual_model_id}"
+    )
 
     if provider_prefix == "openai:":
         llm_instance = OpenAIChat(id=actual_model_id)
@@ -115,26 +111,37 @@ def get_llm_os(
     else:
         logger.error(f"Unsupported LLM provider prefix in model_id: {provider_prefix}")
         st.error(f"Unsupported LLM provider: {provider_prefix}")
-        return None # Cannot proceed
+        return None  # Cannot proceed
 
     if llm_instance is None:
         logger.error(f"LLM instance could not be created for model_id: {model_id}")
         st.error(f"Failed to create LLM instance for {model_id}")
         return None
 
+    memory_db = SqliteMemoryDb(table_name="memory", db_file=SQLITE_MEMORY_DB_PATH)
+    memory = Memory(model="gemini-2.0-flash-exp", db=memory_db)
+
     # Add leader tools
     if calculator:
         leader_tools.append(CalculatorTools(enable_all=True))
-        leader_instructions.append("You have access to Calculator tools for basic arithmetic.")
+        leader_instructions.append(
+            "You have access to Calculator tools for basic arithmetic."
+        )
     if ddg_search:
         leader_tools.append(DuckDuckGoTools(fixed_max_results=3))
-        leader_instructions.append("You can use `duckduckgo_search` for general web searches and `duckduckgo_news` for recent news.")
+        leader_instructions.append(
+            "You can use `duckduckgo_search` for general web searches and `duckduckgo_news` for recent news."
+        )
     if shell_tools:
         leader_tools.append(ShellTools())
-        leader_instructions.append("You can use the `run_shell_command` tool to run shell commands.")
+        leader_instructions.append(
+            "You can use the `run_shell_command` tool to run shell commands."
+        )
     if file_tools:
         leader_tools.append(FileTools(base_dir=cwd))
-        leader_instructions.append("You can use the `read_file`, `save_file`, and `list_files` tools.")
+        leader_instructions.append(
+            "You can use the `read_file`, `save_file`, and `list_files` tools."
+        )
 
     # Create team members
     if data_analyst:
@@ -143,23 +150,43 @@ def get_llm_os(
             model=llm_instance,
             tools=[DuckDbTools()],
             show_tool_calls=True,
-            instructions=["You are a Data Analyst. Your goal is to answer questions about movie data.", "Use the provided DuckDbTools to query the data.", "The data is located at: https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv"],
+            instructions=[
+                "You are a Data Analyst. Your goal is to answer questions about movie data.",
+                "Use the provided DuckDbTools to query the data.",
+                "The data is located at: https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
+            ],
             debug_mode=debug_mode,
+            memory=memory,  # Add memory to member
         )
         members.append(data_analyst_agent)
-        leader_instructions.append("To answer questions about movies, delegate the task to the `Data_Analyst`.")
+        leader_instructions.append(
+            "To answer questions about movies, delegate the task to the `Data_Analyst`."
+        )
 
     if python_agent_enable:
         python_agent: Agent = Agent(
             name="Python_Agent",
             model=llm_instance,
-            tools=[PythonTools(base_dir=Path("tmp/python"))],
+            tools=[PythonTools(base_dir=Path("tmp/python")), FileTools(base_dir=cwd)],
             show_tool_calls=True,
-            instructions=["You are a Python code execution specialist.","Write and run Python code using the provided tool to fulfill the user's request."],
+            instructions=[
+                "You are a Python code execution specialist.",
+                "Write and run Python code using the `save_to_file_and_run` tool to fulfill the user's request.",
+                "IMPORTANT: If the user asks you to read or process a file that you did not create yourself (e.g., a file created by the coordinator), you MUST use the `read_file` tool FIRST to get its content.",
+                "The `read_file` tool operates from the application's main directory. Use the filename provided by the coordinator directly with `read_file`.",
+                "Once you have the file content from `read_file`, incorporate that content into the Python script you write for `save_to_file_and_run`.",
+                "Do NOT attempt to open files directly using Python's `open()` function unless it's a file you are creating within the script itself.",
+            ],
             debug_mode=debug_mode,
+            memory=memory,  # Add memory to member
         )
         members.append(python_agent)
-        leader_instructions.append("To write and run Python code, delegate the task to the `Python_Agent`.")
+        leader_instructions.append(
+            "To write and run Python code, delegate the task to the `Python_Agent`."
+        )
+        leader_instructions.append(
+            "When delegating a task involving reading a file to the Python_Agent, ensure you provide the correct filename created by your own `save_file` tool."
+        )
 
     if research_agent_enable:
         research_agent = Agent(
@@ -202,8 +229,12 @@ def get_llm_os(
             tools=[ExaTools(num_results=3, text_length_limit=1000)],
             markdown=True,
             debug_mode=debug_mode,
+            memory=memory,  # Add memory to member
         )
         members.append(research_agent)
+        leader_instructions.append(
+            "To generate a research report, delegate the task to the `Research_Agent`."
+        )
 
     if investment_agent_enable:
         investment_agent = Agent(
@@ -257,29 +288,22 @@ def get_llm_os(
             </report_format>
             """
             ),
-            tools=[
-                YFinanceTools(
-                    stock_price=True,
-                    company_info=True,
-                    analyst_recommendations=True,
-                    company_news=True,
-                )
-            ],
+            tools=[YFinanceTools, DuckDuckGoTools(fixed_max_results=5)],
             markdown=True,
             debug_mode=debug_mode,
-            add_datetime_to_instructions=True,
+            memory=memory,  # Add memory to member
         )
         members.append(investment_agent)
+        leader_instructions.append(
+            "To generate an investment report, delegate the task to the `Investment_Agent`."
+        )
 
-    # --- Storage and Knowledge Base setup ---
-    logger.debug(f"Initializing SQLite storage at: {SQLITE_DB_PATH}")
-    agent_storage = SqliteStorage(
+    team_storage = SqliteStorage(  
         db_file=str(SQLITE_DB_PATH),
-        table_name="llm_os_team_sessions",
-        mode="agent"
+        table_name="team_sessions",  
+        mode="agent", 
     )
 
-    logger.debug(f"Initializing In-Memory Qdrant for collection: {QDRANT_COLLECTION}")
     try:
         vector_db = Qdrant(location=":memory:", collection=QDRANT_COLLECTION)
         vector_db.create()
@@ -291,13 +315,6 @@ def get_llm_os(
 
     knowledge = AgentKnowledge(vector_db=vector_db, embedder=OpenAIEmbedder())
 
-    # Initialize Memory V2 with Sqlite backend
-    logger.debug(f"Initializing Memory V2 with SQLite backend at: {SQLITE_MEMORY_DB_PATH}")
-    SQLITE_MEMORY_DB_PATH.parent.mkdir(parents=True, exist_ok=True) # Ensure tmp directory exists
-    memory_db = SqliteMemoryDb(table_name="llm_os_memory", db_file=str(SQLITE_MEMORY_DB_PATH))
-    team_memory = Memory(db=memory_db)
-
-    # --- Create the Team instance ---
     llm_os_team = Team(
         name="LLM_OS_Team",
         team_id=final_session_id,
@@ -307,15 +324,17 @@ def get_llm_os(
         members=members,
         tools=leader_tools,
         instructions=leader_instructions,
-        storage=agent_storage,
+        storage=team_storage,  
         knowledge=knowledge,
-        memory=team_memory,
         enable_team_history=True,
         num_of_interactions_from_history=5,
         show_tool_calls=True,
         show_members_responses=True,
         markdown=True,
         debug_mode=debug_mode,
+        memory=memory,  
+        enable_agentic_memory=True,  
+        enable_session_summaries=True,  
     )
 
     # Log the names of the members being added to the team

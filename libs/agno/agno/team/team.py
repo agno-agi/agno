@@ -49,6 +49,7 @@ from agno.utils.log import (
     log_exception,
     log_info,
     log_warning,
+    logger,
     set_log_level_to_debug,
     set_log_level_to_info,
     use_agent_logger,
@@ -1040,6 +1041,9 @@ class Team:
                         run_response.tools = tool_calls_list
 
                     if stream_intermediate_steps:
+                        logger.info(
+                            f"TEAM.PY line 1043: Yielding toolcallstarted. Response Tools: {run_response.tools}"
+                        )
                         yield self._create_run_response(
                             content=model_response_chunk.content,
                             event=RunEvent.tool_call_completed,
@@ -1120,6 +1124,7 @@ class Team:
         self._log_team_run(session_id=session_id, user_id=user_id)
 
         if stream_intermediate_steps:
+            logger.info(f"TEAM.PY line 1124: Yielding toolcallcompleted. Response Tools: {run_response.tools}")
             yield self._create_run_response(
                 from_run_response=run_response,
                 event=RunEvent.run_completed,
