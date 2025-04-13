@@ -49,7 +49,6 @@ from agno.utils.log import (
     log_exception,
     log_info,
     log_warning,
-    logger,
     set_log_level_to_debug,
     set_log_level_to_info,
     use_agent_logger,
@@ -64,7 +63,7 @@ from agno.utils.response import (
     update_run_response_with_reasoning,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model_str
+from agno.utils.string import parse_response_model_str, url_safe_string
 from agno.utils.timer import Timer
 
 
@@ -419,8 +418,8 @@ class Team:
         member.team_session_id = session_id
         member.team_id = self.team_id
 
-        if member.name is None and member.role is None:
-            log_warning("Team member name and role is undefined.")
+        if member.name is None:
+            log_warning("Team member name is undefined.")
 
     def _initialize_team(self, session_id: str) -> None:
         self._set_storage_mode()
@@ -1041,9 +1040,6 @@ class Team:
                         run_response.tools = tool_calls_list
 
                     if stream_intermediate_steps:
-                        logger.info(
-                            f"TEAM.PY line 1043: Yielding toolcallstarted. Response Tools: {run_response.tools}"
-                        )
                         yield self._create_run_response(
                             content=model_response_chunk.content,
                             event=RunEvent.tool_call_completed,
@@ -1124,7 +1120,6 @@ class Team:
         self._log_team_run(session_id=session_id, user_id=user_id)
 
         if stream_intermediate_steps:
-            logger.info(f"TEAM.PY line 1124: Yielding toolcallcompleted. Response Tools: {run_response.tools}")
             yield self._create_run_response(
                 from_run_response=run_response,
                 event=RunEvent.run_completed,
@@ -4147,9 +4142,10 @@ class Team:
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
         for idx, member in enumerate(self.members):
-            url_safe_member_id = (
-                member.name.lower().replace(" ", "-").replace("_", "-") if member.name is not None else None
-            )
+            if member.name is not None:
+                url_safe_member_id = url_safe_string(member.name)
+            else:
+                url_safe_member_id = None
 
             if isinstance(member, Team):
                 system_message_content += f"{indent * ' '} - Team: {member.name}\n"
@@ -5379,7 +5375,7 @@ class Team:
         # First check direct members
         for i, member in enumerate(self.members):
             if member.name is not None:
-                url_safe_member_id = member.name.lower().replace(" ", "-").replace("_", "-")
+                url_safe_member_id = url_safe_string(member.name)
                 if url_safe_member_id == member_id:
                     return (i, member)
 
