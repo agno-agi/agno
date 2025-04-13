@@ -136,7 +136,7 @@ agno_assist = Agent(
 code_execution_agent = Agent(
     name="Code Execution Sandbox",
     agent_id="e2b-sandbox",
-    model=Claude(id="claude-3-5-sonnet-latest"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[E2BTools()],
     markdown=True,
     instructions=[
@@ -153,6 +153,7 @@ code_execution_agent = Agent(
 github_agent = Agent(
     name="Github Agent",
     role="Do analysis on Github repositories",
+    model=OpenAIChat(id="gpt-4o"),
     instructions=[
         "Use your tools to answer questions about the repo: agno-agi/agno",
         "Do not create any issues or pull requests unless explicitly asked to do so",
@@ -169,10 +170,11 @@ github_agent = Agent(
 local_python_agent = Agent(
     name="Local Python Agent",
     role="Run Python code locally",
+    model=OpenAIChat(id="gpt-4o"),
     instructions=[
         "Use your tools to run Python code locally",
     ],
-    tools=[FileTools(base_dir=cwd), PythonTools(base_dir=Path(f"{cwd}/python"), 
+    tools=[FileTools(base_dir=cwd), PythonTools(base_dir=Path(cwd), 
                                                 list_files=True, 
                                                 run_files=True, 
                                                 uv_pip_install=True)],
@@ -206,6 +208,8 @@ agent_team = Team(
     markdown=True,
     show_tool_calls=True,
     show_members_responses=True,
+    enable_agentic_context=True,
+    share_member_interactions=True,
 )
 
 if __name__ == "__main__":
@@ -215,10 +219,10 @@ if __name__ == "__main__":
     # asyncio.run(agent_team.aprint_response("Hi! What are you capable of doing?"))
     
     # Python code execution
-    asyncio.run(agent_team.aprint_response(dedent("""What is the right way to implement an Agno Agent that searches Hacker News for good articles? 
-                                           Create a minimal example for me and test it locally to ensure it won't immediately crash.
-                                           Make sure to include the code in a file called `./python/hacker_news_agent.py`.
-                                           You don't have to mock tools, use real tools."""), stream=True))
+    # asyncio.run(agent_team.aprint_response(dedent("""What is the right way to implement an Agno Agent that searches Hacker News for good articles? 
+    #                                        Create a minimal example for me and test it locally to ensure it won't immediately crash.
+    #                                        Make save the created code in a file called `./python/hacker_news_agent.py`.
+    #                                        Don't mock anything. Use the real information from the Agno documentation."""), stream=True))
     
     
     # # Reddit research
@@ -227,6 +231,6 @@ if __name__ == "__main__":
     #                                        Write a detailed report about your findings that could be given to a financial advisor."""), stream=True))
     
     # Github analysis
-    # asyncio.run(agent_team.aprint_response(dedent("""List open pull requests in the agno-agi/agno repository. 
-    #                                        Find an issue that you think you can resolve and give me the issue number, 
-    #                                        your suggested solution and some code snippets."""), stream=True))
+    asyncio.run(agent_team.aprint_response(dedent("""List open pull requests in the agno-agi/agno repository. 
+                                           Find an issue that you think you can resolve and give me the issue number, 
+                                           your suggested solution and some code snippets."""), stream=True))
