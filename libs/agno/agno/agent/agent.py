@@ -4699,7 +4699,13 @@ class Agent:
         elif tool_name.lower() == "think" and "thought" in tool_args:
             thought = tool_args["thought"]
             formatted_content = f"## Thinking\n{thought}\n\n"
+            self._add_reasoning_step_to_extra_data(ReasoningStep(
+                title="Thinking",
+                reasoning=thought,
+                confidence=None,
+            ))
             self._append_to_reasoning_content(formatted_content)
+
 
     def _append_to_reasoning_content(self, content: str) -> None:
         """Helper to append content to the reasoning_content field."""
