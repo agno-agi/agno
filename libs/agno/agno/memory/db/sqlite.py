@@ -189,5 +189,49 @@ class SqliteMemoryDb(MemoryDb):
         return True
 
     def __del__(self):
+
+    def _safe_eval(self, value):
+        """
+        Safely evaluate a value without using eval().
+        This method handles common data types without executing arbitrary code.
+        """
+        if value is None:
+            return None
+        
+        # Handle string representations of basic types
+        value_str = str(value).strip()
+        
+        # Handle None/null
+        if value_str.lower() in ('none', 'null'):
+            return None
+            
+        # Handle booleans
+        if value_str.lower() == 'true':
+            return True
+        if value_str.lower() == 'false':
+            return False
+            
+        # Handle numbers
+        try:
+            # Try as int first
+            return int(value_str)
+        except ValueError:
+            try:
+                # Then as float
+                return float(value_str)
+            except ValueError:
+                pass
+                
+        # Handle lists and dicts using ast.literal_eval which is safe
+        if (value_str.startswith('[') and value_str.endswith(']')) or \
+           (value_str.startswith('{') and value_str.endswith('}')):
+            import ast
+            try:
+                return ast.literal_eval(value_str)
+            except (SyntaxError, ValueError):
+                pass
+                
+        # Default to returning the string itself
+        return value_str
         # self.Session.remove()
         pass
