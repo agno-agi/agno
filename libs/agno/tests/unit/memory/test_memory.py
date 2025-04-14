@@ -227,7 +227,7 @@ def test_delete_session_summary(memory_with_model, sample_session_summary):
 
 
 # Memory Search Tests
-def test_search_user_memories_semantic(memory_with_model):
+def test_search_user_memories_agentic(memory_with_model):
     # Setup test data
     memory_with_model.memories = {
         "test_user": {
@@ -237,7 +237,7 @@ def test_search_user_memories_semantic(memory_with_model):
     }
 
     # Mock the internal method
-    with patch.object(memory_with_model, "_search_user_memories_semantic") as mock_search:
+    with patch.object(memory_with_model, "_search_user_memories_agentic") as mock_search:
         # Setup the mock to return a memory list
         mock_memories = [
             UserMemory(memory="Memory 1", topics=["topic1"]),
@@ -247,7 +247,7 @@ def test_search_user_memories_semantic(memory_with_model):
 
         # Call the search function
         results = memory_with_model.search_user_memories(
-            query="test query", retrieval_method="semantic", user_id="test_user"
+            query="test query", retrieval_method="agentic", user_id="test_user"
         )
 
         # Verify the search was called correctly
