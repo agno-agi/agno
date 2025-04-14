@@ -1285,13 +1285,18 @@ class Agent:
                             if t.get("tool_name") == "think":
                                 if not reasoning_started:
                                     yield self.create_run_response(
-                                        content="",
+                                        content="Reasoning started",
                                         event=RunEvent.reasoning_started,
                                     )
                                     reasoning_started = True
 
                                 content = t.get("tool_args", {}).get("thought", "")
-                                yield self.create_run_response(content=content, event=RunEvent.reasoning_step)
+
+                                yield self.create_run_response(
+                                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=content)]),
+                                    content_type=ReasoningSteps.__class__.__name__,
+                                    event=RunEvent.reasoning_step,
+                                )
 
                         yield self.create_run_response(
                             content=model_response_chunk.content,
@@ -1348,10 +1353,21 @@ class Agent:
             self.run_response.created_at = model_response.created_at
 
         if self.stream_intermediate_steps and reasoning_started:
-            yield self.create_run_response(
-                content="Reasoning completed",
-                event=RunEvent.reasoning_completed,
-            )
+            all_reasoning_steps = []
+            if (
+                self.run_response
+                and self.run_response.extra_data
+                and hasattr(self.run_response.extra_data, "reasoning_steps")
+            ):
+                all_reasoning_steps = self.run_response.extra_data.reasoning_steps
+
+            if all_reasoning_steps:
+                yield self.create_run_response(
+                    content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
+                    content_type=ReasoningSteps.__class__.__name__,
+                    event=RunEvent.reasoning_completed,
+                )
+
         # 8. Update RunResponse
         # Build a list of messages that should be added to the RunResponse
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
