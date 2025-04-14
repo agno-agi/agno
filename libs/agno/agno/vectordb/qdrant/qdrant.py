@@ -15,6 +15,7 @@ from agno.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
+from agno.vectordb.search import SearchType
 
 DEFAULT_SPARSE_VECTOR_NAME = "sparse"
 DEFAULT_SPARSE_MODEL = "Qdrant/bm25"
@@ -40,7 +41,7 @@ class Qdrant(VectorDb):
         host: Optional[str] = None,
         path: Optional[str] = None,
         reranker: Optional[Reranker] = None,
-        use_hybrid_search: bool = False,
+        search_type: SearchType = SearchType.vector,
         sparse_vector_name: str = DEFAULT_SPARSE_VECTOR_NAME,
         hybrid_fusion_strategy: models.Fusion = models.Fusion.RRF,
         fastembed_kwargs: Optional[dict] = None,
@@ -63,7 +64,7 @@ class Qdrant(VectorDb):
             host (Optional[str]): Qdrant host (default: "localhost" if not specified).
             path (Optional[str]): Path for local persistence (QdrantLocal).
             reranker (Optional[Reranker]): Optional reranker for result refinement.
-            use_hybrid_search (bool): Enable hybrid search if `True`.
+            search_type (SearchType): Whether to use vector, keyword or hybrid search.
             sparse_vector_name (str): Sparse vector name.
             hybrid_fusion_strategy (models.Fusion): Strategy for hybrid fusion.
             fastembed_kwargs (Optional[dict]): Keyword args for `fastembed.SparseTextEmbedding.__init__()`.
@@ -110,11 +111,11 @@ class Qdrant(VectorDb):
         # Qdrant client kwargs
         self.kwargs = kwargs
 
-        self.use_hybrid_search = use_hybrid_search
+        self.search_type = search_type
         self.sparse_vector_name = sparse_vector_name
         self.hybrid_fusion_strategy = hybrid_fusion_strategy
 
-        if self.use_hybrid_search:
+        if self.search_type in [SearchType.keyword, SearchType.hybrid]:
             try:
                 from fastembed import SparseTextEmbedding
 
@@ -182,9 +183,11 @@ class Qdrant(VectorDb):
             log_debug(f"Creating collection: {self.collection}")
             self.client.create_collection(
                 collection_name=self.collection,
-                vectors_config=models.VectorParams(size=self.dimensions, distance=_distance),
+                vectors_config=models.VectorParams(size=self.dimensions, distance=_distance)
+                if self.search in [SearchType.vector, SearchType.hybrid]
+                else {},
                 sparse_vectors_config={self.sparse_vector_name: models.SparseVectorParams()}
-                if self.use_hybrid_search
+                if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
             )
 
@@ -201,9 +204,11 @@ class Qdrant(VectorDb):
             log_debug(f"Creating collection asynchronously: {self.collection}")
             await self.async_client.create_collection(
                 collection_name=self.collection,
-                vectors_config=models.VectorParams(size=self.dimensions, distance=_distance),
+                vectors_config=models.VectorParams(size=self.dimensions, distance=_distance)
+                if self.search in [SearchType.vector, SearchType.hybrid]
+                else {},
                 sparse_vectors_config={self.sparse_vector_name: models.SparseVectorParams()}
-                if self.use_hybrid_search
+                if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
             )
 
@@ -291,14 +296,15 @@ class Qdrant(VectorDb):
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
-            vector = (
-                {
-                    "": document.embedding,
-                    self.sparse_vector_name: next(self.sparse_encoder.embed([document.content])).as_object(),
-                }
-                if self.use_hybrid_search
-                else document.embedding
-            )
+
+            vector = {}
+            if self.search_type in [SearchType.vector, SearchType.hybrid]:
+                vector[""] = document.embedding
+
+            if self.search_type in [SearchType.keyword, SearchType.hybrid]:
+                sparse_vector = next(self.sparse_encoder.embed([document.content])).as_object()
+                vector[self.sparse_vector_name] = sparse_vector
+
             points.append(
                 models.PointStruct(
                     id=doc_id,
@@ -324,17 +330,19 @@ class Qdrant(VectorDb):
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
-            vector = (
-                {
-                    "": document.embedding,
-                    self.sparse_vector_name: next(self.sparse_encoder.embed([document.content])).as_object(),
-                }
-                if self.use_hybrid_search
-                else document.embedding
-            )
+
+            vector = {}
+
+            if self.search_type in [SearchType.vector, SearchType.hybrid]:
+                vector[""] = document.embedding
+
+            if self.search_type in [SearchType.keyword, SearchType.hybrid]:
+                sparse_vector = next(self.sparse_encoder.embed([document.content])).as_object()
+                vector[self.sparse_vector_name] = sparse_vector
+
             return models.PointStruct(
                 id=doc_id,
-                vector=vector,
+                vector=vector if vector else None,
                 payload={
                     "name": document.name,
                     "meta_data": document.meta_data,
@@ -377,95 +385,95 @@ class Qdrant(VectorDb):
             limit (int): Number of search results to return
             filters (Optional[Dict[str, Any]]): Filters to apply while searching
         """
-        query_embedding = self.embedder.get_embedding(query)
-        if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
-            return []
+        if self.search_type == SearchType.vector:
+            dense_embedding = self.embedder.get_embedding(query)
 
-        if not self.use_hybrid_search:
             results = self.client.query_points(
                 collection_name=self.collection,
-                query=query_embedding,
+                query=dense_embedding,
                 with_vectors=True,
                 with_payload=True,
                 limit=limit,
             ).points
-        else:
+        elif self.search_type == SearchType.hybrid:
+            dense_embedding = self.embedder.get_embedding(query)
             sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
+
             results = self.client.query_points(
                 collection_name=self.collection,
                 prefetch=[
                     models.Prefetch(
                         query=models.SparseVector(**sparse_embedding), limit=limit, using=self.sparse_vector_name
                     ),
-                    models.Prefetch(query=query_embedding, limit=limit),
+                    models.Prefetch(query=dense_embedding, limit=limit),
                 ],
                 query=models.FusionQuery(fusion=self.hybrid_fusion_strategy),
                 with_vectors=True,
                 with_payload=True,
                 limit=limit,
             ).points
+        elif self.search_type == SearchType.keyword:
+            sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
+            results = self.client.query_points(
+                collection_name=self.collection,
+                query=models.SparseVector(**sparse_embedding),
+                with_vectors=True,
+                with_payload=True,
+                limit=limit,
+                using=self.sparse_vector_name,
+            ).points
 
-        # Build search results
-        search_results: List[Document] = []
-        for result in results:
-            if result.payload is None:
-                continue
-            search_results.append(
-                Document(
-                    name=result.payload["name"],
-                    meta_data=result.payload["meta_data"],
-                    content=result.payload["content"],
-                    embedder=self.embedder,
-                    embedding=result.vector,  # type: ignore
-                    usage=result.payload["usage"],
-                )
-            )
-
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
-
+        search_results = self._build_search_results(results, query)
         return search_results
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         """Search for documents asynchronously."""
-        query_embedding = self.embedder.get_embedding(query)
-        if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
-            return []
+        if self.search_type == SearchType.vector:
+            dense_embedding = self.embedder.get_embedding(query)
 
-        if not self.use_hybrid_search:
-            results = (
-                await self.async_client.query_points(
-                    collection_name=self.collection,
-                    query=query_embedding,
-                    with_vectors=True,
-                    with_payload=True,
-                    limit=limit,
-                )
+            results = self.async_client.query_points(
+                collection_name=self.collection,
+                query=dense_embedding,
+                with_vectors=True,
+                with_payload=True,
+                limit=limit,
             ).points
-        else:
+        elif self.search_type == SearchType.hybrid:
+            dense_embedding = self.embedder.get_embedding(query)
             sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
-            results = (
-                await self.async_client.query_points(
-                    collection_name=self.collection,
-                    prefetch=[
-                        models.Prefetch(
-                            query=models.SparseVector(**sparse_embedding), limit=limit, using=self.sparse_vector_name
-                        ),
-                        models.Prefetch(query=query_embedding, limit=limit),
-                    ],
-                    query=models.FusionQuery(fusion=self.hybrid_fusion_strategy),
-                    with_vectors=True,
-                    with_payload=True,
-                    limit=limit,
-                )
+
+            results = self.async_client.query_points(
+                collection_name=self.collection,
+                prefetch=[
+                    models.Prefetch(
+                        query=models.SparseVector(**sparse_embedding), limit=limit, using=self.sparse_vector_name
+                    ),
+                    models.Prefetch(query=dense_embedding, limit=limit),
+                ],
+                query=models.FusionQuery(fusion=self.hybrid_fusion_strategy),
+                with_vectors=True,
+                with_payload=True,
+                limit=limit,
+            ).points
+        elif self.search_type == SearchType.keyword:
+            sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
+            results = self.async_client.query_points(
+                collection_name=self.collection,
+                query=models.SparseVector(**sparse_embedding),
+                with_vectors=True,
+                with_payload=True,
+                limit=limit,
+                using=self.sparse_vector_name,
             ).points
 
-        # Build search results
+        search_results = self._build_search_results(results, query)
+        return search_results
+
+    def _build_search_results(self, results, query: str) -> List[Document]:
         search_results: List[Document] = []
+
         for result in results:
             if result.payload is None:
                 continue
