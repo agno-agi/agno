@@ -1,29 +1,26 @@
 from agno.agent import Agent
 from agno.team.team import Team
 from agno.tools import tool
-from pydantic import BaseModel
-
 from agno.tools.duckduckgo import DuckDuckGoTools
-
+from pydantic import BaseModel
 from rich.pretty import pprint
-
 
 
 @tool()
 def answer_from_known_questions(agent: Team, question: str) -> str:
     """Answer a question from a list of known questions
-    
+
     Args:
         question: The question to answer
 
     Returns:
         The answer to the question
     """
-    
+
     class Answer(BaseModel):
         answer: str
         original_question: str
-    
+
     faq = {
         "What is the capital of France?": "Paris",
         "What is the capital of Germany?": "Berlin",
@@ -35,17 +32,16 @@ def answer_from_known_questions(agent: Team, question: str) -> str:
     }
     if agent.session_state is None:
         agent.session_state = {}
-    
+
     if "last_answer" in agent.session_state:
         del agent.session_state["last_answer"]
-    
+
     if question in faq:
         answer = Answer(answer=faq[question], original_question=question)
         agent.session_state["last_answer"] = answer
         return answer.answer
     else:
         return "I don't know the answer to that question."
-    
 
 
 web_agent = Agent(
@@ -56,11 +52,7 @@ web_agent = Agent(
 )
 
 
-team = Team(
-    name="Q & A team",
-    members=[web_agent],
-    tools=[answer_from_known_questions]
-)
+team = Team(name="Q & A team", members=[web_agent], tools=[answer_from_known_questions])
 
 team.print_response("What is the capital of France?", stream=True)
 
