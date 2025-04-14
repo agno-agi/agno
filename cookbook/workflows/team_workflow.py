@@ -24,7 +24,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.hackernews import HackerNewsTools
-from agno.tools.exa import ExaTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 
 class HackerNewsReporter(Workflow):
@@ -37,7 +37,7 @@ class HackerNewsReporter(Workflow):
         name="Reddit Researcher",
         role="Research a topic on Reddit",
         model=OpenAIChat(id="gpt-4o"),
-        tools=[ExaTools()],
+        tools=[DuckDuckGoTools(cache_results=True)],
         add_name_to_instructions=True,
         instructions=dedent("""
             You are a Reddit researcher.
