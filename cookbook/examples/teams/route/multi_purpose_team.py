@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.media import Audio, File, Image
+from agno.media import Audio, File, Image  # type: ignore
 from agno.models.anthropic import Claude
 from agno.models.deepseek import DeepSeek
 from agno.models.google.gemini import Gemini

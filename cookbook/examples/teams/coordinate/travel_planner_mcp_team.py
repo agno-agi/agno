@@ -26,7 +26,6 @@ from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.exa import ExaTools
 from agno.tools.mcp import MCPTools
 from agno.tools.reasoning import ReasoningTools
 from mcp import StdioServerParameters

@@ -27,7 +27,12 @@ def _assert_metrics(response: RunResponse):
 
 def test_basic():
     agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, delay_between_retries=5, markdown=True, telemetry=False, monitoring=False
+        model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
+        delay_between_retries=5,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
     )
 
     # Print the response in the terminal
@@ -62,7 +67,12 @@ def test_basic_stream():
 @pytest.mark.asyncio
 async def test_async_basic():
     agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, delay_between_retries=5, markdown=True, telemetry=False, monitoring=False
+        model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
+        delay_between_retries=5,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
     )
 
     response = await agent.arun("Share a 2 sentence horror story")
@@ -76,7 +86,12 @@ async def test_async_basic():
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, delay_between_retries=5, markdown=True, telemetry=False, monitoring=False
+        model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
+        delay_between_retries=5,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
     )
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)

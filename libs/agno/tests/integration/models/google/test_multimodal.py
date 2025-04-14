@@ -12,7 +12,7 @@ def test_image_input():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp"),
         exponential_backoff=True,
-        delay_between_retries=5,    
+        delay_between_retries=5,
         markdown=True,
         telemetry=False,
         monitoring=False,
