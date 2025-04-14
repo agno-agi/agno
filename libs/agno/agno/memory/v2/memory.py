@@ -144,9 +144,6 @@ class Memory:
 
         self.debug_mode = debug_mode
 
-        if self.db is not None:
-            self.hydrate_from_db()
-
     def set_model(self, model: Model) -> None:
         if self.memory_manager is None:
             self.memory_manager = MemoryManager(model=deepcopy(model))
@@ -170,23 +167,29 @@ class Memory:
             self.model = OpenAIChat(id="gpt-4o")
         return self.model
 
-    def hydrate_from_db(self):
+    def refresh_from_db(self, user_id: Optional[str] = None):
         if self.db:
-            all_memories = self.db.read_memories()
+            # If no user_id is provided, read all memories
+            if user_id is None:
+                all_memories = self.db.read_memories()
+            else:
+                all_memories = self.db.read_memories(user_id=user_id)
             # Reset the memories
             self.memories = {}
             for memory in all_memories:
                 if memory.user_id is not None and memory.id is not None:
                     self.memories.setdefault(memory.user_id, {})[memory.id] = UserMemory.from_dict(memory.memory)
 
-    def initialize(self):
+    def set_log_level(self):
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             self.debug_mode = True
             set_log_level_to_debug()
         else:
             set_log_level_to_info()
 
-        self.hydrate_from_db()
+    def initialize(self, user_id: Optional[str] = None):
+        self.set_log_level()
+        self.refresh_from_db(user_id=user_id)
 
     def to_dict(self) -> Dict[str, Any]:
         _memory_dict = {}
@@ -219,26 +222,39 @@ class Memory:
         return _memory_dict
 
     # -*- Public Functions
-    def get_user_memories(self, user_id: str) -> List[UserMemory]:
+    def get_user_memories(self, user_id: Optional[str] = None) -> List[UserMemory]:
         """Get the user memories for a given user id"""
+        if user_id is None:
+            user_id = "default"
+        # Refresh from the DB
+        self.initialize(user_id=user_id)
         if self.memories is None:
             return []
         return list(self.memories.get(user_id, {}).values())
 
-    def get_session_summaries(self, user_id: str) -> List[SessionSummary]:
+    def get_session_summaries(self, user_id: Optional[str] = None) -> List[SessionSummary]:
         """Get the session summaries for a given user id"""
+        if user_id is None:
+            user_id = "default"
         if self.summaries is None:
             return []
         return list(self.summaries.get(user_id, {}).values())
 
-    def get_user_memory(self, user_id: str, memory_id: str) -> Optional[UserMemory]:
+    def get_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> Optional[UserMemory]:
         """Get the user memory for a given user id"""
+        if user_id is None:
+            user_id = "default"
+        # Refresh from the DB
+        self.initialize(user_id=user_id)
         if self.memories is None:
             return None
         return self.memories.get(user_id, {}).get(memory_id, None)
 
-    def get_session_summary(self, user_id: str, session_id: str) -> Optional[SessionSummary]:
+    def get_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
         """Get the session summary for a given user id"""
+        
+        if user_id is None:
+            user_id = "default"
         if self.summaries is None:
             return None
         return self.summaries.get(user_id, {}).get(session_id, None)
@@ -257,13 +273,14 @@ class Memory:
         """
         from uuid import uuid4
 
-        self.initialize()
-
         memory_id = memory.memory_id or str(uuid4())
         if memory.memory_id is None:
             memory.memory_id = memory_id
         if user_id is None:
             user_id = "default"
+            
+        # Refresh from the DB
+        self.initialize(user_id=user_id)
 
         if not memory.last_updated:
             memory.last_updated = datetime.now()
@@ -296,10 +313,11 @@ class Memory:
             str: The id of the memory
         """
 
-        self.initialize()
-
         if user_id is None:
             user_id = "default"
+            
+        # Refresh from the DB
+        self.initialize(user_id=user_id)
 
         if not memory.last_updated:
             memory.last_updated = datetime.now()
@@ -321,13 +339,18 @@ class Memory:
 
         return memory_id
 
-    def delete_user_memory(self, user_id: str, memory_id: str) -> None:
+    def delete_user_memory(self, memory_id: str,
+        user_id: Optional[str] = None,) -> None:
         """Delete a user memory for a given user id
         Args:
-            user_id (str): The user id to delete the memory from
             memory_id (str): The id of the memory to delete
+            user_id (Optional[str]): The user id to delete the memory from. If not provided, the memory is deleted from the "default" user.
         """
-        self.initialize()
+        if user_id is None:
+            user_id = "default"
+            
+        # Refresh from the DB
+        self.initialize(user_id=user_id)
 
         del self.memories[user_id][memory_id]  # type: ignore
         if self.db:
@@ -355,7 +378,7 @@ class Memory:
         if not self.summary_manager:
             raise ValueError("Summarizer not initialized")
 
-        self.initialize()
+        self.set_log_level()
 
         if user_id is None:
             user_id = "default"
@@ -375,7 +398,7 @@ class Memory:
         if not self.summary_manager:
             raise ValueError("Summarizer not initialized")
 
-        self.initialize()
+        self.set_log_level()
 
         if user_id is None:
             user_id = "default"
@@ -396,6 +419,7 @@ class Memory:
         self, message: Optional[str] = None, messages: Optional[List[Message]] = None, user_id: Optional[str] = None
     ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
+        self.set_log_level()
         if not messages and not message:
             raise ValueError("You must provide either a message or a list of messages")
 
@@ -412,10 +436,10 @@ class Memory:
             log_warning("MemoryDb not provided.")
             return "Please provide a db to store memories"
 
-        self.initialize()
-
         if user_id is None:
             user_id = "default"
+            
+        self.refresh_from_db(user_id=user_id)
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
@@ -426,13 +450,14 @@ class Memory:
         )
 
         # We refresh from the DB
-        self.hydrate_from_db()
+        self.refresh_from_db(user_id=user_id)
         return response
 
     async def acreate_user_memories(
         self, message: Optional[str] = None, messages: Optional[List[Message]] = None, user_id: Optional[str] = None
     ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
+        self.set_log_level()
         if not messages and not message:
             raise ValueError("You must provide either a message or a list of messages")
 
@@ -449,10 +474,11 @@ class Memory:
             log_warning("MemoryDb not provided.")
             return "Please provide a db to store memories"
 
-        self.initialize()
 
         if user_id is None:
             user_id = "default"
+            
+        self.refresh_from_db(user_id=user_id)
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
@@ -464,13 +490,13 @@ class Memory:
         )
 
         # We refresh from the DB
-        self.hydrate_from_db()
+        self.refresh_from_db()
 
         return response
 
     def update_memory_task(self, task: str, user_id: Optional[str] = None) -> str:
         """Updates the memory with a task"""
-
+        self.set_log_level()
         if not self.memory_manager:
             raise ValueError("Memory manager not initialized")
 
@@ -481,7 +507,7 @@ class Memory:
         if user_id is None:
             user_id = "default"
 
-        self.initialize()
+        self.refresh_from_db(user_id=user_id)
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
@@ -498,13 +524,13 @@ class Memory:
         )
 
         # We refresh from the DB
-        self.hydrate_from_db()
+        self.refresh_from_db(user_id=user_id)
 
         return response
 
     async def aupdate_memory_task(self, task: str, user_id: Optional[str] = None) -> str:
         """Updates the memory with a task"""
-
+        self.set_log_level()
         if not self.memory_manager:
             raise ValueError("Memory manager not initialized")
 
@@ -515,7 +541,7 @@ class Memory:
         if user_id is None:
             user_id = "default"
 
-        self.initialize()
+        self.refresh_from_db(user_id=user_id)
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
@@ -532,7 +558,7 @@ class Memory:
         )
 
         # We refresh from the DB
-        self.hydrate_from_db()
+        self.refresh_from_db(user_id=user_id)
 
         return response
 
@@ -672,7 +698,7 @@ class Memory:
         """Search through user memories using the specified retrieval method.
 
         Args:
-            query: The search query for semantic search. Required if retrieval_method is "semantic".
+            query: The search query for agentic search. Required if retrieval_method is "agentic".
             limit: Maximum number of memories to return. Defaults to self.retrieval_limit if not specified. Optional.
             retrieval_method: The method to use for retrieving memories. Defaults to self.retrieval if not specified.
                 - "last_n": Return the most recent memories
@@ -683,13 +709,14 @@ class Memory:
         Returns:
             A list of UserMemory objects matching the search criteria.
         """
-        if not self.memories:
-            return []
 
         if user_id is None:
             user_id = "default"
-
-        self.initialize()
+            
+        self.initialize(user_id=user_id)
+        
+        if not self.memories:
+            return []
 
         # Use default retrieval method if not specified
         retrieval_method = retrieval_method
@@ -699,7 +726,7 @@ class Memory:
         # Handle different retrieval methods
         if retrieval_method == "agentic":
             if not query:
-                raise ValueError("Query is required for semantic search")
+                raise ValueError("Query is required for agentic search")
 
             return self._search_user_memories_agentic(user_id=user_id, query=query, limit=limit)
 
@@ -723,11 +750,13 @@ class Memory:
                     "schema": MemorySearchResponse.model_json_schema(),
                 },
             }
+            model.structured_outputs = False
         else:
             model.response_format = {"type": "json_object"}
+            model.structured_outputs = False
 
     def _search_user_memories_agentic(self, user_id: str, query: str, limit: Optional[int] = None) -> List[UserMemory]:
-        """Search through user memories using semantic search."""
+        """Search through user memories using agentic search."""
         if not self.memories:
             return []
 
