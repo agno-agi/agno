@@ -79,6 +79,8 @@ class Memory:
     memories: Optional[Dict[str, Dict[str, UserMemory]]] = None
     # Manager to manage memories
     memory_manager: Optional[MemoryManager] = None
+    delete_memories: bool = True
+    clear_memories: bool = True
 
     # Session summaries per session per user
     summaries: Optional[Dict[str, Dict[str, SessionSummary]]] = None
@@ -94,6 +96,7 @@ class Memory:
     team_context: Optional[Dict[str, TeamContext]] = None
 
     debug_mode: bool = False
+    version: int = 2
 
     def __init__(
         self,
@@ -486,7 +489,12 @@ class Memory:
         ]
         # The memory manager updates the DB directly
         response = self.memory_manager.run_memory_task(  # type: ignore
-            task=task, existing_memories=existing_memories, user_id=user_id, db=self.db
+            task=task,
+            existing_memories=existing_memories,
+            user_id=user_id,
+            db=self.db,
+            delete_memories=self.delete_memories,
+            clear_memories=self.clear_memories,
         )
 
         # We refresh from the DB
@@ -515,7 +523,12 @@ class Memory:
         ]
         # The memory manager updates the DB directly
         response = await self.memory_manager.arun_memory_task(  # type: ignore
-            task=task, existing_memories=existing_memories, user_id=user_id, db=self.db
+            task=task,
+            existing_memories=existing_memories,
+            user_id=user_id,
+            db=self.db,
+            delete_memories=self.delete_memories,
+            clear_memories=self.clear_memories,
         )
 
         # We refresh from the DB
@@ -653,7 +666,7 @@ class Memory:
         self,
         query: Optional[str] = None,
         limit: Optional[int] = None,
-        retrieval_method: Optional[Literal["last_n", "first_n", "semantic"]] = None,
+        retrieval_method: Optional[Literal["last_n", "first_n", "agentic"]] = None,
         user_id: Optional[str] = None,
     ) -> List[UserMemory]:
         """Search through user memories using the specified retrieval method.
@@ -664,7 +677,7 @@ class Memory:
             retrieval_method: The method to use for retrieving memories. Defaults to self.retrieval if not specified.
                 - "last_n": Return the most recent memories
                 - "first_n": Return the oldest memories
-                - "semantic": Return memories most semantically similar to the query
+                - "agentic": Return memories most similar to the query, but using an agentic approach
             user_id: The user to search for. Optional.
 
         Returns:
@@ -684,11 +697,11 @@ class Memory:
         limit = limit
 
         # Handle different retrieval methods
-        if retrieval_method == "semantic":
+        if retrieval_method == "agentic":
             if not query:
                 raise ValueError("Query is required for semantic search")
 
-            return self._search_user_memories_semantic(user_id=user_id, query=query, limit=limit)
+            return self._search_user_memories_agentic(user_id=user_id, query=query, limit=limit)
 
         elif retrieval_method == "first_n":
             return self._get_first_n_memories(user_id=user_id, limit=limit)
@@ -696,7 +709,7 @@ class Memory:
         else:  # Default to last_n
             return self._get_last_n_memories(user_id=user_id, limit=limit)
 
-    def _update_model_for_semantic_search(self) -> None:
+    def _update_model_for_agentic_search(self) -> None:
         model = self.get_model()
         if model.supports_native_structured_outputs:
             model.response_format = MemorySearchResponse
@@ -713,29 +726,30 @@ class Memory:
         else:
             model.response_format = {"type": "json_object"}
 
-    def _search_user_memories_semantic(self, user_id: str, query: str, limit: Optional[int] = None) -> List[UserMemory]:
+    def _search_user_memories_agentic(self, user_id: str, query: str, limit: Optional[int] = None) -> List[UserMemory]:
         """Search through user memories using semantic search."""
         if not self.memories:
             return []
 
         model = self.get_model()
 
-        self._update_model_for_semantic_search()
+        self._update_model_for_agentic_search()
 
         log_debug("Searching for memories", center=True)
 
         # Get all memories as a list
         user_memories: Dict[str, UserMemory] = self.memories[user_id]
-        system_message_str = "You are a helpful assistant that can search through user memories.\n"
-        system_message_str += "<user_memories>\n"
+        system_message_str = "Your task is to search through user memories and return the IDs of the memories that are related to the query.\n"
+        system_message_str += "\n<user_memories>\n"
         for memory in user_memories.values():
             system_message_str += f"ID: {memory.memory_id}\n"
             system_message_str += f"Memory: {memory.memory}\n"
             if memory.topics:
                 system_message_str += f"Topics: {','.join(memory.topics)}\n"
             system_message_str += "\n"
-        system_message_str += "</user_memories>\n"
-        system_message_str += "Only return the IDs of the memories that are most semantically similar to the query."
+        system_message_str = system_message_str.strip()
+        system_message_str += "\n</user_memories>\n\n"
+        system_message_str += "REMEMBER: Only return the IDs of the memories that are related to the query."
 
         if model.response_format == {"type": "json_object"}:
             system_message_str += "\n" + get_json_output_prompt(MemorySearchResponse)  # type: ignore
@@ -744,7 +758,7 @@ class Memory:
             Message(role="system", content=system_message_str),
             Message(
                 role="user",
-                content=f"Search for memories that are most semantically similar to the following query: {query}",
+                content=f"Return the IDs of the memories related to the following query: {query}",
             ),
         ]
 

@@ -41,7 +41,7 @@ def model():
 @pytest.fixture
 def memory_with_db(model, memory_db):
     """Create a Memory instance with database connections."""
-    return Memory(model=model, db=memory_db, use_json_mode=True)
+    return Memory(model=model, db=memory_db)
 
 
 def test_add_user_memory_with_db(memory_with_db):
@@ -93,7 +93,7 @@ def test_create_user_memories_with_db(memory_with_db):
     ]
 
     # Create memories from the messages
-    result = memory_with_db.create_user_memories(messages, user_id="test_user")
+    result = memory_with_db.create_user_memories(messages=messages, user_id="test_user")
 
     # Verify memories were created
     assert len(result) > 0
@@ -149,7 +149,7 @@ async def test_acreate_user_memories_with_db(memory_with_db):
     ]
 
     # Create memories from the messages
-    result = await memory_with_db.acreate_user_memories(messages, user_id="test_user")
+    result = await memory_with_db.acreate_user_memories(messages=messages, user_id="test_user")
 
     # Verify memories were created
     assert len(result) > 0
@@ -248,7 +248,7 @@ async def test_acreate_session_summary_with_db(memory_with_db):
 def test_memory_persistence_across_instances(model, memory_db):
     """Test that memories persist across different Memory instances."""
     # Create the first Memory instance
-    memory1 = Memory(model=model, db=memory_db, use_json_mode=True)
+    memory1 = Memory(model=model, db=memory_db)
 
     # Add a user memory
     user_memory = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())

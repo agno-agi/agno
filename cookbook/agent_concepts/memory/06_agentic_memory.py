@@ -9,7 +9,8 @@ To enable this, set `enable_agentic_memory=True` in the Agent config.
 from agno.agent.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
-from agno.models.anthropic.claude import Claude
+from agno.models.openai import OpenAIChat
+from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
@@ -22,7 +23,7 @@ memory.clear()
 john_doe_id = "john_doe@example.com"
 
 agent = Agent(
-    model=Claude(id="claude-3-5-sonnet-20241022"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     memory=memory,
     enable_agentic_memory=True,
 )
@@ -37,12 +38,11 @@ agent.print_response("What are my hobbies?", stream=True, user_id=john_doe_id)
 
 memories = memory.get_user_memories(user_id=john_doe_id)
 print("Memories about John Doe:")
-for i, m in enumerate(memories):
-    print(f"{i}: {m.memory}")
+pprint(memories)
 
 
 agent.print_response(
-    "Remove all existing memories of me. Completely clear the DB.",
+    "Remove all existing memories of me.",
     stream=True,
     user_id=john_doe_id,
 )
@@ -50,8 +50,7 @@ agent.print_response(
 memories = memory.get_user_memories(user_id=john_doe_id)
 
 print("Memories about John Doe:")
-for i, m in enumerate(memories):
-    print(f"{i}: {m.memory}")
+pprint(memories)
 
 agent.print_response(
     "My name is John Doe and I like to paint.", stream=True, user_id=john_doe_id
@@ -60,14 +59,14 @@ agent.print_response(
 memories = memory.get_user_memories(user_id=john_doe_id)
 
 print("Memories about John Doe:")
-for i, m in enumerate(memories):
-    print(f"{i}: {m.memory}")
+pprint(memories)
 
 
-agent.print_response("Remove any memory of my name.", stream=True, user_id=john_doe_id)
+agent.print_response(
+    "I don't pain anymore, i draw instead.", stream=True, user_id=john_doe_id
+)
 
 memories = memory.get_user_memories(user_id=john_doe_id)
 
 print("Memories about John Doe:")
-for i, m in enumerate(memories):
-    print(f"{i}: {m.memory}")
+pprint(memories)
