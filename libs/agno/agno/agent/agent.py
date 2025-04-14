@@ -70,6 +70,10 @@ class Agent:
     # Agent introduction. This is added to the message history when a run is started.
     introduction: Optional[str] = None
 
+    # --- Message Handler ---
+    # List of callback functions to handle messages during streaming
+    _message_callbacks: Optional[List[Callable[[Message], None]]] = None
+
     # --- User settings ---
     # Default user_id to use for this agent
     user_id: Optional[str] = None
@@ -739,6 +743,14 @@ class Agent:
                                 index = tool_call_index_map.get(tool_call_id)
                                 if index is not None:
                                     self.run_response.tools[index] = tool_call_dict
+
+                                    # Create and emit a tool response message with the output
+                                    tool_response_message = Message(
+                                        role="tool",
+                                        content=format_tool_calls(self.run_response.tools),  # Use formatted tool calls
+                                        add_to_agent_memory=True
+                                    )
+                                    self._emit_message(tool_response_message)
                         else:
                             self.run_response.tools = tool_calls_list
 
@@ -787,12 +799,39 @@ class Agent:
                 else:
                     self.run_response.tools.extend(model_response.tool_calls)
 
+                # Emit tool response messages for each tool call
+                for tool_call in model_response.tool_calls:
+                    if isinstance(tool_call, dict) and "output" in tool_call:
+                        tool_response_message = Message(
+                            role="tool",
+                            content=tool_call["output"],
+                            add_to_agent_memory=True
+                        )
+                        self._emit_message(tool_response_message)
+
+                # Create and emit a tool message with final state
+                tool_message = Message(
+                    role="tool",
+                    content=format_tool_calls(model_response.tool_calls),
+                    add_to_agent_memory=True
+                )
+                self._emit_message(tool_message)
+
             # Update the run_response audio with the model response audio
             if model_response.audio is not None:
                 self.run_response.response_audio = model_response.audio
 
-            if model_response.image is not None:
-                self.add_image(model_response.image)
+            # Create and emit message for non-streaming response
+            response_message = Message(
+                role="assistant",
+                content=model_response.content,
+                thinking=model_response.thinking,
+                citations=model_response.citations,
+                tools=model_response.tool_calls,
+                audio=model_response.audio,
+                add_to_agent_memory=True
+            )
+            self._emit_message(response_message)
 
             # Update the run_response messages with the messages
             self.run_response.messages = run_messages.messages
@@ -807,9 +846,18 @@ class Agent:
         # Update the RunResponse metrics
         self.run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
 
-        # Update the run_response audio if streaming
-        if self.stream and model_response.audio is not None:
-            self.run_response.response_audio = model_response.audio
+        # Emit final assistant message if we were streaming
+        if self.stream and model_response.content:
+            final_message = Message(
+                role="assistant",
+                content=model_response.content,  # Use final accumulated content
+                thinking=model_response.thinking,  # Use final accumulated thinking
+                citations=model_response.citations,
+                tools=self.run_response.tools,  # Include any tool calls that were made
+                audio=model_response.audio,
+                add_to_agent_memory=True
+            )
+            self._emit_message(final_message)
 
         # 9. Update Agent Memory
         if isinstance(self.memory, AgentMemory):
@@ -1376,8 +1424,17 @@ class Agent:
             if model_response.audio is not None:
                 self.run_response.response_audio = model_response.audio
 
-            if model_response.image is not None:
-                self.add_image(model_response.image)
+            # Create and emit message for non-streaming response
+            response_message = Message(
+                role="assistant",
+                content=model_response.content,
+                thinking=model_response.thinking,
+                citations=model_response.citations,
+                tools=model_response.tool_calls,
+                audio=model_response.audio,
+                add_to_agent_memory=True
+            )
+            self._emit_message(response_message)
 
             # Update the run_response messages with the messages
             self.run_response.messages = run_messages.messages
@@ -1392,9 +1449,18 @@ class Agent:
         # Update the RunResponse metrics
         self.run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
 
-        # Update the run_response audio if streaming
-        if self.stream and model_response.audio is not None:
-            self.run_response.response_audio = model_response.audio
+        # Emit final assistant message if we were streaming
+        if self.stream and model_response.content:
+            final_message = Message(
+                role="assistant",
+                content=model_response.content,  # Use final accumulated content
+                thinking=model_response.thinking,  # Use final accumulated thinking
+                citations=model_response.citations,
+                tools=self.run_response.tools,  # Include any tool calls that were made
+                audio=model_response.audio,
+                add_to_agent_memory=True
+            )
+            self._emit_message(final_message)
 
         # 9. Update Agent Memory
         if isinstance(self.memory, AgentMemory):
@@ -2770,6 +2836,8 @@ class Agent:
         if system_message is not None:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)
+            # Emit the system message
+            self._emit_message(system_message)
 
         # 2. Add extra messages to run_messages if provided
         if self.add_messages is not None:
@@ -5012,3 +5080,23 @@ class Agent:
             self.print_response(
                 message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
+
+    def on_message(self, handler: Callable[[Message], None]) -> None:
+        """Register a callback function to handle messages during streaming.
+        
+        Args:
+            handler: Callback function that takes a Message object as argument
+        """
+        if self._message_callbacks is None:
+            self._message_callbacks = []
+        self._message_callbacks.append(handler)
+
+    def _emit_message(self, message: Message) -> None:
+        """Emit a message to all registered handlers.
+        
+        Args:
+            message: Message object to emit
+        """
+        if self._message_callbacks:
+            for callback in self._message_callbacks:
+                callback(message)
