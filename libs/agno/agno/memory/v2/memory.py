@@ -79,8 +79,6 @@ class Memory:
     memories: Optional[Dict[str, Dict[str, UserMemory]]] = None
     # Manager to manage memories
     memory_manager: Optional[MemoryManager] = None
-    delete_memories: bool = True
-    clear_memories: bool = True
 
     # Session summaries per session per user
     summaries: Optional[Dict[str, Dict[str, SessionSummary]]] = None
@@ -95,6 +93,11 @@ class Memory:
     # Team context per session
     team_context: Optional[Dict[str, TeamContext]] = None
 
+    # Whether to delete memories
+    delete_memories: bool = False
+    # Whether to clear memories
+    clear_memories: bool = False
+
     debug_mode: bool = False
     version: int = 2
 
@@ -108,12 +111,17 @@ class Memory:
         summaries: Optional[Dict[str, Dict[str, SessionSummary]]] = None,
         runs: Optional[Dict[str, List[Union[RunResponse, TeamRunResponse]]]] = None,
         debug_mode: bool = False,
+        delete_memories: bool = False,
+        clear_memories: bool = False,
     ):
         self.memories = memories or {}
         self.summaries = summaries or {}
         self.runs = runs or {}
 
         self.debug_mode = debug_mode
+
+        self.delete_memories = delete_memories
+        self.clear_memories = clear_memories
 
         self.model = model
 
@@ -222,12 +230,13 @@ class Memory:
         return _memory_dict
 
     # -*- Public Functions
-    def get_user_memories(self, user_id: Optional[str] = None) -> List[UserMemory]:
+    def get_user_memories(self, user_id: Optional[str] = None, refresh_from_db: bool = True) -> List[UserMemory]:
         """Get the user memories for a given user id"""
         if user_id is None:
             user_id = "default"
         # Refresh from the DB
-        self.initialize(user_id=user_id)
+        if refresh_from_db:
+            self.refresh_from_db(user_id=user_id)
         if self.memories is None:
             return []
         return list(self.memories.get(user_id, {}).values())
@@ -240,12 +249,13 @@ class Memory:
             return []
         return list(self.summaries.get(user_id, {}).values())
 
-    def get_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> Optional[UserMemory]:
+    def get_user_memory(self, memory_id: str, user_id: Optional[str] = None, refresh_from_db: bool = True) -> Optional[UserMemory]:
         """Get the user memory for a given user id"""
         if user_id is None:
             user_id = "default"
         # Refresh from the DB
-        self.initialize(user_id=user_id)
+        if refresh_from_db:
+            self.refresh_from_db(user_id=user_id)
         if self.memories is None:
             return None
         return self.memories.get(user_id, {}).get(memory_id, None)
@@ -263,6 +273,7 @@ class Memory:
         self,
         memory: UserMemory,
         user_id: Optional[str] = None,
+        refresh_from_db: bool = True,
     ) -> str:
         """Add a user memory for a given user id
         Args:
@@ -280,7 +291,8 @@ class Memory:
             user_id = "default"
             
         # Refresh from the DB
-        self.initialize(user_id=user_id)
+        if refresh_from_db:
+            self.refresh_from_db(user_id=user_id)
 
         if not memory.last_updated:
             memory.last_updated = datetime.now()
@@ -303,6 +315,7 @@ class Memory:
         memory_id: str,
         memory: UserMemory,
         user_id: Optional[str] = None,
+        refresh_from_db: bool = True,
     ) -> Optional[str]:
         """Replace a user memory for a given user id
         Args:
@@ -317,7 +330,8 @@ class Memory:
             user_id = "default"
             
         # Refresh from the DB
-        self.initialize(user_id=user_id)
+        if refresh_from_db:
+            self.refresh_from_db(user_id=user_id)
 
         if not memory.last_updated:
             memory.last_updated = datetime.now()
@@ -339,8 +353,12 @@ class Memory:
 
         return memory_id
 
-    def delete_user_memory(self, memory_id: str,
-        user_id: Optional[str] = None,) -> None:
+    def delete_user_memory(
+        self,
+        memory_id: str,
+        user_id: Optional[str] = None,
+        refresh_from_db: bool = True,
+    ) -> None:
         """Delete a user memory for a given user id
         Args:
             memory_id (str): The id of the memory to delete
@@ -350,7 +368,8 @@ class Memory:
             user_id = "default"
             
         # Refresh from the DB
-        self.initialize(user_id=user_id)
+        if refresh_from_db:
+            self.refresh_from_db(user_id=user_id)
 
         del self.memories[user_id][memory_id]  # type: ignore
         if self.db:
@@ -362,7 +381,6 @@ class Memory:
             user_id (str): The user id to delete the memory from
             session_id (str): The id of the session to delete
         """
-        self.initialize()
         del self.summaries[user_id][session_id]  # type: ignore
 
     def get_runs(self, session_id: str) -> List[Union[RunResponse, TeamRunResponse]]:
@@ -416,7 +434,11 @@ class Memory:
         return session_summary
 
     def create_user_memories(
-        self, message: Optional[str] = None, messages: Optional[List[Message]] = None, user_id: Optional[str] = None
+        self,
+        message: Optional[str] = None,
+        messages: Optional[List[Message]] = None,
+        user_id: Optional[str] = None,
+        refresh_from_db: bool = True,
     ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
         self.set_log_level()
@@ -438,15 +460,16 @@ class Memory:
 
         if user_id is None:
             user_id = "default"
-            
-        self.refresh_from_db(user_id=user_id)
+
+        if refresh_from_db:
+            self.refresh_from_db(user_id=user_id)
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
             {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
         ]
         response = self.memory_manager.create_or_update_memories(  # type: ignore
-            messages=messages, existing_memories=existing_memories, user_id=user_id, db=self.db
+            messages=messages, existing_memories=existing_memories, user_id=user_id, db=self.db, delete_memories=self.delete_memories, clear_memories=self.clear_memories
         )
 
         # We refresh from the DB
@@ -454,7 +477,11 @@ class Memory:
         return response
 
     async def acreate_user_memories(
-        self, message: Optional[str] = None, messages: Optional[List[Message]] = None, user_id: Optional[str] = None
+        self,
+        message: Optional[str] = None,
+        messages: Optional[List[Message]] = None,
+        user_id: Optional[str] = None,
+        refresh_from_db: bool = True,
     ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
         self.set_log_level()
@@ -477,8 +504,9 @@ class Memory:
 
         if user_id is None:
             user_id = "default"
-            
-        self.refresh_from_db(user_id=user_id)
+
+        if refresh_from_db: 
+            self.refresh_from_db(user_id=user_id)
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
@@ -486,7 +514,7 @@ class Memory:
         ]
 
         response = await self.memory_manager.acreate_or_update_memories(  # type: ignore
-            messages=messages, existing_memories=existing_memories, user_id=user_id, db=self.db
+            messages=messages, existing_memories=existing_memories, user_id=user_id, db=self.db, delete_memories=self.delete_memories, clear_memories=self.clear_memories
         )
 
         # We refresh from the DB
@@ -694,6 +722,7 @@ class Memory:
         limit: Optional[int] = None,
         retrieval_method: Optional[Literal["last_n", "first_n", "agentic"]] = None,
         user_id: Optional[str] = None,
+        refresh_from_db: bool = True,
     ) -> List[UserMemory]:
         """Search through user memories using the specified retrieval method.
 
@@ -712,9 +741,12 @@ class Memory:
 
         if user_id is None:
             user_id = "default"
-            
-        self.initialize(user_id=user_id)
+
+        self.set_log_level()
         
+        if refresh_from_db:
+            self.refresh_from_db(user_id=user_id)
+
         if not self.memories:
             return []
 
