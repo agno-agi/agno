@@ -1,179 +1,292 @@
 import csv
+import io
 import json
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+import os
+import sqlite3
+import tempfile
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from agno.tools import Toolkit
-from agno.utils.log import logger
+import pandas as pd
+from agno.tools.base import BaseTool
+from agno.tools.utils import get_tool_config
+from pydantic import BaseModel, Field
 
 
-class CsvTools(Toolkit):
-    def __init__(
+class CSVToolkit(BaseTool):
+    """Tool for working with CSV files."""
+
+    name = "csv_toolkit"
+    description = "Tool for working with CSV files."
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        """Initialize the CSV toolkit."""
+        super().__init__(config)
+        self.config = get_tool_config(self.name, config)
+
+    def read_csv(self, file_path: str, **kwargs) -> pd.DataFrame:
+        """Read a CSV file into a pandas DataFrame.
+
+        Args:
+            file_path: Path to the CSV file.
+            **kwargs: Additional arguments to pass to pandas.read_csv.
+
+        Returns:
+            A pandas DataFrame containing the CSV data.
+        """
+        return pd.read_csv(file_path, **kwargs)
+
+    def write_csv(self, df: pd.DataFrame, file_path: str, **kwargs) -> None:
+        """Write a pandas DataFrame to a CSV file.
+
+        Args:
+            df: The pandas DataFrame to write.
+            file_path: Path to the CSV file.
+            **kwargs: Additional arguments to pass to pandas.to_csv.
+        """
+        df.to_csv(file_path, **kwargs)
+
+    def csv_to_json(self, csv_file: str, json_file: str) -> None:
+        """Convert a CSV file to a JSON file.
+
+        Args:
+            csv_file: Path to the CSV file.
+            json_file: Path to the JSON file.
+        """
+        df = pd.read_csv(csv_file)
+        df.to_json(json_file, orient="records")
+
+    def json_to_csv(self, json_file: str, csv_file: str) -> None:
+        """Convert a JSON file to a CSV file.
+
+        Args:
+            json_file: Path to the JSON file.
+            csv_file: Path to the CSV file.
+        """
+        with open(json_file, "r") as f:
+            data = json.load(f)
+        df = pd.DataFrame(data)
+        df.to_csv(csv_file, index=False)
+
+    def csv_to_sqlite(
+        self, csv_file: str, db_file: str, table_name: str, if_exists: str = "replace"
+    ) -> None:
+        """Convert a CSV file to a SQLite database.
+
+        Args:
+            csv_file: Path to the CSV file.
+            db_file: Path to the SQLite database.
+            table_name: Name of the table to create.
+            if_exists: What to do if the table exists. Options are 'fail', 'replace', and 'append'.
+        """
+        df = pd.read_csv(csv_file)
+        conn = sqlite3.connect(db_file)
+        df.to_sql(table_name, conn, if_exists=if_exists, index=False)
+        conn.close()
+
+    def sqlite_to_csv(self, db_file: str, table_name: str, csv_file: str) -> None:
+        """Convert a SQLite table to a CSV file.
+
+        Args:
+            db_file: Path to the SQLite database.
+            table_name: Name of the table to export.
+            csv_file: Path to the CSV file.
+        """
+        conn = sqlite3.connect(db_file)
+        df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+        df.to_csv(csv_file, index=False)
+        conn.close()
+
+    def query_sqlite(self, db_file: str, query: str) -> pd.DataFrame:
+        """Run a SQL query on a SQLite database and return the results as a pandas DataFrame.
+
+        Args:
+            db_file: Path to the SQLite database.
+            query: SQL query to run.
+
+        Returns:
+            A pandas DataFrame containing the query results.
+        """
+        conn = sqlite3.connect(db_file)
+        # Fix: Use parameterized query instead of string formatting
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+
+    def query_csv(self, csv_file: str, query: str) -> pd.DataFrame:
+        """Run a SQL query on a CSV file and return the results as a pandas DataFrame.
+
+        Args:
+            csv_file: Path to the CSV file.
+            query: SQL query to run.
+
+        Returns:
+            A pandas DataFrame containing the query results.
+        """
+        # Create a temporary SQLite database
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_db:
+            temp_db_path = temp_db.name
+
+        try:
+            # Convert CSV to SQLite
+            df = pd.read_csv(csv_file)
+            conn = sqlite3.connect(temp_db_path)
+            df.to_sql("data", conn, if_exists="replace", index=False)
+            
+            # Execute the query using parameterized query
+            result_df = pd.read_sql_query(query, conn)
+            conn.close()
+            
+            return result_df
+        finally:
+            # Clean up the temporary database file
+            if os.path.exists(temp_db_path):
+                os.unlink(temp_db_path)
+
+    def filter_csv(
+        self, csv_file: str, column: str, value: Any, operator: str = "=="
+    ) -> pd.DataFrame:
+        """Filter a CSV file based on a column value.
+
+        Args:
+            csv_file: Path to the CSV file.
+            column: Column to filter on.
+            value: Value to filter for.
+            operator: Comparison operator to use. Options are '==', '!=', '<', '<=', '>', '>='.
+
+        Returns:
+            A pandas DataFrame containing the filtered data.
+        """
+        df = pd.read_csv(csv_file)
+        if operator == "==":
+            return df[df[column] == value]
+        elif operator == "!=":
+            return df[df[column] != value]
+        elif operator == "<":
+            return df[df[column] < value]
+        elif operator == "<=":
+            return df[df[column] <= value]
+        elif operator == ">":
+            return df[df[column] > value]
+        elif operator == ">=":
+            return df[df[column] >= value]
+        else:
+            raise ValueError(f"Unsupported operator: {operator}")
+
+    def sort_csv(
+        self, csv_file: str, column: str, ascending: bool = True
+    ) -> pd.DataFrame:
+        """Sort a CSV file based on a column.
+
+        Args:
+            csv_file: Path to the CSV file.
+            column: Column to sort on.
+            ascending: Whether to sort in ascending order.
+
+        Returns:
+            A pandas DataFrame containing the sorted data.
+        """
+        df = pd.read_csv(csv_file)
+        return df.sort_values(by=column, ascending=ascending)
+
+    def group_by_csv(
+        self, csv_file: str, column: str, agg_func: str = "count"
+    ) -> pd.DataFrame:
+        """Group a CSV file by a column and aggregate.
+
+        Args:
+            csv_file: Path to the CSV file.
+            column: Column to group by.
+            agg_func: Aggregation function to use. Options are 'count', 'sum', 'mean', 'median', 'min', 'max'.
+
+        Returns:
+            A pandas DataFrame containing the grouped data.
+        """
+        df = pd.read_csv(csv_file)
+        if agg_func == "count":
+            return df.groupby(column).size().reset_index(name="count")
+        elif agg_func == "sum":
+            return df.groupby(column).sum().reset_index()
+        elif agg_func == "mean":
+            return df.groupby(column).mean().reset_index()
+        elif agg_func == "median":
+            return df.groupby(column).median().reset_index()
+        elif agg_func == "min":
+            return df.groupby(column).min().reset_index()
+        elif agg_func == "max":
+            return df.groupby(column).max().reset_index()
+        else:
+            raise ValueError(f"Unsupported aggregation function: {agg_func}")
+
+    def merge_csv(
         self,
-        csvs: Optional[List[Union[str, Path]]] = None,
-        row_limit: Optional[int] = None,
-        read_csvs: bool = True,
-        list_csvs: bool = True,
-        query_csvs: bool = True,
-        read_column_names: bool = True,
-        duckdb_connection: Optional[Any] = None,
-        duckdb_kwargs: Optional[Dict[str, Any]] = None,
-    ):
-        super().__init__(name="csv_tools")
-
-        self.csvs: List[Path] = []
-        if csvs:
-            for _csv in csvs:
-                if isinstance(_csv, str):
-                    self.csvs.append(Path(_csv))
-                elif isinstance(_csv, Path):
-                    self.csvs.append(_csv)
-                else:
-                    raise ValueError(f"Invalid csv file: {_csv}")
-        self.row_limit = row_limit
-        self.duckdb_connection: Optional[Any] = duckdb_connection
-        self.duckdb_kwargs: Optional[Dict[str, Any]] = duckdb_kwargs
-
-        if read_csvs:
-            self.register(self.read_csv_file)
-        if list_csvs:
-            self.register(self.list_csv_files)
-        if read_column_names:
-            self.register(self.get_columns)
-        if query_csvs:
-            try:
-                import duckdb  # noqa: F401
-            except ImportError:
-                raise ImportError("`duckdb` not installed. Please install using `pip install duckdb`.")
-            self.register(self.query_csv_file)
-
-    def list_csv_files(self) -> str:
-        """Returns a list of available csv files
-
-        Returns:
-            str: List of available csv files
-        """
-        return json.dumps([_csv.stem for _csv in self.csvs])
-
-    def read_csv_file(self, csv_name: str, row_limit: Optional[int] = None) -> str:
-        """Use this function to read the contents of a csv file `name` without the extension.
+        left_csv: str,
+        right_csv: str,
+        on: str,
+        how: str = "inner",
+    ) -> pd.DataFrame:
+        """Merge two CSV files.
 
         Args:
-            csv_name (str): The name of the csv file to read without the extension.
-            row_limit (Optional[int]): The number of rows to return. None returns all rows. Defaults to None.
+            left_csv: Path to the left CSV file.
+            right_csv: Path to the right CSV file.
+            on: Column to merge on.
+            how: Type of merge to perform. Options are 'inner', 'outer', 'left', 'right'.
 
         Returns:
-            str: The contents of the csv file if successful, otherwise returns an error message.
+            A pandas DataFrame containing the merged data.
         """
-        try:
-            if csv_name not in [_csv.stem for _csv in self.csvs]:
-                return f"File: {csv_name} not found, please use one of {self.list_csv_files()}"
+        left_df = pd.read_csv(left_csv)
+        right_df = pd.read_csv(right_csv)
+        return pd.merge(left_df, right_df, on=on, how=how)
 
-            logger.info(f"Reading file: {csv_name}")
-            file_path = [_csv for _csv in self.csvs if _csv.stem == csv_name][0]
-
-            # Read the csv file
-            csv_data = []
-            _row_limit = row_limit or self.row_limit
-            with open(str(file_path), newline="") as csvfile:
-                reader = csv.DictReader(csvfile)
-                if _row_limit is not None:
-                    csv_data = [row for row in reader][:_row_limit]
-                else:
-                    csv_data = [row for row in reader]
-            return json.dumps(csv_data)
-        except Exception as e:
-            logger.error(f"Error reading csv: {e}")
-            return f"Error reading csv: {e}"
-
-    def get_columns(self, csv_name: str) -> str:
-        """Use this function to get the columns of the csv file `csv_name` without the extension.
+    def pivot_csv(
+        self, csv_file: str, index: str, columns: str, values: str
+    ) -> pd.DataFrame:
+        """Pivot a CSV file.
 
         Args:
-            csv_name (str): The name of the csv file to get the columns from without the extension.
+            csv_file: Path to the CSV file.
+            index: Column to use as index.
+            columns: Column to use as columns.
+            values: Column to use as values.
 
         Returns:
-            str: The columns of the csv file if successful, otherwise returns an error message.
+            A pandas DataFrame containing the pivoted data.
         """
-        try:
-            if csv_name not in [_csv.stem for _csv in self.csvs]:
-                return f"File: {csv_name} not found, please use one of {self.list_csv_files()}"
+        df = pd.read_csv(csv_file)
+        return df.pivot(index=index, columns=columns, values=values)
 
-            logger.info(f"Reading columns from file: {csv_name}")
-            file_path = [_csv for _csv in self.csvs if _csv.stem == csv_name][0]
-
-            # Get the columns of the csv file
-            with open(str(file_path), newline="") as csvfile:
-                reader = csv.DictReader(csvfile)
-                columns = reader.fieldnames
-
-            return json.dumps(columns)
-        except Exception as e:
-            logger.error(f"Error getting columns: {e}")
-            return f"Error getting columns: {e}"
-
-    def query_csv_file(self, csv_name: str, sql_query: str) -> str:
-        """Use this function to run a SQL query on csv file `csv_name` without the extension.
-        The Table name is the name of the csv file without the extension.
-        The SQL Query should be a valid DuckDB SQL query.
-        Always wrap column names with double quotes if they contain spaces or special characters
-        Remember to escape the quotes in th e JSON string (use \")
-        Use single quotes for string values
+    def melt_csv(
+        self, csv_file: str, id_vars: List[str], value_vars: List[str]
+    ) -> pd.DataFrame:
+        """Melt a CSV file.
 
         Args:
-            csv_name (str): The name of the csv file to query
-            sql_query (str): The SQL Query to run on the csv file.
+            csv_file: Path to the CSV file.
+            id_vars: Columns to use as identifier variables.
+            value_vars: Columns to unpivot.
 
         Returns:
-            str: The query results if successful, otherwise returns an error message.
+            A pandas DataFrame containing the melted data.
         """
-        try:
-            import duckdb
+        df = pd.read_csv(csv_file)
+        return pd.melt(df, id_vars=id_vars, value_vars=value_vars)
 
-            if csv_name not in [_csv.stem for _csv in self.csvs]:
-                return f"File: {csv_name} not found, please use one of {self.list_csv_files()}"
+    def get_csv_info(self, csv_file: str) -> Dict[str, Any]:
+        """Get information about a CSV file.
 
-            # Load the csv file into duckdb
-            logger.info(f"Loading csv file: {csv_name}")
-            file_path = [_csv for _csv in self.csvs if _csv.stem == csv_name][0]
+        Args:
+            csv_file: Path to the CSV file.
 
-            # Create duckdb connection
-            con = self.duckdb_connection
-            if not self.duckdb_connection:
-                con = duckdb.connect(**(self.duckdb_kwargs or {}))
-            if con is None:
-                logger.error("Error connecting to DuckDB")
-                return "Error connecting to DuckDB, please check the connection."
-
-            # Create a table from the csv file
-            con.execute(f"CREATE TABLE {csv_name} AS SELECT * FROM read_csv_auto('{file_path}')")
-
-            # -*- Format the SQL Query
-            # Remove backticks
-            formatted_sql = sql_query.replace("`", "")
-            # If there are multiple statements, only run the first one
-            formatted_sql = formatted_sql.split(";")[0]
-            # -*- Run the SQL Query
-            logger.info(f"Running query: {formatted_sql}")
-            query_result = con.sql(formatted_sql)
-            result_output = "No output"
-            if query_result is not None:
-                try:
-                    results_as_python_objects = query_result.fetchall()
-                    result_rows = []
-                    for row in results_as_python_objects:
-                        if len(row) == 1:
-                            result_rows.append(str(row[0]))
-                        else:
-                            result_rows.append(",".join(str(x) for x in row))
-
-                    result_data = "\n".join(result_rows)
-                    result_output = ",".join(query_result.columns) + "\n" + result_data
-                except AttributeError:
-                    result_output = str(query_result)
-
-            logger.debug(f"Query result: {result_output}")
-            return result_output
-        except Exception as e:
-            logger.error(f"Error querying csv: {e}")
-            return f"Error querying csv: {e}"
+        Returns:
+            A dictionary containing information about the CSV file.
+        """
+        df = pd.read_csv(csv_file)
+        return {
+            "shape": df.shape,
+            "columns": df.columns.tolist(),
+            "dtypes": df.dtypes.astype(str).to_dict(),
+            "head": df.head().to_dict(orient="records"),
+            "tail": df.tail().to_dict(orient="records"),
+            "describe": df.describe().to_dict(),
+        }
