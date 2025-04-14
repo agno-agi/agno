@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 import tempfile
 import time
 from os import fdopen, getenv
@@ -114,6 +115,8 @@ class E2BTools(Toolkit):
         """
         try:
             # Execute the code in the sandbox using the correct method name for Python SDK
+            code = re.sub(r"\b(true)\b", "True", code)
+            code = re.sub(r"\b(false)\b", "False", code)
             execution = self.sandbox.run_code(code)
             self.last_execution = execution
 
