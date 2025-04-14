@@ -342,7 +342,7 @@ class Qdrant(VectorDb):
 
             return models.PointStruct(
                 id=doc_id,
-                vector=vector if vector else None,
+                vector=vector,
                 payload={
                     "name": document.name,
                     "meta_data": document.meta_data,
@@ -378,98 +378,87 @@ class Qdrant(VectorDb):
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
-        Search for documents in the database.
+        Search for documents in the collection.
 
         Args:
             query (str): Query to search for
             limit (int): Number of search results to return
             filters (Optional[Dict[str, Any]]): Filters to apply while searching
         """
-        if self.search_type == SearchType.vector:
-            dense_embedding = self.embedder.get_embedding(query)
-
-            results = self.client.query_points(
-                collection_name=self.collection,
-                query=dense_embedding,
-                with_vectors=True,
-                with_payload=True,
-                limit=limit,
-            ).points
-        elif self.search_type == SearchType.hybrid:
-            dense_embedding = self.embedder.get_embedding(query)
-            sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
-
-            results = self.client.query_points(
-                collection_name=self.collection,
-                prefetch=[
-                    models.Prefetch(
-                        query=models.SparseVector(**sparse_embedding), limit=limit, using=self.sparse_vector_name
-                    ),
-                    models.Prefetch(query=dense_embedding, limit=limit),
-                ],
-                query=models.FusionQuery(fusion=self.hybrid_fusion_strategy),
-                with_vectors=True,
-                with_payload=True,
-                limit=limit,
-            ).points
-        elif self.search_type == SearchType.keyword:
-            sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
-            results = self.client.query_points(
-                collection_name=self.collection,
-                query=models.SparseVector(**sparse_embedding),
-                with_vectors=True,
-                with_payload=True,
-                limit=limit,
-                using=self.sparse_vector_name,
-            ).points
-
-        search_results = self._build_search_results(results, query)
-        return search_results
+        results = self._run_search(query, limit, filters, client=self.client, is_async=False)
+        return self._build_search_results(results, query)
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
-        """Search for documents asynchronously."""
+        """
+        Search for documents in the collection asynchronously.
+
+        Args:
+            query (str): Query to search for
+            limit (int): Number of search results to return
+            filters (Optional[Dict[str, Any]]): Filters to apply while searching
+        """
+        results = await self._run_search(query, limit, filters, client=self.async_client, is_async=True)
+        return self._build_search_results(results, query)
+
+    def _run_search(self, query, limit, filters, client, is_async):
         if self.search_type == SearchType.vector:
-            dense_embedding = self.embedder.get_embedding(query)
-
-            results = self.async_client.query_points(
-                collection_name=self.collection,
-                query=dense_embedding,
-                with_vectors=True,
-                with_payload=True,
-                limit=limit,
-            ).points
-        elif self.search_type == SearchType.hybrid:
-            dense_embedding = self.embedder.get_embedding(query)
-            sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
-
-            results = self.async_client.query_points(
-                collection_name=self.collection,
-                prefetch=[
-                    models.Prefetch(
-                        query=models.SparseVector(**sparse_embedding), limit=limit, using=self.sparse_vector_name
-                    ),
-                    models.Prefetch(query=dense_embedding, limit=limit),
-                ],
-                query=models.FusionQuery(fusion=self.hybrid_fusion_strategy),
-                with_vectors=True,
-                with_payload=True,
-                limit=limit,
-            ).points
+            return self._run_dense_search(query, limit, filters, client, is_async)
         elif self.search_type == SearchType.keyword:
-            sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
-            results = self.async_client.query_points(
-                collection_name=self.collection,
-                query=models.SparseVector(**sparse_embedding),
-                with_vectors=True,
-                with_payload=True,
-                limit=limit,
-                using=self.sparse_vector_name,
-            ).points
+            return self._run_sparse_search(query, limit, filters, client, is_async)
+        elif self.search_type == SearchType.hybrid:
+            return self._run_hybrid_search(query, limit, filters, client, is_async)
+        else:
+            raise ValueError(f"Unsupported search type: {self.search_type}")
 
-        search_results = self._build_search_results(results, query)
-        return search_results
+    def _maybe_await(self, call, is_async):
+        return call if not is_async else call.__await__()
+
+    def _run_dense_search(self, query, limit, filters, client, is_async):
+        dense_embedding = self.embedder.get_embedding(query)
+        call = client.query_points(
+            collection_name=self.collection,
+            query=dense_embedding,
+            with_vectors=True,
+            with_payload=True,
+            limit=limit,
+            query_filter=filters,
+        )
+        return self._maybe_await(call, is_async).points
+
+    def _run_sparse_search(self, query, limit, filters, client, is_async):
+        sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
+        call = client.query_points(
+            collection_name=self.collection,
+            query=models.SparseVector(**sparse_embedding),
+            with_vectors=True,
+            with_payload=True,
+            limit=limit,
+            using=self.sparse_vector_name,
+            query_filter=filters,
+        )
+        return self._maybe_await(call, is_async).points
+
+    def _run_hybrid_search(self, query, limit, filters, client, is_async):
+        dense_embedding = self.embedder.get_embedding(query)
+        sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
+
+        call = client.query_points(
+            collection_name=self.collection,
+            prefetch=[
+                models.Prefetch(
+                    query=models.SparseVector(**sparse_embedding), limit=limit, using=self.sparse_vector_name
+                ),
+                models.Prefetch(query=dense_embedding, limit=limit),
+            ],
+            query=models.FusionQuery(fusion=self.hybrid_fusion_strategy),
+            with_vectors=True,
+            with_payload=True,
+            limit=limit,
+            query_filter=filters,
+        )
+        return self._maybe_await(call, is_async).points
 
     def _build_search_results(self, results, query: str) -> List[Document]:
         search_results: List[Document] = []
