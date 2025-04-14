@@ -1,38 +1,22 @@
-from agno.workflow import Workflow
-
-class TeamWorkflow(Workflow):
-    def __init__(self):
-        super().__init__()
-        self.name = "Team Workflow"
-        self.description = "A workflow for a team of agents"
-        """Please install dependencies using:
-pip install openai newspaper4k lxml_html_clean agno
-"""
-
-import json
 from textwrap import dedent
 from typing import Iterator
 
-import httpx
 from agno.agent import Agent, RunResponse
+from agno.models.openai import OpenAIChat
+from agno.team.team import Team
+from agno.tools.exa import ExaTools
+from agno.tools.hackernews import HackerNewsTools
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.workflow import Workflow
 
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.team.team import Team
-from agno.tools.hackernews import HackerNewsTools
-from agno.tools.exa import ExaTools
 
-
-class HackerNewsReporter(Workflow):
+class TeamWorkflow(Workflow):
     description: str = (
-        "Get the top stories from Hacker News and write a report on them."
+        "Get the top stories from Hacker News and Reddit and write a report on them."
     )
 
-   
     reddit_researcher = Agent(
         name="Reddit Researcher",
         role="Research a topic on Reddit",
@@ -59,7 +43,6 @@ class HackerNewsReporter(Workflow):
         """),
     )
 
-
     agent_team = Team(
         name="Discussion Team",
         mode="collaborate",
@@ -69,8 +52,11 @@ class HackerNewsReporter(Workflow):
             hackernews_researcher,
         ],
         instructions=[
-            "You are a discussion master.",
-            "You have to stop the discussion when you think the team has reached a consensus.",
+            "You are a discussion coordinator.",
+            "Your primary role is to facilitate the research process.",
+            "Once both team members have provided their research results with links to top stories from their respective platforms (Reddit and HackerNews), you should stop the discussion.",
+            "Do not continue the discussion after receiving the links - your goal is to collect the research results, not to reach a consensus on content.",
+            "Ensure each member provides relevant links with brief descriptions before concluding.",
         ],
         success_criteria="The team has reached a consensus.",
         enable_agentic_context=True,
@@ -81,36 +67,28 @@ class HackerNewsReporter(Workflow):
     )
 
     writer: Agent = Agent(
-        tools=[Newspaper4kTools()],
-        description="Write an engaging report on the top stories from hackernews.",
+        tools=[Newspaper4kTools(), ExaTools()],
+        description="Write an engaging report on the top stories from various sources.",
         instructions=[
-            "You will be provided with top stories and their links.",
-            "Carefully read each article and think about the contents",
-            "Then generate a final New York Times worthy article",
-            "Break the article into sections and provide key takeaways at the end.",
-            "Make sure the title is catchy and engaging.",
-            "Share score, title, url and summary of every article.",
-            "Give the section relevant titles and provide details/facts/processes in each section.",
-            "Ignore articles that you cannot read or understand.",
-            "REMEMBER: you are writing for the New York Times, so the quality of the article is important.",
+            "You will receive links to top stories from Reddit and HackerNews from the agent team.",
+            "Your task is to access these links and thoroughly read each article.",
+            "Extract key information, insights, and notable points from each source.",
+            "Write a comprehensive, well-structured report that synthesizes the information.",
+            "Create a catchy and engaging title for your report.",
+            "Organize the content into relevant sections with descriptive headings.",
+            "For each article, include its source, title, URL, and a brief summary.",
+            "Provide detailed analysis and context for the most important stories.",
+            "End with key takeaways that summarize the main insights.",
+            "Maintain a professional tone similar to New York Times reporting.",
+            "If you cannot access or understand certain articles, note this and focus on the ones you can analyze.",
         ],
     )
 
-    def get_top_hackernews_stories(self, num_stories: int = 10) -> str:
-        """Use this function to get top stories from Hacker News.
-
-        Args:
-            num_stories (int): Number of stories to return. Defaults to 10.
-
-        Returns:
-            str: JSON string of top stories.
-        """
-
-
     def run(self) -> Iterator[RunResponse]:
-       
         logger.info(f"Getting top stories from HackerNews.")
-        discussion: RunResponse = self.agent_team.run('Getting 2 top stories from HackerNews and reddit and write a brief report on them')
+        discussion: RunResponse = self.agent_team.run(
+            "Getting 2 top stories from HackerNews and reddit and write a brief report on them"
+        )
         if discussion is None or not discussion.content:
             yield RunResponse(
                 run_id=self.run_id, content="Sorry, could not get the top stories."
@@ -123,7 +101,6 @@ class HackerNewsReporter(Workflow):
 
 if __name__ == "__main__":
     # Run workflow
-    report: Iterator[RunResponse] = HackerNewsReporter(debug_mode=False).run(
-    )
+    report: Iterator[RunResponse] = TeamWorkflow(debug_mode=False).run()
     # Print the report
     pprint_run_response(report, markdown=True, show_time=True)
