@@ -4724,6 +4724,7 @@ class Agent:
         return None
 
 
+
     def _append_to_reasoning_content(self, content: str) -> None:
         """Helper to append content to the reasoning_content field."""
         if not hasattr(self.run_response, "reasoning_content") or not self.run_response.reasoning_content:  # type: ignore
