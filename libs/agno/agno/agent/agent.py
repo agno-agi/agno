@@ -786,7 +786,7 @@ class Agent:
             # Update the run_response created_at with the model response created_at
             self.run_response.created_at = model_response.created_at
 
-        if self.stream_intermediate_steps:
+        if self.stream_intermediate_steps and reasoning_started:
             all_reasoning_steps = []
             if (
                 self.run_response
