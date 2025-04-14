@@ -821,6 +821,9 @@ class Agent:
             if model_response.audio is not None:
                 self.run_response.response_audio = model_response.audio
 
+            if model_response.image is not None:
+                self.add_image(model_response.image)
+
             # Create and emit message for non-streaming response
             response_message = Message(
                 role="assistant",
@@ -845,6 +848,10 @@ class Agent:
         self.run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
         self.run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
+
+        # Update the run_response audio if streaming
+        if self.stream and model_response.audio is not None:
+            self.run_response.response_audio = model_response.audio
 
         # Emit final assistant message if we were streaming
         if self.stream and model_response.content:
@@ -1424,6 +1431,9 @@ class Agent:
             if model_response.audio is not None:
                 self.run_response.response_audio = model_response.audio
 
+            if model_response.image is not None:
+                self.add_image(model_response.image)
+
             # Create and emit message for non-streaming response
             response_message = Message(
                 role="assistant",
@@ -1448,6 +1458,10 @@ class Agent:
         self.run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
         self.run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
+
+        # Update the run_response audio if streaming
+        if self.stream and model_response.audio is not None:
+            self.run_response.response_audio = model_response.audio
 
         # Emit final assistant message if we were streaming
         if self.stream and model_response.content:
