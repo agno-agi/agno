@@ -698,14 +698,17 @@ class Agent:
                         else:
                             self.run_response.tools = tool_calls_list
 
+
+                        reasoning_step: ReasoningStep = None
                         # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
                         if self.run_response.tools:
                             for tool_call in self.run_response.tools:
                                 tool_name = tool_call.get("tool_name", "")
                                 if tool_name.lower() in ["think", "analyze"]:
                                     tool_args = tool_call.get("tool_args", {})
-                                    self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+                                    reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
+                    # 2. Call the function and use the returned ReasoningStep:
                     if self.stream_intermediate_steps:
                         for t in self.run_response.tools:
                             if t.get("tool_name") == "think":
@@ -715,13 +718,12 @@ class Agent:
                                         event=RunEvent.reasoning_started,
                                     )
                                     reasoning_started = True
-
-                                content = t.get("tool_args", {}).get("thought", "")
-
+                                
                                 yield self.create_run_response(
-                                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=content)]),
-                                    content_type=ReasoningSteps.__class__.__name__,
+                                    content=reasoning_step,
+                                    content_type=reasoning_step.__class__.__name__,
                                     event=RunEvent.reasoning_step,
+                                    reasoning_content=self.run_response.reasoning_content
                                 )
 
                         yield self.create_run_response(
@@ -1279,6 +1281,16 @@ class Agent:
                                     self.run_response.tools[index] = tool_call_dict
                         else:
                             self.run_response.tools = tool_calls_list
+                        
+                        reasoning_step: ReasoningStep = None
+                        # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
+                        if self.run_response.tools:
+                            for tool_call in self.run_response.tools:
+                                tool_name = tool_call.get("tool_name", "")
+                                if tool_name.lower() in ["think", "analyze"]:
+                                    tool_args = tool_call.get("tool_args", {})
+                                    reasoning_step = self.update_reasoning_content_from_tool_call(
+                                        tool_name, tool_args)
 
                     if self.stream_intermediate_steps:
                         for t in self.run_response.tools:
@@ -1290,12 +1302,11 @@ class Agent:
                                     )
                                     reasoning_started = True
 
-                                content = t.get("tool_args", {}).get("thought", "")
-
                                 yield self.create_run_response(
-                                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=content)]),
-                                    content_type=ReasoningSteps.__class__.__name__,
+                                    content=reasoning_step,
+                                    content_type=reasoning_step.__class__.__name__,
                                     event=RunEvent.reasoning_step,
+                                    reasoning_content=self.run_response.reasoning_content
                                 )
 
                         yield self.create_run_response(
@@ -4624,7 +4635,7 @@ class Agent:
                 panels = [p for p in panels if not isinstance(p, Status)]
                 live_log.update(Group(*panels))
 
-    def update_reasoning_content_from_tool_call(self, tool_name: str, tool_args: Dict[str, Any]) -> None:
+    def update_reasoning_content_from_tool_call(self, tool_name: str, tool_args: Dict[str, Any]) -> Optional[ReasoningStep]:
         """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
 
         # Case 1: ReasoningTools.think (has title, thought, optional action and confidence)
@@ -4654,6 +4665,7 @@ class Agent:
             formatted_content += "\n"
 
             self._append_to_reasoning_content(formatted_content)
+            return reasoning_step
 
         # Case 2: ReasoningTools.analyze (has title, result, analysis, optional next_action and confidence)
         elif tool_name.lower() == "analyze" and "title" in tool_args:
@@ -4694,12 +4706,23 @@ class Agent:
             formatted_content += "\n"
 
             self._append_to_reasoning_content(formatted_content)
+            return reasoning_step
 
         # Case 3: ThinkingTools.think (simple format, just has 'thought')
         elif tool_name.lower() == "think" and "thought" in tool_args:
             thought = tool_args["thought"]
+            reasoning_step = ReasoningStep(
+                title="Thinking",
+                reasoning=thought,
+                confidence=None,
+            )
             formatted_content = f"## Thinking\n{thought}\n\n"
+            self._add_reasoning_step_to_extra_data(reasoning_step)
             self._append_to_reasoning_content(formatted_content)
+            return reasoning_step
+    
+        return None
+
 
     def _append_to_reasoning_content(self, content: str) -> None:
         """Helper to append content to the reasoning_content field."""
