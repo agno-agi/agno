@@ -82,7 +82,6 @@ def test_tool_use_streaming():
     assert "TSLA" in all_content
 
 
-
 @pytest.mark.asyncio
 async def test_async_tool_use():
     """Test async tool use functionality with LiteLLM"""
@@ -106,6 +105,7 @@ async def test_async_tool_use():
     assert len(tool_messages) > 0, "Tool should have been used"
 
     _assert_metrics(response)
+
 
 @pytest.mark.asyncio
 async def test_async_tool_use_streaming():
@@ -134,7 +134,6 @@ async def test_async_tool_use_streaming():
     assert tool_call_seen, "No tool calls observed in stream"
     all_content = "".join([r.content for r in responses if r.content])
     assert "TSLA" in all_content
-
 
 
 def test_parallel_tool_calls():
