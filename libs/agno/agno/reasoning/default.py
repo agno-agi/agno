@@ -21,6 +21,18 @@ def get_default_reasoning_agent(
 ) -> Optional["Agent"]:  # type: ignore  # noqa: F821
     from agno.agent import Agent
 
+    # Special instructions for Mistral models
+    json_instructions = ""
+    if reasoning_model.__class__.__name__ == "MistralChat":
+        json_instructions = """
+        RESPONSE FORMAT INSTRUCTIONS:
+        - Return your response as a plain JSON object.
+        - DO NOT wrap your JSON in markdown code blocks.
+        - DO NOT use ```json or ``` tags.
+        - Return ONLY the raw JSON with no other text.
+        - For example, respond with {"reasoning_steps": [...]} directly, not ```json {"reasoning_steps": [...]} ```
+        """
+
     agent = Agent(
         model=reasoning_model,
         description="You are a meticulous, thoughtful, and logical Reasoning Agent who solves complex problems through clear, structured, step-by-step analysis.",
@@ -53,7 +65,7 @@ def get_default_reasoning_agent(
             - **validate**: When you reach a potential answer, signaling it's ready for validation.
             - **final_answer**: Only if you have confidently validated the solution.
             - **reset**: Immediately restart analysis if a critical error or incorrect result is identified.
-        6. **Confidence Score**: Provide a numeric confidence score (0.0–1.0) indicating your certainty in the step’s correctness and its outcome.
+        6. **Confidence Score**: Provide a numeric confidence score (0.0–1.0) indicating your certainty in the step's correctness and its outcome.
 
         Step 5 - Validation (mandatory before finalizing an answer):
         - Explicitly validate your solution by:
@@ -76,7 +88,8 @@ def get_default_reasoning_agent(
         - Always explicitly handle errors and mistakes by resetting or revising steps immediately.
         - Adhere strictly to a minimum of {min_steps} and maximum of {max_steps} steps to ensure effective task resolution.
         - Execute necessary tools proactively and without hesitation, clearly documenting tool usage.
-        - Only create a single instance of ReasoningSteps for your response.\
+        - Only create a single instance of ReasoningSteps for your response.
+        {json_instructions}\
         """),
         tools=tools,
         show_tool_calls=False,
@@ -86,7 +99,5 @@ def get_default_reasoning_agent(
         telemetry=telemetry,
         debug_mode=debug_mode,
     )
-
-    agent.model.show_tool_calls = False  # type: ignore
 
     return agent

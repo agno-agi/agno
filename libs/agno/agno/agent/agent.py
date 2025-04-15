@@ -3532,16 +3532,30 @@ class Agent:
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
-                reasoning_agent = get_default_reasoning_agent(
-                    reasoning_model=reasoning_model,
-                    min_steps=self.reasoning_min_steps,
-                    max_steps=self.reasoning_max_steps,
-                    tools=self.tools,
-                    use_json_mode=self.use_json_mode,
-                    monitoring=self.monitoring,
-                    telemetry=self.telemetry,
-                    debug_mode=self.debug_mode,
-                )
+                if reasoning_model.__class__.__name__ == "MistralChat":
+                    # Create the reasoning agent with use_json_mode=True for Mistral
+                    reasoning_agent = get_default_reasoning_agent(
+                        reasoning_model=reasoning_model,
+                        min_steps=self.reasoning_min_steps,
+                        max_steps=self.reasoning_max_steps,
+                        tools=self.tools,
+                        use_json_mode=True,  # Force JSON mode for Mistral
+                        monitoring=self.monitoring,
+                        telemetry=self.telemetry,
+                        debug_mode=self.debug_mode,
+                    )
+
+                else:
+                    reasoning_agent = get_default_reasoning_agent(
+                        reasoning_model=reasoning_model,
+                        min_steps=self.reasoning_min_steps,
+                        max_steps=self.reasoning_max_steps,
+                        tools=self.tools,
+                        use_json_mode=self.use_json_mode,
+                        monitoring=self.monitoring,
+                        telemetry=self.telemetry,
+                        debug_mode=self.debug_mode,
+                    )
 
             # Validate reasoning agent
             if reasoning_agent is None:
