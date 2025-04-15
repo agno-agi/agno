@@ -55,7 +55,7 @@ class PerfResult:
             std = statistics.stdev(data_sorted) if len(data_sorted) > 1 else 0
             med = statistics.median(data_sorted)
             # For 95th percentile, use statistics.quantiles
-            p95 = statistics.quantiles(data_sorted, n=100)[94]  # 0-based index: 95th percentile
+            p95 = statistics.quantiles(data_sorted, n=100)[94] if len(data_sorted) > 1 else 0
             return avg, mn, mx, std, med, p95
 
         # Populate runtime stats
