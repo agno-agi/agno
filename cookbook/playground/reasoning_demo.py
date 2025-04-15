@@ -1,6 +1,7 @@
 """Run `pip install openai exa_py duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api python-docx agno` to install dependencies."""
 
 from agno.agent import Agent
+from agno.team import Team
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
@@ -12,6 +13,30 @@ agent_storage_file: str = "tmp/agents.db"
 image_agent_storage_file: str = "tmp/image_agent.db"
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
+
+finance_agent = Agent(
+    name="Finance Agent",
+    role="Get financial data",
+    agent_id="finance-agent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        YFinanceTools(
+            stock_price=True,
+            analyst_recommendations=True,
+            company_info=True,
+            company_news=True,
+        )
+    ],
+    instructions=["Always use tables to display data"],
+    storage=SqliteStorage(
+        table_name="finance_agent", db_file=agent_storage_file, auto_upgrade_schema=True
+    ),
+    add_history_to_messages=True,
+    num_history_responses=5,
+    add_datetime_to_instructions=True,
+    markdown=True,
+)
 
 cot_agent = Agent(
     name="COT Agent",
@@ -84,6 +109,11 @@ claude_thinking_agent = Agent(
     ),
     markdown=True,
     storage=SqliteStorage(table_name="claude_thinking_agent", db_file=agent_storage_file, auto_upgrade_schema=True),
+)
+
+financial_news_team = Team(
+    name="Financial News Team",
+    agents=[ finance_agent, reasoning_tool_agent],
 )
 
 app = Playground(
