@@ -238,7 +238,6 @@ class Memory:
         if refresh_from_db:
             self.refresh_from_db(user_id=user_id)
             
-        print(self.memories)
         if self.memories is None:
             return []
         return list(self.memories.get(user_id, {}).values())
@@ -309,8 +308,6 @@ class Memory:
                     last_updated=memory.last_updated or datetime.now(),
                 )
             )
-            
-        print(self.memories)
 
         return memory_id
 
