@@ -3,7 +3,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 try:
-    import redis
+    from redis import Redis, ConnectionError
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 
@@ -32,7 +32,7 @@ class RedisMemoryDb(MemoryDb):
             password (Optional[str]): Redis password if authentication is required
         """
         self.prefix = prefix
-        self.redis_client = redis.Redis(
+        self.redis_client = Redis(
             host=host,
             port=port,
             db=db,
@@ -59,7 +59,7 @@ class RedisMemoryDb(MemoryDb):
         try:
             self.redis_client.ping()
             log_debug("Redis connection successful")
-        except redis.ConnectionError as e:
+        except ConnectionError as e:
             logger.error(f"Could not connect to Redis: {e}")
             raise
 
