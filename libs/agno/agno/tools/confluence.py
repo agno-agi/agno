@@ -43,17 +43,17 @@ class ConfluenceTools(Toolkit):
         self.password = api_key or getenv("CONFLUENCE_API_KEY") or password or getenv("CONFLUENCE_PASSWORD")
 
         if not self.url:
-            logger.error(
+            raise ValueError(
                 "Confluence URL not provided. Pass it in the constructor or set CONFLUENCE_URL in environment variable"
             )
 
         if not self.username:
-            logger.error(
+            raise ValueError(
                 "Confluence username not provided. Pass it in the constructor or set CONFLUENCE_USERNAME in environment variable"
             )
 
         if not self.password:
-            logger.error("Confluence API KEY or password not provided")
+            raise ValueError("Confluence API KEY or password not provided")
 
         self.confluence = Confluence(url=self.url, username=self.username, password=self.password, verify_ssl=verify_ssl)
         if not verify_ssl:
