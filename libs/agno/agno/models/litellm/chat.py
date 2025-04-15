@@ -81,6 +81,18 @@ class LiteLLM(Model):
                 msg["tool_call_id"] = m.tool_call_id or ""
                 msg["name"] = m.name or ""
 
+                if m.audio is not None and len(m.audio) > 0:
+                    log_warning("Audio input is currently unsupported.")
+
+                if m.images is not None and len(m.images) > 0:
+                    log_warning("Image input is currently unsupported.")
+
+                if m.files is not None and len(m.files) > 0:
+                    log_warning("File input is currently unsupported.")
+
+                if m.videos is not None and len(m.videos) > 0:
+                    log_warning("Video input is currently unsupported.")
+
             formatted_messages.append(msg)
 
         return formatted_messages
