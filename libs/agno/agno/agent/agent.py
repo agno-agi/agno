@@ -716,8 +716,6 @@ class Agent:
                                 metrics=reasoning_tool_calls[-1].get("metrics")
                                 time_taken = metrics.time
                                 reasoning_time_taken = reasoning_time_taken + float(time_taken)
-                                    
-
                     # 2. Call the function and use the returned ReasoningStep:
                     if self.stream_intermediate_steps:
                         for t in self.run_response.tools:
@@ -808,6 +806,7 @@ class Agent:
                 all_reasoning_steps = self.run_response.extra_data.reasoning_steps
 
             if all_reasoning_steps:
+                self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
                 yield self.create_run_response(
                     content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__class__.__name__,
@@ -4757,6 +4756,42 @@ class Agent:
             self.run_response.extra_data.reasoning_steps = []
 
         self.run_response.extra_data.reasoning_steps.append(reasoning_step)
+        
+    def _add_reasoning_metrics_to_extra_data(self, reasoning_time_taken: float) -> None:
+        try:
+            if hasattr(self, "run_response") and self.run_response is not None:
+                if self.run_response.extra_data is None:
+                    from agno.run.response import RunResponseExtraData
+                    self.run_response.extra_data = RunResponseExtraData()
+                    
+                # Initialize reasoning_messages if it doesn't exist
+                if self.run_response.extra_data.reasoning_messages is None:
+                    self.run_response.extra_data.reasoning_messages = []
+                    
+                try:
+                    # First attempt: Create a Message object with the metrics
+                    from agno.models.message import Message
+                    
+                    metrics_message = Message(
+                        role="assistant",
+                        content=self.run_response.reasoning_content,
+                        metrics={"time": reasoning_time_taken}
+                    )
+                    
+                    # Add the metrics message to the reasoning_messages
+                    self.run_response.extra_data.reasoning_messages.append(metrics_message)
+                except Exception as e:
+                    # Fallback: If Message object fails, try with a simple dictionary
+                    metrics_dict = {
+                        "role": "assistant",
+                        "content": str(self.run_response.reasoning_content),
+                        "metrics": {"time": reasoning_time_taken}
+                    }
+                    self.run_response.extra_data.reasoning_messages.append(metrics_dict)
+        except Exception as e:
+            # Log the error but don't crash
+            from agno.utils.log import log_error
+            log_error(f"Failed to add reasoning metrics to extra_data: {str(e)}")
 
     def cli_app(
         self,
