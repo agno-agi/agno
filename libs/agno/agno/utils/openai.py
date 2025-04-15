@@ -13,7 +13,7 @@ InputImageModel = Optional[str]
 InputImageSize = Optional[str]
 
 
-def _validate_image_params(model: InputImageModel, size: InputImageSize) -> OpenAIImageSize | None:
+def _validate_image_params(model: InputImageModel, size: InputImageSize) -> Union[OpenAIImageSize, None]:
     """Validates image size against the selected model and returns the size to use."""
     dalle_3_sizes = {"1024x1024", "1792x1024", "1024x1792"}
     dalle_2_sizes = {"256x256", "512x512", "1024x1024"}
