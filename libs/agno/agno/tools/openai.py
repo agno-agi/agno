@@ -99,7 +99,6 @@ class OpenAITools(Toolkit):
             str: A comma-separated string of URLs pointing to the generated images, or an error message.
         """
 
-
         # Input validation (size vs model) is now handled in __init__
         # Ensure n=1 for dall-e-3
         if self.image_model == "dall-e-3" and number_of_images != 1:
