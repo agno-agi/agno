@@ -228,14 +228,11 @@ class Gemini(Model):
         formatted_messages, system_message = self._format_messages(messages)
         request_kwargs = self._get_request_kwargs(system_message)
         try:
-            log_debug(f"Gemini Request: model={self.id}, contents={formatted_messages}, kwargs={request_kwargs}")
-            response = self.get_client().models.generate_content(
+            return self.get_client().models.generate_content(
                 model=self.id,
                 contents=formatted_messages,
                 **request_kwargs,
             )
-            log_debug(f"Gemini Raw Response: {response}")
-            return response
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
@@ -243,7 +240,6 @@ class Gemini(Model):
             ) from e
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
-            log_debug(f"Gemini Raw Response on Exception: {getattr(e, 'response', 'N/A')}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]):
@@ -260,15 +256,11 @@ class Gemini(Model):
 
         request_kwargs = self._get_request_kwargs(system_message)
         try:
-            log_debug(f"Gemini Stream Request: model={self.id}, contents={formatted_messages}, kwargs={request_kwargs}")
-            stream = self.get_client().models.generate_content_stream(
+            yield from self.get_client().models.generate_content_stream(
                 model=self.id,
                 contents=formatted_messages,
                 **request_kwargs,
             )
-            for chunk in stream:
-                log_debug(f"Gemini Raw Stream Chunk: {chunk}")
-                yield chunk
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
@@ -276,7 +268,6 @@ class Gemini(Model):
             ) from e
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
-            log_debug(f"Gemini Raw Response on Exception: {getattr(e, 'response', 'N/A')}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]):
@@ -288,14 +279,11 @@ class Gemini(Model):
         request_kwargs = self._get_request_kwargs(system_message)
 
         try:
-            log_debug(f"Gemini Async Request: model={self.id}, contents={formatted_messages}, kwargs={request_kwargs}")
-            response = await self.get_client().aio.models.generate_content(
+            return await self.get_client().aio.models.generate_content(
                 model=self.id,
                 contents=formatted_messages,
                 **request_kwargs,
             )
-            log_debug(f"Gemini Raw Async Response: {response}")
-            return response
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
@@ -303,7 +291,6 @@ class Gemini(Model):
             ) from e
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
-            log_debug(f"Gemini Raw Response on Exception: {getattr(e, 'response', 'N/A')}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]):
@@ -315,14 +302,12 @@ class Gemini(Model):
         request_kwargs = self._get_request_kwargs(system_message)
 
         try:
-            log_debug(f"Gemini Async Stream Request: model={self.id}, contents={formatted_messages}, kwargs={request_kwargs}")
             async_stream = await self.get_client().aio.models.generate_content_stream(
                 model=self.id,
                 contents=formatted_messages,
                 **request_kwargs,
             )
             async for chunk in async_stream:
-                log_debug(f"Gemini Raw Async Stream Chunk: {chunk}")
                 yield chunk
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
@@ -331,7 +316,6 @@ class Gemini(Model):
             ) from e
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
-            log_debug(f"Gemini Raw Response on Exception: {getattr(e, 'response', 'N/A')}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message]):
@@ -614,7 +598,7 @@ class Gemini(Model):
         if combined_content:
             messages.append(
                 Message(
-                    role="user", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
+                    role="tool", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
                 )
             )
 
@@ -628,7 +612,6 @@ class Gemini(Model):
         Returns:
             ModelResponse: Parsed response data
         """
-        log_debug(f"Parsing Gemini Response: {response}")
         model_response = ModelResponse()
 
         # Get response message
@@ -695,14 +678,7 @@ class Gemini(Model):
         return model_response
 
     def parse_provider_response_delta(self, response_delta: GenerateContentResponse) -> ModelResponse:
-        log_debug(f"Parsing Gemini Delta: {response_delta}")
         model_response = ModelResponse()
-
-        # Ensure candidates exist and have content
-        if not response_delta.candidates or not response_delta.candidates[0].content:
-             # Return an empty response or log warning if the chunk is invalid/empty
-             log_warning("Received an empty or invalid response delta chunk.")
-             return model_response
 
         response_message: Content = response_delta.candidates[0].content
 
