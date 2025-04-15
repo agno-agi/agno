@@ -74,7 +74,6 @@ class GoogleSearchTools(Toolkit):
                 language = "en"
 
         log_debug(f"Searching Google [{language}] for: {query}")
-        log_debug(f"Executing search with max_results={max_results}")
 
         # Perform Google search using the googlesearch-python package
         results = list(search(query, num_results=max_results, lang=language, proxy=self.proxy, advanced=True))
@@ -90,5 +89,4 @@ class GoogleSearchTools(Toolkit):
                 }
             )
 
-        log_debug(f"Search completed. Found {len(res)} results")
         return json.dumps(res, indent=2)
