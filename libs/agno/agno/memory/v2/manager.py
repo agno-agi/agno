@@ -18,8 +18,8 @@ class MemoryManager:
     # Model used for memory management
     model: Optional[Model] = None
 
-    # Provide the system prompt for the manager as a string. If not provided, a default prompt will be used.
-    system_prompt: Optional[str] = None
+    # Provide the system message for the manager as a string. If not provided, a default prompt will be used.
+    system_message: Optional[str] = None
     
     # Additional instructions for the manager
     additional_instructions: Optional[str] = None
@@ -29,12 +29,12 @@ class MemoryManager:
 
     def __init__(self, 
                  model: Optional[Model] = None,
-                 system_prompt: Optional[str] = None, 
+                 system_message: Optional[str] = None, 
                  additional_instructions: Optional[str] = None):
         self.model = model
         if self.model is not None and isinstance(self.model, str):
             raise ValueError("Model must be a Model object, not a string")
-        self.system_prompt = system_prompt
+        self.system_message = system_message
         self.additional_instructions = additional_instructions
         
     def add_tools_to_model(self, model: Model, tools: List[Callable]) -> None:
@@ -67,8 +67,8 @@ class MemoryManager:
         enable_delete_memory: bool = True,
         enable_clear_memory: bool = True,
     ) -> Message:
-        if self.system_prompt is not None:
-            return Message(role="system", content=self.system_prompt)
+        if self.system_message is not None:
+            return Message(role="system", content=self.system_message)
 
         # -*- Return a system message for the memory manager
         system_prompt_lines = [

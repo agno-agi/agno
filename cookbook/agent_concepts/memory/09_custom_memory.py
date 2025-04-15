@@ -18,7 +18,7 @@ from rich.pretty import pprint
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
 
-# You can also set the model for Memory Manager and Summarizer individually
+# You can also override the entire `system_message` for the memory manager
 memory_manager = MemoryManager(
     model=OpenRouter(id="meta-llama/llama-3.3-70b-instruct"),
     additional_instructions="""
@@ -26,7 +26,7 @@ memory_manager = MemoryManager(
     """
 )
 
-# You can also override the entire `system_prompt` for the summarizer
+# You can also override the entire `system_message` for the session summarizer
 session_summarizer = SessionSummarizer(
     model=Claude(id="claude-3-5-sonnet-20241022"),
     additional_instructions="""

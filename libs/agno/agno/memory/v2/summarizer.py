@@ -33,8 +33,8 @@ class SessionSummarizer:
     # Model used for summarization
     model: Optional[Model] = None
 
-    # System prompt for the summarizer. If not provided, a default prompt will be used.
-    system_prompt: Optional[str] = None
+    # System message for the summarizer. If not provided, a default prompt will be used.
+    system_message: Optional[str] = None
 
     # Additional instructions for the summarizer. If not provided, a default prompt will be used.
     additional_instructions: Optional[str] = None
@@ -44,12 +44,12 @@ class SessionSummarizer:
 
     def __init__(self, 
                  model: Optional[Model] = None, 
-                 system_prompt: Optional[str] = None, 
+                 system_message: Optional[str] = None, 
                  additional_instructions: Optional[str] = None):
         self.model = model
         if self.model is not None and isinstance(self.model, str):
             raise ValueError("Model must be a Model object, not a string")
-        self.system_prompt = system_prompt
+        self.system_message = system_message
         self.additional_instructions = additional_instructions
         
     def update_model(self, model: Model) -> None:
@@ -70,8 +70,8 @@ class SessionSummarizer:
             model.response_format = {"type": "json_object"}
 
     def get_system_message(self, conversation: List[Message], model: Model) -> Message:
-        if self.system_prompt is not None:
-            return Message(role="system", content=self.system_prompt)
+        if self.system_message is not None:
+            return Message(role="system", content=self.system_message)
 
         # -*- Return a system message for summarization
         system_prompt = dedent("""\
