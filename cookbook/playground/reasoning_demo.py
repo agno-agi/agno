@@ -118,7 +118,6 @@ financial_news_team = Team(
     members=[ finance_agent, reasoning_tool_agent],
     instructions="You are a financial news team that is responsible for providing financial news to the user.",
     storage=SqliteStorage(table_name="financial_news_team", db_file=agent_storage_file, auto_upgrade_schema=True),  
-    add_history_to_messages=True
 )
 
 app = Playground(
