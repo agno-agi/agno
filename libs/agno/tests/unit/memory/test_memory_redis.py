@@ -2,7 +2,7 @@ from typing import Dict
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
-import redis
+from redis import ConnectionError
 
 from agno.memory.v2.db.redis import RedisMemoryDb
 from agno.memory.v2.db.schema import MemoryRow
@@ -11,7 +11,7 @@ from agno.memory.v2.db.schema import MemoryRow
 @pytest.fixture
 def mock_redis_client():
     """Mock Redis client with in-memory storage for testing."""
-    with patch("redis.Redis") as mock_redis:
+    with patch("agno.memory.v2.db.redis.Redis") as mock_redis:
         # Create a mock Redis client
         client = MagicMock()
 
@@ -60,10 +60,10 @@ def test_create_connection(mock_redis_client):
 
 def test_connection_error(mock_redis_client):
     """Test that create() raises exception on connection error."""
-    mock_redis_client.ping.side_effect = redis.ConnectionError("Connection refused")
+    mock_redis_client.ping.side_effect = ConnectionError("Connection refused")
     db = RedisMemoryDb(prefix="test")
 
-    with pytest.raises(redis.ConnectionError):
+    with pytest.raises(ConnectionError):
         db.create()
 
 
