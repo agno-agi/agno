@@ -139,8 +139,9 @@ claude_thinking_agent = Agent(
 financial_news_team = Team(
     name="Financial News Team",
     team_id="financial_news_team",
+    model=OpenAIChat(id="gpt-4o"),
     mode="route",
-    members=[ finance_agent, reasoning_tool_agent],
+    members=[finance_agent, reasoning_tool_agent],
     instructions="You are a financial news team that is responsible for providing financial news to the user.",
     storage=SqliteStorage(table_name="financial_news_team", db_file=agent_storage_file, auto_upgrade_schema=True),  
 )
