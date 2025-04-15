@@ -15,6 +15,9 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.openai import OpenAITools
 
+# Define the output file path
+output_file: str = "image_output.png"
+
 # Create a simple agent using the GPT-4o model and the OpenAI toolkit
 agent: Agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
@@ -24,5 +27,8 @@ agent: Agent = Agent(
 
 # Ask the agent to generate an image using the tool
 agent.print_response(
-    f"Generate an image of a futuristic cityscape at sunset painted in the style of Van Gogh. Use the default   size."
+    f"Generate an image of a futuristic cityscape at sunset painted in the style of Van Gogh. Save the image to '{output_file}' and return the URL.",
+    stream=True,
 )
+
+print(f"\nImage generation requested. Check for the file: {output_file}")

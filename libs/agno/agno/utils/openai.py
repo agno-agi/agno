@@ -1,8 +1,53 @@
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
 from agno.media import Audio, Image
 from agno.utils.log import logger
+
+# Define Literal types for allowed OpenAI parameter values used in utils
+OpenAIImageSize = Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]
+AIDalleModel = Literal["dall-e-2", "dall-e-3"]
+
+# Define broader input types for validation
+InputImageModel = Optional[str]
+InputImageSize = Optional[str]
+
+
+def _validate_image_params(model: InputImageModel, size: InputImageSize) -> OpenAIImageSize | None:
+    """Validates image size against the selected model and returns the size to use."""
+    dalle_3_sizes = {"1024x1024", "1792x1024", "1024x1792"}
+    dalle_2_sizes = {"256x256", "512x512", "1024x1024"}
+
+    # Validate model first
+    if model not in ("dall-e-2", "dall-e-3"):
+        error_msg = f"Invalid model '{model}'. Must be 'dall-e-2' or 'dall-e-3'."
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    # Now proceed with size validation based on the validated model
+    if model == "dall-e-3":
+        if size is None:
+            return "1024x1024"  # DALL-E 3 actually defaults to 1024x1024
+        if size not in dalle_3_sizes:
+            error_msg = f"Invalid size '{size}' for DALL-E 3. Must be one of {dalle_3_sizes} or None."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        # Cast size to OpenAIImageSize after validation
+        return size  # type: ignore[return-value]
+
+    elif model == "dall-e-2":
+        final_size = size if size is not None else "1024x1024"  # Default for DALL-E 2 if None
+        if final_size not in dalle_2_sizes:
+            error_msg = f"Invalid size '{final_size}' for DALL-E 2. Must be one of {dalle_2_sizes}."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        # Cast final_size to OpenAIImageSize after validation
+        return final_size  # type: ignore[return-value]
+    else:
+        # This case is now handled by the initial model validation, but kept defensively
+        error_msg = f"Unknown DALL-E model encountered: {model}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)  # Should not be reachable
 
 
 def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
