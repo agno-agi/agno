@@ -17,8 +17,9 @@ class LinearTools(Toolkit):
         get_user_assigned_issues: bool = True,
         get_workflow_issues: bool = True,
         get_high_priority_issues: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="linear tools")
+        super().__init__(name="linear tools", **kwargs)
         self.api_token = getenv("LINEAR_API_KEY")
 
         if not self.api_token:

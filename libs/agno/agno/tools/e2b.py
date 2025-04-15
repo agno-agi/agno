@@ -4,11 +4,12 @@ import tempfile
 import time
 from os import fdopen, getenv
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import ImageArtifact
+from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
@@ -31,6 +32,7 @@ class E2BTools(Toolkit):
         timeout: int = 300,  # 5 minutes default timeout
         sandbox_options: Optional[Dict[str, Any]] = None,
         command_execution: bool = False,
+        **kwargs,
     ):
         """Initialize E2B toolkit for code interpretation and running Python code in a sandbox.
 
@@ -45,7 +47,7 @@ class E2BTools(Toolkit):
             timeout: Timeout in seconds for the sandbox (default: 5 minutes)
             sandbox_options: Additional options to pass to the Sandbox constructor
         """
-        super().__init__(name="e2b_tools")
+        super().__init__(name="e2b_tools", **kwargs)
 
         self.api_key = api_key or getenv("E2B_API_KEY")
         if not self.api_key:
@@ -170,7 +172,9 @@ class E2BTools(Toolkit):
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error uploading file: {str(e)}"})
 
-    def download_png_result(self, agent: Agent, result_index: int = 0, output_path: Optional[str] = None) -> str:
+    def download_png_result(
+        self, agent: Union[Agent, Team], result_index: int = 0, output_path: Optional[str] = None
+    ) -> str:
         """
         Add a PNG image result from the last code execution as an ImageArtifact to the agent.
 

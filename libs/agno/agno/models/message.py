@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agno.media import Audio, AudioResponse, File, Image, Video
+from agno.media import Audio, AudioResponse, File, Image, ImageArtifact, Video
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 
@@ -173,6 +173,7 @@ class Message(BaseModel):
 
     # Output from the models
     audio_output: Optional[AudioResponse] = None
+    image_output: Optional[ImageArtifact] = None
 
     # The thinking content from the model
     thinking: Optional[str] = None
@@ -312,10 +313,10 @@ class Message(BaseModel):
         if self.tool_calls:
             tool_calls_list = ["Tool Calls:"]
             for tool_call in self.tool_calls:
-                tool_id = tool_call.get("id", "Unknown")
-                function_name = tool_call.get("function", {}).get("name", "Unknown")
-                tool_calls_list.append(f"  - ID: '{tool_id}'")
-                tool_calls_list.append(f"    Name: '{function_name}'")
+                tool_id = tool_call.get("id")
+                function_name = tool_call.get("function", {}).get("name")
+                tool_calls_list.append(f"  - ID: '{tool_id}'") if tool_id else None
+                tool_calls_list.append(f"    Name: '{function_name}'") if function_name else None
                 tool_call_arguments = tool_call.get("function", {}).get("arguments")
                 if tool_call_arguments:
                     try:

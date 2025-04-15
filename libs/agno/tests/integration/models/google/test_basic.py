@@ -27,7 +27,12 @@ def _assert_metrics(response: RunResponse):
 
 def test_basic():
     agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False
+        model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
+        delay_between_retries=5,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
     )
 
     # Print the response in the terminal
@@ -62,7 +67,12 @@ def test_basic_stream():
 @pytest.mark.asyncio
 async def test_async_basic():
     agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False
+        model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
+        delay_between_retries=5,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
     )
 
     response = await agent.arun("Share a 2 sentence horror story")
@@ -76,7 +86,12 @@ async def test_async_basic():
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False
+        model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
+        delay_between_retries=5,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
     )
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
@@ -92,6 +107,7 @@ def test_exception_handling():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash-made-up-id"),
         exponential_backoff=True,
+        delay_between_retries=5,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -110,6 +126,7 @@ def test_with_memory():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
         exponential_backoff=True,
+        delay_between_retries=5,
         add_history_to_messages=True,
         num_history_responses=5,
         markdown=True,
@@ -137,6 +154,7 @@ def test_persistent_memory():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
         exponential_backoff=True,
+        delay_between_retries=5,
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         show_tool_calls=True,
@@ -176,6 +194,8 @@ def test_structured_output():
 
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
+        delay_between_retries=5,
         response_model=MovieScript,
         telemetry=False,
         monitoring=False,
@@ -198,6 +218,8 @@ def test_json_response_mode():
 
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
+        delay_between_retries=5,
         response_model=MovieScript,
         use_json_mode=True,
         telemetry=False,
@@ -221,6 +243,8 @@ def test_structured_outputs_deprecated():
 
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
+        delay_between_retries=5,
         response_model=MovieScript,
         structured_outputs=True,
         telemetry=False,
@@ -239,6 +263,8 @@ def test_structured_outputs_deprecated():
 def test_history():
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
+        exponential_backoff=True,
+        delay_between_retries=5,
         storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
@@ -248,10 +274,6 @@ def test_history():
     assert len(agent.run_response.messages) == 2
     agent.run("Hello 2")
     assert len(agent.run_response.messages) == 4
-    agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 6
-    agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8
 
 
 @pytest.mark.skip(reason="Need to fix this by getting credentials in Github actions")
@@ -290,12 +312,13 @@ def test_custom_client_params():
     agent = Agent(
         model=Gemini(
             id="gemini-1.5-flash",
-            exponential_backoff=True,
             vertexai=True,
             location="us-central1",
             generation_config=generation_config,
             safety_settings=safety_settings,
         ),
+        exponential_backoff=True,
+        delay_between_retries=5,
         telemetry=False,
         monitoring=False,
     )

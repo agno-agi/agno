@@ -16,7 +16,7 @@ Run: `pip install agno mcp openai` to install the dependencies
 Environment variables needed:
 - Create a GitHub personal access token following these steps:
     - https://github.com/modelcontextprotocol/servers/tree/main/src/github#setup
-- GITHUB_TOKEN: Your GitHub personal access token
+- export GITHUB_TOKEN: Your GitHub personal access token
 """
 
 import asyncio
@@ -25,15 +25,11 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp import StdioServerParameters
 
 
 async def run_agent(message: str) -> None:
     """Run the GitHub agent with the given message."""
-    github_token = os.getenv("GITHUB_TOKEN") or os.getenv("GITHUB_ACCESS_TOKEN")
-    if not github_token:
-        raise ValueError("GITHUB_TOKEN environment variable is required")
 
     # Initialize the MCP server
     server_params = StdioServerParameters(

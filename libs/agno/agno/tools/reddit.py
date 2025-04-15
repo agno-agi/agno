@@ -28,8 +28,9 @@ class RedditTools(Toolkit):
         create_post: bool = True,
         reply_to_post: bool = True,
         reply_to_comment: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="reddit")
+        super().__init__(name="reddit", **kwargs)
 
         if reddit_instance is not None:
             log_info("Using provided Reddit instance")

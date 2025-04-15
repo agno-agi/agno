@@ -1,9 +1,20 @@
+import json
+from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
 from agents import get_sql_agent
 from agno.agent.agent import Agent
 from agno.utils.log import logger
+
+
+def is_json(myjson):
+    """Check if a string is valid JSON"""
+    try:
+        json.loads(myjson)
+    except (ValueError, TypeError):
+        return False
+    return True
 
 
 def load_data_and_knowledge():
@@ -45,7 +56,7 @@ def restart_agent():
 def export_chat_history():
     """Export chat history as markdown"""
     if "messages" in st.session_state:
-        chat_text = "# F1 SQL Agent - Chat History\n\n"
+        chat_text = "# Reasoning SQL Agent - Chat History\n\n"
         for msg in st.session_state["messages"]:
             role = "🤖 Assistant" if msg["role"] == "agent" else "👤 User"
             chat_text += f"### {role}\n{msg['content']}\n\n"
@@ -60,47 +71,56 @@ def display_tool_calls(tool_calls_container, tools):
         tool_calls_container: Streamlit container to display the tool calls
         tools: List of tool call dictionaries containing name, args, content, and metrics
     """
-    with tool_calls_container.container():
-        for tool_call in tools:
-            _tool_name = tool_call.get("tool_name")
-            _tool_args = tool_call.get("tool_args")
-            _content = tool_call.get("content")
-            _metrics = tool_call.get("metrics")
+    try:
+        with tool_calls_container.container():
+            for tool_call in tools:
+                tool_name = tool_call.get("tool_name", "Unknown Tool")
+                tool_args = tool_call.get("tool_args", {})
+                content = tool_call.get("content", None)
+                metrics = tool_call.get("metrics", None)
 
-            with st.expander(
-                f"🛠️ {_tool_name.replace('_', ' ').title()}", expanded=False
-            ):
-                if isinstance(_tool_args, dict) and "query" in _tool_args:
-                    st.code(_tool_args["query"], language="sql")
+                # Add timing information
+                execution_time_str = "N/A"
+                try:
+                    if metrics is not None and hasattr(metrics, "time"):
+                        execution_time = metrics.time
+                        if execution_time is not None:
+                            execution_time_str = f"{execution_time:.4f}s"
+                except Exception as e:
+                    logger.error(f"Error displaying tool calls: {str(e)}")
+                    pass
 
-                if _tool_args and _tool_args != {"query": None}:
-                    st.markdown("**Arguments:**")
-                    st.json(_tool_args)
+                with st.expander(
+                    f"🛠️ {tool_name.replace('_', ' ').title()} ({execution_time_str})",
+                    expanded=False,
+                ):
+                    # Show query with syntax highlighting
+                    if isinstance(tool_args, dict) and "query" in tool_args:
+                        st.code(tool_args["query"], language="sql")
 
-                if _content:
-                    st.markdown("**Results:**")
-                    try:
-                        st.json(_content)
-                    except Exception as e:
-                        st.markdown(_content)
+                    # Display arguments in a more readable format
+                    if tool_args and tool_args != {"query": None}:
+                        st.markdown("**Arguments:**")
+                        st.json(tool_args)
 
-                if _metrics:
-                    st.markdown("**Metrics:**")
-                    st.json(_metrics)
+                    if content is not None:
+                        try:
+                            if is_json(content):
+                                st.markdown("**Results:**")
+                                st.json(content)
+                        except Exception as e:
+                            logger.debug(f"Skipped tool call content: {e}")
+    except Exception as e:
+        logger.error(f"Error displaying tool calls: {str(e)}")
+        tool_calls_container.error("Failed to display tool results")
 
 
 def sidebar_widget() -> None:
     """Display a sidebar with sample user queries"""
     with st.sidebar:
-        # Basic Information
-        st.markdown("#### 🏎️ Basic Information")
+        st.markdown("#### 🏆 Sample Queries")
         if st.button("📋 Show Tables"):
             add_message("user", "Which tables do you have access to?")
-        if st.button("ℹ️ Describe Tables"):
-            add_message("user", "Tell me more about these tables.")
-
-        # Statistics
-        st.markdown("#### 🏆 Statistics")
         if st.button("🥇 Most Race Wins"):
             add_message("user", "Which driver has the most race wins?")
 
@@ -112,9 +132,6 @@ def sidebar_widget() -> None:
                 "user",
                 "Tell me the name of the driver with the longest racing career? Also tell me when they started and when they retired.",
             )
-
-        # Analysis
-        st.markdown("#### 📊 Analysis")
         if st.button("📈 Races per Year"):
             add_message("user", "Show me the number of races per year.")
 
@@ -124,20 +141,23 @@ def sidebar_widget() -> None:
                 "Write a query to identify the drivers that won the most races per year from 2010 onwards and the position of their team that year.",
             )
 
-        # Utility buttons
+        st.markdown("---")
         st.markdown("#### 🛠️ Utilities")
         col1, col2 = st.columns(2)
         with col1:
             if st.button("🔄 New Chat"):
                 restart_agent()
         with col2:
+            fn = "sql_agent_chat_history.md"
+            if "sql_agent_session_id" in st.session_state:
+                fn = f"sql_agent_{st.session_state.sql_agent_session_id}.md"
             if st.download_button(
                 "💾 Export Chat",
                 export_chat_history(),
-                file_name="f1_chat_history.md",
+                file_name=fn,
                 mime="text/markdown",
             ):
-                st.success("Chat history exported!")
+                st.sidebar.success("Chat history exported!")
 
         if st.sidebar.button("🚀 Load Data & Knowledge"):
             load_data_and_knowledge()
@@ -145,7 +165,6 @@ def sidebar_widget() -> None:
 
 def session_selector_widget(agent: Agent, model_id: str) -> None:
     """Display a session selector in the sidebar"""
-
     if agent.storage:
         agent_sessions = agent.storage.get_all_sessions()
         # Get session names if available, otherwise use IDs
@@ -184,7 +203,6 @@ def session_selector_widget(agent: Agent, model_id: str) -> None:
 
 def rename_session_widget(agent: Agent) -> None:
     """Rename the current session of the agent and save to storage"""
-
     container = st.sidebar.container()
     session_row = container.columns([3, 1], vertical_alignment="center")
 
