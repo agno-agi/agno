@@ -4,7 +4,7 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_debug, log_info, logger
 
 try:
     from openai import OpenAI as OpenAIClient
@@ -88,7 +88,7 @@ class OpenAITools(Toolkit):
         Returns:
             str: A comma-separated string of URLs pointing to the generated images, or an error message.
         """
-        log_info(f"Generating {n} image(s) using {model_name} of size {size} for prompt: '{prompt}'")
+        log_debug(f"Generating {n} image(s) using {model_name} of size {size} for prompt: '{prompt}'")
 
         if model_name == "dall-e-3":
             if n != 1:
@@ -127,7 +127,7 @@ class OpenAITools(Toolkit):
                             model=model_name,  # Optionally add model context
                         )
                     )
-                    log_info(f"Added generated image artifact {media_id} to agent.")
+                    log_debug(f"Added generated image artifact {media_id} to agent.")
 
             result_string = ", ".join(image_urls)
             log_info(f"Generated image URLs (as string): {result_string}")
@@ -144,6 +144,7 @@ class OpenAITools(Toolkit):
         """Generate speech from text using OpenAI's Text-to-Speech API.
         Adds the generated audio as an AudioArtifact to the agent's context.
         Uses the voice, model, and format specified during OpenAITools initialization.
+        
         Args:
             agent (Agent): The agent instance to add the audio artifact to.
             text_input (str): The text to synthesize into speech.
