@@ -132,6 +132,7 @@ claude_thinking_agent = Agent(
         thinking={"type": "enabled", "budget_tokens": 1024},
     ),
     markdown=True,
+    stream_intermediate_steps=True,
     storage=SqliteStorage(table_name="claude_thinking_agent", db_file=agent_storage_file, auto_upgrade_schema=True),
 )
 
