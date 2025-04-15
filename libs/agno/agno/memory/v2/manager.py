@@ -60,6 +60,9 @@ class MemoryManager:
         enable_delete_memory: bool = True,
         enable_clear_memory: bool = True,
     ) -> Message:
+        if self.system_prompt is not None:
+            return Message(role="system", content=self.system_prompt)
+
         # -*- Return a system message for the memory manager
         system_prompt_lines = [
             "You are a MemoryManager that is responsible for manging key information about the user. "

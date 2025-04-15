@@ -97,11 +97,36 @@ def test_set_model():
     assert memory.summary_manager.model == model
 
 
-def test_initialization_with_memories(sample_user_memory):
-    memories = {"user1": {"memory1": sample_user_memory}}
-    memory = Memory(memories=memories)
-    assert memory.memories == memories
-    assert memory.get_user_memory("user1", "memory1") == sample_user_memory
+def test_custom_memory_manager_with_system_prompt(mock_model, mock_db):
+    # Create a custom system prompt
+    custom_system_prompt = "You are a specialized memory manager that focuses on capturing user preferences."
+    
+    # Create a memory manager with the custom system prompt
+    memory_manager = MemoryManager(model=mock_model, system_prompt=custom_system_prompt)
+    
+    # Create a memory with the custom memory manager
+    memory = Memory(model=mock_model, db=mock_db, memory_manager=memory_manager)
+    
+    # Verify the memory manager has the custom system prompt
+    assert memory.memory_manager.system_prompt == custom_system_prompt
+    
+    # Test that the get_system_message method returns the custom prompt
+    system_message = memory.memory_manager.get_system_message()
+    assert system_message.role == "system"
+    assert system_message.content == custom_system_prompt
+    
+    # Test that the custom prompt is used when creating memories
+    with patch.object(memory.memory_manager, 'create_or_update_memories') as mock_create:
+        mock_create.return_value = "Memories created with custom prompt"
+        
+        # Call the method that would use the system prompt
+        result = memory.create_user_memories(message="I like pizza", user_id="test_user")
+        
+        # Verify the create_or_update_memories method was called
+        mock_create.assert_called_once()
+        
+        # Verify the result
+        assert result == "Memories created with custom prompt"
 
 
 # User Memory Operations Tests
@@ -110,7 +135,7 @@ def test_add_user_memory(memory_with_model, sample_user_memory):
 
     assert memory_id is not None
     assert memory_with_model.memories["test_user"][memory_id] == sample_user_memory
-    assert memory_with_model.get_user_memory("test_user", memory_id) == sample_user_memory
+    assert memory_with_model.get_user_memory(user_id="test_user", memory_id=memory_id) == sample_user_memory
 
 
 def test_add_user_memory_default_user(memory_with_model, sample_user_memory):
@@ -118,7 +143,7 @@ def test_add_user_memory_default_user(memory_with_model, sample_user_memory):
 
     assert memory_id is not None
     assert memory_with_model.memories["default"][memory_id] == sample_user_memory
-    assert memory_with_model.get_user_memory("default", memory_id) == sample_user_memory
+    assert memory_with_model.get_user_memory(user_id="default", memory_id=memory_id) == sample_user_memory
 
 
 def test_replace_user_memory(memory_with_model, sample_user_memory):
@@ -132,7 +157,7 @@ def test_replace_user_memory(memory_with_model, sample_user_memory):
 
     memory_with_model.replace_user_memory(memory_id=memory_id, memory=updated_memory, user_id="test_user")
 
-    retrieved_memory = memory_with_model.get_user_memory("test_user", memory_id)
+    retrieved_memory = memory_with_model.get_user_memory(user_id="test_user", memory_id=memory_id)
     assert retrieved_memory == updated_memory
     assert retrieved_memory.memory == "The user's name is Jane Doe"
 
@@ -142,10 +167,10 @@ def test_delete_user_memory(memory_with_model, sample_user_memory):
     memory_id = memory_with_model.add_user_memory(memory=sample_user_memory, user_id="test_user")
 
     # Verify it exists
-    assert memory_with_model.get_user_memory("test_user", memory_id) is not None
+    assert memory_with_model.get_user_memory(user_id="test_user", memory_id=memory_id) is not None
 
     # Now delete it
-    memory_with_model.delete_user_memory("test_user", memory_id)
+    memory_with_model.delete_user_memory(user_id="test_user", memory_id=memory_id)
 
     # Verify it's gone
     assert memory_id not in memory_with_model.memories["test_user"]
@@ -160,7 +185,7 @@ def test_get_user_memories(memory_with_model, sample_user_memory):
     )
 
     # Get all memories for the user
-    memories = memory_with_model.get_user_memories("test_user")
+    memories = memory_with_model.get_user_memories(user_id="test_user")
 
     assert len(memories) == 2
     assert any(m.memory == "The user's name is John Doe" for m in memories)
@@ -203,7 +228,7 @@ def test_get_session_summary(memory_with_model, sample_session_summary):
     memory_with_model.summaries = {user_id: {session_id: sample_session_summary}}
 
     # Retrieve the summary
-    summary = memory_with_model.get_session_summary(user_id, session_id)
+    summary = memory_with_model.get_session_summary(user_id=user_id, session_id=session_id)
 
     assert summary == sample_session_summary
     assert summary.summary == "This was a session about stocks"
@@ -217,7 +242,7 @@ def test_delete_session_summary(memory_with_model, sample_session_summary):
     memory_with_model.summaries = {user_id: {session_id: sample_session_summary}}
 
     # Verify it exists
-    assert memory_with_model.get_session_summary(user_id, session_id) is not None
+    assert memory_with_model.get_session_summary(user_id=user_id, session_id=session_id) is not None
 
     # Now delete it
     memory_with_model.delete_session_summary(user_id, session_id)

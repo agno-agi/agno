@@ -18,7 +18,7 @@ memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 memory = Memory(
     db=memory_db,
     memory_manager=MemoryManager(
-        model=OpenRouter(id="meta-llama/llama-3.3-70b-instruct")
+        model=OpenRouter(id="meta-llama/llama-3.3-70b-instruct"),
     ),
     summarizer=SessionSummarizer(model=Claude(id="claude-3-5-sonnet-20241022")),
 )
