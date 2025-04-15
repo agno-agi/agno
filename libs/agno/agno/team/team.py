@@ -4158,7 +4158,11 @@ class Team:
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
         for idx, member in enumerate(self.members):
-            if member.name is not None:
+            if hasattr(member, "agent_id") and member.agent_id is not None:
+                url_safe_member_id = url_safe_string(member.agent_id)
+            elif hasattr(member, "team_id") and member.team_id is not None:
+                url_safe_member_id = url_safe_string(member.team_id)
+            elif member.name is not None:
                 url_safe_member_id = url_safe_string(member.name)
             else:
                 url_safe_member_id = None
@@ -4176,7 +4180,7 @@ class Team:
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
                 if member.tools is not None:
-                    system_message_content += f"{indent * ' '}   - Available tools:\n"
+                    system_message_content += f"{indent * ' '}   - Member tools:\n"
                     for _tool in member.tools:
                         if isinstance(_tool, Toolkit):
                             for _func in _tool.functions.values():
@@ -4246,6 +4250,7 @@ class Team:
             system_message_content += (
                 "- You can either respond directly or transfer tasks to members in your team with the highest likelihood of completing the user's request.\n"
                 "- Carefully analyze the tools available to the members and their roles before transferring tasks.\n"
+                "- You cannot use a member tool directly. You can only transfer tasks to members.\n"
                 "- When you transfer a task to another member, make sure to include:\n"
                 "  - member_id (str): The ID of the member to forward the task to.\n"
                 "  - task_description (str): A clear description of the task.\n"
