@@ -15,7 +15,7 @@ from utils import (
 
 nest_asyncio.apply()
 st.set_page_config(
-    page_title="Reasoning SQL Agent",
+    page_title="SQrL: Text2SQL Reasoning Agent",
     page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -30,10 +30,10 @@ def main() -> None:
     # App header
     ####################################################################
     st.markdown(
-        "<h1 class='main-title'>Reasoning SQL Agent</h1>", unsafe_allow_html=True
+        "<h1 class='main-title'>SQrL: Text2SQL Reasoning Agent</h1>", unsafe_allow_html=True
     )
     st.markdown(
-        "<p class='subtitle'>Your intelligent SQL Agent that can think, analyze and reason, powered by Agno</p>",
+        "<p class='subtitle'>SQrL is an intelligent SQL Agent that can think, analyze and reason, powered by Agno</p>",
         unsafe_allow_html=True,
     )
 
@@ -41,6 +41,7 @@ def main() -> None:
     # Model selector
     ####################################################################
     model_options = {
+        "gpt-4.1": "openai:gpt-4.1",
         "claude-3-7-sonnet": "anthropic:claude-3-7-sonnet-latest",
         "gemini-2.5-pro": "google:gemini-2.5-pro-preview-03-25",
         "llama-4-scout": "groq:meta-llama/llama-4-scout-17b-16e-instruct",
@@ -135,14 +136,19 @@ def main() -> None:
                 response = ""
                 try:
                     # Run the agent and stream the response
-                    run_response = sql_agent.run(question, stream=True, stream_intermediate_steps=True)
+                    run_response = sql_agent.run(
+                        question, stream=True, stream_intermediate_steps=True
+                    )
                     for _resp_chunk in run_response:
                         # Display tool calls if available
                         if _resp_chunk.tools and len(_resp_chunk.tools) > 0:
                             display_tool_calls(tool_calls_container, _resp_chunk.tools)
 
                         # Display response if available and event is RunResponse
-                        if _resp_chunk.event == "RunResponse" and _resp_chunk.content is not None:
+                        if (
+                            _resp_chunk.event == "RunResponse"
+                            and _resp_chunk.content is not None
+                        ):
                             response += _resp_chunk.content
                             resp_container.markdown(response)
 
