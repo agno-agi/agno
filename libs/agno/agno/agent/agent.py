@@ -1392,6 +1392,7 @@ class Agent:
                 all_reasoning_steps = self.run_response.extra_data.reasoning_steps
 
             if all_reasoning_steps:
+                self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
                 yield self.create_run_response(
                     content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__class__.__name__,
