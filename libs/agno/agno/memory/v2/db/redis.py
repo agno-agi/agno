@@ -3,7 +3,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 try:
-    from redis import Redis, ConnectionError
+    from redis import ConnectionError, Redis
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 
@@ -66,8 +66,8 @@ class RedisMemoryDb(MemoryDb):
     def memory_exists(self, memory: MemoryRow) -> bool:
         """Check if a memory exists"""
         try:
-            key = self._get_key(memory.id) # type: ignore
-            return self.redis_client.exists(key) > 0 # type: ignore
+            key = self._get_key(memory.id)  # type: ignore
+            return self.redis_client.exists(key) > 0  # type: ignore
         except Exception as e:
             logger.error(f"Error checking memory existence: {e}")
             return False
@@ -86,7 +86,7 @@ class RedisMemoryDb(MemoryDb):
             for key in self.redis_client.scan_iter(match=pattern):
                 data_str = self.redis_client.get(key)
                 if data_str:
-                    data = json.loads(data_str) #type: ignore
+                    data = json.loads(data_str)  # type: ignore
 
                     # Filter by user_id if specified
                     if user_id is None or data.get("user_id") == user_id:
@@ -127,7 +127,7 @@ class RedisMemoryDb(MemoryDb):
             memory_data["updated_at"] = timestamp
 
             # Save to Redis
-            key = self._get_key(memory.id) # type: ignore
+            key = self._get_key(memory.id)  # type: ignore
             self.redis_client.set(key, json.dumps(memory_data))
             return memory
 

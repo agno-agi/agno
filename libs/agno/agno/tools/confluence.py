@@ -55,9 +55,12 @@ class ConfluenceTools(Toolkit):
         if not self.password:
             raise ValueError("Confluence API KEY or password not provided")
 
-        self.confluence = Confluence(url=self.url, username=self.username, password=self.password, verify_ssl=verify_ssl)
+        self.confluence = Confluence(
+            url=self.url, username=self.username, password=self.password, verify_ssl=verify_ssl
+        )
         if not verify_ssl:
             import urllib3
+
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
         self.register(self.get_page_content)

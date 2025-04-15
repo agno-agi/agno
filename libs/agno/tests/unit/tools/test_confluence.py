@@ -130,9 +130,7 @@ def test_get_page_content_success(confluence_tools, mock_confluence):
 
         result = confluence_tools.get_page_content("Space One", "Test Page")
         assert json.loads(result) == mock_page
-        mock_confluence.get_page_by_title.assert_called_once_with(
-            "SPACE1", "Test Page", expand="body.storage"
-        )
+        mock_confluence.get_page_by_title.assert_called_once_with("SPACE1", "Test Page", expand="body.storage")
 
 
 def test_get_page_content_not_found(confluence_tools, mock_confluence):
@@ -143,9 +141,7 @@ def test_get_page_content_not_found(confluence_tools, mock_confluence):
 
         result = confluence_tools.get_page_content("Space One", "Non-existent Page")
         assert json.loads(result) == {"error": "Page 'Non-existent Page' not found in space 'Space One'"}
-        mock_confluence.get_page_by_title.assert_called_once_with(
-            "SPACE1", "Non-existent Page", expand="body.storage"
-        )
+        mock_confluence.get_page_by_title.assert_called_once_with("SPACE1", "Non-existent Page", expand="body.storage")
 
 
 def test_get_page_content_error(confluence_tools, mock_confluence):
@@ -156,9 +152,7 @@ def test_get_page_content_error(confluence_tools, mock_confluence):
 
         result = confluence_tools.get_page_content("Space One", "Test Page")
         assert json.loads(result) == {"error": "API Error"}
-        mock_confluence.get_page_by_title.assert_called_once_with(
-            "SPACE1", "Test Page", expand="body.storage"
-        )
+        mock_confluence.get_page_by_title.assert_called_once_with("SPACE1", "Test Page", expand="body.storage")
 
 
 def test_get_all_page_from_space(confluence_tools, mock_confluence):

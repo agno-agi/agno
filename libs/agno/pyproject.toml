@@ -72,6 +72,7 @@ webex = ["webexpythonsdk"]
 mcp = ["mcp"]
 browserbase = ["browserbase", "playwright"]
 agentql = ["agentql"]
+confluence = ["atlassian-python-api"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -142,6 +143,7 @@ tools = [
   "agno[browserbase]",
   "agno[agentql]",
 #  "agno[yfinance]",  # Broken right now
+  "agno[confluence]",
 ]
 
 # All storage
