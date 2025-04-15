@@ -1,10 +1,11 @@
 import json
 from textwrap import dedent
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from agno.agent import Agent
 from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
+from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
@@ -51,7 +52,7 @@ class KnowledgeTools(Toolkit):
         if analyze:
             self.register(self.analyze)
 
-    def think(self, agent: Agent, thought: str) -> str:
+    def think(self, agent: Union[Agent, Team], thought: str) -> str:
         """Use this tool as a scratchpad to reason about the question, refine your approach, brainstorm search terms, or revise your plan.
 
         Call `Think` whenever you need to figure out what to do next, analyze the user's question, or plan your approach.
@@ -85,7 +86,7 @@ class KnowledgeTools(Toolkit):
             logger.error(f"Error recording thought: {e}")
             return f"Error recording thought: {e}"
 
-    def search(self, agent: Agent, query: str) -> str:
+    def search(self, agent: Union[Agent, Team], query: str) -> str:
         """Use this tool to search the knowledge base for relevant information.
         After thinking through the question, use this tool as many times as needed to search for relevant information.
 
@@ -107,7 +108,7 @@ class KnowledgeTools(Toolkit):
             logger.error(f"Error searching knowledge base: {e}")
             return f"Error searching knowledge base: {e}"
 
-    def analyze(self, agent: Agent, analysis: str) -> str:
+    def analyze(self, agent: Union[Agent, Team], analysis: str) -> str:
         """Use this tool to evaluate whether the returned documents are correct and sufficient.
         If not, go back to "Think" or "Search" with refined queries.
 

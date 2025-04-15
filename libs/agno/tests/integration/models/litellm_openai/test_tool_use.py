@@ -3,6 +3,7 @@ import pytest
 from agno.agent import Agent, RunResponse
 from agno.models.litellm import LiteLLMOpenAI
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.yfinance import YFinanceTools
 
 
 def _assert_metrics(response: RunResponse):
@@ -51,6 +52,35 @@ def test_tool_use():
     _assert_metrics(response)
 
 
+def test_tool_use_streaming():
+    """Test tool use functionality with LiteLLM"""
+    agent = Agent(
+        model=LiteLLMOpenAI(id="gpt-4o"),
+        markdown=True,
+        tools=[YFinanceTools(cache_results=True)],
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_stream = agent.run("What is the current price of TSLA?", stream=True)
+
+    responses = []
+    tool_call_seen = False
+
+    for chunk in response_stream:
+        assert isinstance(chunk, RunResponse)
+        responses.append(chunk)
+        print(chunk.content)
+        if chunk.tools:
+            if any(tc.get("tool_name") for tc in chunk.tools):
+                tool_call_seen = True
+
+    assert len(responses) > 0
+    assert tool_call_seen, "No tool calls observed in stream"
+    all_content = "".join([r.content for r in responses if r.content])
+    assert "TSLA" in all_content
+
+
 @pytest.mark.asyncio
 async def test_async_tool_use():
     """Test async tool use functionality with LiteLLM"""
@@ -74,6 +104,35 @@ async def test_async_tool_use():
     assert len(tool_messages) > 0, "Tool should have been used"
 
     _assert_metrics(response)
+
+
+@pytest.mark.asyncio
+async def test_async_tool_use_streaming():
+    """Test async tool use functionality with LiteLLM"""
+    agent = Agent(
+        model=LiteLLMOpenAI(id="gpt-4o"),
+        markdown=True,
+        tools=[YFinanceTools(cache_results=True)],
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+
+    responses = []
+    tool_call_seen = False
+
+    async for chunk in response_stream:
+        assert isinstance(chunk, RunResponse)
+        responses.append(chunk)
+        if chunk.tools:
+            if any(tc.get("tool_name") for tc in chunk.tools):
+                tool_call_seen = True
+
+    assert len(responses) > 0
+    assert tool_call_seen, "No tool calls observed in stream"
+    all_content = "".join([r.content for r in responses if r.content])
+    assert "TSLA" in all_content
 
 
 def test_parallel_tool_calls():

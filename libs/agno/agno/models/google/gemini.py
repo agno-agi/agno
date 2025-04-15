@@ -174,6 +174,14 @@ class Gemini(Model):
         if system_message is not None:
             config["system_instruction"] = system_message  # type: ignore
 
+        if (
+            self.response_format is not None
+            and isinstance(self.response_format, type)
+            and issubclass(self.response_format, BaseModel)
+        ):
+            config["response_mime_type"] = "application/json"  # type: ignore
+            config["response_schema"] = self.response_format
+
         if self.grounding and self.search:
             log_info("Both grounding and search are enabled. Grounding will take precedence.")
             self.search = False
@@ -196,19 +204,6 @@ class Gemini(Model):
 
         elif self._tools:
             config["tools"] = [format_function_definitions(self._tools)]
-
-        if (
-            self.response_format is not None
-            and isinstance(self.response_format, type)
-            and issubclass(self.response_format, BaseModel)
-        ):
-            config["response_mime_type"] = "application/json"  # type: ignore
-            config["response_schema"] = self.response_format
-
-            if config.get("tool") is not None and len(config["tools"]) > 0:
-                log_warning(
-                    "The current google-genai version does not support structured outputs with tools. Use `use_json_mode=True` to force JSON mode."
-                )
 
         config = {k: v for k, v in config.items() if v is not None}
 
@@ -659,16 +654,12 @@ class Gemini(Model):
                 citations.raw = grounding_metadata
 
                 # Extract url and title
-                chunks = grounding_metadata.pop("grounding_chunks", [])
-                citation_pairs = (
-                    [
-                        (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
-                        for chunk in chunks
-                        if chunk.get("web", {}).get("uri")
-                    ]
-                    if chunks
-                    else []
-                )
+                chunks = grounding_metadata.pop("grounding_chunks", None) or []
+                citation_pairs = [
+                    (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
+                    for chunk in chunks
+                    if chunk.get("web", {}).get("uri")
+                ]
 
                 # Create citation objects from filtered pairs
                 citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
@@ -726,7 +717,7 @@ class Gemini(Model):
             citations.raw = grounding_metadata
 
             # Extract url and title
-            chunks = grounding_metadata.pop("grounding_chunks", [])
+            chunks = grounding_metadata.pop("grounding_chunks", None) or []
             citation_pairs = [
                 (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
                 for chunk in chunks
