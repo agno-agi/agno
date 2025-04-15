@@ -3,7 +3,7 @@ from agno.tools.confluence import ConfluenceTools
 
 agent = Agent(
     name="Confluence agent",
-    tools=[ConfluenceTools()],
+    tools=[ConfluenceTools(verify_ssl=False)],
     show_tool_calls=True,
     markdown=True,
 )

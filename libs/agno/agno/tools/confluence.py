@@ -18,6 +18,7 @@ class ConfluenceTools(Toolkit):
         password: Optional[str] = None,
         url: Optional[str] = None,
         api_key: Optional[str] = None,
+        verify_ssl: bool = True,
         **kwargs,
     ):
         """Initialize Confluence Tools with authentication credentials.
@@ -27,6 +28,7 @@ class ConfluenceTools(Toolkit):
             password (str, optional): Confluence password. Defaults to None.
             url (str, optional): Confluence instance URL. Defaults to None.
             api_key (str, optional): Confluence API key. Defaults to None.
+            verify_ssl (bool, optional): Whether to verify SSL certificates. Defaults to True.
 
         Notes:
             Credentials can be provided either through method arguments or environment variables:
@@ -53,7 +55,10 @@ class ConfluenceTools(Toolkit):
         if not self.password:
             logger.error("Confluence API KEY or password not provided")
 
-        self.confluence = Confluence(url=self.url, username=self.username, password=self.password)
+        self.confluence = Confluence(url=self.url, username=self.username, password=self.password, verify_ssl=verify_ssl)
+        if not verify_ssl:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
         self.register(self.get_page_content)
         self.register(self.get_space_key)
