@@ -15,12 +15,29 @@ memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
 
 # You can also set the model for Memory Manager and Summarizer individually
+memory_manager = MemoryManager(
+    model=OpenRouter(id="meta-llama/llama-3.3-70b-instruct"),
+    additional_instructions="""
+    Don't store any memories about the user's name.
+    """
+)
+session_summarizer = SessionSummarizer(
+    model=Claude(id="claude-3-5-sonnet-20241022"),
+    additional_instructions="""
+    Don't include any memories in the summary.
+    """
+)
+
+
 memory = Memory(
     db=memory_db,
-    memory_manager=MemoryManager(
-        model=OpenRouter(id="meta-llama/llama-3.3-70b-instruct"),
+    memory_manager=memory_manager,
+    summarizer=SessionSummarizer(
+        model=Claude(id="claude-3-5-sonnet-20241022"),
+        system_prompt="""
+        You are a specialized summarizer that focuses on extracting key action items from conversations.
+        """
     ),
-    summarizer=SessionSummarizer(model=Claude(id="claude-3-5-sonnet-20241022")),
 )
 
 # Reset the memory for this example
