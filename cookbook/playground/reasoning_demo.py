@@ -113,7 +113,12 @@ claude_thinking_agent = Agent(
 
 financial_news_team = Team(
     name="Financial News Team",
-    agents=[ finance_agent, reasoning_tool_agent],
+    team_id="financial_news_team",
+    mode="route",
+    members=[ finance_agent, reasoning_tool_agent],
+    instructions="You are a financial news team that is responsible for providing financial news to the user.",
+    storage=SqliteStorage(table_name="financial_news_team", db_file=agent_storage_file, auto_upgrade_schema=True),  
+    add_history_to_messages=True
 )
 
 app = Playground(
