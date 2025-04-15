@@ -579,6 +579,7 @@ class Agent:
         model_response: ModelResponse
         self.model = cast(Model, self.model)
         reasoning_started = False
+        reasoning_time_taken=0
         if self.stream:
             model_response = ModelResponse()
             for model_response_chunk in self.model.response_stream(messages=run_messages.messages):
@@ -702,11 +703,20 @@ class Agent:
                         reasoning_step: ReasoningStep = None
                         # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
                         if self.run_response.tools:
+                            reasoning_tool_calls = []
                             for tool_call in self.run_response.tools:
                                 tool_name = tool_call.get("tool_name", "")
                                 if tool_name.lower() in ["think", "analyze"]:
-                                    tool_args = tool_call.get("tool_args", {})
-                                    reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+                                    reasoning_tool_calls.append(tool_call)
+                                
+                            if len(reasoning_tool_calls) > 0:
+                                tool_args = reasoning_tool_calls[-1].get("tool_args", {})
+                                reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+
+                                metrics=reasoning_tool_calls[-1].get("metrics")
+                                time_taken = metrics.time
+                                reasoning_time_taken = reasoning_time_taken + float(time_taken)
+                                    
 
                     # 2. Call the function and use the returned ReasoningStep:
                     if self.stream_intermediate_steps:
@@ -806,6 +816,7 @@ class Agent:
 
         # 8. Update RunResponse
         # Build a list of messages that should be added to the RunResponse
+
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         # Update the RunResponse messages
         self.run_response.messages = messages_for_run_response
@@ -1285,12 +1296,15 @@ class Agent:
                         reasoning_step: ReasoningStep = None
                         # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
                         if self.run_response.tools:
+                            reasoning_tool_calls = []
                             for tool_call in self.run_response.tools:
                                 tool_name = tool_call.get("tool_name", "")
                                 if tool_name.lower() in ["think", "analyze"]:
-                                    tool_args = tool_call.get("tool_args", {})
-                                    reasoning_step = self.update_reasoning_content_from_tool_call(
-                                        tool_name, tool_args)
+                                    reasoning_tool_calls.append(tool_call)
+                                
+                            if len(reasoning_tool_calls) > 0:
+                                tool_args = reasoning_tool_calls[-1].get("tool_args", {})
+                                reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                     if self.stream_intermediate_steps:
                         for t in self.run_response.tools:
