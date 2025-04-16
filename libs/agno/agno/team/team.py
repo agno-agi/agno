@@ -75,7 +75,7 @@ class Team:
 
     members: List[Union[Agent, "Team"]]
 
-    mode: Literal["route", "coordinate", "collaborate"] = "coordinate"
+    mode: Literal["route", "coordinate", "collaborate", "sequential"] = "coordinate"
 
     # Model for this Team
     model: Optional[Model] = None
@@ -632,6 +632,22 @@ class Team:
 
                 if self.get_member_information_tool:
                     _tools.append(self.get_member_information)
+
+            elif self.mode == "sequential":
+                # Add the sequential pipeline tool
+                # Modified to work with the current Function.from_callable implementation
+                run_sequential_pipeline_func = Function.from_callable(
+                    self.run_sequential_pipeline,
+                    # Remove the name and description parameters
+                )
+                # Set the name attribute after creation
+                run_sequential_pipeline_func.name = "run_sequential_pipeline"
+                run_sequential_pipeline_func.description = "Run all agents in a sequential pipeline, where each agent's output becomes the input for the next agent."
+                _tools.append(run_sequential_pipeline_func)
+                self.model.tool_choice = "auto"  # type: ignore
+                
+                if self.enable_agentic_context:
+                    _tools.append(self.get_set_shared_context_function(session_id=session_id))
 
             self._add_tools_to_model(self.model, tools=_tools)  # type: ignore
 
@@ -1310,6 +1326,22 @@ class Team:
                 _tools.append(run_member_agents_func)
                 self.model.tool_choice = "auto"  # type: ignore
 
+                if self.enable_agentic_context:
+                    _tools.append(self.get_set_shared_context_function(session_id=session_id))
+
+            elif self.mode == "sequential":
+                # Add the sequential pipeline tool
+                # Modified to work with the current Function.from_callable implementation
+                run_sequential_pipeline_func = Function.from_callable(
+                    self.arun_sequential_pipeline,
+                    # Remove the name and description parameters
+                )
+                # Set the name attribute after creation
+                run_sequential_pipeline_func.name = "run_sequential_pipeline"
+                run_sequential_pipeline_func.description = "Run all agents in a sequential pipeline, where each agent's output becomes the input for the next agent."
+                _tools.append(run_sequential_pipeline_func)
+                self.model.tool_choice = "auto"  # type: ignore
+                
                 if self.enable_agentic_context:
                     _tools.append(self.get_set_shared_context_function(session_id=session_id))
 
@@ -4158,11 +4190,7 @@ class Team:
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
         for idx, member in enumerate(self.members):
-            if hasattr(member, "agent_id") and member.agent_id is not None:
-                url_safe_member_id = url_safe_string(member.agent_id)
-            elif hasattr(member, "team_id") and member.team_id is not None:
-                url_safe_member_id = url_safe_string(member.team_id)
-            elif member.name is not None:
+            if member.name is not None:
                 url_safe_member_id = url_safe_string(member.name)
             else:
                 url_safe_member_id = None
@@ -4180,7 +4208,7 @@ class Team:
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
                 if member.tools is not None:
-                    system_message_content += f"{indent * ' '}   - Member tools:\n"
+                    system_message_content += f"{indent * ' '}   - Available tools:\n"
                     for _tool in member.tools:
                         if isinstance(_tool, Toolkit):
                             for _func in _tool.functions.values():
@@ -4192,6 +4220,210 @@ class Team:
                             system_message_content += f"{indent * ' '}    - {_tool.__name__}\n"
 
         return system_message_content
+
+    def run_sequential_pipeline(self, message: str) -> str:
+        """
+        Run all members in the team in a sequential pipeline, where each agent's output becomes the input for the next agent.
+        
+        Args:
+            message: The initial message to start the pipeline with.
+            
+        Returns:
+            The final output after passing through all agents in the pipeline.
+        """
+        current_message = message
+        responses = []
+        
+        log_debug("Starting sequential pipeline execution", center=True, symbol="=")
+        
+        for i, member in enumerate(self.members):
+            log_debug(f"Running sequential pipeline step {i+1}/{len(self.members)}: {member.name or 'Unnamed agent'}")
+            
+            # Run the current member with the current message
+            if isinstance(member, Agent):
+                try:
+                    response = member.run(message=current_message)
+                    if hasattr(response, 'content') and response.content is not None:
+                        # Extract content from the response
+                        if isinstance(response.content, str):
+                            current_message = response.content
+                        else:
+                            # Try to convert to string if it's not already a string
+                            try:
+                                current_message = str(response.content)
+                            except Exception as e:
+                                log_warning(f"Failed to convert response to string: {e}")
+                                current_message = f"Error processing response from {member.name or 'agent'}: {e}"
+                    
+                    # Store the response for debugging
+                    responses.append({
+                        "agent": member.name or f"Agent {i+1}",
+                        "input": message,
+                        "output": current_message
+                    })
+                    
+                    # Update message for the next agent
+                    message = current_message
+                except Exception as e:
+                    log_error(f"Error running agent {member.name or f'Agent {i+1}'}: {e}")
+                    responses.append({
+                        "agent": member.name or f"Agent {i+1}",
+                        "input": message,
+                        "error": str(e)
+                    })
+            
+            elif isinstance(member, Team):
+                # For nested teams, we'll just pass the current message and get the response
+                try:
+                    response = member.run(message=current_message)
+                    if hasattr(response, 'content') and response.content is not None:
+                        # Extract content from the response
+                        if isinstance(response.content, str):
+                            current_message = response.content
+                        else:
+                            # Try to convert to string if it's not already a string
+                            try:
+                                current_message = str(response.content)
+                            except Exception as e:
+                                log_warning(f"Failed to convert response to string: {e}")
+                                current_message = f"Error processing response from {member.name or 'team'}: {e}"
+                    
+                    # Store the response for debugging
+                    responses.append({
+                        "team": member.name or f"Team {i+1}",
+                        "input": message,
+                        "output": current_message
+                    })
+                    
+                    # Update message for the next agent
+                    message = current_message
+                except Exception as e:
+                    log_error(f"Error running team {member.name or f'Team {i+1}'}: {e}")
+                    responses.append({
+                        "team": member.name or f"Team {i+1}",
+                        "input": message,
+                        "error": str(e)
+                    })
+        
+        # Create a summary of the pipeline execution
+        pipeline_summary = "Sequential Pipeline Execution Summary:\n\n"
+        for i, resp in enumerate(responses):
+            agent_name = resp.get("agent", resp.get("team", f"Step {i+1}"))
+            pipeline_summary += f"Step {i+1}: {agent_name}\n"
+            pipeline_summary += f"Input: {resp['input'][:100]}{'...' if len(resp['input']) > 100 else ''}\n"
+            if "error" in resp:
+                pipeline_summary += f"Error: {resp['error']}\n"
+            else:
+                pipeline_summary += f"Output: {resp['output'][:100]}{'...' if len(resp['output']) > 100 else ''}\n"
+            pipeline_summary += "\n"
+        
+        log_debug(pipeline_summary)
+        log_debug("Sequential pipeline execution completed", center=True, symbol="=")
+        
+        # Return the final output
+        return current_message
+
+    async def arun_sequential_pipeline(self, message: str) -> str:
+        """
+        Asynchronously run all members in the team in a sequential pipeline, where each agent's output becomes the input for the next agent.
+        
+        Args:
+            message: The initial message to start the pipeline with.
+            
+        Returns:
+            The final output after passing through all agents in the pipeline.
+        """
+        current_message = message
+        responses = []
+        
+        log_debug("Starting sequential pipeline execution", center=True, symbol="=")
+        
+        for i, member in enumerate(self.members):
+            log_debug(f"Running sequential pipeline step {i+1}/{len(self.members)}: {member.name or 'Unnamed agent'}")
+            
+            # Run the current member with the current message
+            if isinstance(member, Agent):
+                try:
+                    response = await member.arun(message=current_message)
+                    if hasattr(response, 'content') and response.content is not None:
+                        # Extract content from the response
+                        if isinstance(response.content, str):
+                            current_message = response.content
+                        else:
+                            # Try to convert to string if it's not already a string
+                            try:
+                                current_message = str(response.content)
+                            except Exception as e:
+                                log_warning(f"Failed to convert response to string: {e}")
+                                current_message = f"Error processing response from {member.name or 'agent'}: {e}"
+                    
+                    # Store the response for debugging
+                    responses.append({
+                        "agent": member.name or f"Agent {i+1}",
+                        "input": message,
+                        "output": current_message
+                    })
+                    
+                    # Update message for the next agent
+                    message = current_message
+                except Exception as e:
+                    log_error(f"Error running agent {member.name or f'Agent {i+1}'}: {e}")
+                    responses.append({
+                        "agent": member.name or f"Agent {i+1}",
+                        "input": message,
+                        "error": str(e)
+                    })
+            
+            elif isinstance(member, Team):
+                # For nested teams, we'll just pass the current message and get the response
+                try:
+                    response = await member.arun(message=current_message)
+                    if hasattr(response, 'content') and response.content is not None:
+                        # Extract content from the response
+                        if isinstance(response.content, str):
+                            current_message = response.content
+                        else:
+                            # Try to convert to string if it's not already a string
+                            try:
+                                current_message = str(response.content)
+                            except Exception as e:
+                                log_warning(f"Failed to convert response to string: {e}")
+                                current_message = f"Error processing response from {member.name or 'team'}: {e}"
+                    
+                    # Store the response for debugging
+                    responses.append({
+                        "team": member.name or f"Team {i+1}",
+                        "input": message,
+                        "output": current_message
+                    })
+                    
+                    # Update message for the next agent
+                    message = current_message
+                except Exception as e:
+                    log_error(f"Error running team {member.name or f'Team {i+1}'}: {e}")
+                    responses.append({
+                        "team": member.name or f"Team {i+1}",
+                        "input": message,
+                        "error": str(e)
+                    })
+        
+        # Create a summary of the pipeline execution
+        pipeline_summary = "Sequential Pipeline Execution Summary:\n\n"
+        for i, resp in enumerate(responses):
+            agent_name = resp.get("agent", resp.get("team", f"Step {i+1}"))
+            pipeline_summary += f"Step {i+1}: {agent_name}\n"
+            pipeline_summary += f"Input: {resp['input'][:100]}{'...' if len(resp['input']) > 100 else ''}\n"
+            if "error" in resp:
+                pipeline_summary += f"Error: {resp['error']}\n"
+            else:
+                pipeline_summary += f"Output: {resp['output'][:100]}{'...' if len(resp['output']) > 100 else ''}\n"
+            pipeline_summary += "\n"
+        
+        log_debug(pipeline_summary)
+        log_debug("Sequential pipeline execution completed", center=True, symbol="=")
+        
+        # Return the final output
+        return current_message
 
     def get_system_message(
         self,
@@ -4250,7 +4482,6 @@ class Team:
             system_message_content += (
                 "- You can either respond directly or transfer tasks to members in your team with the highest likelihood of completing the user's request.\n"
                 "- Carefully analyze the tools available to the members and their roles before transferring tasks.\n"
-                "- You cannot use a member tool directly. You can only transfer tasks to members.\n"
                 "- When you transfer a task to another member, make sure to include:\n"
                 "  - member_id (str): The ID of the member to forward the task to.\n"
                 "  - task_description (str): A clear description of the task.\n"
@@ -4275,6 +4506,14 @@ class Team:
                 "- To run the members in your team, call `run_member_agents` ONLY once. This will run all members in your team.\n"
                 "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
                 "- If you feel the task has been completed, you can stop and respond to the user.\n"
+            )
+        elif self.mode == "sequential":
+            system_message_content += (
+                "- You will execute agents in a sequential pipeline where each agent's output becomes the input for the next agent.\n"
+                "- Use the `run_sequential_pipeline` tool to execute the sequential pipeline of agents.\n"
+                "- The agents will be executed in the order they were added to the team.\n"
+                "- Each agent's output will be passed as input to the next agent in the sequence.\n"
+                "- The final output will be the output of the last agent in the sequence.\n"
             )
         system_message_content += "</how_to_respond>\n\n"
 
