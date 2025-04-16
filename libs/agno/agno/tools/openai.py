@@ -162,7 +162,6 @@ class OpenAITools(Toolkit):
                             model=self.image_model,
                         )
                     )
-                    log_debug(f"Added generated image artifact {media_id} to agent.")
 
             result_string = ", ".join(image_urls)
             log_info(f"Generated image URLs using {self.image_model}: {result_string}")
