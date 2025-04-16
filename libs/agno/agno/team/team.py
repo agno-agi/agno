@@ -411,7 +411,7 @@ class Team:
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
-    def _initialize_member(self, member: Union["Team", Agent], session_id: str):
+    def _initialize_member(self, member: Union["Team", Agent], session_id: Optional[str] = None):
         # Set debug mode for all members
         if self.debug_mode:
             member.debug_mode = True
@@ -420,7 +420,9 @@ class Team:
         if self.markdown:
             member.markdown = True
 
-        member.team_session_id = session_id
+        if session_id is not None:
+            member.team_session_id = session_id
+            
         member.team_id = self.team_id
 
         if member.name is None:
@@ -442,7 +444,7 @@ class Team:
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
 
-    def initialize_team(self, session_id: str) -> None:
+    def initialize_team(self, session_id: Optional[str] = None) -> None:
         self._set_default_model()
 
         self._set_storage_mode()

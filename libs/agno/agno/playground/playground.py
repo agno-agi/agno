@@ -41,6 +41,8 @@ class Playground:
         if self.teams:
             for team in self.teams:
                 team.initialize_team()
+                for member in team.members:
+                    member.initialize_agent()
 
         if self.workflows:
             for workflow in self.workflows:
