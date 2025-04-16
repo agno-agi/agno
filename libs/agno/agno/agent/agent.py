@@ -1297,6 +1297,7 @@ class Agent:
                         reasoning_step: ReasoningStep = None
                         # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
                         if self.run_response.tools:
+                
                             reasoning_tool_calls = []
                             for tool_call in self.run_response.tools:
                                 tool_name = tool_call.get("tool_name", "")
@@ -1305,13 +1306,16 @@ class Agent:
 
                             if len(reasoning_tool_calls) > 0:
                                 tool_args = reasoning_tool_calls[-1].get("tool_args", {})
+                        
                                 reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
+                        
                                 metrics = reasoning_tool_calls[-1].get("metrics")
                                 time_taken = metrics.time
                                 reasoning_time_taken = reasoning_time_taken + float(time_taken)
 
                     if self.stream_intermediate_steps:
+
                         for t in self.run_response.tools:
                             if t.get("tool_name") == "think":
                                 if not reasoning_started:
@@ -1320,13 +1324,14 @@ class Agent:
                                         event=RunEvent.reasoning_started,
                                     )
                                     reasoning_started = True
-
+              
                                 yield self.create_run_response(
                                     content=reasoning_step,
                                     content_type=reasoning_step.__class__.__name__,
                                     event=RunEvent.reasoning_step,
                                     reasoning_content=self.run_response.reasoning_content,
                                 )
+                                break
 
                         yield self.create_run_response(
                             content=model_response_chunk.content,
