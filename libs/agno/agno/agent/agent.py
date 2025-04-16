@@ -2884,6 +2884,21 @@ class Agent:
             return self.memory.summary
         else:
             raise ValueError(f"Memory type {type(self.memory)} not supported")
+    
+    def get_user_memories(self, user_id: Optional[str] = None):
+        """Get the user memories for the given user ID."""
+        if self.memory is None:
+            return None
+        user_id = user_id if user_id is not None else self.user_id
+        if user_id is None:
+            user_id = "default"
+        
+        if isinstance(self.memory, Memory):
+            return self.memory.get_user_memories(user_id=user_id)
+        elif isinstance(self.memory, AgentMemory):
+            raise ValueError("AgentMemory does not support get_user_memories")
+        else:
+            raise ValueError(f"Memory type {type(self.memory)} not supported")
 
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> Agent:
         """Create and return a deep copy of this Agent, optionally updating fields.

@@ -240,6 +240,7 @@ class Team:
         success_criteria: Optional[str] = None,
         markdown: bool = False,
         add_datetime_to_instructions: bool = False,
+        add_member_tools_to_system_message: bool = True,
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
         knowledge: Optional[AgentKnowledge] = None,
@@ -297,6 +298,7 @@ class Team:
         self.additional_context = additional_context
         self.markdown = markdown
         self.add_datetime_to_instructions = add_datetime_to_instructions
+        self.add_member_tools_to_system_message = add_member_tools_to_system_message
         self.success_criteria = success_criteria
 
         self.context = context
@@ -5936,6 +5938,42 @@ class Team:
             return self.memory.get_messages_for_session(session_id=_session_id)
         else:
             return []
+        
+    
+    def get_session_summary(self, session_id: Optional[str] = None, user_id: Optional[str] = None):
+        """Get the session summary for the given session ID and user ID."""
+        if self.memory is None:
+            return None
+
+        session_id = session_id if session_id is not None else self.session_id
+        if session_id is None:
+            raise ValueError("Session ID is required")
+
+        if isinstance(self.memory, Memory):
+            user_id = user_id if user_id is not None else self.user_id
+            if user_id is None:
+                user_id = "default"
+            return self.memory.get_session_summary(session_id=session_id, user_id=user_id)
+        elif isinstance(self.memory, TeamMemory):
+            raise ValueError("TeamMemory does not support get_session_summary")
+        else:
+            raise ValueError(f"Memory type {type(self.memory)} not supported")
+        
+    
+    def get_user_memories(self, user_id: Optional[str] = None):
+        """Get the user memories for the given user ID."""
+        if self.memory is None:
+            return None
+        user_id = user_id if user_id is not None else self.user_id
+        if user_id is None:
+            user_id = "default"
+        
+        if isinstance(self.memory, Memory):
+            return self.memory.get_user_memories(user_id=user_id)
+        elif isinstance(self.memory, TeamMemory):
+            raise ValueError("TeamMemory does not support get_user_memories")
+        else:
+            raise ValueError(f"Memory type {type(self.memory)} not supported")
 
     ###########################################################################
     # Handle images, videos and audio
