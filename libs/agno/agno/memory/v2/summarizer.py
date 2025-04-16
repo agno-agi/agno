@@ -42,16 +42,18 @@ class SessionSummarizer:
     # Whether the summarizer has created a summary
     summary_updated: bool = False
 
-    def __init__(self, 
-                 model: Optional[Model] = None, 
-                 system_message: Optional[str] = None, 
-                 additional_instructions: Optional[str] = None):
+    def __init__(
+        self,
+        model: Optional[Model] = None,
+        system_message: Optional[str] = None,
+        additional_instructions: Optional[str] = None,
+    ):
         self.model = model
         if self.model is not None and isinstance(self.model, str):
             raise ValueError("Model must be a Model object, not a string")
         self.system_message = system_message
         self.additional_instructions = additional_instructions
-        
+
     def update_model(self, model: Model) -> None:
         model = cast(Model, model)
         if model.supports_native_structured_outputs:
@@ -90,7 +92,7 @@ class SessionSummarizer:
                 conversation_messages.append(f"Assistant: {message.content}\n")
         system_prompt += "\n".join(conversation_messages)
         system_prompt += "</conversation>"
-        
+
         if self.additional_instructions:
             system_prompt += "\n" + self.additional_instructions
 

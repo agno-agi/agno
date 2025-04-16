@@ -2865,16 +2865,16 @@ class Agent:
                         log_warning(f"Failed to validate message: {e}")
 
         return run_messages
-    
+
     def get_session_summary(self, session_id: Optional[str] = None, user_id: Optional[str] = None):
         """Get the session summary for the given session ID and user ID."""
         if self.memory is None:
             return None
-        
+
         session_id = session_id if session_id is not None else self.session_id
         if session_id is None:
             raise ValueError("Session ID is required")
-        
+
         if isinstance(self.memory, Memory):
             user_id = user_id if user_id is not None else self.user_id
             if user_id is None:

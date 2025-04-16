@@ -237,7 +237,7 @@ class Memory:
         # Refresh from the DB
         if refresh_from_db:
             self.refresh_from_db(user_id=user_id)
-            
+
         if self.memories is None:
             return []
         return list(self.memories.get(user_id, {}).values())
@@ -250,7 +250,9 @@ class Memory:
             return []
         return list(self.summaries.get(user_id, {}).values())
 
-    def get_user_memory(self, memory_id: str, user_id: Optional[str] = None, refresh_from_db: bool = True) -> Optional[UserMemory]:
+    def get_user_memory(
+        self, memory_id: str, user_id: Optional[str] = None, refresh_from_db: bool = True
+    ) -> Optional[UserMemory]:
         """Get the user memory for a given user id"""
         if user_id is None:
             user_id = "default"
@@ -263,7 +265,7 @@ class Memory:
 
     def get_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
         """Get the session summary for a given user id"""
-        
+
         if user_id is None:
             user_id = "default"
         if self.summaries is None:
@@ -290,7 +292,7 @@ class Memory:
             memory.memory_id = memory_id
         if user_id is None:
             user_id = "default"
-            
+
         # Refresh from the DB
         if refresh_from_db:
             self.refresh_from_db(user_id=user_id)
@@ -329,7 +331,7 @@ class Memory:
 
         if user_id is None:
             user_id = "default"
-            
+
         # Refresh from the DB
         if refresh_from_db:
             self.refresh_from_db(user_id=user_id)
@@ -367,7 +369,7 @@ class Memory:
         """
         if user_id is None:
             user_id = "default"
-            
+
         # Refresh from the DB
         if refresh_from_db:
             self.refresh_from_db(user_id=user_id)
@@ -470,7 +472,12 @@ class Memory:
             {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
         ]
         response = self.memory_manager.create_or_update_memories(  # type: ignore
-            messages=messages, existing_memories=existing_memories, user_id=user_id, db=self.db, delete_memories=self.delete_memories, clear_memories=self.clear_memories
+            messages=messages,
+            existing_memories=existing_memories,
+            user_id=user_id,
+            db=self.db,
+            delete_memories=self.delete_memories,
+            clear_memories=self.clear_memories,
         )
 
         # We refresh from the DB
@@ -502,11 +509,10 @@ class Memory:
             log_warning("MemoryDb not provided.")
             return "Please provide a db to store memories"
 
-
         if user_id is None:
             user_id = "default"
 
-        if refresh_from_db: 
+        if refresh_from_db:
             self.refresh_from_db(user_id=user_id)
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
@@ -515,7 +521,12 @@ class Memory:
         ]
 
         response = await self.memory_manager.acreate_or_update_memories(  # type: ignore
-            messages=messages, existing_memories=existing_memories, user_id=user_id, db=self.db, delete_memories=self.delete_memories, clear_memories=self.clear_memories
+            messages=messages,
+            existing_memories=existing_memories,
+            user_id=user_id,
+            db=self.db,
+            delete_memories=self.delete_memories,
+            clear_memories=self.clear_memories,
         )
 
         # We refresh from the DB
@@ -744,7 +755,7 @@ class Memory:
             user_id = "default"
 
         self.set_log_level()
-        
+
         if refresh_from_db:
             self.refresh_from_db(user_id=user_id)
 

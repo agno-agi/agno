@@ -30,7 +30,8 @@ def main() -> None:
     # App header
     ####################################################################
     st.markdown(
-        "<h1 class='main-title'>SQrL: Text2SQL Reasoning Agent</h1>", unsafe_allow_html=True
+        "<h1 class='main-title'>SQrL: Text2SQL Reasoning Agent</h1>",
+        unsafe_allow_html=True,
     )
     st.markdown(
         "<p class='subtitle'>SQrL is an intelligent SQL Agent that can think, analyze and reason, powered by Agno</p>",

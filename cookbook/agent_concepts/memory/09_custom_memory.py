@@ -12,7 +12,6 @@ from agno.memory.v2.memory import Memory, MemoryManager, SessionSummarizer
 from agno.models.anthropic.claude import Claude
 from agno.models.google.gemini import Gemini
 from agno.models.openrouter.openrouter import OpenRouter
-
 from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
@@ -23,7 +22,7 @@ memory_manager = MemoryManager(
     model=OpenRouter(id="meta-llama/llama-3.3-70b-instruct"),
     additional_instructions="""
     IMPORTANT: Don't store any memories about the user's name. Just say "The User" instead of referencing the user's name.
-    """
+    """,
 )
 
 # You can also override the entire `system_message` for the session summarizer
@@ -31,7 +30,7 @@ session_summarizer = SessionSummarizer(
     model=Claude(id="claude-3-5-sonnet-20241022"),
     additional_instructions="""
     Make the summary very informal and conversational.
-    """
+    """,
 )
 
 memory = Memory(

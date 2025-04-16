@@ -97,136 +97,138 @@ def test_set_model():
     assert memory.summary_manager.model == model
 
 
-def test_custom_memory_manager_with_system_prompt(mock_model, mock_db):
+def test_custom_memory_manager_with_system_message(mock_model, mock_db):
     # Create a custom system prompt
-    custom_system_prompt = "You are a specialized memory manager that focuses on capturing user preferences."
-    
+    custom_system_message = "You are a specialized memory manager that focuses on capturing user preferences."
+
     # Create a memory manager with the custom system prompt
-    memory_manager = MemoryManager(model=mock_model, system_prompt=custom_system_prompt)
-    
+    memory_manager = MemoryManager(model=mock_model, system_message=custom_system_message)
+
     # Create a memory with the custom memory manager
     memory = Memory(model=mock_model, db=mock_db, memory_manager=memory_manager)
-    
+
     # Test that the get_system_message method returns the custom prompt
     system_message = memory.memory_manager.get_system_message()
     assert system_message.role == "system"
-    assert system_message.content == custom_system_prompt
-    
+    assert system_message.content == custom_system_message
+
     # Test that the custom prompt is used when creating memories
-    with patch.object(memory.memory_manager, 'create_or_update_memories') as mock_create:
-        mock_create.return_value = "Memories created with custom prompt"
-        
+    with patch.object(memory.memory_manager, "create_or_update_memories") as mock_create:
+        mock_create.return_value = "Memories created with custom message"
+
         # Call the method that would use the system prompt
         result = memory.create_user_memories(message="I like pizza", user_id="test_user")
-        
+
         # Verify the create_or_update_memories method was called
         mock_create.assert_called_once()
-        
+
         # Verify the result
-        assert result == "Memories created with custom prompt"
+        assert result == "Memories created with custom message"
 
 
 def test_custom_memory_manager_with_additional_instructions(mock_model, mock_db):
     # Create a custom system prompt
     custom_additional_instructions = "Don't store any memories about the user's name."
-    
+
     # Create a memory manager with the custom system prompt
     memory_manager = MemoryManager(model=mock_model, additional_instructions=custom_additional_instructions)
-    
+
     # Create a memory with the custom memory manager
     memory = Memory(model=mock_model, db=mock_db, memory_manager=memory_manager)
-    
+
     # Test that the get_system_message method returns the custom prompt
     system_message = memory.memory_manager.get_system_message()
     assert system_message.role == "system"
     assert custom_additional_instructions in system_message.content
-    
 
-def test_custom_summarizer_with_system_prompt(mock_model, mock_db):
+
+def test_custom_summarizer_with_system_message(mock_model, mock_db):
     # Create a custom system prompt for the summarizer
-    custom_system_prompt = "You are a specialized summarizer that focuses on extracting key action items from conversations."
-    
+    custom_system_message = (
+        "You are a specialized summarizer that focuses on extracting key action items from conversations."
+    )
+
     # Create a summarizer with the custom system prompt
-    summarizer = SessionSummarizer(model=mock_model, system_prompt=custom_system_prompt)
-    
+    summarizer = SessionSummarizer(model=mock_model, system_message=custom_system_message)
+
     # Create a memory with the custom summarizer
     memory = Memory(model=mock_model, db=mock_db, summarizer=summarizer)
-    
+
     # Verify the summarizer has the custom system prompt
-    assert memory.summary_manager.system_prompt == custom_system_prompt
-    
+    assert memory.summary_manager.system_message == custom_system_message
+
     # Test that the get_system_message method returns the custom prompt
     # Create a sample conversation for testing
     conversation = [
         Message(role="user", content="I need to schedule a meeting for next week"),
         Message(role="assistant", content="I can help with that. What day works best for you?"),
-        Message(role="user", content="Tuesday afternoon would be good")
+        Message(role="user", content="Tuesday afternoon would be good"),
     ]
-    
+
     # Get the system message with the custom prompt
     system_message = memory.summary_manager.get_system_message(conversation, model=mock_model)
     assert system_message.role == "system"
-    assert system_message.content == custom_system_prompt
-    
+    assert system_message.content == custom_system_message
+
     # Test that the custom prompt is used when creating session summaries
-    with patch.object(memory.summary_manager, 'run') as mock_run:
+    with patch.object(memory.summary_manager, "run") as mock_run:
         # Create a mock SessionSummaryResponse
         mock_summary_response = MagicMock()
         mock_summary_response.summary = "Meeting scheduled for Tuesday afternoon"
         mock_summary_response.topics = ["scheduling", "meeting"]
         mock_run.return_value = mock_summary_response
-        
+
         # Add a run to have messages for the summary
         session_id = "test_session"
         user_id = "test_user"
-        
+
         run_response = RunResponse(
             content="Sample response",
             messages=[
                 Message(role="user", content="I need to schedule a meeting for next week"),
                 Message(role="assistant", content="I can help with that. What day works best for you?"),
                 Message(role="user", content="Tuesday afternoon would be good"),
-                Message(role="assistant", content="I'll schedule that for you.")
+                Message(role="assistant", content="I'll schedule that for you."),
             ],
         )
-        
+
         memory.add_run(session_id, run_response)
-        
+
         # Create the summary
         summary = memory.create_session_summary(session_id, user_id)
-        
+
         # Verify the run method was called
         mock_run.assert_called_once()
-        
+
         # Verify the summary was created with the custom prompt
         assert summary is not None
         assert summary.summary == "Meeting scheduled for Tuesday afternoon"
         assert summary.topics == ["scheduling", "meeting"]
         assert memory.summaries[user_id][session_id] == summary
 
+
 def test_custom_summarizer_with_additional_instructions(mock_model, mock_db):
     # Create a custom system prompt
     custom_additional_instructions = "Don't include any memories in the summary."
-    
+
     # Create a summarizer with the custom system prompt
     summarizer = SessionSummarizer(model=mock_model, additional_instructions=custom_additional_instructions)
-    
+
     # Create a memory with the custom summarizer
     memory = Memory(model=mock_model, db=mock_db, summarizer=summarizer)
-    
+
     # Test that the get_system_message method returns the custom prompt
     # Create a sample conversation for testing
     conversation = [
         Message(role="user", content="I need to schedule a meeting for next week"),
         Message(role="assistant", content="I can help with that. What day works best for you?"),
-        Message(role="user", content="Tuesday afternoon would be good")
+        Message(role="user", content="Tuesday afternoon would be good"),
     ]
-    
+
     # Get the system message with the custom prompt
     system_message = memory.summary_manager.get_system_message(conversation, model=mock_model)
     assert system_message.role == "system"
     assert custom_additional_instructions in system_message.content
-    
 
 
 # User Memory Operations Tests

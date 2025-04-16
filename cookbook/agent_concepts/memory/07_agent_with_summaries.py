@@ -71,6 +71,7 @@ print("Mark Gonzales's memories:")
 pprint(memories)
 
 # We can get the session summary from memory as well
-session_summary = memory.get_session_summary(session_id=session_id_2, user_id=mark_gonzales_id)
+session_summary = memory.get_session_summary(
+    session_id=session_id_2, user_id=mark_gonzales_id
+)
 pprint(session_summary)
-
