@@ -18,7 +18,7 @@ def format_tools(agent_tools):
             if isinstance(tool, dict):
                 formatted_tools.append(tool)
             elif isinstance(tool, Toolkit):
-                for f_name, f in tool.functions.items():
+                for _, f in tool.functions.items():
                     formatted_tools.append(f.to_dict())
             elif isinstance(tool, Function):
                 formatted_tools.append(tool.to_dict())
