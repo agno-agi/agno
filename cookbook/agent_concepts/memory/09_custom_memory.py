@@ -1,7 +1,9 @@
 """
 This example shows how you can configure the Memory Manager and Summarizer models individually.
 
-In this example, we use OpenAIChat for the memory manager and Claude for the summarizer. And we use Gemini for the Agent.
+In this example, we use OpenRouter and LLama 3.3-70b-instruct for the memory manager and Claude 3.5 Sonnet for the summarizer. And we use Gemini for the Agent.
+
+We also set custom system prompts for the memory manager and summarizer. You can either override the entire system prompt or add additional instructions which is added to the end of the system prompt.
 """
 
 from agno.agent.agent import Agent
@@ -10,17 +12,31 @@ from agno.memory.v2.memory import Memory, MemoryManager, SessionSummarizer
 from agno.models.anthropic.claude import Claude
 from agno.models.google.gemini import Gemini
 from agno.models.openrouter.openrouter import OpenRouter
+from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
 
-# You can also set the model for Memory Manager and Summarizer individually
+# You can also override the entire `system_message` for the memory manager
+memory_manager = MemoryManager(
+    model=OpenRouter(id="meta-llama/llama-3.3-70b-instruct"),
+    additional_instructions="""
+    IMPORTANT: Don't store any memories about the user's name. Just say "The User" instead of referencing the user's name.
+    """,
+)
+
+# You can also override the entire `system_message` for the session summarizer
+session_summarizer = SessionSummarizer(
+    model=Claude(id="claude-3-5-sonnet-20241022"),
+    additional_instructions="""
+    Make the summary very informal and conversational.
+    """,
+)
+
 memory = Memory(
     db=memory_db,
-    memory_manager=MemoryManager(
-        model=OpenRouter(id="meta-llama/llama-3.3-70b-instruct")
-    ),
-    summarizer=SessionSummarizer(model=Claude(id="claude-3-5-sonnet-20241022")),
+    memory_manager=memory_manager,
+    summarizer=session_summarizer,
 )
 
 # Reset the memory for this example
@@ -46,5 +62,8 @@ agent.print_response("I dont like to swim", stream=True)
 memories = memory.get_user_memories(user_id=john_doe_id)
 
 print("John Doe's memories:")
-for i, m in enumerate(memories):
-    print(f"{i}: {m.memory}")
+pprint(memories)
+
+summary = agent.get_session_summary()
+print("Session summary:")
+pprint(summary)

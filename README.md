@@ -15,11 +15,11 @@
 
 ## Introduction
 
-[Agno](https://docs.agno.com) is a lightweight framework for building Agents with memory, knowledge, tools and reasoning.
+[Agno](https://docs.agno.com) is a lightweight library for building Agents with memory, knowledge, tools and reasoning.
 
-Use Agno to build Reasoning Agents, Multimodal Agents, Teams of Agents and Agentic Workflows.
+Developers use Agno to build Reasoning Agents, Multimodal Agents, Teams of Agents and Agentic Workflows. Agno also provides a beautiful UI to chat with Agents and tools to monitor and evaluate their performance.
 
-Here's an Agent that writes a financial report by reasoning through each step:
+Here's an Agent that researches and writes a report on a stock, reasoning through each step:
 
 ```python reasoning_finance_agent.py
 from agno.agent import Agent
@@ -48,21 +48,21 @@ https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
 
 Agno is simple, fast and model-agnostic. Here are some key features:
 
-- **Model Agnostic**: Agno provides a unified interface for 23+ model providers, no lock-in.
-- **Lightning Fast**: Agents instantiate 10,000x faster than LangGraph and use 50x less memory ([benchmarks](#performance)).
-- **First class support for Reasoning**: Build Agents that can "think" and "analyze" using Reasoning Models, Reasoning Tools or our custom `CoT+Tool-use` approach (see [this example](#example---reasoning-agent)).
-- **Natively Multi Modal**: Agents can take in text, image, audio and video and generate text, image, audio and video as output.
-- **Advanced Multi Agent Architecture**: Industry leading multi-agent architecture with 3 different modes: `route`, `collaborate` and `coordinate`.
-- **Long-term Memory**: Built in support for long-term memory with our `Storage` and `Memory` classes.
-- **20+ Vector Databases for Knowledge**: Add domain knowledge to your Agents by integrating with 20+ vector databases. Fully async and highly performant.
-- **Structured Outputs**: First class support for structured outputs using native structured outputs or `json_mode`.
-- **Monitoring**: Track agent sessions and performance in real-time on [agno.com](https://app.agno.com).
+- **Model Agnostic**: Agno provides a unified interface to 23+ model providers, no lock-in.
+- **Lightning Fast**: Agents instantiate in **~2μs** on average (10,000x faster than LangGraph) and use **~3.75Kib** memory on average (50x less than LangGraph) (see [benchmarks](#performance)).
+- **Reasoning is a first class citizen**: Build Agents that can "think" and "analyze" using Reasoning Models, `ReasoningTools` or our custom `CoT+Tool-use` approach.
+- **Natively Multi Modal**: Agno Agents are natively multi modal, they can take in text, image, audio and video and generate text, image, audio and video as output.
+- **Advanced Multi Agent Architecture**: Agno provides an industry leading multi-agent architecture with 3 different modes: `route`, `collaborate` and `coordinate`.
+- **Long-term Memory & Session Storage**: Agno provides `Storage` & `Memory` classes to provide your Agents with long-term memory and session storage.
+- **20+ Vector Databases for Knowledge**: Add domain knowledge to your Agents by integrating with 20+ vector databases. **Fully async and highly performant.**
+- **Structured Outputs**: Agno Agents have first class support for structured outputs using native structured outputs or `json_mode`.
+- **Monitoring**: Monitor agent sessions and performance in real-time on [agno.com](https://app.agno.com).
 
-## Getting Started with Agno
+## Building Agents with Agno
 
-- Start by [building your first Agent](https://docs.agno.com/introduction/agents)
-- Check out the [examples](https://docs.agno.com/examples/introduction)
-- Read the [documentation](https://docs.agno.com)
+If you're new to Agno, start by building your [first Agent](https://docs.agno.com/introduction/agents), then chat with it on the [playground](https://docs.agno.com/introduction/playground) and finally, monitor it on [agno.com](https://docs.agno.com/introduction/monitoring).
+
+After that, checkout the [Examples Gallery](https://docs.agno.com/examples) and build real-world applications with Agno.
 
 ## Installation
 
@@ -72,15 +72,20 @@ pip install -U agno
 
 ## What are Agents?
 
-**Agents** are intelligent programs that solve problems autonomously.
+**Agents** are AI programs that operate autonomously.
 
-Agents can reason, have memory, domain knowledge and the ability to use tools (like searching the web, querying a database, making API calls). Unlike traditional programs that follow a predefined execution path, Agents dynamically adapt their approach based on the context and tool results.
+- The **brain** of an Agent is the model that it uses to reason, execute, and respond to the user.
+- The **body** of an Agent is the tools it uses to interact with the real world.
+- The **behavior** of an Agent is defined by instructions; the better the model, the better it is at following instructions.
 
-Instead of a rigid binary definition, let's think of Agents in terms of agency and autonomy.
-- **Level 0**: Agents with no tools (basic inference tasks).
-- **Level 1**: Agents with tools for autonomous task execution.
-- **Level 2**: Agents with knowledge, combining memory and reasoning.
-- **Level 3**: Teams of specialized agents collaborating on complex workflows.
+Agents also have **memory**, **knowledge**, **storage** and the ability to **reason**:
+
+- **reasoning:** enables Agents to "think" before responding and "analyze" the results of their actions (i.e. tool calls), this improves the Agents' ability to solve problems that require sequential tool calls.
+- **knowledge:** is domain-specific information the Agent can **_search on demand_** to make better decisions and provide accurate responses. Knowledge is stored in a vector database and this **_search on demand_** pattern is known as Agentic RAG.
+- **storage:** is used by Agents to save session history and state in a database. Model APIs are stateless and storage enables us to continue conversations from where they left off. This makes Agents stateful, enabling multi-turn conversations.
+- **memory:** gives Agents the ability to store and recall information from previous interactions, allowing them to learn user preferences and personalize their responses.
+
+> Let's build a few Agents to see how they work.
 
 ## Example - Reasoning Agent
 

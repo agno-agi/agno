@@ -33,17 +33,26 @@ class SessionSummarizer:
     # Model used for summarization
     model: Optional[Model] = None
 
-    # System prompt for the summarizer. If not provided, a default prompt will be used.
-    system_prompt: Optional[str] = None
+    # System message for the summarizer. If not provided, a default prompt will be used.
+    system_message: Optional[str] = None
+
+    # Additional instructions for the summarizer. If not provided, a default prompt will be used.
+    additional_instructions: Optional[str] = None
 
     # Whether the summarizer has created a summary
     summary_updated: bool = False
 
-    def __init__(self, model: Optional[Model] = None, system_prompt: Optional[str] = None):
+    def __init__(
+        self,
+        model: Optional[Model] = None,
+        system_message: Optional[str] = None,
+        additional_instructions: Optional[str] = None,
+    ):
         self.model = model
         if self.model is not None and isinstance(self.model, str):
             raise ValueError("Model must be a Model object, not a string")
-        self.system_prompt = system_prompt
+        self.system_message = system_message
+        self.additional_instructions = additional_instructions
 
     def update_model(self, model: Model) -> None:
         model = cast(Model, model)
@@ -63,25 +72,29 @@ class SessionSummarizer:
             model.response_format = {"type": "json_object"}
 
     def get_system_message(self, conversation: List[Message], model: Model) -> Message:
-        if self.system_prompt is not None:
-            return Message(role="system", content=self.system_prompt)
+        if self.system_message is not None:
+            return Message(role="system", content=self.system_message)
 
         # -*- Return a system message for summarization
         system_prompt = dedent("""\
         Analyze the following conversation between a user and an assistant, and extract the following details:
           - Summary (str): Provide a concise summary of the session, focusing on important information that would be helpful for future interactions.
           - Topics (Optional[List[str]]): List the topics discussed in the session.
-        Please ignore any frivolous information.
-        Conversation:
+        Keep the summary concise and to the point. Only include relevant information.
+
+        <conversation>
         """)
         conversation_messages = []
         for message in conversation:
             if message.role == "user":
                 conversation_messages.append(f"User: {message.content}")
             elif message.role in ["assistant", "model"]:
-                conversation_messages.append(f"Assistant: {message.content}")
-
+                conversation_messages.append(f"Assistant: {message.content}\n")
         system_prompt += "\n".join(conversation_messages)
+        system_prompt += "</conversation>"
+
+        if self.additional_instructions:
+            system_prompt += "\n" + self.additional_instructions
 
         if model.response_format == {"type": "json_object"}:
             system_prompt += "\n" + get_json_output_prompt(SessionSummaryResponse)  # type: ignore
