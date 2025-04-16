@@ -502,7 +502,7 @@ class Agent:
             self.telemetry = telemetry_env.lower() == "true"
 
     def set_default_model(self):
-        # Set the default model
+        # Use the default Model (OpenAIChat) if no model is provided
         if self.model is None:
             try:
                 from agno.models.openai import OpenAIChat
