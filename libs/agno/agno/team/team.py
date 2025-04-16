@@ -63,7 +63,7 @@ from agno.utils.response import (
     update_run_response_with_reasoning,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model_str, url_safe_string
+from agno.utils.string import is_valid_uuid, parse_response_model_str, url_safe_string
 from agno.utils.timer import Timer
 
 
@@ -118,6 +118,8 @@ class Team:
     # If True, add the current datetime to the instructions to give the team a sense of time
     # This allows for relative times like "tomorrow" to be used in the prompt
     add_datetime_to_instructions: bool = False
+    # If True, add the tools available to team members to the system message
+    add_member_tools_to_system_message: bool = True
 
     # --- Success criteria ---
     # Define the success criteria for the team
@@ -4158,14 +4160,7 @@ class Team:
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
         for idx, member in enumerate(self.members):
-            if hasattr(member, "agent_id") and member.agent_id is not None:
-                url_safe_member_id = url_safe_string(member.agent_id)
-            elif hasattr(member, "team_id") and member.team_id is not None:
-                url_safe_member_id = url_safe_string(member.team_id)
-            elif member.name is not None:
-                url_safe_member_id = url_safe_string(member.name)
-            else:
-                url_safe_member_id = None
+            url_safe_member_id = self._get_member_id(member)
 
             if isinstance(member, Team):
                 system_message_content += f"{indent * ' '} - Team: {member.name}\n"
@@ -4179,7 +4174,7 @@ class Team:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
-                if member.tools is not None:
+                if member.tools is not None and self.add_member_tools_to_system_message:
                     system_message_content += f"{indent * ' '}   - Member tools:\n"
                     for _tool in member.tools:
                         if isinstance(_tool, Toolkit):
@@ -5385,6 +5380,20 @@ class Team:
 
         return transfer_func
 
+    def _get_member_id(self, member: Union[Agent, "Team"]) -> str:
+        """
+        Get the ID of a member
+        """
+        if hasattr(member, "agent_id") and member.agent_id is not None and (not is_valid_uuid(member.agent_id)):
+            url_safe_member_id = url_safe_string(member.agent_id)
+        elif hasattr(member, "team_id") and member.team_id is not None and (not is_valid_uuid(member.team_id)):
+            url_safe_member_id = url_safe_string(member.team_id)
+        elif member.name is not None:
+            url_safe_member_id = url_safe_string(member.name)
+        else:
+            url_safe_member_id = None
+        return url_safe_member_id
+
     def _find_member_by_id(self, member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
         """
         Recursively search through team members and subteams to find an agent by name.
@@ -5400,7 +5409,7 @@ class Team:
         # First check direct members
         for i, member in enumerate(self.members):
             if member.name is not None:
-                url_safe_member_id = url_safe_string(member.name)
+                url_safe_member_id = self._get_member_id(member)
                 if url_safe_member_id == member_id:
                     return (i, member)
 
