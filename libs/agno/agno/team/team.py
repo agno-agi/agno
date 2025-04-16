@@ -75,7 +75,7 @@ class Team:
 
     members: List[Union[Agent, "Team"]]
 
-    mode: Literal["route", "coordinate", "collaborate", "sequential"] = "coordinate"
+    mode: Literal["route", "coordinate", "collaborate"] = "coordinate"
 
     # Model for this Team
     model: Optional[Model] = None
@@ -1344,6 +1344,7 @@ class Team:
                 
                 if self.enable_agentic_context:
                     _tools.append(self.get_set_shared_context_function(session_id=session_id))
+
 
             self._add_tools_to_model(self.model, tools=_tools)  # type: ignore
 
@@ -4190,7 +4191,11 @@ class Team:
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
         for idx, member in enumerate(self.members):
-            if member.name is not None:
+            if hasattr(member, "agent_id") and member.agent_id is not None:
+                url_safe_member_id = url_safe_string(member.agent_id)
+            elif hasattr(member, "team_id") and member.team_id is not None:
+                url_safe_member_id = url_safe_string(member.team_id)
+            elif member.name is not None:
                 url_safe_member_id = url_safe_string(member.name)
             else:
                 url_safe_member_id = None
@@ -4208,7 +4213,7 @@ class Team:
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
                 if member.tools is not None:
-                    system_message_content += f"{indent * ' '}   - Available tools:\n"
+                    system_message_content += f"{indent * ' '}   - Member tools:\n"
                     for _tool in member.tools:
                         if isinstance(_tool, Toolkit):
                             for _func in _tool.functions.values():
@@ -4425,6 +4430,7 @@ class Team:
         # Return the final output
         return current_message
 
+
     def get_system_message(
         self,
         session_id: str,
@@ -4482,6 +4488,7 @@ class Team:
             system_message_content += (
                 "- You can either respond directly or transfer tasks to members in your team with the highest likelihood of completing the user's request.\n"
                 "- Carefully analyze the tools available to the members and their roles before transferring tasks.\n"
+                "- You cannot use a member tool directly. You can only transfer tasks to members.\n"
                 "- When you transfer a task to another member, make sure to include:\n"
                 "  - member_id (str): The ID of the member to forward the task to.\n"
                 "  - task_description (str): A clear description of the task.\n"
@@ -4506,14 +4513,6 @@ class Team:
                 "- To run the members in your team, call `run_member_agents` ONLY once. This will run all members in your team.\n"
                 "- Analyze the responses from all members and evaluate whether the task has been completed.\n"
                 "- If you feel the task has been completed, you can stop and respond to the user.\n"
-            )
-        elif self.mode == "sequential":
-            system_message_content += (
-                "- You will execute agents in a sequential pipeline where each agent's output becomes the input for the next agent.\n"
-                "- Use the `run_sequential_pipeline` tool to execute the sequential pipeline of agents.\n"
-                "- The agents will be executed in the order they were added to the team.\n"
-                "- Each agent's output will be passed as input to the next agent in the sequence.\n"
-                "- The final output will be the output of the last agent in the sequence.\n"
             )
         system_message_content += "</how_to_respond>\n\n"
 
