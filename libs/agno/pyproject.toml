@@ -329,6 +329,7 @@ module = [
   "twilio.*",
   "tzlocal.*",
   "upstash_vector.*",
+  "urllib3.*",
   "uvicorn.*",
   "vertexai.*",
   "voyageai.*",
