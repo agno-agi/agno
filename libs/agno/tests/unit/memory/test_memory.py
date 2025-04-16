@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from agno.memory.v2 import MemoryManager
+from agno.memory.v2 import MemoryManager, SessionSummarizer
 from agno.memory.v2.db.schema import MemoryRow
 from agno.memory.v2.memory import Memory
 from agno.memory.v2.schema import SessionSummary, UserMemory
@@ -97,11 +97,138 @@ def test_set_model():
     assert memory.summary_manager.model == model
 
 
-def test_initialization_with_memories(sample_user_memory):
-    memories = {"user1": {"memory1": sample_user_memory}}
-    memory = Memory(memories=memories)
-    assert memory.memories == memories
-    assert memory.get_user_memory("user1", "memory1") == sample_user_memory
+def test_custom_memory_manager_with_system_message(mock_model, mock_db):
+    # Create a custom system prompt
+    custom_system_message = "You are a specialized memory manager that focuses on capturing user preferences."
+
+    # Create a memory manager with the custom system prompt
+    memory_manager = MemoryManager(model=mock_model, system_message=custom_system_message)
+
+    # Create a memory with the custom memory manager
+    memory = Memory(model=mock_model, db=mock_db, memory_manager=memory_manager)
+
+    # Test that the get_system_message method returns the custom prompt
+    system_message = memory.memory_manager.get_system_message()
+    assert system_message.role == "system"
+    assert system_message.content == custom_system_message
+
+    # Test that the custom prompt is used when creating memories
+    with patch.object(memory.memory_manager, "create_or_update_memories") as mock_create:
+        mock_create.return_value = "Memories created with custom message"
+
+        # Call the method that would use the system prompt
+        result = memory.create_user_memories(message="I like pizza", user_id="test_user")
+
+        # Verify the create_or_update_memories method was called
+        mock_create.assert_called_once()
+
+        # Verify the result
+        assert result == "Memories created with custom message"
+
+
+def test_custom_memory_manager_with_additional_instructions(mock_model, mock_db):
+    # Create a custom system prompt
+    custom_additional_instructions = "Don't store any memories about the user's name."
+
+    # Create a memory manager with the custom system prompt
+    memory_manager = MemoryManager(model=mock_model, additional_instructions=custom_additional_instructions)
+
+    # Create a memory with the custom memory manager
+    memory = Memory(model=mock_model, db=mock_db, memory_manager=memory_manager)
+
+    # Test that the get_system_message method returns the custom prompt
+    system_message = memory.memory_manager.get_system_message()
+    assert system_message.role == "system"
+    assert custom_additional_instructions in system_message.content
+
+
+def test_custom_summarizer_with_system_message(mock_model, mock_db):
+    # Create a custom system prompt for the summarizer
+    custom_system_message = (
+        "You are a specialized summarizer that focuses on extracting key action items from conversations."
+    )
+
+    # Create a summarizer with the custom system prompt
+    summarizer = SessionSummarizer(model=mock_model, system_message=custom_system_message)
+
+    # Create a memory with the custom summarizer
+    memory = Memory(model=mock_model, db=mock_db, summarizer=summarizer)
+
+    # Verify the summarizer has the custom system prompt
+    assert memory.summary_manager.system_message == custom_system_message
+
+    # Test that the get_system_message method returns the custom prompt
+    # Create a sample conversation for testing
+    conversation = [
+        Message(role="user", content="I need to schedule a meeting for next week"),
+        Message(role="assistant", content="I can help with that. What day works best for you?"),
+        Message(role="user", content="Tuesday afternoon would be good"),
+    ]
+
+    # Get the system message with the custom prompt
+    system_message = memory.summary_manager.get_system_message(conversation, model=mock_model)
+    assert system_message.role == "system"
+    assert system_message.content == custom_system_message
+
+    # Test that the custom prompt is used when creating session summaries
+    with patch.object(memory.summary_manager, "run") as mock_run:
+        # Create a mock SessionSummaryResponse
+        mock_summary_response = MagicMock()
+        mock_summary_response.summary = "Meeting scheduled for Tuesday afternoon"
+        mock_summary_response.topics = ["scheduling", "meeting"]
+        mock_run.return_value = mock_summary_response
+
+        # Add a run to have messages for the summary
+        session_id = "test_session"
+        user_id = "test_user"
+
+        run_response = RunResponse(
+            content="Sample response",
+            messages=[
+                Message(role="user", content="I need to schedule a meeting for next week"),
+                Message(role="assistant", content="I can help with that. What day works best for you?"),
+                Message(role="user", content="Tuesday afternoon would be good"),
+                Message(role="assistant", content="I'll schedule that for you."),
+            ],
+        )
+
+        memory.add_run(session_id, run_response)
+
+        # Create the summary
+        summary = memory.create_session_summary(session_id, user_id)
+
+        # Verify the run method was called
+        mock_run.assert_called_once()
+
+        # Verify the summary was created with the custom prompt
+        assert summary is not None
+        assert summary.summary == "Meeting scheduled for Tuesday afternoon"
+        assert summary.topics == ["scheduling", "meeting"]
+        assert memory.summaries[user_id][session_id] == summary
+
+
+def test_custom_summarizer_with_additional_instructions(mock_model, mock_db):
+    # Create a custom system prompt
+    custom_additional_instructions = "Don't include any memories in the summary."
+
+    # Create a summarizer with the custom system prompt
+    summarizer = SessionSummarizer(model=mock_model, additional_instructions=custom_additional_instructions)
+
+    # Create a memory with the custom summarizer
+    memory = Memory(model=mock_model, db=mock_db, summarizer=summarizer)
+
+    # Test that the get_system_message method returns the custom prompt
+    # Create a sample conversation for testing
+    conversation = [
+        Message(role="user", content="I need to schedule a meeting for next week"),
+        Message(role="assistant", content="I can help with that. What day works best for you?"),
+        Message(role="user", content="Tuesday afternoon would be good"),
+    ]
+
+    # Get the system message with the custom prompt
+    system_message = memory.summary_manager.get_system_message(conversation, model=mock_model)
+    assert system_message.role == "system"
+    assert custom_additional_instructions in system_message.content
 
 
 # User Memory Operations Tests
@@ -110,7 +237,7 @@ def test_add_user_memory(memory_with_model, sample_user_memory):
 
     assert memory_id is not None
     assert memory_with_model.memories["test_user"][memory_id] == sample_user_memory
-    assert memory_with_model.get_user_memory("test_user", memory_id) == sample_user_memory
+    assert memory_with_model.get_user_memory(user_id="test_user", memory_id=memory_id) == sample_user_memory
 
 
 def test_add_user_memory_default_user(memory_with_model, sample_user_memory):
@@ -118,7 +245,7 @@ def test_add_user_memory_default_user(memory_with_model, sample_user_memory):
 
     assert memory_id is not None
     assert memory_with_model.memories["default"][memory_id] == sample_user_memory
-    assert memory_with_model.get_user_memory("default", memory_id) == sample_user_memory
+    assert memory_with_model.get_user_memory(user_id="default", memory_id=memory_id) == sample_user_memory
 
 
 def test_replace_user_memory(memory_with_model, sample_user_memory):
@@ -132,7 +259,7 @@ def test_replace_user_memory(memory_with_model, sample_user_memory):
 
     memory_with_model.replace_user_memory(memory_id=memory_id, memory=updated_memory, user_id="test_user")
 
-    retrieved_memory = memory_with_model.get_user_memory("test_user", memory_id)
+    retrieved_memory = memory_with_model.get_user_memory(user_id="test_user", memory_id=memory_id)
     assert retrieved_memory == updated_memory
     assert retrieved_memory.memory == "The user's name is Jane Doe"
 
@@ -142,10 +269,10 @@ def test_delete_user_memory(memory_with_model, sample_user_memory):
     memory_id = memory_with_model.add_user_memory(memory=sample_user_memory, user_id="test_user")
 
     # Verify it exists
-    assert memory_with_model.get_user_memory("test_user", memory_id) is not None
+    assert memory_with_model.get_user_memory(user_id="test_user", memory_id=memory_id) is not None
 
     # Now delete it
-    memory_with_model.delete_user_memory("test_user", memory_id)
+    memory_with_model.delete_user_memory(user_id="test_user", memory_id=memory_id)
 
     # Verify it's gone
     assert memory_id not in memory_with_model.memories["test_user"]
@@ -160,7 +287,7 @@ def test_get_user_memories(memory_with_model, sample_user_memory):
     )
 
     # Get all memories for the user
-    memories = memory_with_model.get_user_memories("test_user")
+    memories = memory_with_model.get_user_memories(user_id="test_user")
 
     assert len(memories) == 2
     assert any(m.memory == "The user's name is John Doe" for m in memories)
@@ -203,7 +330,7 @@ def test_get_session_summary(memory_with_model, sample_session_summary):
     memory_with_model.summaries = {user_id: {session_id: sample_session_summary}}
 
     # Retrieve the summary
-    summary = memory_with_model.get_session_summary(user_id, session_id)
+    summary = memory_with_model.get_session_summary(user_id=user_id, session_id=session_id)
 
     assert summary == sample_session_summary
     assert summary.summary == "This was a session about stocks"
@@ -217,7 +344,7 @@ def test_delete_session_summary(memory_with_model, sample_session_summary):
     memory_with_model.summaries = {user_id: {session_id: sample_session_summary}}
 
     # Verify it exists
-    assert memory_with_model.get_session_summary(user_id, session_id) is not None
+    assert memory_with_model.get_session_summary(user_id=user_id, session_id=session_id) is not None
 
     # Now delete it
     memory_with_model.delete_session_summary(user_id, session_id)
@@ -227,7 +354,7 @@ def test_delete_session_summary(memory_with_model, sample_session_summary):
 
 
 # Memory Search Tests
-def test_search_user_memories_semantic(memory_with_model):
+def test_search_user_memories_agentic(memory_with_model):
     # Setup test data
     memory_with_model.memories = {
         "test_user": {
@@ -237,7 +364,7 @@ def test_search_user_memories_semantic(memory_with_model):
     }
 
     # Mock the internal method
-    with patch.object(memory_with_model, "_search_user_memories_semantic") as mock_search:
+    with patch.object(memory_with_model, "_search_user_memories_agentic") as mock_search:
         # Setup the mock to return a memory list
         mock_memories = [
             UserMemory(memory="Memory 1", topics=["topic1"]),
@@ -247,7 +374,7 @@ def test_search_user_memories_semantic(memory_with_model):
 
         # Call the search function
         results = memory_with_model.search_user_memories(
-            query="test query", retrieval_method="semantic", user_id="test_user"
+            query="test query", retrieval_method="agentic", user_id="test_user"
         )
 
         # Verify the search was called correctly

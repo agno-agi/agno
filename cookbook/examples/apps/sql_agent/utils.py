@@ -235,15 +235,18 @@ def rename_session_widget(agent: Agent) -> None:
 
 def about_widget() -> None:
     """Display an about section in the sidebar"""
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### ℹ️ About")
-    st.sidebar.markdown("""
-    This SQL Assistant helps you analyze Formula 1 data from 1950 to 2020 using natural language queries.
+    with st.sidebar:
+        st.markdown("### About Agno ✨")
+        st.markdown("""
+        Agno is a lightweight library for building Reasoning Agents.
 
-    Built with:
-    - 🚀 Agno
-    - 💫 Streamlit
-    """)
+        [GitHub](https://github.com/agno-agi/agno) | [Docs](https://docs.agno.com)
+        """)
+
+        st.markdown("### Need Help?")
+        st.markdown(
+            "If you have any questions, catch us on [discord](https://agno.link/discord) or post in the community [forum](https://agno.link/community)."
+        )
 
 
 CUSTOM_CSS = """
