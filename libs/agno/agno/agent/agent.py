@@ -660,13 +660,13 @@ class Agent:
                 elif (
                     model_response_chunk.event == ModelResponseEvent.tool_call_started.value
                 ):  # Add tool calls to the run_response
-                    tool_calls_list = model_response_chunk.tool_calls
-                    if tool_calls_list is not None:
+                    new_tool_calls_list = model_response_chunk.tool_calls
+                    if new_tool_calls_list is not None:
                         # Add tool calls to the agent.run_response
                         if self.run_response.tools is None:
-                            self.run_response.tools = tool_calls_list
+                            self.run_response.tools = new_tool_calls_list
                         else:
-                            self.run_response.tools.extend(tool_calls_list)
+                            self.run_response.tools.extend(new_tool_calls_list)
 
                         # Format tool calls whenever new ones are added during streaming
                         self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
@@ -682,8 +682,8 @@ class Agent:
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
                     reasoning_step: ReasoningStep = None
 
-                    tool_calls_list = model_response_chunk.tool_calls
-                    if tool_calls_list is not None:
+                    new_tool_calls_list = model_response_chunk.tool_calls
+                    if new_tool_calls_list is not None:
                         # Update the existing tool call in the run_response
                         if self.run_response.tools:
                             # Create a mapping of tool_call_id to index
@@ -693,29 +693,24 @@ class Agent:
                                 if tc.get("tool_call_id") is not None
                             }
                             # Process tool calls
-                            for tool_call_dict in tool_calls_list:
+                            for tool_call_dict in new_tool_calls_list:
                                 tool_call_id = tool_call_dict.get("tool_call_id")
                                 index = tool_call_index_map.get(tool_call_id)
                                 if index is not None:
                                     self.run_response.tools[index] = tool_call_dict
                         else:
-                            self.run_response.tools = tool_calls_list
-
-                        # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
-                        if self.run_response.tools:
-                            reasoning_tool_calls = []
-                            for tool_call in self.run_response.tools:
-                                tool_name = tool_call.get("tool_name", "")
-                                if tool_name.lower() in ["think", "analyze"]:
-                                    reasoning_tool_calls.append(tool_call)
-
-                            if len(reasoning_tool_calls) > 0:
-                                tool_args = reasoning_tool_calls[-1].get("tool_args", {})
+                            self.run_response.tools = new_tool_calls_list
+                        
+                        # Only iterate through new tool calls
+                        for tool_call in new_tool_calls_list:
+                            tool_name = tool_call.get("tool_name", "")
+                            if tool_name.lower() in ["think", "analyze"]:
+                                tool_args = tool_call.get("tool_args", {})
+                                
                                 reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
-
-                                metrics = reasoning_tool_calls[-1].get("metrics")
-                                time_taken = metrics.time
-                                reasoning_time_taken = reasoning_time_taken + float(time_taken)
+                        
+                                metrics = tool_call.get("metrics")
+                                reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if self.stream_intermediate_steps:
                         if reasoning_step is not None:
@@ -1253,13 +1248,13 @@ class Agent:
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                     # Add tool calls to the run_response
-                    tool_calls_list = model_response_chunk.tool_calls
-                    if tool_calls_list is not None:
+                    new_tool_calls_list = model_response_chunk.tool_calls
+                    if new_tool_calls_list is not None:
                         # Add tool calls to the agent.run_response
                         if self.run_response.tools is None:
-                            self.run_response.tools = tool_calls_list
+                            self.run_response.tools = new_tool_calls_list
                         else:
-                            self.run_response.tools.extend(tool_calls_list)
+                            self.run_response.tools.extend(new_tool_calls_list)
 
                         # Format tool calls whenever new ones are added during streaming
                         self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
@@ -1274,8 +1269,8 @@ class Agent:
                 # If the model response is a tool_call_completed, update the existing tool call in the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
                     reasoning_step: ReasoningStep = None
-                    tool_calls_list = model_response_chunk.tool_calls
-                    if tool_calls_list is not None:
+                    new_tool_calls_list = model_response_chunk.tool_calls
+                    if new_tool_calls_list is not None:
                         # Update the existing tool call in the run_response
                         if self.run_response.tools:
                             # Create a mapping of tool_call_id to index
@@ -1285,7 +1280,7 @@ class Agent:
                                 if tc.get("tool_call_id") is not None
                             }
                             # Process tool calls
-                            for tool_call_dict in tool_calls_list:
+                            for tool_call_dict in new_tool_calls_list:
                                 tool_call_id = (
                                     tool_call_dict.get("tool_call_id")
                                 )
@@ -1293,24 +1288,18 @@ class Agent:
                                 if index is not None:
                                     self.run_response.tools[index] = tool_call_dict
                         else:
-                            self.run_response.tools = tool_calls_list
-
+                            self.run_response.tools = new_tool_calls_list
                         
-                        # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
-                        if self.run_response.tools:
-                            reasoning_tool_calls = []
-                            for tool_call in self.run_response.tools:
-                                tool_name = tool_call.get("tool_name", "")
-                                if tool_name.lower() in ["think", "analyze"]:
-                                    reasoning_tool_calls.append(tool_call)
-
-                            if len(reasoning_tool_calls) > 0:
-                                tool_args = reasoning_tool_calls[-1].get("tool_args", {})
+                        # Only iterate through new tool calls
+                        for tool_call in new_tool_calls_list:
+                            tool_name = tool_call.get("tool_name", "")
+                            if tool_name.lower() in ["think", "analyze"]:
+                                tool_args = tool_call.get("tool_args", {})
+                                
                                 reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
                         
-                                metrics = reasoning_tool_calls[-1].get("metrics")
-                                time_taken = metrics.time
-                                reasoning_time_taken = reasoning_time_taken + float(time_taken)
+                                metrics = tool_call.get("metrics")
+                                reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if self.stream_intermediate_steps:
                         if reasoning_step is not None:
@@ -1412,14 +1401,6 @@ class Agent:
         # Update the run_response audio if streaming
         if self.stream and model_response.audio is not None:
             self.run_response.response_audio = model_response.audio
-
-        # Process all tool calls to update reasoning_content
-        if self.run_response.tools:
-            for tool_call in self.run_response.tools:
-                tool_name = tool_call.get("tool_name", "")
-                if tool_name.lower() in ["think", "analyze"]:
-                    tool_args = tool_call.get("tool_args", {})
-                    self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
         # 9. Update Agent Memory
         # Add the system message to the memory
@@ -4661,7 +4642,7 @@ class Agent:
         self, tool_name: str, tool_args: Dict[str, Any]
     ) -> Optional[ReasoningStep]:
         """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
-
+        
         # Case 1: ReasoningTools.think (has title, thought, optional action and confidence)
         if tool_name.lower() == "think" and "title" in tool_args and "thought" in tool_args:
             title = tool_args["title"]
