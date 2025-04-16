@@ -467,6 +467,8 @@ class Agent:
         self.agent_session: Optional[AgentSession] = None
 
         self._tools_for_model: Optional[List[Dict]] = None
+        self._functions_for_model: Optional[Dict[str, Function]] = None
+        self._tool_instructions: Optional[List[str]] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
@@ -1922,7 +1924,7 @@ class Agent:
 
     def update_model(self, session_id: str, async_mode: bool = False, user_id: Optional[str] = None) -> None:
         self.set_default_model()
-
+        
         self.model = cast(Model, self.model)
 
         # Update the response_format on the Model
