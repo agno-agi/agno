@@ -1,4 +1,5 @@
 import uuid
+
 import pytest
 
 from agno.agent import Agent
@@ -71,7 +72,7 @@ def test_get_member_id():
     assert Team(members=[member])._get_member_id(member) == "123"
     member = Agent(name="Test Agent", agent_id=str(uuid.uuid4()))
     assert Team(members=[member])._get_member_id(member) == "test-agent"
-    
+
     member = Agent(name="Test Agent")
     inner_team = Team(name="Test Team", members=[member])
     assert Team(members=[inner_team])._get_member_id(inner_team) == "test-team"

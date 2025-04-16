@@ -426,7 +426,25 @@ class Team:
         if member.name is None:
             log_warning("Team member name is undefined.")
 
-    def _initialize_team(self, session_id: str) -> None:
+    def _set_default_model(self):
+        # Set the default model
+        if self.model is None:
+            try:
+                from agno.models.openai import OpenAIChat
+            except ModuleNotFoundError as e:
+                log_exception(e)
+                log_error(
+                    "Agno agents use `openai` as the default model provider. "
+                    "Please provide a `model` or install `openai`."
+                )
+                exit(1)
+
+            log_info("Setting default model to OpenAI Chat")
+            self.model = OpenAIChat(id="gpt-4o")
+
+    def initialize_team(self, session_id: str) -> None:
+        self._set_default_model()
+
         self._set_storage_mode()
 
         # Set debug mode
@@ -522,7 +540,7 @@ class Team:
 
         log_debug(f"Session ID: {session_id}", center=True)
 
-        self._initialize_team(session_id=session_id)
+        self.initialize_team(session_id=session_id)
 
         show_tool_calls = self.show_tool_calls
 
@@ -1205,7 +1223,7 @@ class Team:
 
         log_debug(f"Session ID: {session_id}", center=True)
 
-        self._initialize_team(session_id=session_id)
+        self.initialize_team(session_id=session_id)
 
         show_tool_calls = self.show_tool_calls
 
@@ -4023,20 +4041,9 @@ class Team:
                 log_warning("Context is not a dict")
 
     def _configure_model(self, show_tool_calls: bool = False) -> None:
-        # Set the default model
-        if self.model is None:
-            try:
-                from agno.models.openai import OpenAIChat
-            except ModuleNotFoundError as e:
-                log_exception(e)
-                log_error(
-                    "Agno agents use `openai` as the default model provider. "
-                    "Please provide a `model` or install `openai`."
-                )
-                exit(1)
+        self._set_default_model()
 
-            log_info("Setting default model to OpenAI Chat")
-            self.model = OpenAIChat(id="gpt-4o")
+        self.model = cast(Model, self.model)
 
         # Update the response_format on the Model
         if self.response_model is None:
@@ -5906,7 +5913,7 @@ class Team:
                 if self.session_id is None or self.session_id == "":
                     self.session_id = str(uuid4())
                 if self.team_id is None:
-                    self._initialize_team(session_id=self.session_id)
+                    self.initialize_team(session_id=self.session_id)
                 # write_to_storage() will create a new TeamSession
                 # and populate self.team_session with the new session
                 self.write_to_storage(session_id=self.session_id, user_id=self.user_id)  # type: ignore
@@ -5938,8 +5945,7 @@ class Team:
             return self.memory.get_messages_for_session(session_id=_session_id)
         else:
             return []
-        
-    
+
     def get_session_summary(self, session_id: Optional[str] = None, user_id: Optional[str] = None):
         """Get the session summary for the given session ID and user ID."""
         if self.memory is None:
@@ -5958,8 +5964,7 @@ class Team:
             raise ValueError("TeamMemory does not support get_session_summary")
         else:
             raise ValueError(f"Memory type {type(self.memory)} not supported")
-        
-    
+
     def get_user_memories(self, user_id: Optional[str] = None):
         """Get the user memories for the given user ID."""
         if self.memory is None:
@@ -5967,7 +5972,7 @@ class Team:
         user_id = user_id if user_id is not None else self.user_id
         if user_id is None:
             user_id = "default"
-        
+
         if isinstance(self.memory, Memory):
             return self.memory.get_user_memories(user_id=user_id)
         elif isinstance(self.memory, TeamMemory):

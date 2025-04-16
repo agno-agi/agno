@@ -87,7 +87,5 @@ if __name__ == "__main__":
     )
 
     # You can also get the session summary from the team
-    session_summary = team.get_session_summary(
-        user_id=user_id, session_id=session_id_2
-    )
+    session_summary = team.get_session_summary(user_id=user_id, session_id=session_id_2)
     print("Session Summary: ", session_summary.summary)
