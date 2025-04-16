@@ -259,8 +259,8 @@ def test_memory_persistence_across_instances(model, memory_db):
     memory2 = Memory(model=model, db=memory_db)
 
     # Verify the memory is accessible from the second instance
-    assert memory2.get_user_memory("test_user", memory_id) is not None
-    assert memory2.get_user_memory("test_user", memory_id).memory == "The user's name is John Doe"
+    assert memory2.get_user_memory(user_id="test_user", memory_id=memory_id) is not None
+    assert memory2.get_user_memory(user_id="test_user", memory_id=memory_id).memory == "The user's name is John Doe"
 
 
 def test_memory_operations_with_db(memory_with_db):
@@ -278,10 +278,10 @@ def test_memory_operations_with_db(memory_with_db):
     memory_with_db.replace_user_memory(memory_id=memory_id, memory=updated_memory, user_id="test_user")
 
     # Verify the memory was updated
-    assert memory_with_db.get_user_memory("test_user", memory_id).memory == "The user's name is Jane Doe"
+    assert memory_with_db.get_user_memory(user_id="test_user", memory_id=memory_id).memory == "The user's name is Jane Doe"
 
     # Delete the memory
-    memory_with_db.delete_user_memory("test_user", memory_id)
+    memory_with_db.delete_user_memory(user_id="test_user", memory_id=memory_id)
 
     # Verify the memory was deleted
     assert memory_id not in memory_with_db.memories["test_user"]
