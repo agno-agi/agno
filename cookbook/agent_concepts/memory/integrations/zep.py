@@ -1,48 +1,36 @@
 """
 Agno Agent - Zep Memory Integration
 
-This example demonstrates how to integrate AsyncZep memory with the API.
-It creates an assistant that can remember previous conversations using Zep's asynchronous memory capabilities.
+To get started, please export your Zep API and OpenAI API keys as environment variables:
+
+export ZEP_API_KEY=<your-zep-api-key>
+export OPENAI_API_KEY=<your-openai-api-key>
+
+You can get your Zep API key from https://app.getzep.com/
+You can get your OpenAI API key from https://platform.openai.com/api-keys
 """
 
 import asyncio
-import os
 import time
 import uuid
+import click
 from typing import Any, Dict, List, Optional
 
-import click
-
-# Agnoimports
-from agno.agent import Agent, Message
-from agno.models.openai import OpenAIChat
 from zep_cloud import NotFoundError
-
-# Zep Cloud imports
 from zep_cloud.client import AsyncZep
 from zep_cloud.types import Message as ZepMessage
 
-MODEL_NAME = "gpt-4o-mini"
-SYSTEM_PROMPT = """
-You are a helpful assistant with memory capabilities. Use the memory search tool to recall important information about the user.
+from agno.agent import Agent, Message
+from agno.models.openai import OpenAIChat
 
-Ask the user plenty of questions about their life so you can build up a profile of them. Some things to ask them:
-- Where they live
-- their favorite things
-- their favorite activities
-- what they like about the place they live
-"""
-
-# Set your API keys in environment variables_API_KEY = os.environ.get(_API_KEY")
-ZEP_API_KEY = os.environ.get("ZEP_API_KEY")
-
-# Validate API key
-if not ZEP_API_KEY:
-    print(
-        "Warning: ZEP_API_KEY environment variable not set. Some functionality will not work."
-    )
+# Example tool
+async def get_weather(city: str) -> str:
+    """Get the current weather in a given city."""
+    # This is a mock function - in a real application, you would call a weather API
+    return f"The weather in {city} is sunny and 72 degrees Fahrenheit."
 
 
+# Initialize the AsyncZep client
 class AsyncZepMemoryManager:
     """
     A class to manage memory using AsyncZep
@@ -79,13 +67,8 @@ class AsyncZepMemoryManager:
         """
         Initialize the AsyncZep client, create or get the user, and create a new memory session.
         """
-        if not ZEP_API_KEY:
-            print(
-                "Error: ZEP_API_KEY environment variable not set. Cannot initialize AsyncZep client."
-            )
-            return
 
-        self.zep_client = AsyncZep(api_key=ZEP_API_KEY)
+        self.zep_client = AsyncZep()
 
         # Create or get the user
         try:
@@ -278,9 +261,14 @@ class AsyncZepMemoryAgent:
         # Create the agent with memory tools and context-enhanced system message
         self.agent = Agent(
             name="Memory Assistant with AsyncZep",
-            model=OpenAIChat(model=MODEL_NAME),
-            instructions=(SYSTEM_PROMPT + "\n" + f"Memory Context: {memory_context}"),
+            model=OpenAIChat(id="gpt-4o-mini"),
+            instructions=(
+                "You are a helpful Agent with memory capabilities. Use the memory search tool to recall important information about the user."
+                + "\n"
+                + f"Memory Context: {memory_context}"
+            ),
             tools=[
+                get_weather,
                 search_memory,
             ],
         )
@@ -308,7 +296,9 @@ class AsyncZepMemoryAgent:
         # Update the agent's instructions with the latest memory context
         memory_context = await self.memory_manager.get_memory()
         self.agent.instructions = (
-            SYSTEM_PROMPT + "\n" + f"Memory Context: {memory_context}"
+            "You are a helpful Agent with memory capabilities. Use the memory search tool to recall important information about the user."
+            + "\n"
+            + f"Memory Context: {memory_context}"
         )
 
         # Run the agent with the user input directly
