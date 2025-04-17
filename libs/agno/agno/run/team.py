@@ -36,7 +36,7 @@ class TeamRunResponse:
     audio: Optional[List[AudioArtifact]] = None  # Audio from member runs
 
     response_audio: Optional[AudioResponse] = None  # Model audio response
-    
+
     reasoning_content: Optional[str] = None
 
     citations: Optional[Citations] = None

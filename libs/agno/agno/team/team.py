@@ -941,7 +941,7 @@ class Team:
             self.memory = cast(Memory, self.memory)
 
         self.model = cast(Model, self.model)
-        
+
         reasoning_started = False
         reasoning_time_taken = 0
 
@@ -1067,15 +1067,14 @@ class Team:
                                 run_response.tools[index] = tool_call_dict
                     else:
                         run_response.tools = new_tool_calls_list
-                    
+
                     # Only iterate through new tool calls
                     for tool_call in new_tool_calls_list:
                         tool_name = tool_call.get("tool_name", "")
                         if tool_name.lower() in ["think", "analyze"]:
                             tool_args = tool_call.get("tool_args", {})
 
-                            reasoning_step = self.update_reasoning_content_from_tool_call(
-                                tool_name, tool_args)
+                            reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                             metrics = tool_call.get("metrics")
                             reasoning_time_taken = reasoning_time_taken + float(metrics.time)
@@ -1097,7 +1096,7 @@ class Team:
                                 reasoning_content=self.run_response.reasoning_content,
                                 session_id=session_id,
                             )
-                        
+
                         yield self._create_run_response(
                             content=model_response_chunk.content,
                             event=RunEvent.tool_call_completed,
@@ -1181,6 +1180,7 @@ class Team:
             yield self._create_run_response(
                 from_run_response=run_response,
                 event=RunEvent.run_completed,
+                reasoning_content=self.run_response.reasoning_content,
                 session_id=session_id,
             )
 
@@ -1651,6 +1651,9 @@ class Team:
 
         self.model = cast(Model, self.model)
 
+        reasoning_started = False
+        reasoning_time_taken = 0
+
         # 1. Reason about the task(s) if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._areason(
@@ -1733,13 +1736,13 @@ class Team:
             # If the model response is a tool_call_started, add the tool call to the run_response
             elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
                 # Add tool calls to the run_response
-                tool_calls_list = model_response_chunk.tool_calls
-                if tool_calls_list is not None:
+                new_tool_calls_list = model_response_chunk.tool_calls
+                if new_tool_calls_list is not None:
                     # Add tool calls to the agent.run_response
                     if run_response.tools is None:
-                        run_response.tools = tool_calls_list
+                        run_response.tools = new_tool_calls_list
                     else:
-                        run_response.tools.extend(tool_calls_list)
+                        run_response.tools.extend(new_tool_calls_list)
 
                 # Format tool calls whenever new ones are added during streaming
                 run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
@@ -1755,8 +1758,9 @@ class Team:
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
-                tool_calls_list = model_response_chunk.tool_calls
-                if tool_calls_list is not None:
+                reasoning_step: ReasoningStep = None
+                new_tool_calls_list = model_response_chunk.tool_calls
+                if new_tool_calls_list is not None:
                     # Update the existing tool call in the run_response
                     if run_response.tools:
                         # Create a mapping of tool_call_id to index
@@ -1766,15 +1770,43 @@ class Team:
                             if tc.get("tool_call_id") is not None
                         }
                         # Process tool calls
-                        for tool_call_dict in tool_calls_list:
+                        for tool_call_dict in new_tool_calls_list:
                             tool_call_id = tool_call_dict.get("tool_call_id")
                             index = tool_call_index_map.get(tool_call_id)
                             if index is not None:
                                 run_response.tools[index] = tool_call_dict
                     else:
-                        run_response.tools = tool_calls_list
+                        run_response.tools = new_tool_calls_list
+
+                    # Only iterate through new tool calls
+                    for tool_call in new_tool_calls_list:
+                        tool_name = tool_call.get("tool_name", "")
+                        if tool_name.lower() in ["think", "analyze"]:
+                            tool_args = tool_call.get("tool_args", {})
+
+                            reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+
+                            metrics = tool_call.get("metrics")
+                            reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if stream_intermediate_steps:
+                        if reasoning_step is not None:
+                            if not reasoning_started:
+                                yield self._create_run_response(
+                                    content="Reasoning started",
+                                    session_id=session_id,
+                                    event=RunEvent.reasoning_started,
+                                )
+                                reasoning_started = True
+
+                            yield self._create_run_response(
+                                content=reasoning_step,
+                                content_type=reasoning_step.__class__.__name__,
+                                event=RunEvent.reasoning_step,
+                                reasoning_content=self.run_response.reasoning_content,
+                                session_id=session_id,
+                            )
+
                         yield self._create_run_response(
                             content=model_response_chunk.content,
                             event=RunEvent.tool_call_completed,
@@ -1865,6 +1897,7 @@ class Team:
             yield self._create_run_response(
                 from_run_response=run_response,
                 event=RunEvent.run_completed,
+                reasoning_content=self.run_response.reasoning_content,
                 session_id=session_id,
             )
 
@@ -6057,7 +6090,7 @@ class Team:
 
     def get_audio(self) -> Optional[List[AudioArtifact]]:
         return self.audio
-    
+
     def update_reasoning_content_from_tool_call(
         self, tool_name: str, tool_args: Dict[str, Any]
     ) -> Optional[ReasoningStep]:
@@ -6190,8 +6223,7 @@ class Team:
                     )
 
                     # Add the metrics message to the reasoning_messages
-                    self.run_response.extra_data.reasoning_messages.append(
-                        metrics_message)
+                    self.run_response.extra_data.reasoning_messages.append(metrics_message)
                 except Exception as e:
                     # Fallback: If Message object fails, try with a simple dictionary
                     metrics_dict = {
@@ -6199,14 +6231,12 @@ class Team:
                         "content": str(self.run_response.reasoning_content),
                         "metrics": {"time": reasoning_time_taken},
                     }
-                    self.run_response.extra_data.reasoning_messages.append(
-                        metrics_dict)
+                    self.run_response.extra_data.reasoning_messages.append(metrics_dict)
         except Exception as e:
             # Log the error but don't crash
             from agno.utils.log import log_error
 
-            log_error(
-                f"Failed to add reasoning metrics to extra_data: {str(e)}")
+            log_error(f"Failed to add reasoning metrics to extra_data: {str(e)}")
 
     ###########################################################################
     # Knowledge
