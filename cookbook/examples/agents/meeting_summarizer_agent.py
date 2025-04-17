@@ -6,24 +6,22 @@ to process a meeting recording, summarize it, visualize it, and create an audio 
 Requires: pip install openai agno
 """
 
+from pathlib import Path
 from textwrap import dedent
 
-import requests
 from agno.agent import Agent
-from agno.media import Audio
 from agno.models.google import Gemini
 from agno.tools.openai import OpenAITools
 from agno.tools.reasoning import ReasoningTools
+from agno.utils.media import download_file, save_audio
 
 input_audio_url: str = (
     "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/sample_audio.mp3"
 )
+print(f"Downloading meeting to local path: {input_audio_url}")
 
-print("Downloading audio from URL...")
-response = requests.get(input_audio_url, timeout=30)
-audio_content = response.content
-
-print("Done!")
+local_audio_path = Path("tmp/meeting_recording.mp3")
+download_file(input_audio_url, local_audio_path)
 
 meeting_agent: Agent = Agent(
     model=Gemini(id="gemini-2.0-flash"),
@@ -38,16 +36,15 @@ meeting_agent: Agent = Agent(
         1. Receive the path to an audio file.
         2. Use the `transcribe_audio` tool to get the text transcription.
         3. Analyze the transcription and write a concise summary highlighting key discussion points, decisions, and action items.
-        4. Based *only* on the summary created in step 3, formulate a *specific and detailed* prompt for generating a visual representation of the meeting. This prompt should aim to create an image that visually represents the *core topics, decisions, or action items* identified in the summary. Think of it as a visual overview of the summary's content.
-        5. Let's use model `dall-e-3` and save it to `meeting_summary.png`
-        6. Present the final output clearly: first the text summary, then include the exact image URL string returned by the `generate_image` tool (and mention the image artifact is in the context), and finally mention that the audio summary was generated and added to the context (using the artifact ID returned in step 6).
+        4. Based *only* on the summary created in step 3, generating important meeting points. This should be a essentially an overview of the summary's content properly ordered and formatted in the form of meeting minutes.
+        5. Convert the meeting minutes into an audio summary using the `generate_speech` tool.
     """),
     markdown=True,
     show_tool_calls=True,
 )
 
-meeting_agent.print_response(
-    f"Please process the meeting recording.",
-    audio=[Audio(content=audio_content)],
-    debug=True,
+response = meeting_agent.run(
+    f"Please process the meeting recording located at '{local_audio_path}'",
 )
+if response.audio:
+    save_audio(response.audio[0].base64_audio, Path("tmp/meeting_summary.mp3"))

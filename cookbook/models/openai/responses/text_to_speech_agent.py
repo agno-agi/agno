@@ -5,21 +5,29 @@ This script demonstrates how to use an agent to generate speech from a given tex
 Run `pip install openai agno` to install the necessary dependencies.
 """
 
+from pathlib import Path
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.openai import OpenAITools
+from agno.utils.media import save_audio
 
-# Create a simple agent using the GPT-4o model and the OpenAI toolkit
+output_file: str = Path("tmp/speech_output2.mp3")
+
 agent: Agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[OpenAITools()],
     markdown=True,
-    show_tool_calls=True,  # Show tool calls for clarity
+    show_tool_calls=True,
 )
 
-text_to_synthesize: str = "Hello from Agno! This is a demonstration of the text-to-speech capability using OpenAI"
-output_file: str = "speech_output.mp3"
-
-agent.print_response(
-    f"Please generate speech for the following text and save it to '{output_file}'. Text: \"{text_to_synthesize}\""
+# Ask the agent to generate speech, but not save it
+response = agent.run(
+    f'Please generate speech for the following text: "Hello from Agno! This is a demonstration of the text-to-speech capability using OpenAI"'
 )
+
+print(f"Agent response: {response.get_content_as_string()}")
+
+if response.audio:
+    save_audio(response.audio[0].base64_audio, output_file)
+    print(f"Successfully saved generated speech to{output_file}")

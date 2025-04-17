@@ -11,24 +11,23 @@ Example prompts to try:
 Run `pip install openai agno` to install the necessary dependencies.
 """
 
+from pathlib import Path
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.openai import OpenAITools
+from agno.utils.media import download_image
 
-# Define the output file path
-output_file: str = "image_output.png"
-
-# Create a simple agent using the GPT-4o model and the OpenAI toolkit
-agent: Agent = Agent(
+agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[OpenAITools()],
     markdown=True,
+    show_tool_calls=True,
 )
 
-# Ask the agent to generate an image using the tool
-agent.print_response(
-    f"Generate an image of a futuristic cityscape at sunset painted in the style of Van Gogh. Save the image to '{output_file}' and return the URL.",
-    stream=True,
+response = agent.run(
+    f"Generate a photorealistic image of a cozy coffee shop interior",
 )
 
-print(f"\nImage generation requested. Check for the file: {output_file}")
+if response.images:
+    download_image(response.images[0].url, Path("tmp/coffee_shop.png"))
