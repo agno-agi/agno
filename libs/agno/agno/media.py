@@ -274,8 +274,10 @@ class Image(BaseModel):
 class File(BaseModel):
     url: Optional[str] = None
     filepath: Optional[Union[Path, str]] = None
+    # Raw bytes content of a file
     content: Optional[Any] = None
     mime_type: Optional[str] = None
+    # External file object (e.g. GeminiFile, must be a valid object as expected by the model you are using)
     external: Optional[Any] = None
 
     @model_validator(mode="before")
