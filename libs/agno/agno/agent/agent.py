@@ -3629,10 +3629,7 @@ class Agent:
                     if next_action == NextAction.FINAL_ANSWER:
                         break
                 except Exception as e:
-                    import traceback
-
                     log_error(f"Reasoning error: {e}")
-                    traceback.print_exc()
                     break
 
                 step_count += 1
