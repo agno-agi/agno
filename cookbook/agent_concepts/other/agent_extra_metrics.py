@@ -18,8 +18,9 @@ agent = Agent(
         audio={"voice": "sage", "format": "wav"},
     ),
     markdown=True,
+    debug_mode=True,
 )
-agent.run(
+agent.print_response(
     "What's in these recording?",
     audio=[Audio(content=wav_data, format="wav")],
 )
@@ -29,9 +30,9 @@ print(f"Output audio tokens: {agent.run_response.metrics['output_audio_tokens']}
 print(f"Audio tokens: {agent.run_response.metrics['audio_tokens']}")
 
 agent = Agent(
-    model=OpenAIChat(id="o3-mini"), markdown=True, telemetry=False, monitoring=False
+    model=OpenAIChat(id="o3-mini"), markdown=True, telemetry=False, monitoring=False, debug_mode=True
 )
-response = agent.run(
+agent.print_response(
     "Solve the trolley problem. Evaluate multiple ethical frameworks. Include an ASCII diagram of your solution.",
     stream=False,
 )
@@ -43,6 +44,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False
 )
 agent.run("Share a 2 sentence horror story" * 150)
-response = agent.run("Share a 2 sentence horror story" * 150)
+agent.print_response("Share a 2 sentence horror story" * 150)
 # Showing cached tokens metrics
 print(f"Cached tokens: {agent.run_response.metrics['cached_tokens']}")
