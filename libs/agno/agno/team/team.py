@@ -276,7 +276,7 @@ class Team:
         monitoring: bool = False,
         telemetry: bool = True,
     ):
-        self.members = members
+        # self.members = members
 
         self.mode = mode
 
@@ -6395,7 +6395,7 @@ class Team:
 
     def to_platform_dict(self) -> Dict[str, Any]:
         return {
-            "members": [member.to_platform_dict() for member in self.members],
+            "members": [member.to_platform_dict() for member in self.members ],
             "mode": self.mode,
             "model": self.model.to_dict() if self.model is not None else None,
             "name": self.name,

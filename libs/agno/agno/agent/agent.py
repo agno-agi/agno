@@ -4162,7 +4162,8 @@ class Agent:
         from agno.api.agent import AgentCreate, create_agent
 
         try:
-            create_agent(app=AgentCreate(name=self.name, agent_id=self.agent_id, config=self.to_platform_dict()))
+            log_debug(f"Creating Agent app: {self.name}, {self.agent_id}, {self.team_id},")
+            create_agent(app=AgentCreate(name=self.name, agent_id=self.agent_id, team_id=self.team_id,  config=self.to_platform_dict()))
         except Exception as e:
             log_debug(f"Could not create Agent app: {e}")
 
@@ -4175,7 +4176,7 @@ class Agent:
 
         try:
             await acreate_agent(
-                agent=AgentCreate(name=self.name, agent_id=self.agent_id, config=self.to_platform_dict())
+                agent=AgentCreate(name=self.name, agent_id=self.agent_id, team_id=self.team_id, config=self.to_platform_dict())
             )
         except Exception as e:
             log_debug(f"Could not create Agent app: {e}")
