@@ -26,8 +26,9 @@ from textwrap import dedent
 from typing import Optional
 
 import typer
-from agno.agent import Agent, AgentMemory
-from agno.memory.db.sqlite import SqliteMemoryDb
+from agno.agent import Agent
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from rich.console import Console
@@ -55,16 +56,14 @@ def create_agent(user: str = "user"):
         user_id=user,
         session_id=session_id,
         # Configure memory system with SQLite storage
-        memory=AgentMemory(
+        memory=Memory(
             db=SqliteMemoryDb(
                 table_name="agent_memory",
                 db_file="tmp/agent_memory.db",
             ),
-            create_user_memories=True,
-            update_user_memories_after_run=True,
-            create_session_summary=True,
-            update_session_summary_after_run=True,
         ),
+        enable_user_memories=True,
+        enable_session_summaries=True,
         storage=agent_storage,
         add_history_to_messages=True,
         num_history_responses=3,
@@ -93,43 +92,66 @@ def print_agent_memory(agent):
     """Print the current state of agent's memory systems"""
     console = Console()
 
+    messages = []
+    session_id = agent.session_id
+    session_run = agent.memory.runs[session_id][-1]
+    for m in session_run.messages:
+        message_dict = m.to_dict()
+        messages.append(message_dict)
+
     # Print chat history
     console.print(
         Panel(
             JSON(
-                json.dumps([m.to_dict() for m in agent.memory.messages]),
+                json.dumps(
+                    messages,
+                ),
                 indent=4,
             ),
-            title=f"Chat History for session_id: {agent.session_id}",
+            title=f"Chat History for session_id: {session_run.session_id}",
             expand=True,
         )
     )
 
     # Print user memories
-    console.print(
-        Panel(
-            JSON(
-                json.dumps(
-                    [
-                        m.model_dump(include={"memory", "input"})
-                        for m in agent.memory.memories
-                    ]
+    for user_id in list(agent.memory.memories.keys()):
+        console.print(
+            Panel(
+                JSON(
+                    json.dumps(
+                        [
+                            user_memory.to_dict()
+                            for user_memory in agent.memory.get_user_memories(
+                                user_id=user_id
+                            )
+                        ],
+                        indent=4,
+                    ),
                 ),
-                indent=4,
-            ),
-            title=f"Memories for user_id: {agent.user_id}",
-            expand=True,
+                title=f"Memories for user_id: {user_id}",
+                expand=True,
+            )
         )
-    )
 
     # Print session summary
-    console.print(
-        Panel(
-            JSON(json.dumps(agent.memory.summary.model_dump(), indent=4)),
-            title=f"Summary for session_id: {agent.session_id}",
-            expand=True,
+    for user_id in list(agent.memory.summaries.keys()):
+        console.print(
+            Panel(
+                JSON(
+                    json.dumps(
+                        [
+                            summary.to_dict()
+                            for summary in agent.memory.get_session_summaries(
+                                user_id=user_id
+                            )
+                        ],
+                        indent=4,
+                    ),
+                ),
+                title=f"Summary for session_id: {agent.session_id}",
+                expand=True,
+            )
         )
-    )
 
 
 def main(user: str = "user"):
