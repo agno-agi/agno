@@ -3,6 +3,11 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
 from agno.media import Audio, Image
 from agno.utils.log import logger
+import base64
+import mimetypes
+
+# Ensure .webp is recognized
+mimetypes.add_type('image/webp', '.webp')
 
 # Define Literal types for allowed OpenAI parameter values used in utils
 OpenAIImageSize = Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]
@@ -64,7 +69,6 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
     Returns:
         Message content with audio added in the format expected by the model
     """
-    import base64
     from urllib.parse import urlparse
 
     audio_messages = []
@@ -136,8 +140,6 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
 
 def _process_bytes_image(image: bytes) -> Dict[str, Any]:
     """Process bytes image data."""
-    import base64
-
     base64_image = base64.b64encode(image).decode("utf-8")
     # Assuming JPEG if type not specified, could attempt detection
     image_url = f"data:image/jpeg;base64,{base64_image}"
@@ -146,9 +148,6 @@ def _process_bytes_image(image: bytes) -> Dict[str, Any]:
 
 def _process_image_path(image_path: Union[Path, str]) -> Dict[str, Any]:
     """Process image ( file path)."""
-    import base64
-    import mimetypes
-
     # Process local file image
     path = Path(image_path)  # Ensure it's a Path object
     if not path.exists():
