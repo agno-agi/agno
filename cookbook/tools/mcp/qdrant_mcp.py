@@ -9,35 +9,36 @@ Example prompts to try:
 - "Tell me about natural language processing"
 - "What are the applications of computer vision?"
 
-Run: `pip install agno mcp openai dotenv` to install the dependencies
+Run: `pip install agno mcp openai` to install the dependencies
+
+Export the following environment variables:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export QDRANT_API_KEY="..."
+```
+
 """
 
+import os
 from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
-from dotenv import load_dotenv, find_dotenv
-import logging
 import asyncio
 
-# Configure basic logging
-logging.basicConfig(
-    level=logging.INFO,  # Set the log level to INFO
-    format='%(asctime)s - %(levelname)s - %(message)s'  # Log format
-)
-load_dotenv(find_dotenv())
 
-async def qdrant_mcp_agent() -> Agent:
+async def run_qdrant_mcp_agent(question: str):
     """Run the qdrant agent with the given message."""
 
     # initialize the Qdrant MCP server
     async with MCPTools(
         "uvx mcp-server-qdrant",
         env={
-            "QDRANT_URL": "<http://localhost:6333>", # your qdrant instance: local or cloud
+            "QDRANT_URL": "http://localhost:6333", # your qdrant instance: local or cloud
             "COLLECTION_NAME": "TEST", # your qdrant collection name
-            "QDRANT_API_KEY": "kjashkdkjah.asdkjhaskdh.leouroeas", # your qdrant api_key
+            **os.environ,
         }
     ) as mcp_tools:
         agent = Agent(
@@ -56,12 +57,11 @@ async def qdrant_mcp_agent() -> Agent:
             markdown=True,
             show_tool_calls=True,
         )
-    return agent
+
+        await agent.aprint_response(question)
 
 async def main():
-    agent = await qdrant_mcp_agent()
-    response = await agent.arun("What is the difference of LLM and VLM?")
-    logging.info(response.content)
+    await run_qdrant_mcp_agent("What is the difference of LLM and VLM?")
 
 if __name__ == "__main__":
     asyncio.run(main())
