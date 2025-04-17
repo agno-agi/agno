@@ -1,12 +1,16 @@
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.google import Gemini
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
 reasoning_agent = Agent(
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=Gemini(id="gemini-2.5-pro-preview-03-25"),
     tools=[
-        ReasoningTools(add_instructions=True),
+        ReasoningTools(
+            think=True,
+            analyze=True,
+            add_instructions=True,
+        ),
         YFinanceTools(
             stock_price=True,
             analyst_recommendations=True,
@@ -15,13 +19,11 @@ reasoning_agent = Agent(
         ),
     ],
     instructions="Use tables where possible",
+    stream_intermediate_steps=True,
+    show_tool_calls=True,
     markdown=True,
+    debug_mode=True,
 )
-
-if __name__ == "__main__":
-    reasoning_agent.print_response(
-        "Write a report on NVDA. Only the report, no other text.",
-        stream=True,
-        show_full_reasoning=True,
-        stream_intermediate_steps=True,
-    )
+reasoning_agent.print_response(
+    "Write a report comparing NVDA to TSLA.", show_full_reasoning=True
+)

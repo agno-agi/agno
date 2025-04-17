@@ -113,5 +113,5 @@ team.print_response(
 session_run = memory.runs[session_id][-1]
 # -*- Print chat history
 print_chat_history(session_run)
-# -*- Print team memory
-print_team_memory(user_id, memory.get_user_memories(user_id))
+# -*- Print team memory (you can also get the user memories from the team)
+print_team_memory(user_id, team.get_user_memories(user_id))

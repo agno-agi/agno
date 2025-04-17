@@ -503,7 +503,24 @@ class Agent:
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
+    def set_default_model(self):
+        # Use the default Model (OpenAIChat) if no model is provided
+        if self.model is None:
+            try:
+                from agno.models.openai import OpenAIChat
+            except ModuleNotFoundError as e:
+                log_exception(e)
+                log_error(
+                    "Agno agents use `openai` as the default model provider. "
+                    "Please provide a `model` or install `openai`."
+                )
+                exit(1)
+
+            log_info("Setting default model to OpenAI Chat")
+            self.model = OpenAIChat(id="gpt-4o")
+
     def initialize_agent(self) -> None:
+        self.set_default_model()
         self.set_storage_mode()
         self.set_debug()
         self.set_agent_id()
@@ -1906,18 +1923,9 @@ class Agent:
                 model.set_functions(functions=self._functions_for_model)
 
     def update_model(self, session_id: str, async_mode: bool = False, user_id: Optional[str] = None) -> None:
-        # Use the default Model (OpenAIChat) if no model is provided
-        if self.model is None:
-            try:
-                from agno.models.openai import OpenAIChat
-            except ModuleNotFoundError as e:
-                log_exception(e)
-                log_error(
-                    "Agno agents use `openai` as the default model provider. "
-                    "Please provide a `model` or install `openai` using `pip install openai -U`."
-                )
-                exit(1)
-            self.model = OpenAIChat(id="gpt-4o")
+        self.set_default_model()
+
+        self.model = cast(Model, self.model)
 
         # Update the response_format on the Model
         if self.response_model is None:
@@ -2865,6 +2873,40 @@ class Agent:
                         log_warning(f"Failed to validate message: {e}")
 
         return run_messages
+
+    def get_session_summary(self, session_id: Optional[str] = None, user_id: Optional[str] = None):
+        """Get the session summary for the given session ID and user ID."""
+        if self.memory is None:
+            return None
+
+        session_id = session_id if session_id is not None else self.session_id
+        if session_id is None:
+            raise ValueError("Session ID is required")
+
+        if isinstance(self.memory, Memory):
+            user_id = user_id if user_id is not None else self.user_id
+            if user_id is None:
+                user_id = "default"
+            return self.memory.get_session_summary(session_id=session_id, user_id=user_id)
+        elif isinstance(self.memory, AgentMemory):
+            return self.memory.summary
+        else:
+            raise ValueError(f"Memory type {type(self.memory)} not supported")
+
+    def get_user_memories(self, user_id: Optional[str] = None):
+        """Get the user memories for the given user ID."""
+        if self.memory is None:
+            return None
+        user_id = user_id if user_id is not None else self.user_id
+        if user_id is None:
+            user_id = "default"
+
+        if isinstance(self.memory, Memory):
+            return self.memory.get_user_memories(user_id=user_id)
+        elif isinstance(self.memory, AgentMemory):
+            raise ValueError("AgentMemory does not support get_user_memories")
+        else:
+            raise ValueError(f"Memory type {type(self.memory)} not supported")
 
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> Agent:
         """Create and return a deep copy of this Agent, optionally updating fields.
