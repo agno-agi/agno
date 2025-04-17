@@ -25,7 +25,6 @@ file_agent = Agent(
     name="File Upload Agent",
     agent_id="file-upload-agent",
     role="Answer questions about the uploaded files",
-    model=Claude(id="claude-3-7-sonnet-latest"),
     storage=PostgresStorage(
         table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
     ),
@@ -41,7 +40,6 @@ file_agent = Agent(
 
 video_agent = Agent(
     name="Video Understanding Agent",
-    model=Gemini(id="gemini-2.0-flash"),
     agent_id="video-understanding-agent",
     role="Answer questions about video files",
     storage=PostgresStorage(
@@ -59,7 +57,6 @@ audio_agent = Agent(
     name="Audio Understanding Agent",
     agent_id="audio-understanding-agent",
     role="Answer questions about audio files",
-    model=OpenAIChat(id="gpt-4o-audio-preview"),
     storage=PostgresStorage(
         table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
     ),
@@ -74,7 +71,6 @@ audio_agent = Agent(
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
-    model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
     agent_id="web_agent",
     instructions=[
@@ -93,7 +89,6 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
     agent_id="finance_agent",
-    model=OpenAIChat(id="gpt-4o"),
     tools=[
         YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
     ],
@@ -114,7 +109,6 @@ finance_agent = Agent(
 simple_agent = Agent(
     name="Simple Agent",
     role="Simple agent",
-    model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a simple agent"],
     memory=memory,
     enable_user_memories=True,
@@ -123,7 +117,6 @@ simple_agent = Agent(
 research_agent = Agent(
     name="Research Agent",
     role="Research agent",
-    model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a research agent"],
     tools=[DuckDuckGoTools(), ExaTools()],
     agent_id="research_agent",
@@ -135,7 +128,6 @@ research_team = Team(
     name="Research Team",
     description="A team of agents that research the web",
     members=[research_agent, simple_agent],
-    model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
     team_id="research_team",
     success_criteria=dedent("""\
@@ -191,7 +183,6 @@ financial_news_team = Team(
         audio_agent,
         video_agent,
     ],
-    model=OpenAIChat(id="gpt-4o"),
     mode="route",
     team_id="financial_news_team",
     instructions=[

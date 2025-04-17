@@ -1,4 +1,4 @@
-"""Run `pip install openai agno memory_profiler` to install dependencies."""
+"""Run `pip install openai agno` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat

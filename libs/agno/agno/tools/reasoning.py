@@ -193,21 +193,21 @@ Confidence: {step_parsed.confidence}
 
     DEFAULT_INSTRUCTIONS = dedent(
         """\
-        You have access to the `think` and `analyze` tools to work through problems step-by-step and structure your thought process. You must ALWAYS `think` before making a tool call or generating an answer.
+        You have access to the `think` and `analyze` tools to work through problems step-by-step and structure your thought process. You must ALWAYS `think` before making tool calls or generating a response.
 
         1. **Think** (scratchpad):
             - Purpose: Use the `think` tool as a scratchpad to break down complex problems, outline steps, and decide on immediate actions within your reasoning flow. Use this to structure your internal monologue.
-            - Usage: Call `think` multiple times to build a chain of thought. Detail your reasoning for each step and specify the intended action (e.g., "make a tool call", "perform calculation", "ask clarifying question").
-            - You must always `think` before making a tool call or generating an answer.
+            - Usage: Call `think` before making tool calls or generating a response. Explain your reasoning and specify the intended action (e.g., "make a tool call", "perform calculation", "ask clarifying question").
 
         2. **Analyze** (evaluation):
-            - Purpose: Evaluate the result of a think step or tool call. Assess if the result is expected, sufficient, or requires further investigation.
-            - Usage: Call `analyze` after a `think` step or a tool call. Determine the `next_action` based on your analysis: `continue` (more reasoning needed), `validate` (seek external confirmation/validation if possible), or `final_answer` (ready to conclude).
-            - Also note your reasoning about whether it's correct/sufficient.
+            - Purpose: Evaluate the result of a think step or a set of tool calls. Assess if the result is expected, sufficient, or requires further investigation.
+            - Usage: Call `analyze` after a set of tool calls. Determine the `next_action` based on your analysis: `continue` (more reasoning needed), `validate` (seek external confirmation/validation if possible), or `final_answer` (ready to conclude).
+            - Explain your reasoning highlighting whether the result is correct/sufficient.
 
         ## IMPORTANT GUIDELINES
-        - **Always Think First:** You MUST use the `think` tool before any other action (like calling another tool or giving the final answer). This is your first step.
-        - **Iterate to Solve:** Use the `think` and `analyze` tools iteratively to build a clear reasoning path. The typical flow is `Think` -> [`Tool Call` if needed] -> [`Analyze` if needed] -> ... -> `final_answer`. Repeat this cycle until you reach a satisfactory conclusion.
+        - **Always Think First:** You MUST use the `think` tool before making tool calls or generating a response.
+        - **Iterate to Solve:** Use the `think` and `analyze` tools iteratively to build a clear reasoning path. The typical flow is `Think` -> [`Tool Calls` if needed] -> [`Analyze` if needed] -> ... -> `final_answer`. Repeat this cycle until you reach a satisfactory conclusion.
+        - **Make multiple tool calls in parallel:** After a `think` step, you can make multiple tool calls in parallel.
         - **Keep Thoughts Internal:** The reasoning steps (thoughts and analyses) are for your internal process only. Do not share them directly with the user.
         - **Conclude Clearly:** When your analysis determines the `next_action` is `final_answer`, provide a concise and accurate final answer to the user."""
     )
@@ -261,7 +261,7 @@ Confidence: {step_parsed.confidence}
         )
         ```
 
-        *Perform multiple external tool calls in parallel*
+        *Perform multiple tool calls in parallel*
         *--(Tool call 1: search(query="capital of France"))--*
         *--(Tool call 2: search(query="population of Paris current"))--*
         *--(Tool Result 1: "Paris")--*
