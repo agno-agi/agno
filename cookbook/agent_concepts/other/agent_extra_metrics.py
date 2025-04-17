@@ -1,3 +1,5 @@
+"""Show special token metrics like audio, cached and reasoning tokens"""
+
 import requests
 from agno.agent import Agent
 from agno.media import Audio
