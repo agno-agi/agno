@@ -7,7 +7,7 @@ from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 try:
     from mistralai import CompletionEvent
@@ -66,6 +66,15 @@ def _format_messages(messages: List[Message]) -> List[MistralMessage]:
     for message in messages:
         mistral_message: MistralMessage
         if message.role == "user":
+            if message.audio is not None and len(message.audio) > 0:
+                log_warning("Audio input is currently unsupported.")
+
+            if message.files is not None and len(message.files) > 0:
+                log_warning("File input is currently unsupported.")
+
+            if message.videos is not None and len(message.videos) > 0:
+                log_warning("Video input is currently unsupported.")
+
             if message.images is not None:
                 content: List[Any] = [TextChunk(type="text", text=message.content)]
                 for image in message.images:

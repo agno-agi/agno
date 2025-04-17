@@ -231,6 +231,9 @@ class Groq(Model):
                 message_dict["content"] = [{"type": "text", "text": message.content}]
                 message_dict["content"].extend(images_to_message(images=message.images))
 
+        if message.files is not None and len(message.files) > 0:
+            log_warning("File input is currently unsupported.")
+
         if message.audio is not None and len(message.audio) > 0:
             log_warning("Audio input is currently unsupported.")
 
