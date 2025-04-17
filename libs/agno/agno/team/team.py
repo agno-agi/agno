@@ -276,7 +276,7 @@ class Team:
         monitoring: bool = False,
         telemetry: bool = True,
     ):
-        # self.members = members
+        self.members = members
 
         self.mode = mode
 
