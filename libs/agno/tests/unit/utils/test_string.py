@@ -192,9 +192,10 @@ def test_parse_complex_markdown():
     assert result.value == "123"
     assert result.description == 'A "quoted" description'
 
+
 def test_parse_nested_json():
     """Test parsing nested JSON"""
-    
+
     class Step(BaseModel):
         step: str
         description: str

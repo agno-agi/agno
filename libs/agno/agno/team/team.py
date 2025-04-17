@@ -193,11 +193,13 @@ class Team:
     # If True, the agent adds a reference to the session summaries in the response
     add_session_summary_references: Optional[bool] = None
 
-    # --- Agent History ---
+    # --- Team History ---
     # If True, enable the team history
     enable_team_history: bool = False
-    # Number of interactions from history
+    # Deprecated in favor of num_history_runs: Number of interactions from history
     num_of_interactions_from_history: int = 3
+    # Number of historical runs to include in the messages
+    num_history_runs: int = 3
 
     # --- Team Storage ---
     storage: Optional[Storage] = None
@@ -265,7 +267,8 @@ class Team:
         enable_session_summaries: bool = False,
         add_session_summary_references: Optional[bool] = None,
         enable_team_history: bool = False,
-        num_of_interactions_from_history: int = 3,
+        num_of_interactions_from_history: Optional[int] = None,
+        num_history_runs: int = 3,
         storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
@@ -340,6 +343,9 @@ class Team:
 
         self.enable_team_history = enable_team_history
         self.num_of_interactions_from_history = num_of_interactions_from_history
+        self.num_history_runs = num_history_runs
+        if num_of_interactions_from_history is not None:
+            self.num_history_runs = num_of_interactions_from_history
 
         self.storage = storage
         self.extra_data = extra_data
@@ -4457,12 +4463,10 @@ class Team:
 
             history = []
             if isinstance(self.memory, TeamMemory):
-                history = self.memory.get_messages_from_last_n_runs(
-                    last_n=self.num_of_interactions_from_history, skip_role="system"
-                )
+                history = self.memory.get_messages_from_last_n_runs(last_n=self.num_history_runs, skip_role="system")
             elif isinstance(self.memory, Memory):
                 history = self.memory.get_messages_from_last_n_runs(
-                    session_id=session_id, last_n=self.num_of_interactions_from_history, skip_role="system"
+                    session_id=session_id, last_n=self.num_history_runs, skip_role="system"
                 )
 
             if len(history) > 0:
