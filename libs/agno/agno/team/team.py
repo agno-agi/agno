@@ -3837,6 +3837,14 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
+            if self.stream_intermediate_steps:
+                yield self.create_run_response(
+                    content=ReasoningSteps(
+                        reasoning_steps=[ReasoningStep(result=reasoning_message.content)]
+                    ),
+                    session_id=session_id,
+                    event=RunEvent.reasoning_completed,
+                )
         else:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
@@ -3921,14 +3929,14 @@ class Team:
                 reasoning_messages=reasoning_messages,
             )
 
-        # Yield the final reasoning completed event
-        if stream_intermediate_steps:
-            yield self._create_run_response(
-                content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),  # type: ignore
-                content_type=ReasoningSteps.__class__.__name__,
-                event=RunEvent.reasoning_completed,
-                session_id=session_id,
-            )
+            # Yield the final reasoning completed event
+            if stream_intermediate_steps:
+                yield self._create_run_response(
+                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),  # type: ignore
+                    content_type=ReasoningSteps.__class__.__name__,
+                    event=RunEvent.reasoning_completed,
+                    session_id=session_id,
+                )
 
     async def _areason(
         self,
@@ -4007,6 +4015,14 @@ class Team:
                     run_response=run_response,
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
+                )
+            if self.stream_intermediate_steps:
+                yield self.create_run_response(
+                    content=ReasoningSteps(
+                        reasoning_steps=[ReasoningStep(result=reasoning_message.content)]
+                    ),
+                    session_id=session_id,
+                    event=RunEvent.reasoning_completed,
                 )
         else:
             from agno.reasoning.default import get_default_reasoning_agent
@@ -4092,14 +4108,14 @@ class Team:
                 reasoning_messages=reasoning_messages,
             )
 
-        # Yield the final reasoning completed event
-        if stream_intermediate_steps:
-            yield self._create_run_response(
-                content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),  # type: ignore
-                content_type=ReasoningSteps.__class__.__name__,
-                event=RunEvent.reasoning_completed,
-                session_id=session_id,
-            )
+            # Yield the final reasoning completed event
+            if stream_intermediate_steps:
+                yield self._create_run_response(
+                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),  # type: ignore
+                    content_type=ReasoningSteps.__class__.__name__,
+                    event=RunEvent.reasoning_completed,
+                    session_id=session_id,
+                )
 
     def _create_run_response(
         self,
