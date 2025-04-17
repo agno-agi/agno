@@ -3474,87 +3474,64 @@ class Agent:
 
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
-            from agno.models.openai.like import OpenAILike
+            from agno.reasoning.deepseek import is_deepseek_reasoning_model
+            from agno.reasoning.groq import is_groq_reasoning_model
+            from agno.reasoning.helpers import get_reasoning_agent
+            from agno.reasoning.ollama import is_ollama_reasoning_model
+            from agno.reasoning.openai import is_openai_reasoning_model
 
-            # Use DeepSeek for reasoning
-            if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id.lower() == "deepseek-reasoner":
-                from agno.reasoning.deepseek import get_deepseek_reasoning, get_deepseek_reasoning_agent
+            reasoning_agent = self.reasoning_agent or get_reasoning_agent(
+                reasoning_model=reasoning_model, monitoring=self.monitoring
+            )
 
-                ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
-                    reasoning_model=reasoning_model, monitoring=self.monitoring
-                )
-                log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
-                ds_reasoning_message: Optional[Message] = get_deepseek_reasoning(
-                    reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if ds_reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-                run_messages.messages.append(ds_reasoning_message)
-                # Add reasoning step to the Agent's run_response
-                self.update_run_response_with_reasoning(
-                    reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)],
-                    reasoning_agent_messages=[ds_reasoning_message],
-                )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)]),
-                        session_id=session_id,
-                        event=RunEvent.reasoning_completed,
-                    )
-            # Use Groq for reasoning
-            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id.lower():
-                from agno.reasoning.groq import get_groq_reasoning, get_groq_reasoning_agent
-
-                groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
-                    reasoning_model=reasoning_model, monitoring=self.monitoring
-                )
-                log_debug("Starting Groq Reasoning", center=True, symbol="=")
-                groq_reasoning_message: Optional[Message] = get_groq_reasoning(
-                    reasoning_agent=groq_reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if groq_reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-                run_messages.messages.append(groq_reasoning_message)
-                # Add reasoning step to the Agent's run_response
-                self.update_run_response_with_reasoning(
-                    reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)],
-                    reasoning_agent_messages=[groq_reasoning_message],
-                )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)]),
-                        session_id=session_id,
-                        event=RunEvent.reasoning_completed,
-                    )
-            # Use o-3 or OpenAILike with deepseek model for reasoning
-            elif (reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")) or (
-                isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower()
+            if (
+                (is_deepseek := is_deepseek_reasoning_model(reasoning_model))
+                or (is_groq := is_groq_reasoning_model(reasoning_model))
+                or (is_openai := is_openai_reasoning_model(reasoning_model))
+                or (is_ollama := is_ollama_reasoning_model(reasoning_model))
             ):
-                from agno.reasoning.openai import get_openai_reasoning, get_openai_reasoning_agent
+                reasoning_message: Optional[Message] = None
+                if is_deepseek:
+                    from agno.reasoning.deepseek import get_deepseek_reasoning
 
-                openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
-                    reasoning_model=reasoning_model, monitoring=self.monitoring
-                )
-                log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
-                openai_reasoning_message: Optional[Message] = get_openai_reasoning(
-                    reasoning_agent=openai_reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if openai_reasoning_message is None:
+                    log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
+                    reasoning_message = get_deepseek_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_groq:
+                    from agno.reasoning.groq import get_groq_reasoning
+
+                    log_debug("Starting Groq Reasoning", center=True, symbol="=")
+                    reasoning_message = get_groq_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_openai:
+                    from agno.reasoning.openai import get_openai_reasoning
+
+                    log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
+                    reasoning_message = get_openai_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_ollama:
+                    from agno.reasoning.ollama import get_ollama_reasoning
+
+                    log_debug("Starting Ollama Reasoning", center=True, symbol="=")
+                    reasoning_message = get_ollama_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+
+                if reasoning_message is None:
                     log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
-                run_messages.messages.append(openai_reasoning_message)
+                run_messages.messages.append(reasoning_message)
                 # Add reasoning step to the Agent's run_response
                 self.update_run_response_with_reasoning(
-                    reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)],
-                    reasoning_agent_messages=[openai_reasoning_message],
+                    reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
+                    reasoning_agent_messages=[reasoning_message],
                 )
                 if self.stream_intermediate_steps:
                     yield self.create_run_response(
-                        content=ReasoningSteps(
-                            reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)]
-                        ),
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
                         session_id=session_id,
                         event=RunEvent.reasoning_completed,
                     )
@@ -3572,7 +3549,7 @@ class Agent:
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
-            reasoning_agent: Optional[Agent] = self.reasoning_agent
+            reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
             if reasoning_agent is None:
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
@@ -3616,7 +3593,10 @@ class Agent:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
                         break
 
-                    if reasoning_agent_response.content.reasoning_steps is None:
+                    if (
+                        reasoning_agent_response.content.reasoning_steps is None
+                        or len(reasoning_agent_response.content.reasoning_steps) == 0
+                    ):
                         log_warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
                         break
 
@@ -3644,7 +3624,6 @@ class Agent:
                     self.update_run_response_with_reasoning(
                         reasoning_steps=reasoning_steps, reasoning_agent_messages=reasoning_agent_response.messages
                     )
-
                     # Get the next action
                     next_action = get_next_action(reasoning_steps[-1])
                     if next_action == NextAction.FINAL_ANSWER:
@@ -3672,7 +3651,7 @@ class Agent:
                     event=RunEvent.reasoning_completed,
                     session_id=session_id,
                 )
-                
+
     async def areason(self, run_messages: RunMessages, session_id: Optional[str] = None) -> Any:
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
@@ -3693,88 +3672,64 @@ class Agent:
 
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
-            from agno.models.openai.like import OpenAILike
+            from agno.reasoning.deepseek import is_deepseek_reasoning_model
+            from agno.reasoning.groq import is_groq_reasoning_model
+            from agno.reasoning.helpers import get_reasoning_agent
+            from agno.reasoning.ollama import is_ollama_reasoning_model
+            from agno.reasoning.openai import is_openai_reasoning_model
 
-            # Use DeepSeek for reasoning
-            if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id == "deepseek-reasoner":
-                from agno.reasoning.deepseek import aget_deepseek_reasoning, get_deepseek_reasoning_agent
+            reasoning_agent = self.reasoning_agent or get_reasoning_agent(
+                reasoning_model=reasoning_model, monitoring=self.monitoring
+            )
 
-                ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
-                    reasoning_model=reasoning_model, monitoring=self.monitoring
-                )
-                log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
-                ds_reasoning_message: Optional[Message] = await aget_deepseek_reasoning(
-                    reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if ds_reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-                run_messages.messages.append(ds_reasoning_message)
-                # Add reasoning step to the Agent's run_response
-                self.update_run_response_with_reasoning(
-                    reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)],
-                    reasoning_agent_messages=[ds_reasoning_message],
-                )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)]),
-                        session_id=session_id,
-                        event=RunEvent.reasoning_completed,
-                    )
-            # Use Groq for reasoning
-            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
-                from agno.reasoning.groq import aget_groq_reasoning, get_groq_reasoning_agent
-
-                groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
-                    reasoning_model=reasoning_model, monitoring=self.monitoring
-                )
-                log_debug("Starting Groq Reasoning", center=True, symbol="=")
-                groq_reasoning_message: Optional[Message] = await aget_groq_reasoning(
-                    reasoning_agent=groq_reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if groq_reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-                run_messages.messages.append(groq_reasoning_message)
-                # Add reasoning step to the Agent's run_response
-                self.update_run_response_with_reasoning(
-                    reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)],
-                    reasoning_agent_messages=[groq_reasoning_message],
-                )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)]),
-                        session_id=session_id,
-                        event=RunEvent.reasoning_completed,
-                    )
-            # Use o-3 for reasoning
-            elif (reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")) or (
-                isinstance(reasoning_model, OpenAILike) and "deepseek" in reasoning_model.id.lower()
+            if (
+                (is_deepseek := is_deepseek_reasoning_model(reasoning_model))
+                or (is_groq := is_groq_reasoning_model(reasoning_model))
+                or (is_openai := is_openai_reasoning_model(reasoning_model))
+                or (is_ollama := is_ollama_reasoning_model(reasoning_model))
             ):
-                # elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o"):
-                from agno.reasoning.openai import aget_openai_reasoning, get_openai_reasoning_agent
+                reasoning_message: Optional[Message] = None
+                if is_deepseek:
+                    from agno.reasoning.deepseek import aget_deepseek_reasoning
 
-                openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
-                    reasoning_model=reasoning_model, monitoring=self.monitoring
-                )
-                log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
-                openai_reasoning_message: Optional[Message] = await aget_openai_reasoning(
-                    reasoning_agent=openai_reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if openai_reasoning_message is None:
+                    log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_deepseek_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_groq:
+                    from agno.reasoning.groq import aget_groq_reasoning
+
+                    log_debug("Starting Groq Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_groq_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_openai:
+                    from agno.reasoning.openai import aget_openai_reasoning
+
+                    log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_openai_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_ollama:
+                    from agno.reasoning.ollama import get_ollama_reasoning
+
+                    log_debug("Starting Ollama Reasoning", center=True, symbol="=")
+                    reasoning_message = get_ollama_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+
+                if reasoning_message is None:
                     log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
-                run_messages.messages.append(openai_reasoning_message)
+                run_messages.messages.append(reasoning_message)
                 # Add reasoning step to the Agent's run_response
                 self.update_run_response_with_reasoning(
-                    reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)],
-                    reasoning_agent_messages=[openai_reasoning_message],
+                    reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
+                    reasoning_agent_messages=[reasoning_message],
                 )
                 if self.stream_intermediate_steps:
                     yield self.create_run_response(
-                        content=ReasoningSteps(
-                            reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)]
-                        ),
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
                         session_id=session_id,
                         event=RunEvent.reasoning_completed,
                     )
@@ -3792,7 +3747,7 @@ class Agent:
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
-            reasoning_agent: Optional[Agent] = self.reasoning_agent
+            reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
             if reasoning_agent is None:
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
