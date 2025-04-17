@@ -25,6 +25,7 @@ st.set_page_config(
 MODEL_OPTIONS = {
     "Gemini 2.5 Pro Experimental (Recommended)": "gemini-2.5-pro-exp-03-25",
     "Gemini 2.0 Pro": "gemini-2.0-pro",
+    "Gemini 2.0 Pro": "gemini-2.0-pro",
     "Gemini 1.5 Pro": "gemini-1.5-pro",
 }
 
@@ -194,19 +195,15 @@ def process_agent_response():
                     logger.info("Starting stream processing...")
                     full_content = ""
                     for chunk in stream_generator:
-                        logger.debug(f"Stream Chunk Received: {chunk}")
                         content_delta = getattr(chunk, "content", None)
-                        logger.debug(f"Extracted Content Delta: {repr(content_delta)}")
                         if content_delta:
                             full_content += content_delta
                             yield content_delta
                         tools = getattr(chunk, "tools", None)
                         if tools:
-                            logger.debug(f"Captured Tools: {tools}")
                             st.session_state.current_tools = tools
                         citations = getattr(chunk, "citations", None)
                         if citations:
-                            logger.debug(f"Captured Citations: {citations}")
                             st.session_state.current_citations = citations
                     logger.info("Finished stream processing.")
                     st.session_state.full_content_from_stream = full_content
