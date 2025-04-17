@@ -4,30 +4,23 @@ from typing import List, Optional
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.openai.like import OpenAILike
 from agno.utils.log import logger
 
 
-def is_openai_reasoning_model(reasoning_model: Model) -> bool:
+def is_ollama_reasoning_model(reasoning_model: Model) -> bool:
     return (
-        (
-            reasoning_model.__class__.__name__ == "OpenAIChat"
-            or reasoning_model.__class__.__name__ == "OpenAIResponses"
-            or reasoning_model.__class__.__name__ == "AzureOpenAI"
-        )
+        reasoning_model.__class__.__name__ == "Ollama"
         and (
-            ("o3" in reasoning_model.id)
-            or ("o1" in reasoning_model.id)
-            or ("4.1" in reasoning_model.id)
-            or ("4.5" in reasoning_model.id)
+            "qwq" in reasoning_model.id
+            or "deepseek-r1" in reasoning_model.id
+            or "qwen2.5-coder" in reasoning_model.id
+            or "openthinker" in reasoning_model.id
         )
-    ) or (
-        isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower()
     )
 
 
 
-def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
+def get_ollama_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
     from agno.run.response import RunResponse
 
     try:
@@ -53,13 +46,8 @@ def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> O
     )
 
 
-async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
+async def aget_ollama_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
     from agno.run.response import RunResponse
-
-    # Update system message role to "system"
-    for message in messages:
-        if message.role == "developer":
-            message.role = "system"
 
     try:
         reasoning_agent_response: RunResponse = await reasoning_agent.arun(messages=messages)

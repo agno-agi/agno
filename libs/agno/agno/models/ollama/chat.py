@@ -161,6 +161,7 @@ class Ollama(Model):
             "role": message.role,
             "content": message.content,
         }
+        print("MESSAGE", _message)
         if message.role == "user":
             if message.images is not None:
                 message_images = []
