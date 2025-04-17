@@ -274,15 +274,18 @@ class Image(BaseModel):
 class File(BaseModel):
     url: Optional[str] = None
     filepath: Optional[Union[Path, str]] = None
-    content: Optional[Any] = None  # Actual file bytes content
+    # Raw bytes content of a file
+    content: Optional[Any] = None
     mime_type: Optional[str] = None
+    # External file object (e.g. GeminiFile, must be a valid object as expected by the model you are using)
+    external: Optional[Any] = None
 
     @model_validator(mode="before")
     @classmethod
     def check_at_least_one_source(cls, data):
         """Ensure at least one of url, filepath, or content is provided."""
-        if isinstance(data, dict) and not any(data.get(field) for field in ["url", "filepath", "content"]):
-            raise ValueError("At least one of url, filepath, or content must be provided")
+        if isinstance(data, dict) and not any(data.get(field) for field in ["url", "filepath", "content", "external"]):
+            raise ValueError("At least one of url, filepath, content or external must be provided")
         return data
 
     @field_validator("mime_type")
