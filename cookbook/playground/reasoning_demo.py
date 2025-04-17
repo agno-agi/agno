@@ -146,7 +146,8 @@ app = Playground(
         reasoning_model_agent,
         native_model_agent,
         claude_thinking_agent,
-    ]
+    ],
+    teams=[financial_news_team],
 ).get_app()
 
 if __name__ == "__main__":
