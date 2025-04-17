@@ -326,6 +326,7 @@ class Gemini(Model):
             messages (List[Message]): The list of messages to convert.
         """
         formatted_messages: List = []
+        file_content: Union[GeminiFile, Part] = None
         system_message = None
         for message in messages:
             role = message.role
@@ -421,11 +422,15 @@ class Gemini(Model):
                 if message.files is not None:
                     for file in message.files:
                         file_content = self._format_file_for_message(file)
-                        if file_content:
-                            message_parts.append(file_content)
+                        if isinstance(file_content, Part):
+                            formatted_messages.append(file_content)
 
             final_message = Content(role=role, parts=message_parts)
             formatted_messages.append(final_message)
+
+            if isinstance(file_content, GeminiFile):
+                formatted_messages.insert(0, file_content)
+
         return formatted_messages, system_message
 
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:
@@ -565,19 +570,35 @@ class Gemini(Model):
                             mime_type=mimetypes.guess_type(file_path)[0], data=file_path.read_bytes()
                         )
                 else:
-                    file_upload = self.get_client().files.upload(
-                        file=file_path,
-                    )
-                    # Check whether the file is ready to be used.
-                    while file_upload.state.name == "PROCESSING":
-                        time.sleep(2)
-                        file_upload = self.get_client().files.get(name=file_upload.name)
-                    if file_upload.state.name == "FAILED":
-                        raise ValueError(file_upload.state.name)
-                    return Part.from_uri(file_uri=file_upload.uri, mime_type=file_upload.mime_type)
+                    clean_file_name = f"files/{file_path.stem.lower().replace('_', '')}"
+                    remote_file = None
+                    try:
+                        remote_file = self.get_client().files.get(name=clean_file_name)
+                    except Exception as e:
+                        log_warning(f"Error getting file {clean_file_name}: {e}")
+
+                    if remote_file is not None:
+                        return Part.from_uri(file_uri=remote_file.uri, mime_type=remote_file.mime_type)
+                    else:
+                        file_upload = self.get_client().files.upload(
+                            file=file_path,
+                            config=dict(
+                                name=clean_file_name,
+                            ),
+                        )
+                        # Check whether the file is ready to be used.
+                        while file_upload.state.name == "PROCESSING":
+                            time.sleep(2)
+                            file_upload = self.get_client().files.get(name=file_upload.name)
+                        if file_upload.state.name == "FAILED":
+                            raise ValueError(file_upload.state.name)
+                        return Part.from_uri(file_uri=file_upload.uri, mime_type=file_upload.mime_type)
             else:
                 log_error(f"File {file_path} does not exist.")
 
+        # Case 4: File is a Gemini File object
+        elif isinstance(file.external, GeminiFile):
+            return file.external
         return None
 
     def format_function_call_results(

@@ -86,7 +86,6 @@ def _format_messages(messages: List[Message]) -> List[MistralMessage]:
                 mistral_message = UserMessage(role="user", content=message.content)
         elif message.role == "assistant":
             if message.reasoning_content is not None:
-                message.role = "user"
                 mistral_message = UserMessage(role="user", content=message.content)
             elif message.tool_calls is not None:
                 mistral_message = AssistantMessage(
@@ -102,6 +101,12 @@ def _format_messages(messages: List[Message]) -> List[MistralMessage]:
             raise ValueError(f"Unknown role: {message.role}")
 
         mistral_messages.append(mistral_message)
+
+    # Check if the last message is an assistant message
+    if mistral_messages and hasattr(mistral_messages[-1], "role") and mistral_messages[-1].role == "assistant":
+        # Set prefix=True for the last assistant message to allow it as the last message
+        mistral_messages[-1].prefix = True
+
     return mistral_messages
 
 

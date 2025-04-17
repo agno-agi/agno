@@ -345,7 +345,7 @@ class Claude(Model):
                     {
                         "type": "tool_result",
                         "tool_use_id": _fc_message.tool_call_id,
-                        "content": _fc_message.content,
+                        "content": str(_fc_message.content),
                     }
                 )
             messages.append(Message(role="user", content=fc_responses))
