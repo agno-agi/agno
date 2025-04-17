@@ -3723,6 +3723,29 @@ class Team:
         return Agent(
             model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode
         )
+        
+    def _format_reasoning_step_content(self, reasoning_step: ReasoningStep) -> str:
+        """Format content for a reasoning step without changing any existing logic."""
+        step_content = ""
+        if reasoning_step.title:
+            step_content += f"## {reasoning_step.title}\n"
+        if reasoning_step.reasoning:
+            step_content += f"{reasoning_step.reasoning}\n"
+        if reasoning_step.action:
+            step_content += f"Action: {reasoning_step.action}\n"
+        if reasoning_step.result:
+            step_content += f"Result: {reasoning_step.result}\n"
+        step_content += "\n"
+
+        # Get the current reasoning_content and append this step
+        current_reasoning_content = ""
+        if hasattr(self.run_response, "reasoning_content") and self.run_response.reasoning_content:  # type: ignore
+            current_reasoning_content = self.run_response.reasoning_content  # type: ignore
+
+        # Create updated reasoning_content
+        updated_reasoning_content = current_reasoning_content + step_content
+
+        return updated_reasoning_content
 
     def _reason(
         self,
@@ -3735,6 +3758,7 @@ class Team:
             yield self._create_run_response(
                 from_run_response=run_response,
                 content="Reasoning started",
+                reasoning_content="",
                 event=RunEvent.reasoning_started,
                 session_id=session_id,
             )
@@ -3844,9 +3868,12 @@ class Team:
                     # Yield reasoning steps
                     if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
+                            updated_reasoning_content = self._format_reasoning_step_content(reasoning_step)
+                            
                             yield self._create_run_response(
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,
+                                reasoning_content=updated_reasoning_content,
                                 event=RunEvent.reasoning_step,
                                 session_id=session_id,
                             )
@@ -3903,6 +3930,7 @@ class Team:
             yield self._create_run_response(
                 from_run_response=run_response,
                 content="Reasoning started",
+                reasoning_content="",
                 event=RunEvent.reasoning_started,
                 session_id=session_id,
             )
@@ -4011,9 +4039,12 @@ class Team:
                     # Yield reasoning steps
                     if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
+                            updated_reasoning_content = self._format_reasoning_step_content(reasoning_step)
+                            
                             yield self._create_run_response(
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,
+                                reasoning_content=updated_reasoning_content,
                                 event=RunEvent.reasoning_step,
                                 session_id=session_id,
                             )
