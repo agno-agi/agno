@@ -21,10 +21,7 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
             or ("4.1" in reasoning_model.id)
             or ("4.5" in reasoning_model.id)
         )
-    ) or (
-        isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower()
-    )
-
+    ) or (isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower())
 
 
 def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821

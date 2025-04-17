@@ -278,7 +278,9 @@ def test_memory_operations_with_db(memory_with_db):
     memory_with_db.replace_user_memory(memory_id=memory_id, memory=updated_memory, user_id="test_user")
 
     # Verify the memory was updated
-    assert memory_with_db.get_user_memory(user_id="test_user", memory_id=memory_id).memory == "The user's name is Jane Doe"
+    assert (
+        memory_with_db.get_user_memory(user_id="test_user", memory_id=memory_id).memory == "The user's name is Jane Doe"
+    )
 
     # Delete the memory
     memory_with_db.delete_user_memory(user_id="test_user", memory_id=memory_id)

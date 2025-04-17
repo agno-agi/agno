@@ -76,7 +76,7 @@ class AzureOpenAI(OpenAILike):
             _client_params["default_headers"] = self.default_headers
         if self.default_query is not None:
             _client_params["default_query"] = self.default_query
-            
+
         _client_params.update({k: v for k, v in params_mapping.items() if v is not None})
         if self.client_params:
             _client_params.update(self.client_params)

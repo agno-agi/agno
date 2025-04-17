@@ -8,16 +8,12 @@ from agno.utils.log import logger
 
 
 def is_ollama_reasoning_model(reasoning_model: Model) -> bool:
-    return (
-        reasoning_model.__class__.__name__ == "Ollama"
-        and (
-            "qwq" in reasoning_model.id
-            or "deepseek-r1" in reasoning_model.id
-            or "qwen2.5-coder" in reasoning_model.id
-            or "openthinker" in reasoning_model.id
-        )
+    return reasoning_model.__class__.__name__ == "Ollama" and (
+        "qwq" in reasoning_model.id
+        or "deepseek-r1" in reasoning_model.id
+        or "qwen2.5-coder" in reasoning_model.id
+        or "openthinker" in reasoning_model.id
     )
-
 
 
 def get_ollama_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821

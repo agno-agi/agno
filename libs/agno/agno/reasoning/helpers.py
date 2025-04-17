@@ -7,7 +7,6 @@ from agno.run.messages import RunMessages
 from agno.utils.log import logger
 
 
-            
 def get_reasoning_agent(reasoning_model: Model, monitoring: bool = False) -> "Agent":  # type: ignore  # noqa: F821
     from agno.agent import Agent
 
