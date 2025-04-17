@@ -197,7 +197,7 @@ class Team:
     # If True, enable the team history
     enable_team_history: bool = False
     # Deprecated in favor of num_history_runs: Number of interactions from history
-    num_of_interactions_from_history: int = 3
+    num_of_interactions_from_history: Optional[int] = None
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
 
