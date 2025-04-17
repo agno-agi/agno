@@ -6,7 +6,6 @@ from agno.tools.mcp import MCPTools
 
 
 async def run_agent(message: str) -> None:
-
     # Initialize the MCP server
     async with (
         MCPTools(

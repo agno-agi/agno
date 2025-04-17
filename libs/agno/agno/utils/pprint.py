@@ -67,7 +67,6 @@ def pprint_run_response(
             response_timer.stop()
 
 
-
 async def apprint_run_response(
     run_response: Union[RunResponse, Iterable[RunResponse], TeamRunResponse, Iterable[TeamRunResponse]],
     markdown: bool = False,

@@ -1,6 +1,5 @@
-
 """
-`fastmcp` is required for this demo. 
+`fastmcp` is required for this demo.
 
 ```bash
 pip install fastmcp
@@ -17,6 +16,7 @@ mcp = FastMCP("weather_tools")
 @mcp.tool()
 def get_weather(city: str) -> str:
     return f"The weather in {city} is sunny"
+
 
 @mcp.tool()
 def get_temperature(city: str) -> str:

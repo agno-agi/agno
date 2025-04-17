@@ -22,7 +22,7 @@ async def run_agent(message: str) -> None:
             tools=[mcp_tools],
             markdown=True,
         )
-        
+
         response_stream = await agent.arun(message, stream=True)
         await apprint_run_response(response_stream, markdown=True)
 
