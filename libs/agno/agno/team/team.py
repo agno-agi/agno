@@ -1121,7 +1121,7 @@ class Team:
         run_response.messages = messages_for_run_response
         # Update the TeamRunResponse metrics
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
-        
+
         if stream_intermediate_steps and reasoning_started:
             all_reasoning_steps = []
             if (
@@ -1137,7 +1137,7 @@ class Team:
                     content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__class__.__name__,
                     event=RunEvent.reasoning_completed,
-                    session_id=session_id
+                    session_id=session_id,
                 )
 
         # 4. Update Team Memory
@@ -1855,7 +1855,7 @@ class Team:
         run_response.messages = messages_for_run_response
         # Update the TeamRunResponse metrics
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
-        
+
         if stream_intermediate_steps and reasoning_started:
             all_reasoning_steps = []
             if (
@@ -1868,11 +1868,10 @@ class Team:
             if all_reasoning_steps:
                 self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
                 yield self._create_run_response(
-                    content=ReasoningSteps(
-                        reasoning_steps=all_reasoning_steps),
+                    content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__class__.__name__,
                     event=RunEvent.reasoning_completed,
-                    session_id=session_id
+                    session_id=session_id,
                 )
 
         # 4. Update Team Memory
@@ -3723,7 +3722,7 @@ class Team:
         return Agent(
             model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode
         )
-        
+
     def _format_reasoning_step_content(self, reasoning_step: ReasoningStep) -> str:
         """Format content for a reasoning step without changing any existing logic."""
         step_content = ""
@@ -3869,7 +3868,7 @@ class Team:
                     if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(reasoning_step)
-                            
+
                             yield self._create_run_response(
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,
@@ -4040,7 +4039,7 @@ class Team:
                     if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(reasoning_step)
-                            
+
                             yield self._create_run_response(
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,

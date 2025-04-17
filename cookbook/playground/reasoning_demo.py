@@ -6,9 +6,10 @@ from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
-from agno.tools.duckduckgo import DuckDuckGoTools
+
 agent_storage_file: str = "tmp/agents.db"
 image_agent_storage_file: str = "tmp/image_agent.db"
 
@@ -176,7 +177,6 @@ reasoning_finance_team = Team(
         auto_upgrade_schema=True,
     ),
 )
-
 
 
 app = Playground(
