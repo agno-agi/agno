@@ -73,7 +73,10 @@ def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> O
 
         # Handle code blocks
         if "```json" in content:
-            content = content.split("```json")[-1].split("```")[0].strip()
+            content = content.split("```json")[-1].strip()
+            parts = content.split("```")
+            parts.pop(-1)
+            content = "".join(parts)
         elif "```" in content:
             content = content.split("```")[1].strip()
 
