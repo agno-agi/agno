@@ -358,6 +358,12 @@ class Message(BaseModel):
                 token_metrics.append(f"output={self.metrics.output_tokens}")
             if self.metrics.total_tokens:
                 token_metrics.append(f"total={self.metrics.total_tokens}")
+            if self.metrics.cached_tokens:
+                token_metrics.append(f"cached={self.metrics.cached_tokens}")
+            if self.metrics.reasoning_tokens:
+                token_metrics.append(f"reasoning={self.metrics.reasoning_tokens}")
+            if self.metrics.audio_tokens:
+                token_metrics.append(f"audio={self.metrics.audio_tokens}")
             if token_metrics:
                 _logger(f"* Tokens:                      {', '.join(token_metrics)}")
             if self.metrics.prompt_tokens_details:
