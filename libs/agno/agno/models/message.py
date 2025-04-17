@@ -55,6 +55,11 @@ class MessageMetrics:
     output_tokens: int = 0
     total_tokens: int = 0
 
+    audio_tokens: int = 0
+    input_audio_tokens: int = 0
+    output_audio_tokens: int = 0
+    cached_tokens: int = 0
+    reasoning_tokens: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     prompt_tokens_details: Optional[dict] = None
@@ -100,6 +105,11 @@ class MessageMetrics:
             total_tokens=self.total_tokens + other.total_tokens,
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
             completion_tokens=self.completion_tokens + other.completion_tokens,
+            audio_tokens=self.audio_tokens + other.audio_tokens,
+            input_audio_tokens=self.input_audio_tokens + other.input_audio_tokens,
+            output_audio_tokens=self.output_audio_tokens + other.output_audio_tokens,
+            cached_tokens=self.cached_tokens + other.cached_tokens,
+            reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
 
         # Handle prompt_tokens_details
