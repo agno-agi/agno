@@ -3672,7 +3672,7 @@ class Agent:
                     event=RunEvent.reasoning_completed,
                     session_id=session_id,
                 )
-
+                
     async def areason(self, run_messages: RunMessages, session_id: Optional[str] = None) -> Any:
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
