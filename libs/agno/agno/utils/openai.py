@@ -1,13 +1,13 @@
+import base64
+import mimetypes
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
 from agno.media import Audio, Image
 from agno.utils.log import logger
-import base64
-import mimetypes
 
 # Ensure .webp is recognized
-mimetypes.add_type('image/webp', '.webp')
+mimetypes.add_type("image/webp", ".webp")
 
 # Define Literal types for allowed OpenAI parameter values used in utils
 OpenAIImageSize = Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]

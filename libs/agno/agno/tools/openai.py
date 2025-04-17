@@ -77,7 +77,6 @@ class OpenAITools(Toolkit):
                 log_debug(f"Transcript: {transcript}")
             return transcript
         except Exception as e:
-            log_error(f"Failed to transcribe audio: {str(e)}")
             return f"Failed to transcribe audio: {str(e)}"
 
     def generate_image(
@@ -157,5 +156,4 @@ class OpenAITools(Toolkit):
             )
             return f"Speech generated successfully with ID: {media_id}"
         except Exception as e:
-            log_error(f"Failed to generate speech: {str(e)}")
             return f"Failed to generate speech: {str(e)}"
