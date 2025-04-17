@@ -143,7 +143,7 @@ def test_structured_output_json_mode():
         response_model=MovieScript,
         use_json_mode=True,
         telemetry=False,
-        monitoring=False
+        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")

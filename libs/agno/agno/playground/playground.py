@@ -1,4 +1,5 @@
 from typing import List, Optional, Set
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -32,6 +33,25 @@ class Playground:
         self.agents: Optional[List[Agent]] = agents
         self.workflows: Optional[List[Workflow]] = workflows
         self.teams: Optional[List[Team]] = teams
+
+        if self.agents:
+            for agent in self.agents:
+                agent.initialize_agent()
+
+        if self.teams:
+            for team in self.teams:
+                team.initialize_team()
+                for member in team.members:
+                    if isinstance(member, Agent):
+                        member.initialize_agent()
+                    elif isinstance(member, Team):
+                        member.initialize_team()
+
+        if self.workflows:
+            for workflow in self.workflows:
+                if not workflow.workflow_id:
+                    workflow.workflow_id = generate_id(workflow.name)
+
         self.settings: PlaygroundSettings = settings or PlaygroundSettings()
         self.api_app: Optional[FastAPI] = api_app
         self.router: Optional[APIRouter] = router
@@ -111,3 +131,10 @@ class Playground:
             return
 
         self.endpoints_created.add(endpoint)
+
+
+def generate_id(name: Optional[str] = None) -> str:
+    if name:
+        return name.lower().replace(" ", "-").replace("_", "-")
+    else:
+        return str(uuid4())
