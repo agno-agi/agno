@@ -1121,6 +1121,24 @@ class Team:
         run_response.messages = messages_for_run_response
         # Update the TeamRunResponse metrics
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
+        
+        if stream_intermediate_steps and reasoning_started:
+            all_reasoning_steps = []
+            if (
+                self.run_response
+                and self.run_response.extra_data
+                and hasattr(self.run_response.extra_data, "reasoning_steps")
+            ):
+                all_reasoning_steps = self.run_response.extra_data.reasoning_steps
+
+            if all_reasoning_steps:
+                self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
+                yield self._create_run_response(
+                    content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
+                    content_type=ReasoningSteps.__class__.__name__,
+                    event=RunEvent.reasoning_completed,
+                    session_id=session_id
+                )
 
         # 4. Update Team Memory
         if isinstance(self.memory, TeamMemory):
@@ -1837,6 +1855,25 @@ class Team:
         run_response.messages = messages_for_run_response
         # Update the TeamRunResponse metrics
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
+        
+        if stream_intermediate_steps and reasoning_started:
+            all_reasoning_steps = []
+            if (
+                self.run_response
+                and self.run_response.extra_data
+                and hasattr(self.run_response.extra_data, "reasoning_steps")
+            ):
+                all_reasoning_steps = self.run_response.extra_data.reasoning_steps
+
+            if all_reasoning_steps:
+                self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
+                yield self._create_run_response(
+                    content=ReasoningSteps(
+                        reasoning_steps=all_reasoning_steps),
+                    content_type=ReasoningSteps.__class__.__name__,
+                    event=RunEvent.reasoning_completed,
+                    session_id=session_id
+                )
 
         # 4. Update Team Memory
         if isinstance(self.memory, TeamMemory):
