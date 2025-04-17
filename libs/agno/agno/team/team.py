@@ -825,7 +825,7 @@ class Team:
 
         # Update the TeamRunResponse metrics
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
-        
+
         for tool_call in model_response.tool_calls:
             tool_name = tool_call.get("tool_name", "")
             if tool_name.lower() in ["think", "analyze"]:
@@ -1556,13 +1556,12 @@ class Team:
         run_response.messages = messages_for_run_response
         # Update the TeamRunResponse metrics
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
-        
+
         for tool_call in model_response.tool_calls:
             tool_name = tool_call.get("tool_name", "")
             if tool_name.lower() in ["think", "analyze"]:
                 tool_args = tool_call.get("tool_args", {})
-                self.update_reasoning_content_from_tool_call(
-                    tool_name, tool_args)
+                self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
         # 4. Update Team Memory
         if isinstance(self.memory, TeamMemory):
