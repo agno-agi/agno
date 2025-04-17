@@ -227,7 +227,7 @@ class PerfEval:
         tracemalloc.stop()
 
         # Convert to MiB and subtract baseline
-        peak_mib = peak / (1024 * 1024)
+        peak_mib = peak / 1024 / 1024
         adjusted_usage = max(0, peak_mib - baseline)
 
         if self.debug_mode:
@@ -251,7 +251,7 @@ class PerfEval:
             empty_func()
             _, peak = tracemalloc.get_traced_memory()
             tracemalloc.stop()
-            results.append(peak / (1024 * 1024))
+            results.append(peak / 1024 / 1024)
 
         return sum(results) / len(results) if results else 0
 
