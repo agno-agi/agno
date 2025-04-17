@@ -954,7 +954,10 @@ class Team:
         # 1. Reason about the task(s) if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
-                run_response=run_response, run_messages=run_messages, session_id=session_id
+                run_response=run_response,
+                run_messages=run_messages,
+                session_id=session_id,
+                stream_intermediate_steps=True,
             )
 
             yield from reasoning_generator  # type: ignore
@@ -1687,7 +1690,10 @@ class Team:
         # 1. Reason about the task(s) if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._areason(
-                run_response=run_response, run_messages=run_messages, session_id=session_id
+                run_response=run_response,
+                run_messages=run_messages,
+                session_id=session_id,
+                stream_intermediate_steps=True,
             )
 
             async for reasoning_response in reasoning_generator:
@@ -3837,11 +3843,9 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-            if self.stream_intermediate_steps:
+            if stream_intermediate_steps:
                 yield self.create_run_response(
-                    content=ReasoningSteps(
-                        reasoning_steps=[ReasoningStep(result=reasoning_message.content)]
-                    ),
+                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
                     session_id=session_id,
                     event=RunEvent.reasoning_completed,
                 )
@@ -3932,7 +3936,7 @@ class Team:
             # Yield the final reasoning completed event
             if stream_intermediate_steps:
                 yield self._create_run_response(
-                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),  # type: ignore
+                    content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__class__.__name__,
                     event=RunEvent.reasoning_completed,
                     session_id=session_id,
@@ -4016,11 +4020,9 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-            if self.stream_intermediate_steps:
-                yield self.create_run_response(
-                    content=ReasoningSteps(
-                        reasoning_steps=[ReasoningStep(result=reasoning_message.content)]
-                    ),
+            if stream_intermediate_steps:
+                yield self._create_run_response(
+                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
                     session_id=session_id,
                     event=RunEvent.reasoning_completed,
                 )
@@ -4111,7 +4113,7 @@ class Team:
             # Yield the final reasoning completed event
             if stream_intermediate_steps:
                 yield self._create_run_response(
-                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),  # type: ignore
+                    content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__class__.__name__,
                     event=RunEvent.reasoning_completed,
                     session_id=session_id,
