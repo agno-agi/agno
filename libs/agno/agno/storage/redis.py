@@ -11,7 +11,7 @@ from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_info, logger
 
 try:
-    from redis import Redis, ConnectionError
+    from redis import ConnectionError, Redis
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 

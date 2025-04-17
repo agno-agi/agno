@@ -64,6 +64,7 @@ agent.print_response(
 session_run = memory.runs[session_id][-1]
 print_chat_history(session_run)
 
-memories = memory.get_user_memories(user_id=john_doe_id)
+# You can also get the user memories from the agent
+memories = agent.get_user_memories(user_id=john_doe_id)
 print("John Doe's memories:")
 pprint(memories)
