@@ -422,7 +422,7 @@ class Team:
 
         if session_id is not None:
             member.team_session_id = session_id
-            
+
         member.team_id = self.team_id
 
         if member.name is None:

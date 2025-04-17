@@ -210,7 +210,6 @@ class PerfEval:
         # Return the elapsed time
         return timer.elapsed
 
-        
     def _measure_memory(self, baseline: float) -> float:
         """
         Measures peak memory usage using tracemalloc.

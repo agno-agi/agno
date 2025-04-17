@@ -1924,7 +1924,7 @@ class Agent:
 
     def update_model(self, session_id: str, async_mode: bool = False, user_id: Optional[str] = None) -> None:
         self.set_default_model()
-        
+
         self.model = cast(Model, self.model)
 
         # Update the response_format on the Model
