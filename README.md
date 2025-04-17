@@ -74,16 +74,10 @@ pip install -U agno
 
 **Agents** are AI programs that operate autonomously.
 
-- The **brain** of an Agent is the model that it uses to reason, execute, and respond to the user.
-- The **body** of an Agent is the tools it uses to interact with the real world.
-- The **behavior** of an Agent is defined by instructions; the better the model, the better it is at following instructions.
+- The core of an Agent is a model, the tools it has access to, and instructions to guide its behavior.
+- Agents also have **memory**, **knowledge**, **storage** and the ability to **reason**.
 
-Agents also have **memory**, **knowledge**, **storage** and the ability to **reason**:
-
-- **reasoning:** enables Agents to "think" before responding and "analyze" the results of their actions (i.e. tool calls), this improves the Agents' ability to solve problems that require sequential tool calls.
-- **knowledge:** is domain-specific information the Agent can **_search on demand_** to make better decisions and provide accurate responses. Knowledge is stored in a vector database and this **_search on demand_** pattern is known as Agentic RAG.
-- **storage:** is used by Agents to save session history and state in a database. Model APIs are stateless and storage enables us to continue conversations from where they left off. This makes Agents stateful, enabling multi-turn conversations.
-- **memory:** gives Agents the ability to store and recall information from previous interactions, allowing them to learn user preferences and personalize their responses.
+Read more about each of these in the [docs](https://docs.agno.com/introduction/agents#what-are-agents%3F).
 
 > Let's build a few Agents to see how they work.
 
@@ -102,7 +96,7 @@ from agno.tools.yfinance import YFinanceTools
 agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),
     tools=[
-        ReasoningTools(add_instructions=True, add_few_shot=True),
+        ReasoningTools(add_instructions=True),
         YFinanceTools(
             stock_price=True,
             analyst_recommendations=True,
