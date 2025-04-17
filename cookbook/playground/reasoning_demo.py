@@ -170,6 +170,11 @@ reasoning_finance_team = Team(
     enable_agentic_context=True,
     add_datetime_to_instructions=True,
     success_criteria="The team has successfully completed the task.",
+    storage=SqliteStorage(
+        table_name="reasoning_finance_team",
+        db_file=agent_storage_file,
+        auto_upgrade_schema=True,
+    ),
 )
 
 
