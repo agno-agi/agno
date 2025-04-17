@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
 from agno.media import Audio, Image
-from agno.utils.log import logger
+from agno.utils.log import log_error, log_warning
 
 # Ensure .webp is recognized
 mimetypes.add_type("image/webp", ".webp")
@@ -26,7 +26,7 @@ def _validate_image_params(model: InputImageModel, size: InputImageSize) -> Unio
     # Validate model first
     if model not in ("dall-e-2", "dall-e-3"):
         error_msg = f"Invalid model '{model}'. Must be 'dall-e-2' or 'dall-e-3'."
-        logger.error(error_msg)
+        log_error(error_msg)
         raise ValueError(error_msg)
 
     # Now proceed with size validation based on the validated model
@@ -35,7 +35,7 @@ def _validate_image_params(model: InputImageModel, size: InputImageSize) -> Unio
             return "1024x1024"  # DALL-E 3 actually defaults to 1024x1024
         if size not in dalle_3_sizes:
             error_msg = f"Invalid size '{size}' for DALL-E 3. Must be one of {dalle_3_sizes} or None."
-            logger.error(error_msg)
+            log_error(error_msg)
             raise ValueError(error_msg)
         # Cast size to OpenAIImageSize after validation
         return size  # type: ignore[return-value]
@@ -44,16 +44,10 @@ def _validate_image_params(model: InputImageModel, size: InputImageSize) -> Unio
         final_size = size if size is not None else "1024x1024"  # Default for DALL-E 2 if None
         if final_size not in dalle_2_sizes:
             error_msg = f"Invalid size '{final_size}' for DALL-E 2. Must be one of {dalle_2_sizes}."
-            logger.error(error_msg)
+            log_error(error_msg)
             raise ValueError(error_msg)
         # Cast final_size to OpenAIImageSize after validation
         return final_size  # type: ignore[return-value]
-    else:
-        # This case is now handled by the initial model validation, but kept defensively
-        error_msg = f"Unknown DALL-E model encountered: {model}"
-        logger.error(error_msg)
-        raise ValueError(error_msg)  # Should not be reachable
-
 
 def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
     """
@@ -95,12 +89,12 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
                         # Get suffix from the path component only
                         audio_format = Path(parsed_url.path).suffix.lstrip(".")
                         if not audio_format:  # Handle cases like URLs ending in /
-                            logger.warning(
+                            log_warning(
                                 f"Could not determine audio format from URL path: {parsed_url.path}. Defaulting."
                             )
                             audio_format = "wav"
                     except Exception as e:
-                        logger.warning(
+                        log_warning(
                             f"Could not determine audio format from URL: {audio_snippet.url}. Error: {e}. Defaulting."
                         )
                         audio_format = "wav"  # Default if guessing fails
@@ -115,10 +109,10 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
                     if not audio_format:
                         audio_format = path.suffix.lstrip(".")
                 except Exception as e:
-                    logger.error(f"Failed to read audio file {path}: {e}")
+                    log_error(f"Failed to read audio file {path}: {e}")
                     continue  # Skip this audio snippet if file reading fails
             else:
-                logger.error(f"Audio file not found or is not a file: {path}")
+                log_error(f"Audio file not found or is not a file: {path}")
                 continue  # Skip if file doesn't exist
 
         # Append the message if we successfully processed the audio
@@ -133,7 +127,7 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
                 },
             )
         else:
-            logger.warning(f"Could not process audio snippet: {audio_snippet}")
+            log(f"Could not process audio snippet: {audio_snippet}")
 
     return audio_messages
 
@@ -162,7 +156,7 @@ def _process_image_path(image_path: Union[Path, str]) -> Dict[str, Any]:
             image_url = f"data:{mime_type};base64,{base64_image}"
             return {"type": "image_url", "image_url": {"url": image_url}}
     except Exception as e:
-        logger.error(f"Failed to read image file {path}: {e}")
+        log_error(f"Failed to read image file {path}: {e}")
         raise  # Re-raise the exception after logging
 
 
@@ -189,7 +183,7 @@ def _process_image(image: Image) -> Optional[Dict[str, Any]]:
             image_payload = _process_bytes_image(image.content)
 
         else:
-            logger.warning(f"Unsupported image format or no data provided: {image}")
+            log_warning(f"Unsupported image format or no data provided: {image}")
             return None
 
         if image_payload and image.detail:  # Check if payload was created before adding detail
@@ -201,10 +195,10 @@ def _process_image(image: Image) -> Optional[Dict[str, Any]]:
         return image_payload
 
     except (FileNotFoundError, IsADirectoryError, ValueError) as e:
-        logger.error(f"Failed to process image due to invalid input: {str(e)}")
+        log_error(f"Failed to process image due to invalid input: {str(e)}")
         return None  # Return None for handled validation errors
     except Exception as e:
-        logger.error(f"An unexpected error occurred while processing image: {str(e)}")
+        log_error(f"An unexpected error occurred while processing image: {str(e)}")
         # Depending on policy, you might want to return None or re-raise
         return None  # Return None for unexpected errors as well, preventing crashes
 
@@ -234,7 +228,7 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
             if image_data:
                 image_messages.append(image_data)
         except Exception as e:
-            logger.error(f"Failed to process image: {str(e)}")
+            log_error(f"Failed to process image: {str(e)}")
             continue
 
     return image_messages
