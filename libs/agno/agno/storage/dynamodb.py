@@ -104,7 +104,6 @@ class DynamoDbStorage(Storage):
                         {"AttributeName": "session_id", "AttributeType": "S"},
                         {"AttributeName": "user_id", "AttributeType": "S"},
                         {"AttributeName": "team_id", "AttributeType": "S"},
-                        {"AttributeName": "team_session_id", "AttributeType": "S"},
                         {"AttributeName": "created_at", "AttributeType": "N"},
                     ]
                 elif self.mode == "workflow":
