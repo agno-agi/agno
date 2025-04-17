@@ -15,9 +15,11 @@
 
 ## Introduction
 
-[Agno](https://docs.agno.com) is a lightweight library for building Reasoning Agents with memory, knowledge, tools and native multi-modal support. Use Agno to build Reasoning Agents, Multi-Modal Agents, Teams of Agents and Agentic Workflows.
+[Agno](https://docs.agno.com) is a lightweight library for building Agents with memory, knowledge, tools and reasoning.
 
-Here's an Agent that writes a financial report by reasoning through each step:
+Developers use Agno to build Reasoning Agents, Multimodal Agents, Teams of Agents and Agentic Workflows. Agno also provides a beautiful UI to chat with your Agents and tools to monitor and evaluate their performance.
+
+Here's an Agent that researches and writes a report on a stock, reasoning through each step:
 
 ```python reasoning_finance_agent.py
 from agno.agent import Agent
@@ -39,27 +41,28 @@ agent = Agent(
 )
 agent.print_response("Write a report on NVDA", stream=True, show_full_reasoning=True, stream_intermediate_steps=True)
 ```
+
 https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
 
 ## Key features
 
-Agno is simple, fast and model-agnostic. Here are the key features:
+Agno is simple, fast and model-agnostic. Here are some key features:
 
-- **Lightning Fast**: Agents instantiate 10,000x faster than LangGraph and use 50x less memory (see [performance](#performance)).
-- **Model Agnostic**: Use any model, any provider, no lock-in.
-- **Reasoning Agents**: Build best in class reasoning agents using Reasoning Models, Reasoning Tools or our custom `CoT+Tool-use` approach.
-- **Natively Multi Modal**: Built in support for text, image, audio and video.
-- **Multi Agent Teams**: Industry leading multi-agent architecture with 3 different modes: `route`, `collaborate` and `coordinate`.
-- **Long-term Memory**: Built in support for long-term memory with our `Storage` and `Memory` classes.
-- **Domain Knowledge**: Add domain knowledge to your Agents with our `Knowledge` classes. Fully async and highly performant.
-- **Structured Outputs**: First class support for structured outputs using native structured outputs or `json_mode`.
-- **Monitoring**: Track agent sessions and performance in real-time on [agno.com](https://app.agno.com).
+- **Model Agnostic**: Agno Agents can connect to 23+ model providers, no lock-in.
+- **Lightning Fast**: Agents instantiate in **~2μs** on average (10,000x faster than LangGraph) and use **~3.75Kib** memory on average (50x less than LangGraph) (see [benchmarks](#performance)).
+- **Reasoning is a first class citizen**: Make your Agents "think" and "analyze" using Reasoning Models, `ReasoningTools` or our custom `CoT+Tool-use` approach.
+- **Natively Multi Modal**: Agno Agents are natively multi modal, they can take in text, image, audio and video and generate text, image, audio and video as output.
+- **Advanced Multi Agent Architecture**: Agno provides an industry leading multi-agent architecture with 3 different modes: `route`, `collaborate` and `coordinate`.
+- **Agentic RAG using Hybrid Search + Reranking**: Give your Agents access to domain knowledge using one of 20+ vector databases. Get access to state-of-the-art Agentic search that uses hybrid search with re-ranking. **Fully async and highly performant.**
+- **Long-term Memory & Session Storage**: Agno provides plug-n-play `Storage` & `Memory` drivers that give your Agents long-term memory and session storage.
+- **Structured Outputs**: Agno Agents can return fully-typed responses using model provided structured outputs or `json_mode`.
+- **Monitoring**: Monitor agent sessions and performance in real-time on [agno.com](https://app.agno.com).
 
-## Getting Started with Agno
+## Building Agents with Agno
 
-- Start by [building your first Agent](https://docs.agno.com/introduction/agents)
-- Check out the [examples](https://docs.agno.com/examples/introduction)
-- Read the [documentation](https://docs.agno.com)
+If you're new to Agno, start by building your [first Agent](https://docs.agno.com/introduction/agents), chat with it on the [playground](https://docs.agno.com/introduction/playground) and finally, monitor it on [agno.com](https://docs.agno.com/introduction/monitoring).
+
+After that, checkout the [Examples Gallery](https://docs.agno.com/examples) and build real-world applications with Agno.
 
 ## Installation
 
@@ -69,15 +72,70 @@ pip install -U agno
 
 ## What are Agents?
 
-**Agents** are intelligent programs that solve problems autonomously.
+**Agents** are AI programs that operate autonomously.
 
-Agents have memory, domain knowledge and the ability to use tools (like searching the web, querying a database, making API calls). Unlike traditional programs that follow a predefined execution path, Agents dynamically adapt their approach based on the context and tool results.
+- They use a language model to reason, run tools to act and interact with the real world, and use instructions to guide their behavior.
+- Agents also have **memory**, **knowledge**, **storage** and the ability to **reason**.
 
-Instead of a rigid binary definition, let's think of Agents in terms of agency and autonomy.
-- **Level 0**: Agents with no tools (basic inference tasks).
-- **Level 1**: Agents with tools for autonomous task execution.
-- **Level 2**: Agents with knowledge, combining memory and reasoning.
-- **Level 3**: Teams of specialized agents collaborating on complex workflows.
+Read more about each of these in the [docs](https://docs.agno.com/introduction/agents#what-are-agents%3F).
+
+> Let's build a few Agents to see how they work.
+
+## Example - Reasoning Agent
+
+Let's start with a Reasoning Agent so we get a sense of Agno's capabilities.
+
+Save this code to a file: `reasoning_agent.py`.
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
+
+agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    tools=[
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(
+            stock_price=True,
+            analyst_recommendations=True,
+            company_info=True,
+            company_news=True,
+        ),
+    ],
+    instructions=[
+        "Use tables to display data",
+        "Only output the report, no other text",
+    ],
+    markdown=True,
+)
+agent.print_response(
+    "Write a report on NVDA",
+    stream=True,
+    show_full_reasoning=True,
+    stream_intermediate_steps=True,
+)
+```
+
+Then create a virtual environment, install dependencies, export your `ANTHROPIC_API_KEY` and run the agent.
+
+```shell
+uv venv --python 3.12
+source .venv/bin/activate
+
+uv pip install agno anthropic yfinance
+
+export ANTHROPIC_API_KEY=sk-ant-api03-xxxx
+
+python reasoning_agent.py
+```
+
+We can see the Agent is reasoning through the task, using the `ReasoningTools` and `YFinanceTools` to gather information. This is how the output looks like:
+
+https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
+
+> Now let's walk through the simple -> tools -> knowledge -> teams of agents flow.
 
 ## Example - Basic Agent
 

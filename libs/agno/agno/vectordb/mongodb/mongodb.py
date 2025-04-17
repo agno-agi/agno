@@ -40,6 +40,7 @@ class MongoDb(VectorDb):
         max_pool_size: int = 100,
         retry_writes: bool = True,
         client: Optional[MongoClient] = None,
+        search_index_name: Optional[str] = "vector_index_1",
         **kwargs,
     ):
         """
@@ -57,6 +58,7 @@ class MongoDb(VectorDb):
             max_pool_size (int): Maximum number of connections in the connection pool
             retry_writes (bool): Whether to retry write operations
             client (Optional[MongoClient]): An existing MongoClient instance.
+            search_index_name (str): Name of the search index (default: "vector_index_1")
             **kwargs: Additional arguments for MongoClient.
         """
         if not collection_name:
@@ -65,6 +67,7 @@ class MongoDb(VectorDb):
             raise ValueError("Database name must not be empty.")
         self.collection_name = collection_name
         self.database = database
+        self.search_index_name = search_index_name
 
         if embedder is None:
             from agno.embedder.openai import OpenAIEmbedder
@@ -170,7 +173,7 @@ class MongoDb(VectorDb):
 
     def _create_search_index(self, overwrite: bool = True) -> None:
         """Create or overwrite the Atlas Search index with proper error handling."""
-        index_name = "vector_index_1"
+        index_name = self.search_index_name or "vector_index_1"
         max_retries = 3
         retry_delay = 5
 
@@ -239,7 +242,7 @@ class MongoDb(VectorDb):
 
     async def _create_search_index_async(self) -> None:
         """Create the Atlas Search index asynchronously."""
-        index_name = "vector_index_1"
+        index_name = self.search_index_name
         max_retries = 3
         retry_delay = 5
 
@@ -278,7 +281,7 @@ class MongoDb(VectorDb):
 
     def _search_index_exists(self) -> bool:
         """Check if the search index exists."""
-        index_name = "vector_index_1"
+        index_name = self.search_index_name
         try:
             collection = self._get_collection()
             indexes = list(collection.list_search_indexes())
@@ -290,7 +293,7 @@ class MongoDb(VectorDb):
 
     def _wait_for_index_ready(self) -> None:
         """Wait until the Atlas Search index is ready."""
-        index_name = "vector_index_1"
+        index_name = self.search_index_name
         while True:
             try:
                 if self._search_index_exists():
@@ -304,7 +307,7 @@ class MongoDb(VectorDb):
     async def _wait_for_index_ready_async(self) -> None:
         """Wait until the Atlas Search index is ready asynchronously."""
         start_time = time.time()
-        index_name = "vector_index_1"
+        index_name = self.search_index_name
         while True:
             try:
                 collection = await self._get_async_collection()
@@ -438,7 +441,7 @@ class MongoDb(VectorDb):
             pipeline = [
                 {
                     "$vectorSearch": {
-                        "index": "vector_index_1",
+                        "index": self.search_index_name,
                         "limit": limit,
                         "numCandidates": min(limit * 4, 100),
                         "queryVector": query_embedding,
@@ -513,7 +516,7 @@ class MongoDb(VectorDb):
         if self.exists():
             try:
                 collection = self._get_collection()
-                index_name = "vector_index_1"
+                index_name = self.search_index_name or "vector_index_1"
                 if self._search_index_exists():
                     collection.drop_search_index(index_name)
                     time.sleep(2)
@@ -648,7 +651,7 @@ class MongoDb(VectorDb):
             pipeline = [
                 {
                     "$vectorSearch": {
-                        "index": "vector_index_1",
+                        "index": self.search_index_name,
                         "limit": limit,
                         "numCandidates": min(limit * 4, 100),
                         "queryVector": query_embedding,

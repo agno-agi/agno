@@ -30,7 +30,6 @@ image_agent = Agent(
         "Don't provide the URL of the image in the response. Only describe what image was generated.",
     ],
     markdown=True,
-    debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     storage=SqliteStorage(
@@ -51,7 +50,6 @@ ml_gif_agent = Agent(
         "Don't provide the URL of the image in the response. Only describe what image was generated.",
     ],
     markdown=True,
-    debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     storage=SqliteStorage(
@@ -79,7 +77,6 @@ ml_music_agent = Agent(
         "Do not include any file names, URLs or technical details in responses.",
     ],
     markdown=True,
-    debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     storage=SqliteStorage(
@@ -100,7 +97,6 @@ ml_video_agent = Agent(
         "Don't provide the URL of the video in the response. Only describe what video was generated.",
     ],
     markdown=True,
-    debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     storage=SqliteStorage(
@@ -121,7 +117,6 @@ fal_agent = Agent(
         "Don't provide the URL of the video in the response. Only describe what video was generated.",
     ],
     markdown=True,
-    debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     storage=SqliteStorage(
@@ -142,7 +137,6 @@ gif_agent = Agent(
         "Don't return the URL, only describe what you created.",
     ],
     markdown=True,
-    debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     storage=SqliteStorage(
@@ -172,7 +166,6 @@ audio_agent = Agent(
         "The audio should be long and detailed.",
     ],
     markdown=True,
-    debug_mode=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     storage=SqliteStorage(
