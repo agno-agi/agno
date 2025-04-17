@@ -1,5 +1,5 @@
 import json
-from typing import Iterable, Union
+from typing import Iterable, Union, AsyncIterable
 
 from pydantic import BaseModel
 
@@ -68,7 +68,7 @@ def pprint_run_response(
 
 
 async def apprint_run_response(
-    run_response: Union[RunResponse, Iterable[RunResponse], TeamRunResponse, Iterable[TeamRunResponse]],
+    run_response: Union[RunResponse, AsyncIterable[RunResponse], TeamRunResponse, AsyncIterable[TeamRunResponse]],
     markdown: bool = False,
     show_time: bool = False,
 ) -> None:
