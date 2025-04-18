@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 import tempfile
 import time
 from os import fdopen, getenv
@@ -114,6 +115,14 @@ class E2BTools(Toolkit):
         """
         try:
             # Execute the code in the sandbox using the correct method name for Python SDK
+            # Fix common Python keywords that require capitalized first letters
+            # This is necessary because users or LLMs sometimes use lowercase versions
+            # of Python keywords that should be capitalized (True, False, None)
+            python_keywords = {"true": "True", "false": "False", "none": "None"}
+
+            for lowercase, capitalized in python_keywords.items():
+                code = re.sub(rf"\b({lowercase})\b", capitalized, code)
+
             execution = self.sandbox.run_code(code)
             self.last_execution = execution
 

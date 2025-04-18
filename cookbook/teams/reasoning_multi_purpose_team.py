@@ -199,7 +199,6 @@ agent_team = Team(
     show_members_responses=True,
     enable_agentic_context=True,
     share_member_interactions=True,
-    debug_mode=True,
 )
 
 if __name__ == "__main__":
