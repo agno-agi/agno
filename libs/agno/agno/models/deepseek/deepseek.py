@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Optional
-from agno.exceptions import ModelProviderError
 
+from agno.exceptions import ModelProviderError
 from agno.models.openai.like import OpenAILike
 
 
