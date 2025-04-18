@@ -16,23 +16,18 @@ from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.document.reader.firecrawl_reader import FirecrawlReader
-from agno.embedder.google import GeminiEmbedder
 from agno.embedder.openai import OpenAIEmbedder
-from agno.knowledge.firecrawl import FireCrawlKnowledgeBase
 from agno.knowledge.url import UrlKnowledge
-from agno.knowledge.website import WebsiteKnowledgeBase
 from agno.models.anthropic import Claude
 from agno.models.openai.chat import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.e2b import E2BTools
-from agno.tools.exa import ExaTools
 from agno.tools.file import FileTools
 from agno.tools.github import GithubTools
 from agno.tools.knowledge import KnowledgeTools
+from agno.tools.pubmed import PubmedTools
 from agno.tools.python import PythonTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
@@ -93,6 +88,18 @@ writer_agent = Agent(
     ],
 )
 
+# Writer agent that can write content
+medical_agent = Agent(
+    name="Medical Agent",
+    role="Write content",
+    model=Claude(id="claude-3-5-sonnet-latest"),
+    description="You are an AI agent that can write content.",
+    tools=[PubmedTools()],
+    instructions=[
+        "You are a medical agent that can answer questions about medical topics.",
+    ],
+)
+
 # Calculator agent that can calculate
 calculator_agent = Agent(
     name="Calculator Agent",
@@ -131,23 +138,6 @@ agno_assist = Agent(
     ],
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
-)
-
-code_execution_agent = Agent(
-    name="Code Execution Sandbox",
-    agent_id="e2b-sandbox",
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[E2BTools()],
-    markdown=True,
-    instructions=[
-        "You are an expert at writing and validating Python code using a secure E2B sandbox environment.",
-        "Your primary purpose is to:",
-        "1. Write clear, efficient Python code based on user requests",
-        "2. Execute and verify the code in the E2B sandbox",
-        "3. Share the complete code with the user, as this is the main use case",
-        "4. Provide thorough explanations of how the code works",
-        "",
-    ],
 )
 
 github_agent = Agent(
@@ -194,7 +184,6 @@ agent_team = Team(
         writer_agent,
         calculator_agent,
         agno_assist,
-        code_execution_agent,
         github_agent,
         local_python_agent,
     ],
@@ -210,6 +199,7 @@ agent_team = Team(
     show_members_responses=True,
     enable_agentic_context=True,
     share_member_interactions=True,
+    debug_mode=True,
 )
 
 if __name__ == "__main__":
@@ -231,6 +221,13 @@ if __name__ == "__main__":
     #                                        Write a detailed report about your findings that could be given to a financial advisor."""), stream=True))
     
     # Github analysis
-    asyncio.run(agent_team.aprint_response(dedent("""List open pull requests in the agno-agi/agno repository. 
-                                           Find an issue that you think you can resolve and give me the issue number, 
-                                           your suggested solution and some code snippets."""), stream=True))
+    # asyncio.run(agent_team.aprint_response(dedent("""List open pull requests in the agno-agi/agno repository. 
+    #                                        Find an issue that you think you can resolve and give me the issue number, 
+    #                                        your suggested solution and some code snippets."""), stream=True))
+    
+    # Medical research
+    txt_path = Path(__file__).parent.resolve() / "medical_history.txt"
+    loaded_txt = open(txt_path, "r").read()
+    asyncio.run(agent_team.aprint_response(dedent(f"""I have a patient with the following medical information:\n {loaded_txt}
+                                                    What is the most likely diagnosis?
+                                                """), stream=True))

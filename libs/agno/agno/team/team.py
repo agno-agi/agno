@@ -4158,15 +4158,15 @@ class Team:
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
         for idx, member in enumerate(self.members):
-            if hasattr(member, "agent_id") and member.agent_id is not None:
+            if isinstance(member, Agent) and member.agent_id is not None:
                 url_safe_member_id = url_safe_string(member.agent_id)
-            elif hasattr(member, "team_id") and member.team_id is not None:
+            elif isinstance(member, Team) and member.team_id is not None:
                 url_safe_member_id = url_safe_string(member.team_id)
             elif member.name is not None:
                 url_safe_member_id = url_safe_string(member.name)
             else:
                 url_safe_member_id = None
-
+            
             if isinstance(member, Team):
                 system_message_content += f"{indent * ' '} - Team: {member.name}\n"
                 system_message_content += f"{indent * ' '} - ID: {url_safe_member_id}\n"
