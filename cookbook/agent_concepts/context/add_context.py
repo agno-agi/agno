@@ -1,11 +1,3 @@
-"""📰 Agent with Context
-
-This example shows how to inject external dependencies into an agent.
-The context is evaluated when the agent is run, acting like dependency injection for Agents.
-
-Run `pip install openai agno` to install dependencies.
-"""
-
 import json
 from textwrap import dedent
 
@@ -43,19 +35,11 @@ def get_top_hackernews_stories(num_stories: int = 5) -> str:
 # Create a Context-Aware Agent that can access real-time HackerNews data
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    # Each function in the context is evaluated when the agent is run,
+    # Each function in the context is resolved when the agent is run,
     # think of it as dependency injection for Agents
     context={"top_hackernews_stories": get_top_hackernews_stories},
-    # Alternatively, you can manually add the context to the instructions
-    instructions=dedent("""\
-        You are an insightful tech trend observer! 📰
-
-        Here are the top stories on HackerNews:
-        {top_hackernews_stories}\
-    """),
-    # add_state_in_messages will make the `top_hackernews_stories` variable
-    # available in the instructions
-    add_state_in_messages=True,
+    # We can add the entire context dictionary to the user message
+    add_context=True,
     markdown=True,
 )
 
