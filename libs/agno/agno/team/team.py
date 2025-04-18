@@ -6204,6 +6204,8 @@ class Team:
             team_data["team_id"] = self.team_id
         if self.model is not None:
             team_data["model"] = self.model.to_dict()
+        if self.mode is not None:
+            team_data["mode"] = self.mode
         return team_data
 
     def _get_session_data(self) -> Dict[str, Any]:

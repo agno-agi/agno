@@ -19,7 +19,7 @@
 
 Developers use Agno to build Reasoning Agents, Multimodal Agents, Teams of Agents and Agentic Workflows. Agno also provides a beautiful UI to chat with your Agents and tools to monitor and evaluate their performance.
 
-Here's an Agent that researches and writes a report on a stock, reasoning through each step:
+Here's an Agent that writes a report on a stock, reasoning through each step:
 
 ```python reasoning_finance_agent.py
 from agno.agent import Agent
@@ -49,11 +49,11 @@ https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
 Agno is simple, fast and model-agnostic. Here are some key features:
 
 - **Model Agnostic**: Agno Agents can connect to 23+ model providers, no lock-in.
-- **Lightning Fast**: Agents instantiate in **~2μs** on average (10,000x faster than LangGraph) and use **~3.75Kib** memory on average (50x less than LangGraph) (see [benchmarks](#performance)).
-- **Reasoning is a first class citizen**: Make your Agents "think" and "analyze" using Reasoning Models, `ReasoningTools` or our custom `CoT+Tool-use` approach.
+- **Lightning Fast**: - **Lightning Fast**: Agents instantiate in **~3μs** and use **~5Kib** memory on average (see [performance](#performance) for more details).
+- **Reasoning is a first class citizen**: Make your Agents "think" and "analyze" using Reasoning Models, `ReasoningTools` or our custom `chain-of-thought` approach.
 - **Natively Multi Modal**: Agno Agents are natively multi modal, they can take in text, image, audio and video and generate text, image, audio and video as output.
 - **Advanced Multi Agent Architecture**: Agno provides an industry leading multi-agent architecture with 3 different modes: `route`, `collaborate` and `coordinate`.
-- **Agentic RAG using Hybrid Search + Reranking**: Give your Agents access to domain knowledge using one of 20+ vector databases. Get access to state-of-the-art Agentic search that uses hybrid search with re-ranking. **Fully async and highly performant.**
+- **Agentic Search built-in**: Give your Agents the ability to search for information at runtime using one of 20+ vector databases. Get access to state-of-the-art Agentic RAG that uses hybrid search with re-ranking. **Fully async and highly performant.**
 - **Long-term Memory & Session Storage**: Agno provides plug-n-play `Storage` & `Memory` drivers that give your Agents long-term memory and session storage.
 - **Structured Outputs**: Agno Agents can return fully-typed responses using model provided structured outputs or `json_mode`.
 - **Monitoring**: Monitor agent sessions and performance in real-time on [agno.com](https://app.agno.com).
