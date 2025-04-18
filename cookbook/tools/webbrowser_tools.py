@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.webbrowsertool import WebBrowserTools
+from agno.tools.webbrowser import WebBrowserTools
 
 agent = Agent(
     model=Gemini("gemini-2.0-flash"),
@@ -13,4 +13,4 @@ agent = Agent(
     show_tool_calls=True,
     markdown=True,
 )
-agent.print_response("Find an article explaining MCP")
+agent.print_response("Find an article explaining MCP and open it in the web browser.")

@@ -10,11 +10,15 @@ class WebBrowserTools(Toolkit):
         super().__init__(name="webbrowser_tools")
         self.register(self.open_page)
 
-    def open_page(self, url: str):
+    def open_page(self, url: str, new_window: bool = False):
         """Open a URL in a browser window
         Args:
             url: URL to open
+            new_window: If True, open in a new window, otherwise open in a new tab
         Returns:
             None
         """
-        webbrowser.open_new_tab(url)
+        if new_window:
+            webbrowser.open_new(url)
+        else:
+            webbrowser.open_new_tab(url)
