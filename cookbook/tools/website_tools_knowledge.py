@@ -2,8 +2,6 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.knowledge.combined import CombinedKnowledgeBase
-from agno.knowledge.csv import CSVKnowledgeBase
-from agno.knowledge.pdf import PDFKnowledgeBase
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.knowledge.website import WebsiteKnowledgeBase
 from agno.tools.website import WebsiteTools
