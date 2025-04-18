@@ -63,7 +63,7 @@ from agno.utils.response import (
     update_run_response_with_reasoning,
 )
 from agno.utils.safe_formatter import SafeFormatter
-from agno.utils.string import parse_response_model_str
+from agno.utils.string import is_valid_uuid, parse_response_model_str, url_safe_string
 from agno.utils.timer import Timer
 
 
@@ -118,6 +118,8 @@ class Team:
     # If True, add the current datetime to the instructions to give the team a sense of time
     # This allows for relative times like "tomorrow" to be used in the prompt
     add_datetime_to_instructions: bool = False
+    # If True, add the tools available to team members to the system message
+    add_member_tools_to_system_message: bool = True
 
     # --- Success criteria ---
     # Define the success criteria for the team
@@ -191,11 +193,13 @@ class Team:
     # If True, the agent adds a reference to the session summaries in the response
     add_session_summary_references: Optional[bool] = None
 
-    # --- Agent History ---
+    # --- Team History ---
     # If True, enable the team history
     enable_team_history: bool = False
-    # Number of interactions from history
-    num_of_interactions_from_history: int = 3
+    # Deprecated in favor of num_history_runs: Number of interactions from history
+    num_of_interactions_from_history: Optional[int] = None
+    # Number of historical runs to include in the messages
+    num_history_runs: int = 3
 
     # --- Team Storage ---
     storage: Optional[Storage] = None
@@ -238,6 +242,7 @@ class Team:
         success_criteria: Optional[str] = None,
         markdown: bool = False,
         add_datetime_to_instructions: bool = False,
+        add_member_tools_to_system_message: bool = True,
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
         knowledge: Optional[AgentKnowledge] = None,
@@ -262,7 +267,8 @@ class Team:
         enable_session_summaries: bool = False,
         add_session_summary_references: Optional[bool] = None,
         enable_team_history: bool = False,
-        num_of_interactions_from_history: int = 3,
+        num_of_interactions_from_history: Optional[int] = None,
+        num_history_runs: int = 3,
         storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
@@ -295,6 +301,7 @@ class Team:
         self.additional_context = additional_context
         self.markdown = markdown
         self.add_datetime_to_instructions = add_datetime_to_instructions
+        self.add_member_tools_to_system_message = add_member_tools_to_system_message
         self.success_criteria = success_criteria
 
         self.context = context
@@ -336,6 +343,9 @@ class Team:
 
         self.enable_team_history = enable_team_history
         self.num_of_interactions_from_history = num_of_interactions_from_history
+        self.num_history_runs = num_history_runs
+        if num_of_interactions_from_history is not None:
+            self.num_history_runs = num_of_interactions_from_history
 
         self.storage = storage
         self.extra_data = extra_data
@@ -370,13 +380,14 @@ class Team:
         # Team session
         self.team_session: Optional[TeamSession] = None
 
-        self._formatter: Optional[SafeFormatter] = None
-
         self._tools_for_model: Optional[List[Dict]] = None
         self._functions_for_model: Optional[Dict[str, Function]] = None
+        self._tool_instructions: Optional[List[str]] = None
 
         # True if we should parse a member response model
         self._member_response_model: Optional[Type[BaseModel]] = None
+
+        self._formatter: Optional[SafeFormatter] = None
 
     def _set_team_id(self) -> str:
         if self.team_id is None:
@@ -406,7 +417,7 @@ class Team:
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
-    def _initialize_member(self, member: Union["Team", Agent], session_id: str):
+    def _initialize_member(self, member: Union["Team", Agent], session_id: Optional[str] = None):
         # Set debug mode for all members
         if self.debug_mode:
             member.debug_mode = True
@@ -415,13 +426,33 @@ class Team:
         if self.markdown:
             member.markdown = True
 
-        member.team_session_id = session_id
+        if session_id is not None:
+            member.team_session_id = session_id
+
         member.team_id = self.team_id
 
-        if member.name is None and member.role is None:
-            log_warning("Team member name and role is undefined.")
+        if member.name is None:
+            log_warning("Team member name is undefined.")
 
-    def _initialize_team(self, session_id: str) -> None:
+    def _set_default_model(self):
+        # Set the default model
+        if self.model is None:
+            try:
+                from agno.models.openai import OpenAIChat
+            except ModuleNotFoundError as e:
+                log_exception(e)
+                log_error(
+                    "Agno agents use `openai` as the default model provider. "
+                    "Please provide a `model` or install `openai`."
+                )
+                exit(1)
+
+            log_info("Setting default model to OpenAI Chat")
+            self.model = OpenAIChat(id="gpt-4o")
+
+    def initialize_team(self, session_id: Optional[str] = None) -> None:
+        self._set_default_model()
+
         self._set_storage_mode()
 
         # Set debug mode
@@ -517,7 +548,7 @@ class Team:
 
         log_debug(f"Session ID: {session_id}", center=True)
 
-        self._initialize_team(session_id=session_id)
+        self.initialize_team(session_id=session_id)
 
         show_tool_calls = self.show_tool_calls
 
@@ -1200,7 +1231,7 @@ class Team:
 
         log_debug(f"Session ID: {session_id}", center=True)
 
-        self._initialize_team(session_id=session_id)
+        self.initialize_team(session_id=session_id)
 
         show_tool_calls = self.show_tool_calls
 
@@ -4018,20 +4049,9 @@ class Team:
                 log_warning("Context is not a dict")
 
     def _configure_model(self, show_tool_calls: bool = False) -> None:
-        # Set the default model
-        if self.model is None:
-            try:
-                from agno.models.openai import OpenAIChat
-            except ModuleNotFoundError as e:
-                log_exception(e)
-                log_error(
-                    "Agno agents use `openai` as the default model provider. "
-                    "Please provide a `model` or install `openai`."
-                )
-                exit(1)
+        self._set_default_model()
 
-            log_info("Setting default model to OpenAI Chat")
-            self.model = OpenAIChat(id="gpt-4o")
+        self.model = cast(Model, self.model)
 
         # Update the response_format on the Model
         if self.response_model is None:
@@ -4062,9 +4082,12 @@ class Team:
                     self.model.response_format = None
                 self.model.structured_outputs = False
 
-            else:  # Model does not support structured or JSON schema outputs
+            else:
+                log_debug("Model does not support structured or JSON schema outputs.")
                 self.model.response_format = json_response_format if self.use_json_mode else None
                 self.model.structured_outputs = False
+
+            log_debug(f"Structured outputs: {self.model.structured_outputs}")
 
         # Set show_tool_calls on the Model
         self.model.show_tool_calls = show_tool_calls
@@ -4111,6 +4134,12 @@ class Team:
                             self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                             log_debug(f"Added function {name} from {tool.name}")
 
+                    # Add instructions from the toolkit
+                    if tool.add_instructions and tool.instructions is not None:
+                        if self._tool_instructions is None:
+                            self._tool_instructions = []
+                        self._tool_instructions.append(tool.instructions)
+
                 elif isinstance(tool, Function):
                     if tool.name not in self._functions_for_model:
                         tool._agent = self
@@ -4120,6 +4149,12 @@ class Team:
                         self._functions_for_model[tool.name] = tool
                         self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
                         log_debug(f"Added function {tool.name}")
+
+                    # Add instructions from the Function
+                    if tool.add_instructions and tool.instructions is not None:
+                        if self._tool_instructions is None:
+                            self._tool_instructions = []
+                        self._tool_instructions.append(tool.instructions)
 
                 elif callable(tool):
                     # We add the tools, which are callable functions
@@ -4142,9 +4177,7 @@ class Team:
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
         for idx, member in enumerate(self.members):
-            url_safe_member_id = (
-                member.name.lower().replace(" ", "-").replace("_", "-") if member.name is not None else None
-            )
+            url_safe_member_id = self._get_member_id(member)
 
             if isinstance(member, Team):
                 system_message_content += f"{indent * ' '} - Team: {member.name}\n"
@@ -4158,8 +4191,8 @@ class Team:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
-                if member.tools is not None:
-                    system_message_content += f"{indent * ' '}   - Available tools:\n"
+                if member.tools is not None and self.add_member_tools_to_system_message:
+                    system_message_content += f"{indent * ' '}   - Member tools:\n"
                     for _tool in member.tools:
                         if isinstance(_tool, Toolkit):
                             for _func in _tool.functions.values():
@@ -4229,6 +4262,7 @@ class Team:
             system_message_content += (
                 "- You can either respond directly or transfer tasks to members in your team with the highest likelihood of completing the user's request.\n"
                 "- Carefully analyze the tools available to the members and their roles before transferring tasks.\n"
+                "- You cannot use a member tool directly. You can only transfer tasks to members.\n"
                 "- When you transfer a task to another member, make sure to include:\n"
                 "  - member_id (str): The ID of the member to forward the task to.\n"
                 "  - task_description (str): A clear description of the task.\n"
@@ -4357,6 +4391,10 @@ class Team:
             for _ai in additional_information:
                 system_message_content += f"\n- {_ai}"
             system_message_content += "\n</additional_information>\n\n"
+        # 3.3.7 Then add instructions for the tools
+        if self._tool_instructions is not None:
+            for _ti in self._tool_instructions:
+                system_message_content += f"{_ti}\n"
 
         # Format the system message with the session state variables
         if self.add_state_in_messages:
@@ -4425,12 +4463,10 @@ class Team:
 
             history = []
             if isinstance(self.memory, TeamMemory):
-                history = self.memory.get_messages_from_last_n_runs(
-                    last_n=self.num_of_interactions_from_history, skip_role="system"
-                )
+                history = self.memory.get_messages_from_last_n_runs(last_n=self.num_history_runs, skip_role="system")
             elif isinstance(self.memory, Memory):
                 history = self.memory.get_messages_from_last_n_runs(
-                    session_id=session_id, last_n=self.num_of_interactions_from_history, skip_role="system"
+                    session_id=session_id, last_n=self.num_history_runs, skip_role="system"
                 )
 
             if len(history) > 0:
@@ -5359,6 +5395,20 @@ class Team:
 
         return transfer_func
 
+    def _get_member_id(self, member: Union[Agent, "Team"]) -> str:
+        """
+        Get the ID of a member
+        """
+        if hasattr(member, "agent_id") and member.agent_id is not None and (not is_valid_uuid(member.agent_id)):
+            url_safe_member_id = url_safe_string(member.agent_id)
+        elif hasattr(member, "team_id") and member.team_id is not None and (not is_valid_uuid(member.team_id)):
+            url_safe_member_id = url_safe_string(member.team_id)
+        elif member.name is not None:
+            url_safe_member_id = url_safe_string(member.name)
+        else:
+            url_safe_member_id = None
+        return url_safe_member_id
+
     def _find_member_by_id(self, member_id: str) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
         """
         Recursively search through team members and subteams to find an agent by name.
@@ -5374,7 +5424,7 @@ class Team:
         # First check direct members
         for i, member in enumerate(self.members):
             if member.name is not None:
-                url_safe_member_id = member.name.lower().replace(" ", "-").replace("_", "-")
+                url_safe_member_id = self._get_member_id(member)
                 if url_safe_member_id == member_id:
                     return (i, member)
 
@@ -5844,6 +5894,98 @@ class Team:
                             log_warning(f"Failed to load session summaries: {e}")
         log_debug(f"-*- TeamSession loaded: {session.session_id}")
 
+    def load_session(self, force: bool = False) -> Optional[str]:
+        """Load an existing session from the database and return the session_id.
+        If a session does not exist, create a new session.
+
+        - If a session exists in the database, load the session.
+        - If a session does not exist in the database, create a new session.
+        """
+        # If a team_session is already loaded, return the session_id from the team_session
+        #   if the session_id matches the session_id from the team_session
+        if self.team_session is not None and not force:
+            if self.session_id is not None and self.team_session.session_id == self.session_id:
+                return self.team_session.session_id
+
+        # Load an existing session or create a new session
+        if self.storage is not None:
+            # Load existing session if session_id is provided
+            log_debug(f"Reading TeamSession: {self.session_id}")
+            self.read_from_storage(session_id=self.session_id)  # type: ignore
+
+            # Create a new session if it does not exist
+            if self.team_session is None:
+                log_debug("-*- Creating new TeamSession")
+                if self.session_id is None or self.session_id == "":
+                    self.session_id = str(uuid4())
+                if self.team_id is None:
+                    self.initialize_team(session_id=self.session_id)
+                # write_to_storage() will create a new TeamSession
+                # and populate self.team_session with the new session
+                self.write_to_storage(session_id=self.session_id, user_id=self.user_id)  # type: ignore
+                if self.team_session is None:
+                    raise Exception("Failed to create new TeamSession in storage")
+                log_debug(f"-*- Created TeamSession: {self.team_session.session_id}")
+                self._log_team_session(session_id=self.session_id, user_id=self.user_id)  # type: ignore
+        return self.session_id
+
+    def get_messages_for_session(
+        self, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> List[Message]:
+        """Get messages for a session"""
+        _session_id = session_id or self.session_id
+        _user_id = user_id or self.user_id
+        if _session_id is None:
+            log_warning("Session ID is not set, cannot get messages for session")
+            return []
+
+        if self.memory is None:
+            self.read_from_storage(session_id=_session_id)
+
+        if self.memory is None:
+            return []
+
+        if isinstance(self.memory, AgentMemory):
+            return self.memory.messages
+        elif isinstance(self.memory, Memory):
+            return self.memory.get_messages_for_session(session_id=_session_id)
+        else:
+            return []
+
+    def get_session_summary(self, session_id: Optional[str] = None, user_id: Optional[str] = None):
+        """Get the session summary for the given session ID and user ID."""
+        if self.memory is None:
+            return None
+
+        session_id = session_id if session_id is not None else self.session_id
+        if session_id is None:
+            raise ValueError("Session ID is required")
+
+        if isinstance(self.memory, Memory):
+            user_id = user_id if user_id is not None else self.user_id
+            if user_id is None:
+                user_id = "default"
+            return self.memory.get_session_summary(session_id=session_id, user_id=user_id)
+        elif isinstance(self.memory, TeamMemory):
+            raise ValueError("TeamMemory does not support get_session_summary")
+        else:
+            raise ValueError(f"Memory type {type(self.memory)} not supported")
+
+    def get_user_memories(self, user_id: Optional[str] = None):
+        """Get the user memories for the given user ID."""
+        if self.memory is None:
+            return None
+        user_id = user_id if user_id is not None else self.user_id
+        if user_id is None:
+            user_id = "default"
+
+        if isinstance(self.memory, Memory):
+            return self.memory.get_user_memories(user_id=user_id)
+        elif isinstance(self.memory, TeamMemory):
+            raise ValueError("TeamMemory does not support get_user_memories")
+        else:
+            raise ValueError(f"Memory type {type(self.memory)} not supported")
+
     ###########################################################################
     # Handle images, videos and audio
     ###########################################################################
@@ -6062,6 +6204,8 @@ class Team:
             team_data["team_id"] = self.team_id
         if self.model is not None:
             team_data["model"] = self.model.to_dict()
+        if self.mode is not None:
+            team_data["mode"] = self.mode
         return team_data
 
     def _get_session_data(self) -> Dict[str, Any]:
@@ -6091,9 +6235,11 @@ class Team:
             else:
                 self.memory = cast(Memory, self.memory)
                 # We fake the structure on storage, to maintain the interface with the legacy implementation
-                run_responses = self.memory.runs[session_id]  # type: ignore
-                memory_dict = self.memory.to_dict()
-                memory_dict["runs"] = [rr.to_dict() for rr in run_responses]
+                if self.memory.runs is not None:
+                    memory_dict = self.memory.to_dict()
+                    run_responses = self.memory.runs.get(session_id)
+                    if run_responses is not None:
+                        memory_dict["runs"] = [rr.to_dict() for rr in run_responses]
         else:
             memory_dict = None
 

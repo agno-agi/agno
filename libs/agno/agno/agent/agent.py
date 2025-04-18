@@ -503,7 +503,24 @@ class Agent:
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
+    def set_default_model(self):
+        # Use the default Model (OpenAIChat) if no model is provided
+        if self.model is None:
+            try:
+                from agno.models.openai import OpenAIChat
+            except ModuleNotFoundError as e:
+                log_exception(e)
+                log_error(
+                    "Agno agents use `openai` as the default model provider. "
+                    "Please provide a `model` or install `openai`."
+                )
+                exit(1)
+
+            log_info("Setting default model to OpenAI Chat")
+            self.model = OpenAIChat(id="gpt-4o")
+
     def initialize_agent(self) -> None:
+        self.set_default_model()
         self.set_storage_mode()
         self.set_debug()
         self.set_agent_id()
@@ -582,7 +599,7 @@ class Agent:
             self.resolve_run_context()
 
         # 3. Read existing session from storage
-        self.read_from_storage(user_id=user_id, session_id=session_id)
+        self.read_from_storage(session_id=session_id, user_id=user_id)
 
         # 4. Prepare run messages
         run_messages: RunMessages = self.get_run_messages(
@@ -1167,7 +1184,7 @@ class Agent:
             self.resolve_run_context()
 
         # 3. Read existing session from storage
-        self.read_from_storage(user_id=user_id, session_id=session_id)
+        self.read_from_storage(session_id=session_id, user_id=user_id)
 
         # 4. Prepare run messages
         run_messages: RunMessages = self.get_run_messages(
@@ -1906,18 +1923,9 @@ class Agent:
                 model.set_functions(functions=self._functions_for_model)
 
     def update_model(self, session_id: str, async_mode: bool = False, user_id: Optional[str] = None) -> None:
-        # Use the default Model (OpenAIChat) if no model is provided
-        if self.model is None:
-            try:
-                from agno.models.openai import OpenAIChat
-            except ModuleNotFoundError as e:
-                log_exception(e)
-                log_error(
-                    "Agno agents use `openai` as the default model provider. "
-                    "Please provide a `model` or install `openai` using `pip install openai -U`."
-                )
-                exit(1)
-            self.model = OpenAIChat(id="gpt-4o")
+        self.set_default_model()
+
+        self.model = cast(Model, self.model)
 
         # Update the response_format on the Model
         if self.response_model is None:
@@ -2448,7 +2456,7 @@ class Agent:
         system_message_content: str = ""
         # 3.3.1 First add the Agent description if provided
         if self.description is not None:
-            system_message_content += f"{self.description}\n\n"
+            system_message_content += f"{self.description}\n"
         # 3.3.2 Then add the Agent goal if provided
         if self.goal is not None:
             system_message_content += f"\n<your_goal>\n{self.goal}\n</your_goal>\n\n"
@@ -2493,22 +2501,18 @@ class Agent:
         if self.add_state_in_messages:
             system_message_content = self.format_message_with_state_variables(system_message_content)
 
-        # 3.3.7 Then add the system message from the Model
-        system_message_from_model = self.model.get_system_message_for_model()
-        if system_message_from_model is not None:
-            system_message_content += system_message_from_model
-        # 3.3.8 Then add the expected output
+        # 3.3.7 Then add the expected output
         if self.expected_output is not None:
             system_message_content += f"<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n"
-        # 3.3.9 Then add additional context
+        # 3.3.8 Then add additional context
         if self.additional_context is not None:
             system_message_content += f"{self.additional_context}\n"
-        # 3.3.10 Then add information about the team members
+        # 3.3.9 Then add information about the team members
         if self.has_team and self.add_transfer_instructions:
             system_message_content += (
                 f"<transfer_instructions>\n{self.get_transfer_instructions().strip()}\n</transfer_instructions>\n\n"
             )
-        # 3.3.11 Then add memories to the system prompt
+        # 3.3.10 Then add memories to the system prompt
         if self.memory:
             if isinstance(self.memory, AgentMemory) and self.memory.create_user_memories:
                 if self.memory.memories and len(self.memory.memories) > 0:
@@ -2526,7 +2530,7 @@ class Agent:
                 else:
                     system_message_content += (
                         "You have the capability to retain memories from previous interactions with the user, "
-                        "but have not had any interactions with the current user yet.\n"
+                        "but have not had any interactions with the user yet.\n"
                     )
                 system_message_content += (
                     "You can add new memories using the `update_memory` tool.\n"
@@ -2546,25 +2550,27 @@ class Agent:
                     system_message_content += "\n</memories_from_previous_interactions>\n\n"
                     system_message_content += (
                         "Note: this information is from previous interactions and may be updated in this conversation. "
-                        "You should always prefer information from this conversation over the past memories.\n\n"
+                        "You should always prefer information from this conversation over the past memories.\n"
                     )
                 else:
                     system_message_content += (
                         "You have the capability to retain memories from previous interactions with the user, "
-                        "but have not had any interactions with the current user yet.\n"
+                        "but have not had any interactions with the user yet.\n"
                     )
 
                 if self.enable_agentic_memory:
                     system_message_content += (
-                        "You have access to the `update_user_memory` tool.\n"
-                        "You can use the `update_user_memory` tool to add new memories, update existing memories, delete memories, or clear all memories.\n"
-                        "Memories should include details that could personalize ongoing interactions with the user.\n"
-                        "Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
-                        "Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
-                        "If you use the `update_user_memory` tool, remember to pass on the response to the user.\n\n"
+                        "\n<updating_user_memories>\n"
+                        "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
+                        "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
+                        "- Memories should include details that could personalize ongoing interactions with the user.\n"
+                        "- Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
+                        "- Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
+                        "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
+                        "</updating_user_memories>\n\n"
                     )
 
-            # 3.3.12 Then add a summary of the interaction to the system prompt
+            # 3.3.11 Then add a summary of the interaction to the system prompt
             if isinstance(self.memory, AgentMemory) and self.memory.create_session_summary:
                 if self.memory.summary is not None:
                     system_message_content += "Here is a brief summary of your previous interactions:\n\n"
@@ -2588,6 +2594,11 @@ class Agent:
                         "Note: this information is from previous interactions and may be outdated. "
                         "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
                     )
+
+        # 3.3.12 Finally, add the system message from the Model
+        system_message_from_model = self.model.get_system_message_for_model()
+        if system_message_from_model is not None:
+            system_message_content += system_message_from_model
 
         # Add the JSON output prompt if response_model is provided and structured_outputs is False (only applicable if the model supports structured outputs)
         if self.response_model is not None and not (
@@ -2862,6 +2873,40 @@ class Agent:
                         log_warning(f"Failed to validate message: {e}")
 
         return run_messages
+
+    def get_session_summary(self, session_id: Optional[str] = None, user_id: Optional[str] = None):
+        """Get the session summary for the given session ID and user ID."""
+        if self.memory is None:
+            return None
+
+        session_id = session_id if session_id is not None else self.session_id
+        if session_id is None:
+            raise ValueError("Session ID is required")
+
+        if isinstance(self.memory, Memory):
+            user_id = user_id if user_id is not None else self.user_id
+            if user_id is None:
+                user_id = "default"
+            return self.memory.get_session_summary(session_id=session_id, user_id=user_id)
+        elif isinstance(self.memory, AgentMemory):
+            return self.memory.summary
+        else:
+            raise ValueError(f"Memory type {type(self.memory)} not supported")
+
+    def get_user_memories(self, user_id: Optional[str] = None):
+        """Get the user memories for the given user ID."""
+        if self.memory is None:
+            return None
+        user_id = user_id if user_id is not None else self.user_id
+        if user_id is None:
+            user_id = "default"
+
+        if isinstance(self.memory, Memory):
+            return self.memory.get_user_memories(user_id=user_id)
+        elif isinstance(self.memory, AgentMemory):
+            raise ValueError("AgentMemory does not support get_user_memories")
+        else:
+            raise ValueError(f"Memory type {type(self.memory)} not supported")
 
     def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> Agent:
         """Create and return a deep copy of this Agent, optionally updating fields.
@@ -3251,7 +3296,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(user_id=self.user_id, session_id=session_id)  # type: ignore
+        self.read_from_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
         # -*- Rename Agent
         self.name = name
         # -*- Save to storage
@@ -3268,7 +3313,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(user_id=self.user_id, session_id=session_id)  # type: ignore
+        self.read_from_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage
@@ -3324,7 +3369,7 @@ class Agent:
             raise Exception("Session ID is not set")
 
         # -*- Read from storage
-        self.read_from_storage(user_id=self.user_id, session_id=self.session_id)  # type: ignore
+        self.read_from_storage(session_id=self.session_id, user_id=self.user_id)  # type: ignore
         # -*- Generate name for session
         generated_session_name = self.generate_session_name(session_id=self.session_id)
         log_debug(f"Generated Session Name: {generated_session_name}")
@@ -3341,6 +3386,29 @@ class Agent:
             return
         # -*- Delete session
         self.storage.delete_session(session_id=session_id)
+
+    def get_messages_for_session(
+        self, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> List[Message]:
+        """Get messages for a session"""
+        _session_id = session_id or self.session_id
+        _user_id = user_id or self.user_id
+        if _session_id is None:
+            log_warning("Session ID is not set, cannot get messages for session")
+            return []
+
+        if self.memory is None:
+            self.read_from_storage(session_id=_session_id, user_id=_user_id)
+
+        if self.memory is None:
+            return []
+
+        if isinstance(self.memory, AgentMemory):
+            return self.memory.messages
+        elif isinstance(self.memory, Memory):
+            return self.memory.get_messages_for_session(session_id=_session_id)
+        else:
+            return []
 
     ###########################################################################
     # Handle images, videos and audio
@@ -3406,87 +3474,64 @@ class Agent:
 
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
-            from agno.models.openai.like import OpenAILike
+            from agno.reasoning.deepseek import is_deepseek_reasoning_model
+            from agno.reasoning.groq import is_groq_reasoning_model
+            from agno.reasoning.helpers import get_reasoning_agent
+            from agno.reasoning.ollama import is_ollama_reasoning_model
+            from agno.reasoning.openai import is_openai_reasoning_model
 
-            # Use DeepSeek for reasoning
-            if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id.lower() == "deepseek-reasoner":
-                from agno.reasoning.deepseek import get_deepseek_reasoning, get_deepseek_reasoning_agent
+            reasoning_agent = self.reasoning_agent or get_reasoning_agent(
+                reasoning_model=reasoning_model, monitoring=self.monitoring
+            )
 
-                ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
-                    reasoning_model=reasoning_model, monitoring=self.monitoring
-                )
-                log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
-                ds_reasoning_message: Optional[Message] = get_deepseek_reasoning(
-                    reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if ds_reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-                run_messages.messages.append(ds_reasoning_message)
-                # Add reasoning step to the Agent's run_response
-                self.update_run_response_with_reasoning(
-                    reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)],
-                    reasoning_agent_messages=[ds_reasoning_message],
-                )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)]),
-                        session_id=session_id,
-                        event=RunEvent.reasoning_completed,
-                    )
-            # Use Groq for reasoning
-            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id.lower():
-                from agno.reasoning.groq import get_groq_reasoning, get_groq_reasoning_agent
-
-                groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
-                    reasoning_model=reasoning_model, monitoring=self.monitoring
-                )
-                log_debug("Starting Groq Reasoning", center=True, symbol="=")
-                groq_reasoning_message: Optional[Message] = get_groq_reasoning(
-                    reasoning_agent=groq_reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if groq_reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-                run_messages.messages.append(groq_reasoning_message)
-                # Add reasoning step to the Agent's run_response
-                self.update_run_response_with_reasoning(
-                    reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)],
-                    reasoning_agent_messages=[groq_reasoning_message],
-                )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)]),
-                        session_id=session_id,
-                        event=RunEvent.reasoning_completed,
-                    )
-            # Use o-3 or OpenAILike with deepseek model for reasoning
-            elif (reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")) or (
-                isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower()
+            if (
+                (is_deepseek := is_deepseek_reasoning_model(reasoning_model))
+                or (is_groq := is_groq_reasoning_model(reasoning_model))
+                or (is_openai := is_openai_reasoning_model(reasoning_model))
+                or (is_ollama := is_ollama_reasoning_model(reasoning_model))
             ):
-                from agno.reasoning.openai import get_openai_reasoning, get_openai_reasoning_agent
+                reasoning_message: Optional[Message] = None
+                if is_deepseek:
+                    from agno.reasoning.deepseek import get_deepseek_reasoning
 
-                openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
-                    reasoning_model=reasoning_model, monitoring=self.monitoring
-                )
-                log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
-                openai_reasoning_message: Optional[Message] = get_openai_reasoning(
-                    reasoning_agent=openai_reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if openai_reasoning_message is None:
+                    log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
+                    reasoning_message = get_deepseek_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_groq:
+                    from agno.reasoning.groq import get_groq_reasoning
+
+                    log_debug("Starting Groq Reasoning", center=True, symbol="=")
+                    reasoning_message = get_groq_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_openai:
+                    from agno.reasoning.openai import get_openai_reasoning
+
+                    log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
+                    reasoning_message = get_openai_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_ollama:
+                    from agno.reasoning.ollama import get_ollama_reasoning
+
+                    log_debug("Starting Ollama Reasoning", center=True, symbol="=")
+                    reasoning_message = get_ollama_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+
+                if reasoning_message is None:
                     log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
-                run_messages.messages.append(openai_reasoning_message)
+                run_messages.messages.append(reasoning_message)
                 # Add reasoning step to the Agent's run_response
                 self.update_run_response_with_reasoning(
-                    reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)],
-                    reasoning_agent_messages=[openai_reasoning_message],
+                    reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
+                    reasoning_agent_messages=[reasoning_message],
                 )
                 if self.stream_intermediate_steps:
                     yield self.create_run_response(
-                        content=ReasoningSteps(
-                            reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)]
-                        ),
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
                         session_id=session_id,
                         event=RunEvent.reasoning_completed,
                     )
@@ -3504,7 +3549,7 @@ class Agent:
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
-            reasoning_agent: Optional[Agent] = self.reasoning_agent
+            reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
             if reasoning_agent is None:
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
@@ -3548,7 +3593,10 @@ class Agent:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
                         break
 
-                    if reasoning_agent_response.content.reasoning_steps is None:
+                    if (
+                        reasoning_agent_response.content.reasoning_steps is None
+                        or len(reasoning_agent_response.content.reasoning_steps) == 0
+                    ):
                         log_warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
                         break
 
@@ -3576,7 +3624,6 @@ class Agent:
                     self.update_run_response_with_reasoning(
                         reasoning_steps=reasoning_steps, reasoning_agent_messages=reasoning_agent_response.messages
                     )
-
                     # Get the next action
                     next_action = get_next_action(reasoning_steps[-1])
                     if next_action == NextAction.FINAL_ANSWER:
@@ -3625,88 +3672,64 @@ class Agent:
 
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
-            from agno.models.openai.like import OpenAILike
+            from agno.reasoning.deepseek import is_deepseek_reasoning_model
+            from agno.reasoning.groq import is_groq_reasoning_model
+            from agno.reasoning.helpers import get_reasoning_agent
+            from agno.reasoning.ollama import is_ollama_reasoning_model
+            from agno.reasoning.openai import is_openai_reasoning_model
 
-            # Use DeepSeek for reasoning
-            if reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id == "deepseek-reasoner":
-                from agno.reasoning.deepseek import aget_deepseek_reasoning, get_deepseek_reasoning_agent
+            reasoning_agent = self.reasoning_agent or get_reasoning_agent(
+                reasoning_model=reasoning_model, monitoring=self.monitoring
+            )
 
-                ds_reasoning_agent = self.reasoning_agent or get_deepseek_reasoning_agent(
-                    reasoning_model=reasoning_model, monitoring=self.monitoring
-                )
-                log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
-                ds_reasoning_message: Optional[Message] = await aget_deepseek_reasoning(
-                    reasoning_agent=ds_reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if ds_reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-                run_messages.messages.append(ds_reasoning_message)
-                # Add reasoning step to the Agent's run_response
-                self.update_run_response_with_reasoning(
-                    reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)],
-                    reasoning_agent_messages=[ds_reasoning_message],
-                )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=ds_reasoning_message.content)]),
-                        session_id=session_id,
-                        event=RunEvent.reasoning_completed,
-                    )
-            # Use Groq for reasoning
-            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id:
-                from agno.reasoning.groq import aget_groq_reasoning, get_groq_reasoning_agent
-
-                groq_reasoning_agent = self.reasoning_agent or get_groq_reasoning_agent(
-                    reasoning_model=reasoning_model, monitoring=self.monitoring
-                )
-                log_debug("Starting Groq Reasoning", center=True, symbol="=")
-                groq_reasoning_message: Optional[Message] = await aget_groq_reasoning(
-                    reasoning_agent=groq_reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if groq_reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-                run_messages.messages.append(groq_reasoning_message)
-                # Add reasoning step to the Agent's run_response
-                self.update_run_response_with_reasoning(
-                    reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)],
-                    reasoning_agent_messages=[groq_reasoning_message],
-                )
-                if self.stream_intermediate_steps:
-                    yield self.create_run_response(
-                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=groq_reasoning_message.content)]),
-                        session_id=session_id,
-                        event=RunEvent.reasoning_completed,
-                    )
-            # Use o-3 for reasoning
-            elif (reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3")) or (
-                isinstance(reasoning_model, OpenAILike) and "deepseek" in reasoning_model.id.lower()
+            if (
+                (is_deepseek := is_deepseek_reasoning_model(reasoning_model))
+                or (is_groq := is_groq_reasoning_model(reasoning_model))
+                or (is_openai := is_openai_reasoning_model(reasoning_model))
+                or (is_ollama := is_ollama_reasoning_model(reasoning_model))
             ):
-                # elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o"):
-                from agno.reasoning.openai import aget_openai_reasoning, get_openai_reasoning_agent
+                reasoning_message: Optional[Message] = None
+                if is_deepseek:
+                    from agno.reasoning.deepseek import aget_deepseek_reasoning
 
-                openai_reasoning_agent = self.reasoning_agent or get_openai_reasoning_agent(
-                    reasoning_model=reasoning_model, monitoring=self.monitoring
-                )
-                log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
-                openai_reasoning_message: Optional[Message] = await aget_openai_reasoning(
-                    reasoning_agent=openai_reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if openai_reasoning_message is None:
+                    log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_deepseek_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_groq:
+                    from agno.reasoning.groq import aget_groq_reasoning
+
+                    log_debug("Starting Groq Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_groq_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_openai:
+                    from agno.reasoning.openai import aget_openai_reasoning
+
+                    log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_openai_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_ollama:
+                    from agno.reasoning.ollama import get_ollama_reasoning
+
+                    log_debug("Starting Ollama Reasoning", center=True, symbol="=")
+                    reasoning_message = get_ollama_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+
+                if reasoning_message is None:
                     log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
-                run_messages.messages.append(openai_reasoning_message)
+                run_messages.messages.append(reasoning_message)
                 # Add reasoning step to the Agent's run_response
                 self.update_run_response_with_reasoning(
-                    reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)],
-                    reasoning_agent_messages=[openai_reasoning_message],
+                    reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
+                    reasoning_agent_messages=[reasoning_message],
                 )
                 if self.stream_intermediate_steps:
                     yield self.create_run_response(
-                        content=ReasoningSteps(
-                            reasoning_steps=[ReasoningStep(result=openai_reasoning_message.content)]
-                        ),
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
                         session_id=session_id,
                         event=RunEvent.reasoning_completed,
                     )
@@ -3724,7 +3747,7 @@ class Agent:
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
-            reasoning_agent: Optional[Agent] = self.reasoning_agent
+            reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
             if reasoning_agent is None:
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
@@ -3830,8 +3853,7 @@ class Agent:
 
     def get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Callable:
         def update_user_memory(task: str) -> str:
-            """
-            Use this function to submit a task to modify the Agent's memory.
+            """Use this function to submit a task to modify the Agent's memory.
             Describe the task in detail and be specific.
             The task can include adding a memory, updating a memory, deleting a memory, or clearing all memories.
 
@@ -3846,8 +3868,7 @@ class Agent:
             return response
 
         async def aupdate_user_memory(task: str) -> str:
-            """
-            Use this function to update the Agent's memory of a user.
+            """Use this function to update the Agent's memory of a user.
             Describe the task in detail and be specific.
             The task can include adding a memory, updating a memory, deleting a memory, or clearing all memories.
 
