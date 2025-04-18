@@ -74,6 +74,7 @@ hn_team = Team(
     response_model=Article,
     show_tool_calls=True,
     markdown=True,
+    add_member_tools_to_system_message=False,
     debug_mode=True,
     show_members_responses=True,
     enable_agentic_context=True,

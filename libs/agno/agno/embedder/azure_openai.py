@@ -55,6 +55,10 @@ class AzureOpenAIEmbedder(Embedder):
             _client_params["azure_ad_token"] = self.azure_ad_token
         if self.azure_ad_token_provider:
             _client_params["azure_ad_token_provider"] = self.azure_ad_token_provider
+
+        if self.client_params:
+            _client_params.update(self.client_params)
+
         return AzureOpenAIClient(**_client_params)
 
     def _response(self, text: str) -> CreateEmbeddingResponse:

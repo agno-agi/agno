@@ -30,7 +30,11 @@ print(f"Output audio tokens: {agent.run_response.metrics['output_audio_tokens']}
 print(f"Audio tokens: {agent.run_response.metrics['audio_tokens']}")
 
 agent = Agent(
-    model=OpenAIChat(id="o3-mini"), markdown=True, telemetry=False, monitoring=False, debug_mode=True
+    model=OpenAIChat(id="o3-mini"),
+    markdown=True,
+    telemetry=False,
+    monitoring=False,
+    debug_mode=True,
 )
 agent.print_response(
     "Solve the trolley problem. Evaluate multiple ethical frameworks. Include an ASCII diagram of your solution.",
