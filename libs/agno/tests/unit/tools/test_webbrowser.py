@@ -1,6 +1,5 @@
 """Unit tests for WebBrowserTools class."""
 
-import json
 from unittest.mock import patch
 
 import pytest
@@ -18,7 +17,7 @@ def test_initialization(webbrowser_tools):
     """Test initialization of WebBrowserTools."""
     # Check if the tool name is correct
     assert webbrowser_tools.name == "webbrowser_tools"
-    
+
     # Check if open_page function is registered
     function_names = [func.name for func in webbrowser_tools.functions.values()]
     assert "open_page" in function_names
@@ -31,10 +30,10 @@ def test_open_page(mock_open_new_tab, webbrowser_tools):
     # Test opening a regular URL
     url = "https://example.com"
     result = webbrowser_tools.open_page(url)
-    
+
     # Verify the mock was called with the correct URL
     mock_open_new_tab.assert_called_once_with(url)
-    
+
     # Since the function doesn't return anything special, we'd expect None
     assert result is None
 
@@ -43,13 +42,13 @@ def test_open_page(mock_open_new_tab, webbrowser_tools):
 def test_open_page_error_handling(mock_open_new_tab, webbrowser_tools):
     """Test error handling when browser opening fails."""
     url = "https://example.com"
-    
+
     # The function should raise an exception if the browser fails to open
     with pytest.raises(Exception) as excinfo:
         webbrowser_tools.open_page(url)
-    
+
     # Verify the exception is propagated
     assert "Browser error" in str(excinfo.value)
-    
+
     # Verify the mock was called with the correct URL
-    mock_open_new_tab.assert_called_once_with(url) 
+    mock_open_new_tab.assert_called_once_with(url)
