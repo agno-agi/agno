@@ -6,7 +6,6 @@ from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.openai import _validate_image_params
 
 try:
     from openai import OpenAI as OpenAIClient
@@ -31,8 +30,7 @@ class OpenAITools(Toolkit):
         text_to_speech_voice: OpenAIVoice = "alloy",
         text_to_speech_model: OpenAITTSModel = "tts-1",
         text_to_speech_format: OpenAITTSFormat = "mp3",
-        image_generation_model: Optional[str] = "dall-e-3",
-        image_generation_size: Optional[str] = None,
+        image_model: Optional[str] = "dall-e-3",
         **kwargs,
     ):
         super().__init__(name="openai_tools", **kwargs)
@@ -45,14 +43,7 @@ class OpenAITools(Toolkit):
         self.tts_voice = text_to_speech_voice
         self.tts_model = text_to_speech_model
         self.tts_format = text_to_speech_format
-
-        # Validate Image Generation defaults
-        try:
-            self.image_model = image_generation_model
-            self.image_size = _validate_image_params(image_generation_model, image_generation_size)
-        except ValueError as e:
-            log_error(f"Initialization failed: {e}")
-            raise
+        self.image_model = image_model
 
         if enable_transcription:
             self.register(self.transcribe_audio)
@@ -74,10 +65,12 @@ class OpenAITools(Toolkit):
                 transcript = OpenAIClient().audio.transcriptions.create(
                     model="whisper-1", file=audio_file, response_format="srt"
                 )
-                log_debug(f"Transcript: {transcript}")
-            return transcript
-        except Exception as e:
+        except Exception as e:  # type: ignore[return]
+            log_error(f"Failed to transcribe audio: {str(e)}")
             return f"Failed to transcribe audio: {str(e)}"
+
+        log_debug(f"Transcript: {transcript}")
+        return transcript  # type: ignore[return-value]
 
     def generate_image(
         self,
@@ -95,7 +88,6 @@ class OpenAITools(Toolkit):
             response = OpenAIClient().images.generate(
                 model=self.image_model,
                 prompt=prompt,
-                size=self.image_size,
                 response_format="url",
             )
 
@@ -134,7 +126,10 @@ class OpenAITools(Toolkit):
             import base64
 
             response = OpenAIClient().audio.speech.create(
-                model=self.tts_model, voice=self.tts_voice, input=text_input, response_format=self.tts_format
+                model=self.tts_model,
+                voice=self.tts_voice,
+                input=text_input,
+                response_format=self.tts_format,
             )
 
             # Get raw audio data for artifact creation before potentially saving
