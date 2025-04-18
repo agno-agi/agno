@@ -1,10 +1,7 @@
-import os
 import json
 import pytest
 from unittest.mock import patch, Mock
 import requests
-
-# Adjust this import to point at wherever SerperApiTools is defined
 from agno.tools.api import SerperApiTools
 
 
