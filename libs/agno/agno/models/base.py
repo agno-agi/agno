@@ -155,6 +155,10 @@ class Model(ABC):
         if len(functions) > 0:
             self._functions = functions
 
+    def reset_tools_and_functions(self) -> None:
+        self._tools = None
+        self._functions = None
+
     def response(self, messages: List[Message]) -> ModelResponse:
         """
         Generate a response from the model.
@@ -1099,18 +1103,70 @@ class Model(ABC):
         if hasattr(response_usage, "prompt_tokens_details"):
             if isinstance(response_usage.prompt_tokens_details, dict):
                 assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details
+                if (
+                    "audio_tokens" in response_usage.prompt_tokens_details
+                    and response_usage.prompt_tokens_details["audio_tokens"] is not None
+                ):
+                    assistant_message.metrics.input_audio_tokens = response_usage.prompt_tokens_details["audio_tokens"]
+                if (
+                    "cached_tokens" in response_usage.prompt_tokens_details
+                    and response_usage.prompt_tokens_details["cached_tokens"] is not None
+                ):
+                    assistant_message.metrics.cached_tokens = response_usage.prompt_tokens_details["cached_tokens"]
             elif hasattr(response_usage.prompt_tokens_details, "model_dump"):
                 assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details.model_dump(
                     exclude_none=True
                 )
+                if (
+                    hasattr(response_usage.prompt_tokens_details, "audio_tokens")
+                    and response_usage.prompt_tokens_details.audio_tokens is not None
+                ):
+                    assistant_message.metrics.input_audio_tokens = response_usage.prompt_tokens_details.audio_tokens
+                if (
+                    hasattr(response_usage.prompt_tokens_details, "cached_tokens")
+                    and response_usage.prompt_tokens_details.cached_tokens is not None
+                ):
+                    assistant_message.metrics.cached_tokens = response_usage.prompt_tokens_details.cached_tokens
 
         if hasattr(response_usage, "completion_tokens_details"):
             if isinstance(response_usage.completion_tokens_details, dict):
                 assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details
+                if (
+                    "audio_tokens" in response_usage.completion_tokens_details
+                    and response_usage.completion_tokens_details["audio_tokens"] is not None
+                ):
+                    assistant_message.metrics.output_audio_tokens = response_usage.completion_tokens_details[
+                        "audio_tokens"
+                    ]
+                if (
+                    "reasoning_tokens" in response_usage.completion_tokens_details
+                    and response_usage.completion_tokens_details["reasoning_tokens"] is not None
+                ):
+                    assistant_message.metrics.reasoning_tokens = response_usage.completion_tokens_details[
+                        "reasoning_tokens"
+                    ]
             elif hasattr(response_usage.completion_tokens_details, "model_dump"):
                 assistant_message.metrics.completion_tokens_details = (
                     response_usage.completion_tokens_details.model_dump(exclude_none=True)
                 )
+                if (
+                    hasattr(response_usage.completion_tokens_details, "audio_tokens")
+                    and response_usage.completion_tokens_details.audio_tokens is not None
+                ):
+                    assistant_message.metrics.output_audio_tokens = (
+                        response_usage.completion_tokens_details.audio_tokens
+                    )
+                if (
+                    hasattr(response_usage.completion_tokens_details, "reasoning_tokens")
+                    and response_usage.completion_tokens_details.reasoning_tokens is not None
+                ):
+                    assistant_message.metrics.reasoning_tokens = (
+                        response_usage.completion_tokens_details.reasoning_tokens
+                    )
+
+        assistant_message.metrics.audio_tokens = (
+            assistant_message.metrics.input_audio_tokens + assistant_message.metrics.output_audio_tokens
+        )
 
     def _log_messages(self, messages: List[Message]) -> None:
         """
@@ -1151,7 +1207,7 @@ class Model(ABC):
 
         # Deep copy all attributes
         for k, v in self.__dict__.items():
-            if k in {"response_format", "tools", "_functions", "_function_call_stack"}:
+            if k in {"response_format", "_tools", "_functions", "_function_call_stack"}:
                 continue
             setattr(new_model, k, deepcopy(v, memo))
 

@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.2.15"
+version = "1.3.3"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -73,12 +73,14 @@ webex = ["webexpythonsdk"]
 mcp = ["mcp"]
 browserbase = ["browserbase", "playwright"]
 agentql = ["agentql"]
+confluence = ["atlassian-python-api"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary", "psycopg"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
+redis = ["redis"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
@@ -143,6 +145,7 @@ tools = [
   "agno[browserbase]",
   "agno[agentql]",
 #  "agno[yfinance]",  # Broken right now
+  "agno[confluence]",
 ]
 
 # All storage
@@ -151,6 +154,7 @@ storage = [
   "agno[postgres]",
   "agno[sqlite]",
   "agno[gcs]",
+  "agno[redis]",
 ]
 
 # All vector databases
@@ -303,6 +307,7 @@ module = [
   "pytz.*",
   "qdrant_client.*",
   "rapidocr_onnxruntime.*",
+  "redis.*",
   "replicate.*",
   "requests.*",
   "scrapegraph_py.*",
@@ -326,6 +331,7 @@ module = [
   "twilio.*",
   "tzlocal.*",
   "upstash_vector.*",
+  "urllib3.*",
   "uvicorn.*",
   "vertexai.*",
   "voyageai.*",

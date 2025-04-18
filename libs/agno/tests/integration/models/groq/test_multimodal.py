@@ -4,7 +4,7 @@ from agno.models.groq import Groq
 
 
 def test_image_input():
-    agent = Agent(model=Groq(id="llama-3.2-90b-vision-preview"), telemetry=False, monitoring=False)
+    agent = Agent(model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct"), telemetry=False, monitoring=False)
 
     response = agent.run(
         "Tell me about this image.",

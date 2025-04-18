@@ -87,16 +87,16 @@ class WebsiteKnowledgeBase(AgentKnowledge):
                     urls_to_read.remove(url)
 
         for url in urls_to_read:
-            document_list = self.reader.read(url=url)
-            # Filter out documents which already exist in the vector db
-            if not recreate:
-                document_list = [document for document in document_list if not self.vector_db.doc_exists(document)]
-            if upsert and self.vector_db.upsert_available():
-                self.vector_db.upsert(documents=document_list, filters=filters)
-            else:
-                self.vector_db.insert(documents=document_list, filters=filters)
-            num_documents += len(document_list)
-            log_info(f"Loaded {num_documents} documents to knowledge base")
+            if document_list := self.reader.read(url=url):
+                # Filter out documents which already exist in the vector db
+                if not recreate:
+                    document_list = [document for document in document_list if not self.vector_db.doc_exists(document)]
+                if upsert and self.vector_db.upsert_available():
+                    self.vector_db.upsert(documents=document_list, filters=filters)
+                else:
+                    self.vector_db.insert(documents=document_list, filters=filters)
+                num_documents += len(document_list)
+                log_info(f"Loaded {num_documents} documents to knowledge base")
 
         if self.optimize_on is not None and num_documents > self.optimize_on:
             log_debug("Optimizing Vector DB")

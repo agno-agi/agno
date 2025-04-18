@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from agno.media import File, Image
 from agno.models.message import Message
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 try:
     from anthropic.types import (
@@ -205,6 +205,12 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                     file_content = _format_file_for_message(file)
                     if file_content:
                         content.append(file_content)
+
+            if message.audio is not None and len(message.audio) > 0:
+                log_warning("Audio input is currently unsupported.")
+
+            if message.videos is not None and len(message.videos) > 0:
+                log_warning("Video input is currently unsupported.")
 
         elif message.role == "assistant":
             content = []
