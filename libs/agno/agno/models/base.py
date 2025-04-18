@@ -1199,7 +1199,7 @@ class Model(ABC):
             Model: A new Model instance with deeply copied attributes.
         """
         from copy import deepcopy
-
+        
         # Create a new instance without calling __init__
         cls = self.__class__
         new_model = cls.__new__(cls)
