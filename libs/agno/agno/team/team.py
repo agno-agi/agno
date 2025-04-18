@@ -550,6 +550,9 @@ class Team:
 
         # Register the team on the platform
         self._register_team_on_platform()
+
+        for member in self.members:
+            member._register_agent_on_platform()
         
         # Run the team
         last_exception = None
@@ -1239,6 +1242,9 @@ class Team:
 
         t = threading.Thread(target=_run_async_in_thread, args=(self._aregister_team_on_platform(),), daemon=True)
         t.start()
+        for member in self.members:
+            t = threading.Thread(target=_run_async_in_thread, args=(member._aregister_agent_on_platform(),), daemon=True)
+            t.start()
 
         # Run the team
         last_exception = None
@@ -6374,6 +6380,7 @@ class Team:
                     config=self.to_platform_dict(),
                 ),
             )
+            
         except Exception as e:
             log_debug(f"Could not create team on platform: {e}")
             print(f"Could not create team on platform: {e}")
