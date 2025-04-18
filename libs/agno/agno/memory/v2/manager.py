@@ -21,7 +21,7 @@ class MemoryManager:
 
     # Provide the system message for the manager as a string. If not provided, a default prompt will be used.
     system_message: Optional[str] = None
-    
+
     # Provide the memory capture instructions for the manager as a string. If not provided, a default prompt will be used.
     memory_capture_instructions: Optional[str] = None
 
@@ -77,7 +77,7 @@ class MemoryManager:
     ) -> Message:
         if self.system_message is not None:
             return Message(role="system", content=self.system_message)
-        
+
         memory_capture_instructions = self.memory_capture_instructions or dedent("""
             "Memories should include details that could personalize ongoing interactions with the user, such as:",
             "  - Personal facts: name, age, occupation, location, interests, preferences, etc.",
