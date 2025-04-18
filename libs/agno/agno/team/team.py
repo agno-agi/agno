@@ -4177,7 +4177,6 @@ class Team:
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
         for idx, member in enumerate(self.members):
-
             url_safe_member_id = self._get_member_id(member)
 
             if isinstance(member, Team):
