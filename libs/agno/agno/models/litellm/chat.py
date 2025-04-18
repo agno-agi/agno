@@ -45,9 +45,10 @@ class LiteLLM(Model):
         if not self.api_key:
             self.api_key = getenv("LITELLM_API_KEY")
             if not self.api_key:
-                # Use LiteLLM to ensure that the user has the correct keys set,
-                # Since they didn't explicitly provide it via the LITELLM_API_KEY env var
-                validate_environment(model=self.id, api_base=self.api_base)
+                # Check for other present valid keys, e.g. OPENAI_API_KEY if self.id is an OpenAI model
+                env_validation = validate_environment(model=self.id, api_base=self.api_base)
+                if not env_validation.get("keys_in_environment"):
+                    log_warning("Missing required key. Please set the LITELLM_API_KEY or other valid environment variables.")
 
     def get_client(self) -> Any:
         """
