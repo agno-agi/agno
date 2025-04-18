@@ -18,17 +18,26 @@ class MemoryManager:
     # Model used for memory management
     model: Optional[Model] = None
 
-    # Provide the system prompt for the manager as a string. If not provided, a default prompt will be used.
-    system_prompt: Optional[str] = None
+    # Provide the system message for the manager as a string. If not provided, a default prompt will be used.
+    system_message: Optional[str] = None
+
+    # Additional instructions for the manager
+    additional_instructions: Optional[str] = None
 
     # Whether memories were created in the last run
     memories_updated: bool = False
 
-    def __init__(self, model: Optional[Model] = None, system_prompt: Optional[str] = None):
+    def __init__(
+        self,
+        model: Optional[Model] = None,
+        system_message: Optional[str] = None,
+        additional_instructions: Optional[str] = None,
+    ):
         self.model = model
         if self.model is not None and isinstance(self.model, str):
             raise ValueError("Model must be a Model object, not a string")
-        self.system_prompt = system_prompt
+        self.system_message = system_message
+        self.additional_instructions = additional_instructions
 
     def add_tools_to_model(self, model: Model, tools: List[Callable]) -> None:
         model = cast(Model, model)
@@ -60,6 +69,9 @@ class MemoryManager:
         enable_delete_memory: bool = True,
         enable_clear_memory: bool = True,
     ) -> Message:
+        if self.system_message is not None:
+            return Message(role="system", content=self.system_message)
+
         # -*- Return a system message for the memory manager
         system_prompt_lines = [
             "You are a MemoryManager that is responsible for manging key information about the user. "
@@ -74,9 +86,10 @@ class MemoryManager:
             "## How to add or update memories",
             "- If you decide to add a new memory, create memories that captures key information, as if you were storing it for future reference.",
             "- Memories should be a brief, third-person statements that encapsulate the most important aspect of the user's input, without adding any extraneous information.",
-            "  - Example: If the user's message is 'I'm going to the gym', a memory could be 'John Doe goes to the gym regularly'.",
-            "  - Example: If the user's message is 'My name is John Doe', a memory could be 'User's name is John Doe'.",
+            "  - Example: If the user's message is 'I'm going to the gym', a memory could be `John Doe goes to the gym regularly`.",
+            "  - Example: If the user's message is 'My name is John Doe', a memory could be `User's name is John Doe`.",
             "- Don't make a single memory too long or complex, create multiple memories if needed to capture all the information.",
+            "- Don't repeat the same information in multiple memories. Rather update existing memories if needed.",
             "- When updating a memory, append the existing memory with new information rather than completely overwriting it.",
             "- When a user's preferences change, update the relevant memories to reflect the new preferences but also capture what the user's preferences used to be and what has changed.",
             "",
@@ -114,6 +127,9 @@ class MemoryManager:
                 system_prompt_lines.append(f"Memory: {existing_memory['memory']}")
                 system_prompt_lines.append("")
             system_prompt_lines.append("</existing_memories>")
+
+        if self.additional_instructions:
+            system_prompt_lines.append(self.additional_instructions)
 
         return Message(role="system", content="\n".join(system_prompt_lines))
 

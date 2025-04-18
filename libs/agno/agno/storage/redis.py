@@ -11,7 +11,7 @@ from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_info, logger
 
 try:
-    import redis
+    from redis import ConnectionError, Redis
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 
@@ -39,7 +39,7 @@ class RedisStorage(Storage):
         """
         super().__init__(mode)
         self.prefix = prefix
-        self.redis_client = redis.Redis(
+        self.redis_client = Redis(
             host=host,
             port=port,
             db=db,
@@ -69,7 +69,7 @@ class RedisStorage(Storage):
         try:
             self.redis_client.ping()
             log_debug("Redis connection successful")
-        except redis.ConnectionError as e:
+        except ConnectionError as e:
             logger.error(f"Could not connect to Redis: {e}")
             raise
 

@@ -6,8 +6,8 @@ import pytest
 
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory, UserMemory
-from agno.models.google.gemini import Gemini
 from agno.models.message import Message
+from agno.models.openai import OpenAIChat
 from agno.run.response import RunResponse
 
 
@@ -35,7 +35,7 @@ def memory_db(temp_db_file):
 @pytest.fixture
 def model():
     """Create a Gemini model for testing."""
-    return Gemini(id="gemini-2.0-flash-exp")
+    return OpenAIChat(id="gpt-4o-mini")
 
 
 @pytest.fixture
@@ -60,8 +60,8 @@ def test_add_user_memory_with_db(memory_with_db):
     new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify the memory was loaded from the database
-    assert new_memory.get_user_memory("test_user", memory_id) is not None
-    assert new_memory.get_user_memory("test_user", memory_id).memory == "The user's name is John Doe"
+    assert new_memory.get_user_memory(user_id="test_user", memory_id=memory_id) is not None
+    assert new_memory.get_user_memory(user_id="test_user", memory_id=memory_id).memory == "The user's name is John Doe"
 
 
 def test_create_user_memory_with_db(memory_with_db):
@@ -81,7 +81,7 @@ def test_create_user_memory_with_db(memory_with_db):
     assert len(memories) > 0
 
     assert memories[0].input == message
-    assert "basketball" in memories[0].memory.lower()
+    assert "john doe" in memories[0].memory.lower()
 
 
 def test_create_user_memories_with_db(memory_with_db):
@@ -99,7 +99,7 @@ def test_create_user_memories_with_db(memory_with_db):
     assert len(result) > 0
 
     # Get all memories for the user
-    memories = memory_with_db.get_user_memories("test_user")
+    memories = memory_with_db.get_user_memories(user_id="test_user")
 
     # Verify memories were added to the in-memory store
     assert len(memories) > 0
@@ -108,7 +108,7 @@ def test_create_user_memories_with_db(memory_with_db):
     new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify memories were loaded from the database
-    new_memories = new_memory.get_user_memories("test_user")
+    new_memories = new_memory.get_user_memories(user_id="test_user")
     assert len(new_memories) > 0
 
 
@@ -125,7 +125,7 @@ async def test_acreate_user_memory_with_db(memory_with_db):
     assert len(result) > 0
 
     # Get all memories for the user
-    memories = memory_with_db.get_user_memories("test_user")
+    memories = memory_with_db.get_user_memories(user_id="test_user")
 
     # Verify memory was added to the in-memory store
     assert len(memories) > 0
@@ -134,7 +134,7 @@ async def test_acreate_user_memory_with_db(memory_with_db):
     new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify memory was loaded from the database
-    new_memories = new_memory.get_user_memories("test_user")
+    new_memories = new_memory.get_user_memories(user_id="test_user")
     assert len(new_memories) > 0
 
 
@@ -164,7 +164,7 @@ async def test_acreate_user_memories_with_db(memory_with_db):
     new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify memories were loaded from the database
-    new_memories = new_memory.get_user_memories("test_user")
+    new_memories = new_memory.get_user_memories(user_id="test_user")
     assert len(new_memories) > 0
 
 
@@ -213,7 +213,7 @@ def test_create_session_summary_with_db(memory_with_db):
     memory_with_db.add_run(session_id, run_response)
 
     # Create the summary
-    summary = memory_with_db.create_session_summary(session_id, user_id)
+    summary = memory_with_db.create_session_summary(session_id=session_id, user_id=user_id)
 
     # Verify the summary was created
     assert summary is not None
@@ -259,8 +259,8 @@ def test_memory_persistence_across_instances(model, memory_db):
     memory2 = Memory(model=model, db=memory_db)
 
     # Verify the memory is accessible from the second instance
-    assert memory2.get_user_memory("test_user", memory_id) is not None
-    assert memory2.get_user_memory("test_user", memory_id).memory == "The user's name is John Doe"
+    assert memory2.get_user_memory(user_id="test_user", memory_id=memory_id) is not None
+    assert memory2.get_user_memory(user_id="test_user", memory_id=memory_id).memory == "The user's name is John Doe"
 
 
 def test_memory_operations_with_db(memory_with_db):
@@ -278,10 +278,12 @@ def test_memory_operations_with_db(memory_with_db):
     memory_with_db.replace_user_memory(memory_id=memory_id, memory=updated_memory, user_id="test_user")
 
     # Verify the memory was updated
-    assert memory_with_db.get_user_memory("test_user", memory_id).memory == "The user's name is Jane Doe"
+    assert (
+        memory_with_db.get_user_memory(user_id="test_user", memory_id=memory_id).memory == "The user's name is Jane Doe"
+    )
 
     # Delete the memory
-    memory_with_db.delete_user_memory("test_user", memory_id)
+    memory_with_db.delete_user_memory(user_id="test_user", memory_id=memory_id)
 
     # Verify the memory was deleted
     assert memory_id not in memory_with_db.memories["test_user"]
