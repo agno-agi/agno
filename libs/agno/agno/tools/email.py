@@ -21,7 +21,7 @@ class EmailTools(Toolkit):
         self.sender_passkey: Optional[str] = sender_passkey
         self.register(self.email_user)
 
-    def email_user(self, subject: str, body: str) -> str:
+    def email_user(self, subject: str, body: str, **kwargs) -> str:
         """Emails the user with the given subject and body.
 
         :param subject: The subject of the email.

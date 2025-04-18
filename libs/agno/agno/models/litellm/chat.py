@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional
@@ -79,6 +80,18 @@ class LiteLLM(Model):
             if m.role == "tool":
                 msg["tool_call_id"] = m.tool_call_id or ""
                 msg["name"] = m.name or ""
+
+                if m.audio is not None and len(m.audio) > 0:
+                    log_warning("Audio input is currently unsupported.")
+
+                if m.images is not None and len(m.images) > 0:
+                    log_warning("Image input is currently unsupported.")
+
+                if m.files is not None and len(m.files) > 0:
+                    log_warning("File input is currently unsupported.")
+
+                if m.videos is not None and len(m.videos) > 0:
+                    log_warning("Video input is currently unsupported.")
 
             formatted_messages.append(msg)
 
@@ -190,18 +203,116 @@ class LiteLLM(Model):
                 model_response.content = delta.content
 
             if hasattr(delta, "tool_calls") and delta.tool_calls:
-                model_response.tool_calls = []
-                for tool_call in delta.tool_calls:
-                    if tool_call.type == "function":
-                        model_response.tool_calls.append(
-                            {
-                                "id": tool_call.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tool_call.function.name,
-                                    "arguments": tool_call.function.arguments,
-                                },
-                            }
-                        )
+                processed_tool_calls = []
+                for i, tool_call in enumerate(delta.tool_calls):
+                    # Create a basic structure with index
+                    tool_call_dict = {"index": i, "type": "function"}
+
+                    # Extract ID if available
+                    if hasattr(tool_call, "id") and tool_call.id is not None:
+                        tool_call_dict["id"] = tool_call.id
+
+                    # Extract function data
+                    function_data = {}
+                    if hasattr(tool_call, "function"):
+                        if hasattr(tool_call.function, "name") and tool_call.function.name is not None:
+                            function_data["name"] = tool_call.function.name
+                        if hasattr(tool_call.function, "arguments") and tool_call.function.arguments is not None:
+                            function_data["arguments"] = tool_call.function.arguments
+
+                    tool_call_dict["function"] = function_data
+                    processed_tool_calls.append(tool_call_dict)
+
+                model_response.tool_calls = processed_tool_calls
 
         return model_response
+
+    @staticmethod
+    def parse_tool_calls(tool_calls_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Build tool calls from streamed tool call data.
+
+        Args:
+            tool_calls_data (List[Dict[str, Any]]): The tool call data to build from.
+
+        Returns:
+            List[Dict[str, Any]]: The built tool calls.
+        """
+        # Early return for empty list
+        if not tool_calls_data:
+            return []
+
+        # Group tool calls by index
+        tool_calls_by_index: Dict[int, Dict[str, Any]] = {}
+
+        for tc in tool_calls_data:
+            # Get index (default to 0)
+            index = tc.get("index", 0)
+            if not isinstance(index, int):
+                index = 0
+
+            # Initialize if first time seeing this index
+            if index not in tool_calls_by_index:
+                tool_calls_by_index[index] = {"id": None, "type": "function", "function": {"name": "", "arguments": ""}}
+
+            # Update with new information
+            if tc.get("id") is not None:
+                tool_calls_by_index[index]["id"] = tc["id"]
+
+            if tc.get("type") is not None:
+                tool_calls_by_index[index]["type"] = tc["type"]
+
+            # Update function information
+            function_data = tc.get("function", {})
+            if not isinstance(function_data, dict):
+                function_data = {}
+
+            # Update function name if provided
+            if function_data.get("name") is not None:
+                name = function_data.get("name", "")
+                if isinstance(tool_calls_by_index[index]["function"], dict):
+                    # type: ignore
+                    tool_calls_by_index[index]["function"]["name"] = name
+
+            # Update function arguments if provided
+            if function_data.get("arguments") is not None:
+                args = function_data.get("arguments", "")
+                if isinstance(tool_calls_by_index[index]["function"], dict):
+                    current_args = tool_calls_by_index[index]["function"].get("arguments", "")  # type: ignore
+                    if isinstance(current_args, str) and isinstance(args, str):
+                        # type: ignore
+                        tool_calls_by_index[index]["function"]["arguments"] = current_args + args
+
+        # Process arguments - Ensure they're valid JSON for the Message.log() method
+        result = []
+        for tc in tool_calls_by_index.values():
+            # Make a safe copy to avoid modifying the original
+            tc_copy = {
+                "id": tc.get("id"),
+                "type": tc.get("type", "function"),
+                "function": {"name": "", "arguments": ""},
+            }
+
+            # Safely copy function data
+            if isinstance(tc.get("function"), dict):
+                func_dict = tc.get("function", {})
+                tc_copy["function"]["name"] = func_dict.get("name", "")
+
+                # Process arguments
+                args = func_dict.get("arguments", "")
+                if args and isinstance(args, str):
+                    try:
+                        # Check if arguments are already valid JSON
+                        parsed = json.loads(args)
+                        # If it's not a dict, convert to a JSON string of a dict
+                        if not isinstance(parsed, dict):
+                            tc_copy["function"]["arguments"] = json.dumps({"value": parsed})
+                        else:
+                            tc_copy["function"]["arguments"] = args
+                    except json.JSONDecodeError:
+                        # If not valid JSON, make it a JSON dict
+                        tc_copy["function"]["arguments"] = json.dumps({"text": args})
+
+            result.append(tc_copy)
+
+        return result
