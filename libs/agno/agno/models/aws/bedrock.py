@@ -36,6 +36,7 @@ class AwsBedrock(Model):
         aws_region (Optional[str]): The AWS region to use.
         aws_access_key_id (Optional[str]): The AWS access key ID to use.
         aws_secret_access_key (Optional[str]): The AWS secret access key to use.
+        aws_sso_auth (Optional[str]): Removes the need for an access and secret access key by leveraging the current profile's authentication
         session (Optional[Session]): A boto3 Session object to use for authentication.
     """
 
