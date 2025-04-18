@@ -13,8 +13,8 @@ class WebBrowserTools(Toolkit):
     def open_page(self, url: str, new_window: bool = False):
         """Open a URL in a browser window
         Args:
-            url: URL to open
-            new_window: If True, open in a new window, otherwise open in a new tab
+            url (str): URL to open
+            new_window (bool): If True, open in a new window, otherwise open in a new tab. Default is False.
         Returns:
             None
         """
