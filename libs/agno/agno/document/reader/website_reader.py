@@ -34,6 +34,9 @@ class WebsiteReader(Reader):
         self.max_links = max_links
         self.proxy = proxy
         self.timeout = timeout
+        
+        self._visited = set()
+        self._urls_to_crawl = []
 
     def delay(self, min_seconds=1, max_seconds=3):
         """
