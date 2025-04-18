@@ -109,6 +109,7 @@ class OpenAITools(Toolkit):
 
         except Exception as e:
             log_error(f"Failed to generate image using {self.image_model}: {str(e)}")
+            return f"Failed to generate image: {str(e)}"
 
     def generate_speech(
         self,
