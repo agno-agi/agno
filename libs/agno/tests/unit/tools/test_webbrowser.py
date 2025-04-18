@@ -38,6 +38,20 @@ def test_open_page(mock_open_new_tab, webbrowser_tools):
     assert result is None
 
 
+@patch("webbrowser.open_new")
+def test_open_page_new_window(mock_open_new, webbrowser_tools):
+    """Test open_page operation."""
+    # Test opening a regular URL
+    url = "https://example.com"
+    result = webbrowser_tools.open_page(url, new_window=True)
+
+    # Verify the mock was called with the correct URL
+    mock_open_new.assert_called_once_with(url)
+
+    # Since the function doesn't return anything special, we'd expect None
+    assert result is None
+
+
 @patch("webbrowser.open_new_tab", side_effect=Exception("Browser error"))
 def test_open_page_error_handling(mock_open_new_tab, webbrowser_tools):
     """Test error handling when browser opening fails."""
