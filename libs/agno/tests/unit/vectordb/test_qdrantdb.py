@@ -105,19 +105,10 @@ def test_create_collection(qdrant_db, mock_qdrant_client):
 
 def test_exists(qdrant_db, mock_qdrant_client):
     """Test checking if collection exists"""
-    # Test when collection exists
-    collection_info = Mock()
-    collection_info.name = "test_collection"
-    collections_response = Mock()
-    collections_response.collections = [collection_info]
-    mock_qdrant_client.get_collections.return_value = collections_response
-
+    mock_qdrant_client.collection_exists.return_value = True
     assert qdrant_db.exists() is True
 
-    # Test when collection doesn't exist
-    collections_response.collections = []
-    mock_qdrant_client.get_collections.return_value = collections_response
-
+    mock_qdrant_client.collection_exists.return_value = False
     assert qdrant_db.exists() is False
 
 

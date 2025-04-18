@@ -387,9 +387,9 @@ class Qdrant(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while searching
         """
         if self.search_type == SearchType.vector:
-            results = self._run_dense_search_sync(query, limit, filters)
+            results = self._run_vector_search_sync(query, limit, filters)
         elif self.search_type == SearchType.keyword:
-            results = self._run_sparse_search_sync(query, limit, filters)
+            results = self._run_keyword_search_sync(query, limit, filters)
         elif self.search_type == SearchType.hybrid:
             results = self._run_hybrid_search_sync(query, limit, filters)
         else:
@@ -401,9 +401,9 @@ class Qdrant(VectorDb):
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         if self.search_type == SearchType.vector:
-            results = await self._run_dense_search_async(query, limit, filters)
+            results = await self._run_vector_search_async(query, limit, filters)
         elif self.search_type == SearchType.keyword:
-            results = await self._run_sparse_search_async(query, limit, filters)
+            results = await self._run_keyword_search_async(query, limit, filters)
         elif self.search_type == SearchType.hybrid:
             results = await self._run_hybrid_search_async(query, limit, filters)
         else:
@@ -411,7 +411,7 @@ class Qdrant(VectorDb):
 
         return self._build_search_results(results, query)
 
-    def _run_dense_search_sync(
+    def _run_vector_search_sync(
         self,
         query: str,
         limit: int,
@@ -429,7 +429,7 @@ class Qdrant(VectorDb):
         )
         return call.points
 
-    def _run_sparse_search_sync(
+    def _run_keyword_search_sync(
         self,
         query: str,
         limit: int,
@@ -473,7 +473,7 @@ class Qdrant(VectorDb):
         )
         return call.points
 
-    async def _run_dense_search_async(
+    async def _run_vector_search_async(
         self,
         query: str,
         limit: int,
@@ -491,7 +491,7 @@ class Qdrant(VectorDb):
         )
         return call.points
 
-    async def _run_sparse_search_async(
+    async def _run_keyword_search_async(
         self,
         query: str,
         limit: int,
