@@ -26,15 +26,16 @@ class WebsiteReader(Reader):
 
     _visited: Set[str] = field(default_factory=set)
     _urls_to_crawl: List[Tuple[str, int]] = field(default_factory=list)
-    
-    
-    def __init__(self, max_depth: int = 3, max_links: int = 10, timeout: int = 10, proxy: Optional[str] = None, **kwargs):
+
+    def __init__(
+        self, max_depth: int = 3, max_links: int = 10, timeout: int = 10, proxy: Optional[str] = None, **kwargs
+    ):
         super().__init__(**kwargs)
         self.max_depth = max_depth
         self.max_links = max_links
         self.proxy = proxy
         self.timeout = timeout
-        
+
         self._visited = set()
         self._urls_to_crawl = []
 
@@ -134,7 +135,11 @@ class WebsiteReader(Reader):
 
             try:
                 log_debug(f"Crawling: {current_url}")
-                response = httpx.get(current_url, timeout=self.timeout, proxy=self.proxy) if self.proxy else httpx.get(current_url, timeout=self.timeout)
+                response = (
+                    httpx.get(current_url, timeout=self.timeout, proxy=self.proxy)
+                    if self.proxy
+                    else httpx.get(current_url, timeout=self.timeout)
+                )
 
                 response.raise_for_status()
                 soup = BeautifulSoup(response.content, "html.parser")

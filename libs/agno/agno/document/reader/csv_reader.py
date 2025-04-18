@@ -133,11 +133,10 @@ class CSVReader(Reader):
 
 class CSVUrlReader(Reader):
     """Reader for CSV files"""
-    
+
     def __init__(self, proxy: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self.proxy = proxy
-        
 
     def read(self, url: str) -> List[Document]:
         if not url:

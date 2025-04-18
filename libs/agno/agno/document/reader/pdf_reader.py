@@ -1,6 +1,5 @@
 import asyncio
 from pathlib import Path
-from time import sleep
 from typing import IO, Any, List, Optional, Union
 
 from agno.document.base import Document
@@ -169,20 +168,18 @@ class PDFUrlReader(BasePDFReader):
     def __init__(self, proxy: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self.proxy = proxy
-        
+
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
 
         from io import BytesIO
 
-        import httpx
-
         log_info(f"Reading: {url}")
-        
+
         # Retry the request up to 3 times with exponential backoff
         response = fetch_with_retry(url, proxy=self.proxy)
-        
+
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
 
@@ -298,7 +295,7 @@ class PDFUrlImageReader(BasePDFReader):
     def __init__(self, proxy: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         self.proxy = proxy
-        
+
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
