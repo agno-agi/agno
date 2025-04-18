@@ -2,7 +2,7 @@ import json
 import pytest
 from unittest.mock import patch, Mock
 import requests
-from agno.tools.api import SerperApiTools
+from agno.tools.serperapi import SerperApiTools
 
 
 @pytest.fixture(autouse=True)
