@@ -258,7 +258,7 @@ def test_cached_tokens():
 
     # Multiple + one large prompt to ensure token caching is triggered
     agent.run("Share a 2 sentence horror story")
-    response = agent.run("Share a 2 sentence horror story" * 150)
+    response = agent.run("Share a 2 sentence horror story" * 250)
 
     cached_tokens = response.metrics.get("cached_tokens")
     assert cached_tokens is not None

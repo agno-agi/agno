@@ -1,9 +1,16 @@
 from typing import List
 
+from agno.models.base import Model
 from agno.models.message import Message
 from agno.reasoning.step import NextAction, ReasoningStep
 from agno.run.messages import RunMessages
 from agno.utils.log import logger
+
+
+def get_reasoning_agent(reasoning_model: Model, monitoring: bool = False) -> "Agent":  # type: ignore  # noqa: F821
+    from agno.agent import Agent
+
+    return Agent(model=reasoning_model, monitoring=monitoring)
 
 
 def get_next_action(reasoning_step: ReasoningStep) -> NextAction:
