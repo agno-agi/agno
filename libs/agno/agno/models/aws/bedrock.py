@@ -71,10 +71,7 @@ class AwsBedrock(Model):
         self.aws_region = self.aws_region or getenv("AWS_REGION")
 
         if self.aws_sso_auth:
-            self.client = AwsClient(
-                service_name="bedrock-runtime",
-                region_name=self.aws_region
-            )
+            self.client = AwsClient(service_name="bedrock-runtime", region_name=self.aws_region)
         else:
             if not self.aws_access_key_id or not self.aws_secret_access_key:
                 raise AgnoError(
