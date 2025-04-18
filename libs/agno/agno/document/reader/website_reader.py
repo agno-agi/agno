@@ -76,7 +76,7 @@ class WebsiteReader(Reader):
             if element:
                 return element.get_text(strip=True, separator=" ")
 
-        return ""
+        return soup.get_text(strip=True, separator=" ")
 
     def crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
         """
