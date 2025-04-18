@@ -1,9 +1,9 @@
 from agno.agent import Agent
 from agno.media import Image
-from agno.models.aimlapi import AImlAPI
+from agno.models.ai_ml_api import AIMlAPI
 
 agent = Agent(
-    model=AImlAPI(id="meta-llama/Llama-Vision-Free"),
+    model=AIMlAPI(id="meta-llama/Llama-Vision-Free"),
     markdown=True,
 )
 

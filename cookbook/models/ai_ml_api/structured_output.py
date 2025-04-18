@@ -1,7 +1,7 @@
 from typing import List
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.aimlapi import AImlAPI
+from agno.models.ai_ml_api import AIMlAPI
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -27,7 +27,7 @@ class MovieScript(BaseModel):
 
 # Agent that uses JSON mode
 json_mode_agent = Agent(
-    model=AImlAPI(id="gpt-4o-mini"),
+    model=AIMlAPI(id="gpt-4o-mini"),
     description="You write movie scripts.",
     response_model=MovieScript,
     use_json_mode=True,

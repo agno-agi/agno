@@ -6,7 +6,7 @@ from agno.models.openai.like import OpenAILike
 
 
 @dataclass
-class AImlAPI(OpenAILike):
+class AIMlAPI(OpenAILike):
     """
     A class for using models hosted on AI/ML API.
 
@@ -20,9 +20,8 @@ class AImlAPI(OpenAILike):
     """
 
     id: str = "gpt-4o-mini"
-    name: str = "AImlAPI"
-    provider: str = "AImlAPI"
+    name: str = "AIMlAPI"
+    provider: str = "AIMlAPI"
 
     api_key: Optional[str] = getenv("AIMLAPI_API_KEY")
-    base_url: str = "https://api.aimlapi.com/v1/chat/completions"
-    max_tokens: int = 1024
+    base_url: str = "https://api.aimlapi.com/v1"

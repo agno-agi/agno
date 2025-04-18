@@ -1,9 +1,9 @@
 from typing import Iterator
 
 from agno.agent import Agent, RunResponse
-from agno.models.aimlapi import AImlAPI
+from agno.models.ai_ml_api import AIMlAPI
 
-agent = Agent(model=AImlAPI(id="gpt-4o-mini"), markdown=True)
+agent = Agent(model=AIMlAPI(id="gpt-4o-mini"), markdown=True)
 
 # Get the response in a variable
 # run_response: Iterator[RunResponse] = agent.run("Share a 2 sentence horror story", stream=True)
