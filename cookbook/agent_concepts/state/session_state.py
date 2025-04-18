@@ -69,5 +69,8 @@ print(f"Session state: {agent.session_state}")
 agent.print_response("whats on my list?", stream=True)
 print(f"Session state: {agent.session_state}")
 
-agent.print_response("Clear everything from my list and start over with just bananas and yogurt", stream=True)
+agent.print_response(
+    "Clear everything from my list and start over with just bananas and yogurt",
+    stream=True,
+)
 print(f"Session state: {agent.session_state}")

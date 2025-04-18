@@ -3,7 +3,6 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
-
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     # Initialize the session state with a variable
