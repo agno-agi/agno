@@ -764,6 +764,7 @@ class Agent:
                         else:
                             self.run_response.tools = new_tool_calls_list
 
+
                         # Only iterate through new tool calls
                         for tool_call in new_tool_calls_list:
                             tool_name = tool_call.get("tool_name", "")
@@ -3833,7 +3834,7 @@ class Agent:
                     event=RunEvent.reasoning_completed,
                     session_id=session_id,
                 )
-                
+
     async def areason(self, run_messages: RunMessages, session_id: Optional[str] = None) -> Any:
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
