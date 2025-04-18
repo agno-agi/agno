@@ -1,8 +1,12 @@
-# Reasoning SQL Agent
+# SQrL: A Text2SQL Reasoning Agent
 
-This advanced example shows how to build a sophisticated text-to-SQL system that leverages Reasoning Agents to provide deep insights into any data. We'll use the F1 dataset as an example, but the system is designed to be easily extensible to other datasets.
+SQrL is an advanced text-to-SQL system that leverages Reasoning Agents to provide deep insights into any data. We'll use the F1 dataset as an example, but the system is designed to be easily extensible to other datasets.
 
 The agent uses Reasoning Agents to search for table metadata and rules, enabling it to write and run better SQL queries. This process, called `Dynamic Few Shot Prompting`, is a technique that allows the agent to dynamically search for few shot examples to improve its performance.
+
+SQrL also "thinks" before it acts. It will think about the user's question, and then decide to search its knowledge base before writing and running the SQL query.
+
+SQrL also "analyzes" the result of the SQL query, which yield much better results.
 
 > Note: Fork and clone the repository if needed
 

@@ -174,6 +174,14 @@ class Gemini(Model):
         if system_message is not None:
             config["system_instruction"] = system_message  # type: ignore
 
+        if (
+            self.response_format is not None
+            and isinstance(self.response_format, type)
+            and issubclass(self.response_format, BaseModel)
+        ):
+            config["response_mime_type"] = "application/json"  # type: ignore
+            config["response_schema"] = self.response_format
+
         if self.grounding and self.search:
             log_info("Both grounding and search are enabled. Grounding will take precedence.")
             self.search = False
@@ -196,19 +204,6 @@ class Gemini(Model):
 
         elif self._tools:
             config["tools"] = [format_function_definitions(self._tools)]
-
-        if (
-            self.response_format is not None
-            and isinstance(self.response_format, type)
-            and issubclass(self.response_format, BaseModel)
-        ):
-            config["response_mime_type"] = "application/json"  # type: ignore
-            config["response_schema"] = self.response_format
-
-            if config.get("tool") is not None and len(config["tools"]) > 0:
-                log_warning(
-                    "The current google-genai version does not support structured outputs with tools. Use `use_json_mode=True` to force JSON mode."
-                )
 
         config = {k: v for k, v in config.items() if v is not None}
 
@@ -331,6 +326,7 @@ class Gemini(Model):
             messages (List[Message]): The list of messages to convert.
         """
         formatted_messages: List = []
+        file_content: Union[GeminiFile, Part] = None
         system_message = None
         for message in messages:
             role = message.role
@@ -426,11 +422,15 @@ class Gemini(Model):
                 if message.files is not None:
                     for file in message.files:
                         file_content = self._format_file_for_message(file)
-                        if file_content:
-                            message_parts.append(file_content)
+                        if isinstance(file_content, Part):
+                            formatted_messages.append(file_content)
 
             final_message = Content(role=role, parts=message_parts)
             formatted_messages.append(final_message)
+
+            if isinstance(file_content, GeminiFile):
+                formatted_messages.insert(0, file_content)
+
         return formatted_messages, system_message
 
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:
@@ -570,19 +570,35 @@ class Gemini(Model):
                             mime_type=mimetypes.guess_type(file_path)[0], data=file_path.read_bytes()
                         )
                 else:
-                    file_upload = self.get_client().files.upload(
-                        file=file_path,
-                    )
-                    # Check whether the file is ready to be used.
-                    while file_upload.state.name == "PROCESSING":
-                        time.sleep(2)
-                        file_upload = self.get_client().files.get(name=file_upload.name)
-                    if file_upload.state.name == "FAILED":
-                        raise ValueError(file_upload.state.name)
-                    return Part.from_uri(file_uri=file_upload.uri, mime_type=file_upload.mime_type)
+                    clean_file_name = f"files/{file_path.stem.lower().replace('_', '')}"
+                    remote_file = None
+                    try:
+                        remote_file = self.get_client().files.get(name=clean_file_name)
+                    except Exception as e:
+                        log_warning(f"Error getting file {clean_file_name}: {e}")
+
+                    if remote_file is not None:
+                        return Part.from_uri(file_uri=remote_file.uri, mime_type=remote_file.mime_type)
+                    else:
+                        file_upload = self.get_client().files.upload(
+                            file=file_path,
+                            config=dict(
+                                name=clean_file_name,
+                            ),
+                        )
+                        # Check whether the file is ready to be used.
+                        while file_upload.state.name == "PROCESSING":
+                            time.sleep(2)
+                            file_upload = self.get_client().files.get(name=file_upload.name)
+                        if file_upload.state.name == "FAILED":
+                            raise ValueError(file_upload.state.name)
+                        return Part.from_uri(file_uri=file_upload.uri, mime_type=file_upload.mime_type)
             else:
                 log_error(f"File {file_path} does not exist.")
 
+        # Case 4: File is a Gemini File object
+        elif isinstance(file.external, GeminiFile):
+            return file.external
         return None
 
     def format_function_call_results(
@@ -659,16 +675,12 @@ class Gemini(Model):
                 citations.raw = grounding_metadata
 
                 # Extract url and title
-                chunks = grounding_metadata.pop("grounding_chunks", [])
-                citation_pairs = (
-                    [
-                        (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
-                        for chunk in chunks
-                        if chunk.get("web", {}).get("uri")
-                    ]
-                    if chunks
-                    else []
-                )
+                chunks = grounding_metadata.pop("grounding_chunks", None) or []
+                citation_pairs = [
+                    (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
+                    for chunk in chunks
+                    if chunk.get("web", {}).get("uri")
+                ]
 
                 # Create citation objects from filtered pairs
                 citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
@@ -726,7 +738,7 @@ class Gemini(Model):
             citations.raw = grounding_metadata
 
             # Extract url and title
-            chunks = grounding_metadata.pop("grounding_chunks", [])
+            chunks = grounding_metadata.pop("grounding_chunks", None) or []
             citation_pairs = [
                 (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
                 for chunk in chunks

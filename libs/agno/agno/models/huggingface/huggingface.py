@@ -239,6 +239,18 @@ class HuggingFace(Model):
         if message.tool_calls is None or len(message.tool_calls) == 0:
             message_dict["tool_calls"] = None
 
+        if message.audio is not None and len(message.audio) > 0:
+            log_warning("Audio input is currently unsupported.")
+
+        if message.files is not None and len(message.files) > 0:
+            log_warning("File input is currently unsupported.")
+
+        if message.images is not None and len(message.images) > 0:
+            log_warning("Image input is currently unsupported.")
+
+        if message.videos is not None and len(message.videos) > 0:
+            log_warning("Video input is currently unsupported.")
+
         return message_dict
 
     def invoke(self, messages: List[Message]) -> Union[ChatCompletionOutput]:

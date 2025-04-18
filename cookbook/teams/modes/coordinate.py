@@ -72,6 +72,7 @@ hn_team = Team(
         "Finally, provide a thoughtful and engaging summary.",
     ],
     response_model=Article,
+    add_member_tools_to_system_message=False,
     show_tool_calls=True,
     markdown=True,
     debug_mode=True,

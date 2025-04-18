@@ -207,6 +207,10 @@ class AwsBedrock(Model):
                             )
                         else:
                             raise ValueError("Video content and format are required.")
+
+                if message.files is not None and len(message.files) > 0:
+                    log_warning("File input is currently unsupported.")
+
                 formatted_messages.append(formatted_message)
         # TODO: Add caching: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-call.html
         return formatted_messages, system_message
