@@ -1,1 +1,1 @@
-from agno.models.ai_ml_api.aimlapi import AIMlAPI
+from agno.models.ai_ml_api.ai_ml_api import AIMlAPI
