@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 from time import sleep
-from typing import IO, Any, List, Union
+from typing import IO, Any, List, Optional, Union
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
@@ -165,6 +165,10 @@ class PDFReader(BasePDFReader):
 class PDFUrlReader(BasePDFReader):
     """Reader for PDF files from URL"""
 
+    def __init__(self, proxy: Optional[str] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.proxy = proxy
+        
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
@@ -177,7 +181,7 @@ class PDFUrlReader(BasePDFReader):
         # Retry the request up to 3 times with exponential backoff
         for attempt in range(3):
             try:
-                response = httpx.get(url)
+                response = httpx.get(url, proxy=self.proxy) if self.proxy else httpx.get(url)
                 break
             except httpx.RequestError as e:
                 if attempt == 2:  # Last attempt
@@ -220,7 +224,8 @@ class PDFUrlReader(BasePDFReader):
 
         log_info(f"Reading: {url}")
 
-        async with httpx.AsyncClient() as client:
+        client_args = {"proxy": self.proxy} if self.proxy else {}
+        async with httpx.AsyncClient(**client_args) as client:
             # Retry the request up to 3 times with exponential backoff
             for attempt in range(3):
                 try:
@@ -321,6 +326,10 @@ class PDFImageReader(BasePDFReader):
 class PDFUrlImageReader(BasePDFReader):
     """Reader for PDF files from URL with text and images extraction"""
 
+    def __init__(self, proxy: Optional[str] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.proxy = proxy
+        
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
@@ -331,7 +340,7 @@ class PDFUrlImageReader(BasePDFReader):
 
         # Read the PDF from the URL
         log_info(f"Reading: {url}")
-        response = httpx.get(url)
+        response = httpx.get(url, proxy=self.proxy) if self.proxy else httpx.get(url)
 
         doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
@@ -356,7 +365,8 @@ class PDFUrlImageReader(BasePDFReader):
 
         log_info(f"Reading: {url}")
 
-        async with httpx.AsyncClient() as client:
+        client_args = {"proxy": self.proxy} if self.proxy else {}
+        async with httpx.AsyncClient(**client_args) as client:
             response = await client.get(url)
             response.raise_for_status()
 
