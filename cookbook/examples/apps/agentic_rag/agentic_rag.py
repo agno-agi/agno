@@ -77,7 +77,7 @@ def get_agentic_rag_agent(
             # Use OpenAI embeddings
             embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),
-        num_documents=5,  # Retrieve 3 most relevant documents
+        num_documents=3,  # Retrieve 3 most relevant documents
     )
 
     # Create the Agent
