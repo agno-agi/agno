@@ -119,14 +119,11 @@ class MCPTools(Toolkit):
 
         # Create a new session using stdio_client or sse_client based on transport
         if self.transport == "sse":
-            if self.url is None:
-                raise ValueError("URL must be provided when using SSE transport")
-
             sse_args = asdict(self.sse_params) if self.sse_params is not None else {}
             self._stdio_context = sse_client(self.url, **sse_args)  # type: ignore
         else:
             if self.server_params is None:
-                raise ValueError("server_params must be provided when using stdio transport")
+                raise ValueError("server_params must be provided when using stdio transport.")
             self._stdio_context = stdio_client(self.server_params)  # type: ignore
 
         read, write = await self._stdio_context.__aenter__()  # type: ignore
