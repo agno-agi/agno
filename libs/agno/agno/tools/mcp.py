@@ -1,8 +1,8 @@
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from os import environ
 from types import TracebackType
-from typing import List, Optional, Union, Literal, Dict, Any
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -11,8 +11,8 @@ from agno.utils.mcp import get_entrypoint_for_tool
 
 try:
     from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
     from mcp.client.sse import sse_client
+    from mcp.client.stdio import stdio_client
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
 
@@ -20,6 +20,7 @@ except (ImportError, ModuleNotFoundError):
 @dataclass
 class SSEClientParams:
     """Parameters for SSE client connection."""
+
     headers: Optional[Dict[str, Any]] = None
     timeout: Optional[float] = None
     sse_read_timeout: Optional[float] = None
@@ -49,7 +50,6 @@ class MCPTools(Toolkit):
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
-
         **kwargs,
     ):
         """
@@ -205,9 +205,10 @@ class MultiMCPTools(Toolkit):
     A toolkit for integrating multiple Model Context Protocol (MCP) servers with Agno agents.
     This allows agents to access tools, resources, and prompts exposed by MCP servers.
 
-    Can be used in two ways:
+    Can be used in three ways:
     1. Direct initialization with a ClientSession
     2. As an async context manager with StdioServerParameters
+    3. As an async context manager with SSE endpoints
     """
 
     def __init__(
@@ -216,6 +217,7 @@ class MultiMCPTools(Toolkit):
         *,
         env: Optional[dict[str, str]] = None,
         server_params_list: Optional[List[StdioServerParameters]] = None,
+        sse_endpoints: Optional[List[Dict[str, Union[str, SSEClientParams]]]] = None,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -228,17 +230,19 @@ class MultiMCPTools(Toolkit):
             server_params_list: List of StdioServerParameters for creating new sessions
             commands: List of commands to run to start the servers. Should be used in conjunction with env.
             env: The environment variables to pass to the servers. Should be used in conjunction with commands.
+            sse_endpoints: List of dictionaries containing {"url": str, "params": SSEClientParams} for SSE connections
             client: The underlying MCP client (optional, used to prevent garbage collection)
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
         """
         super().__init__(name="MultiMCPToolkit", **kwargs)
 
-        if server_params_list is None and commands is None:
-            raise ValueError("Either server_params_list or commands must be provided")
+        if server_params_list is None and commands is None and sse_endpoints is None:
+            raise ValueError("Either server_params_list, commands, or sse_endpoints must be provided")
 
         self.server_params_list: List[StdioServerParameters] = server_params_list or []
         self.commands: Optional[List[str]] = commands
+        self.sse_endpoints: Optional[List[Dict[str, Union[str, SSEClientParams]]]] = sse_endpoints
 
         # Merge provided env with system env
         if env is not None:
@@ -270,12 +274,34 @@ class MultiMCPTools(Toolkit):
     async def __aenter__(self) -> "MultiMCPTools":
         """Enter the async context manager."""
 
+        # Handle stdio connections
         for server_params in self.server_params_list:
             stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
             read, write = stdio_transport
             session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
 
             await self.initialize(session)
+
+        # Handle SSE connections
+        if self.sse_endpoints:
+            for endpoint in self.sse_endpoints:
+                url = endpoint.get("url")
+                if not url or not isinstance(url, str):
+                    raise ValueError("URL must be provided as a string for SSE endpoint")
+
+                params = endpoint.get("params", None)
+                sse_args = {}
+                if params is not None:
+                    if isinstance(params, SSEClientParams):
+                        sse_args = asdict(params)
+                    else:
+                        raise ValueError("SSE params must be an instance of SSEClientParams")
+
+                sse_transport = await self._async_exit_stack.enter_async_context(sse_client(url, **sse_args))
+                read, write = sse_transport
+                session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+
+                await self.initialize(session)
 
         return self
 
