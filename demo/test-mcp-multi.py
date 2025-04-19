@@ -3,13 +3,17 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.mcp import MCPTools
+from agno.tools.mcp import MultiMCPTools
 
 async def run_agent(message: str) -> None:
     """Run the filesystem agent with the given message."""
 
     # MCP server to access via SSE
-    async with MCPTools("http://0.0.0.0:7071/runtime/webhooks/mcp/sse", transport="sse") as mcp_tools:
+    async with MultiMCPTools(
+        sse_endpoints=[
+            {"url": "http://0.0.0.0:7071/runtime/webhooks/mcp/sse"}
+        ]
+    ) as mcp_tools:
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
             tools=[mcp_tools],
