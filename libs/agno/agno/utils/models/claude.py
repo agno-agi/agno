@@ -246,6 +246,6 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                             type="tool_use",
                         )
                     )
-
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
+
     return chat_messages, " ".join(system_messages)

@@ -348,7 +348,7 @@ class Claude(Model):
                         "content": str(_fc_message.content),
                     }
                 )
-            messages.append(Message(role="user", content=fc_responses))
+            messages.append(Message(role="tool", content=fc_responses))
 
     def get_system_message_for_model(self) -> Optional[str]:
         if self._functions is not None and len(self._functions) > 0:

@@ -104,7 +104,7 @@ def test_response_model():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=OpenRouter(id="anthropic/claude-3-sonnet"),
+        model=OpenRouter(id="openai/o4-mini"),
         markdown=True,
         telemetry=False,
         monitoring=False,
