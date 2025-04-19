@@ -2103,7 +2103,8 @@ class Agent:
                     # If the session_state is already set, merge the session_state from the database with the current session_state
                     if self.session_state is not None and len(self.session_state) > 0:
                         # This updates session_state_from_db
-                        merge_dictionaries(session_state_from_db, self.session_state)
+                        # If there are conflicting keys, values from session_state_from_db will take precedence
+                        merge_dictionaries(self.session_state, session_state_from_db)
                     # Update the current session_state
                     self.session_state = session_state_from_db
 
