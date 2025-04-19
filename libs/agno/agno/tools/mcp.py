@@ -217,7 +217,7 @@ class MultiMCPTools(Toolkit):
         *,
         env: Optional[dict[str, str]] = None,
         server_params_list: Optional[List[StdioServerParameters]] = None,
-        sse_endpoints: Optional[List[Dict[str, Union[str, SSEClientParams]]]] = None,
+        sse_endpoints: Optional[List[Dict[str, Union[str, Optional[SSEClientParams]]]]] = None,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -242,7 +242,7 @@ class MultiMCPTools(Toolkit):
 
         self.server_params_list: List[StdioServerParameters] = server_params_list or []
         self.commands: Optional[List[str]] = commands
-        self.sse_endpoints: Optional[List[Dict[str, Union[str, SSEClientParams]]]] = sse_endpoints
+        self.sse_endpoints: Optional[List[Dict[str, Union[str, Optional[SSEClientParams]]]]] = sse_endpoints
 
         # Merge provided env with system env
         if env is not None:
