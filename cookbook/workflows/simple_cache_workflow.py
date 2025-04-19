@@ -16,7 +16,9 @@ class CacheWorkflow(Workflow):
         logger.info(f"Checking cache for '{message}'")
         if self.session_state.get(message):
             logger.info(f"Cache hit for '{message}'")
-            yield RunResponse(run_id=self.run_id, content=self.session_state.get(message))
+            yield RunResponse(
+                run_id=self.run_id, content=self.session_state.get(message)
+            )
             return
 
         logger.info(f"Cache miss for '{message}'")
