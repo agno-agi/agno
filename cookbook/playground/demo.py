@@ -6,6 +6,8 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.memory.v2 import Memory
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
 from agno.storage.sqlite import SqliteStorage
@@ -14,6 +16,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 from agno.tools.youtube import YouTubeTools
+from agno.vectordb.lancedb import LanceDb, SearchType
 
 agent_storage_file: str = "tmp/agents.db"
 memory_storage_file: str = "tmp/memory.db"
@@ -40,6 +43,9 @@ simple_agent = Agent(
     num_history_responses=5,
     add_datetime_to_instructions=True,
     markdown=True,
+    instructions=[
+        "Always answer like a pirate",
+    ],
 )
 
 web_agent = Agent(
@@ -61,6 +67,16 @@ web_agent = Agent(
     num_history_responses=5,
     add_datetime_to_instructions=True,
     markdown=True,
+    debug_mode=True,
+    knowledge=PDFUrlKnowledgeBase(
+        urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+        vector_db=LanceDb(
+            uri="tmp/lancedb",
+            table_name="recipe_knowledge",
+            search_type=SearchType.hybrid,
+            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+        ),
+    ),
 )
 
 finance_agent = Agent(
