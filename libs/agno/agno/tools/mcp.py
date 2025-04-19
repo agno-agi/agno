@@ -31,10 +31,10 @@ class MCPTools(Toolkit):
     A toolkit for integrating Model Context Protocol (MCP) servers with Agno agents.
     This allows agents to access tools, resources, and prompts exposed by MCP servers.
 
-    Can be used in two ways:
+    Can be used in three ways:
     1. Direct initialization with a ClientSession
     2. As an async context manager with StdioServerParameters
-    3. As an async context manager with `command` directly specified
+    3. As an async context manager with SSE endpoints
     """
 
     def __init__(
