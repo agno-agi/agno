@@ -233,16 +233,27 @@ class Qdrant(VectorDb):
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
+
+            # Create payload with document properties
+            payload = {
+                "name": document.name,
+                "meta_data": document.meta_data,
+                "content": cleaned_content,
+                "usage": document.usage,
+            }
+
+            # Add filters as metadata if provided
+            if filters:
+                # Merge filters with existing metadata
+                if "meta_data" not in payload:
+                    payload["meta_data"] = {}
+                payload["meta_data"].update(filters)
+
             points.append(
                 models.PointStruct(
                     id=doc_id,
                     vector=document.embedding,
-                    payload={
-                        "name": document.name,
-                        "meta_data": document.meta_data,
-                        "content": cleaned_content,
-                        "usage": document.usage,
-                    },
+                    payload=payload,
                 )
             )
             log_debug(f"Inserted document: {document.name} ({document.meta_data})")
@@ -309,13 +320,39 @@ class Qdrant(VectorDb):
             logger.error(f"Error getting embedding for Query: {query}")
             return []
 
-        results = self.client.search(
-            collection_name=self.collection,
-            query_vector=query_embedding,
-            with_vectors=True,
-            with_payload=True,
-            limit=limit,
-        )
+        # Build search parameters
+        search_params = {
+            "collection_name": self.collection,
+            "query_vector": query_embedding,
+            "with_vectors": True,
+            "with_payload": True,
+            "limit": limit,
+        }
+
+        # Handle filters if provided
+        if filters:
+            filter_conditions = []
+            for key, value in filters.items():
+                if isinstance(value, dict):
+                    # Handle nested dictionaries like meta_data
+                    for sub_key, sub_value in value.items():
+                        filter_conditions.append(
+                            models.FieldCondition(key=f"{key}.{sub_key}", match=models.MatchValue(value=sub_value))
+                        )
+                else:
+                    # Handle direct key-value pairs
+                    filter_conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=value)))
+
+            if filter_conditions:
+                # Use query_filter instead of filter
+                search_params["query_filter"] = models.Filter(must=filter_conditions)
+
+        try:
+            # Execute search with parameters
+            results = self.client.search(**search_params)
+        except Exception as e:
+            logger.error(f"Error searching for documents: {e}")
+            return []
 
         # Build search results
         search_results: List[Document] = []
