@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 
 import httpx
@@ -8,7 +9,7 @@ def download_image(url: str, output_path: str) -> bool:
     Downloads an image from the specified URL and saves it to the given local path.
     Parameters:
     - url (str): URL of the image to download.
-    - save_path (str): Local filesystem path to save the image.
+    - output_path (str): Local filesystem path to save the image
     """
     try:
         # Send HTTP GET request to the image URL
@@ -77,3 +78,27 @@ def download_file(url: str, output_path: str) -> None:
 
     except httpx.HTTPError as e:
         raise Exception(f"Failed to download file from {url}: {str(e)}")
+
+
+def save_audio(base64_data: str, output_path: str) -> bool:
+    """
+    Saves base64 string to the specified path.
+    """
+    try:
+        # Decode the base64 string into bytes
+        decoded_data = base64.b64decode(base64_data)
+    except Exception as e:
+        raise Exception(f"An unexpected error occurred during base64 decoding: {e}")
+
+    try:
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write the bytes to the local file in binary mode
+        with open(path, "wb") as file:
+            file.write(decoded_data)
+
+        print(f"Data successfully saved to '{path}'.")
+        return True
+    except Exception as e:
+        raise Exception(f"An unexpected error occurred while saving data to '{output_path}': {e}")
