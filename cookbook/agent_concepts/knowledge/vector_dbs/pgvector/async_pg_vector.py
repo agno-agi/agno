@@ -1,7 +1,8 @@
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.pgvector import PgVector
-import asyncio
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -19,5 +20,4 @@ if __name__ == "__main__":
     asyncio.run(knowledge_base.aload(recreate=False))
 
     # Create and use the agent
-    asyncio.run(agent.aprint_response(
-        "How to make Tom Kha Gai", markdown=True))
+    asyncio.run(agent.aprint_response("How to make Tom Kha Gai", markdown=True))

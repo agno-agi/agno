@@ -1,9 +1,9 @@
-from hashlib import md5
-from math import sqrt
-from typing import Any, Dict, List, Optional, Union, Callable, TypeVar, cast
+import asyncio
 import concurrent.futures
 import functools
-import asyncio
+from hashlib import md5
+from math import sqrt
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, cast
 
 try:
     from sqlalchemy.dialects import postgresql
@@ -31,7 +31,7 @@ from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.search import SearchType
 
 # Type variable for generic function return types
-T = TypeVar('T')
+T = TypeVar("T")
 
 # Add this near the top of the file after imports
 thread_pool_executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
@@ -41,10 +41,13 @@ def run_in_thread(func: Callable[..., T]) -> Callable[..., T]:
     """
     Decorator to run a function in a thread pool.
     """
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         return thread_pool_executor.submit(func, *args, **kwargs)
+
     return wrapper
+
 
 class PgVector(VectorDb):
     """
@@ -221,9 +224,10 @@ class PgVector(VectorDb):
                     sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
             log_debug(f"Creating table: {self.table_name}")
             self.table.create(self.db_engine)
-            
+
     async def async_create(self) -> None:
         """Create the table asynchronously by running in a thread."""
+
         def _create():
             self.create()
 
@@ -263,9 +267,10 @@ class PgVector(VectorDb):
         cleaned_content = document.content.replace("\x00", "\ufffd")
         content_hash = md5(cleaned_content.encode()).hexdigest()
         return self._record_exists(self.table.c.content_hash, content_hash)
-    
+
     async def async_doc_exists(self, document: Document) -> bool:
         """Check if document exists asynchronously by running in a thread."""
+
         def _doc_exists():
             return self.doc_exists(document)
 
@@ -283,9 +288,10 @@ class PgVector(VectorDb):
             bool: True if a document with the name exists, False otherwise.
         """
         return self._record_exists(self.table.c.name, name)
-    
+
     async def async_name_exists(self, name: str) -> bool:
         """Check if name exists asynchronously by running in a thread."""
+
         def _name_exists():
             return self.name_exists(name)
 
@@ -370,9 +376,10 @@ class PgVector(VectorDb):
         except Exception as e:
             logger.error(f"Error inserting documents: {e}")
             raise
-        
+
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents asynchronously by running in a thread."""
+
         def _insert():
             self.insert(documents, filters)
 
@@ -454,9 +461,10 @@ class PgVector(VectorDb):
         except Exception as e:
             logger.error(f"Error upserting documents: {e}")
             raise
-        
+
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents asynchronously by running in a thread."""
+
         def _upsert():
             self.upsert(documents, filters)
 
@@ -484,9 +492,12 @@ class PgVector(VectorDb):
         else:
             logger.error(f"Invalid search type '{self.search_type}'.")
             return []
-        
-    async def async_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """Search asynchronously by running in a thread."""
+
         def _search():
             return self.search(query, limit, filters)
 
@@ -814,9 +825,10 @@ class PgVector(VectorDb):
                 raise
         else:
             log_info(f"Table '{self.table.fullname}' does not exist.")
-            
+
     async def async_drop(self) -> None:
         """Drop the table asynchronously by running in a thread."""
+
         def _drop():
             self.drop()
 
@@ -831,9 +843,10 @@ class PgVector(VectorDb):
             bool: True if the table exists, False otherwise.
         """
         return self.table_exists()
-    
+
     async def async_exists(self) -> bool:
         """Check if table exists asynchronously by running in a thread."""
+
         def _exists():
             return self.exists()
 
