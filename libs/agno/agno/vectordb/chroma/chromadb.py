@@ -1,5 +1,8 @@
+import asyncio
+import concurrent.futures
+import functools
 from hashlib import md5
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 try:
     from chromadb import Client as ChromaDbClient
@@ -17,6 +20,12 @@ from agno.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
+
+# Type variable for generic function return types
+T = TypeVar("T")
+
+# Thread pool executor for async operations
+thread_pool_executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
 
 
 class ChromaDb(VectorDb):
@@ -85,6 +94,15 @@ class ChromaDb(VectorDb):
             self._collection = self.client.create_collection(
                 name=self.collection_name, metadata={"hnsw:space": self.distance.value}
             )
+            
+    async def async_create(self) -> None:
+        """Create the collection asynchronously by running in a thread."""
+
+        def _create():
+            self.create()
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(thread_pool_executor, _create)
 
     def doc_exists(self, document: Document) -> bool:
         """Check if a document exists in the collection.
@@ -107,6 +125,15 @@ class ChromaDb(VectorDb):
         except Exception as e:
             logger.error(f"Document does not exist: {e}")
         return False
+    
+    async def async_doc_exists(self, document: Document) -> bool:
+        """Check if a document exists asynchronously."""
+
+        def _doc_exists():
+            return self.doc_exists(document)
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(thread_pool_executor, _doc_exists)
 
     def name_exists(self, name: str) -> bool:
         """Check if a document with a given name exists in the collection.
@@ -123,6 +150,15 @@ class ChromaDb(VectorDb):
             except Exception as e:
                 logger.error(f"Document with given name does not exist: {e}")
         return False
+    
+    async def async_name_exists(self, name: str) -> bool:
+        """Check if a document with given name exists asynchronously."""
+
+        def _name_exists():
+            return self.name_exists(name)
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(thread_pool_executor, _name_exists)
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the collection.
@@ -156,6 +192,15 @@ class ChromaDb(VectorDb):
             if len(docs) > 0:
                 self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
                 log_debug(f"Committed {len(docs)} documents")
+                
+    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        """Insert documents asynchronously by running in a thread."""
+
+        def _insert():
+            self.insert(documents, filters)
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(thread_pool_executor, _insert)
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in ChromaDB."""
@@ -193,6 +238,15 @@ class ChromaDb(VectorDb):
             if len(docs) > 0:
                 self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
                 log_debug(f"Committed {len(docs)} documents")
+                
+    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        """Upsert documents asynchronously by running in a thread."""
+
+        def _upsert():
+            self.upsert(documents, filters)
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(thread_pool_executor, _upsert)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Search the collection for a query.
@@ -249,12 +303,32 @@ class ChromaDb(VectorDb):
             search_results = self.reranker.rerank(query=query, documents=search_results)
 
         return search_results
+    
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        """Search asynchronously by running in a thread."""
+
+        def _search():
+            return self.search(query, limit, filters)
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(thread_pool_executor, _search)
 
     def drop(self) -> None:
         """Delete the collection."""
         if self.exists():
             log_debug(f"Deleting collection: {self.collection_name}")
             self.client.delete_collection(name=self.collection_name)
+            
+    async def async_drop(self) -> None:
+        """Drop the collection asynchronously by running in a thread."""
+
+        def _drop():
+            self.drop()
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(thread_pool_executor, _drop)
 
     def exists(self) -> bool:
         """Check if the collection exists."""
@@ -264,6 +338,15 @@ class ChromaDb(VectorDb):
         except Exception as e:
             log_debug(f"Collection does not exist: {e}")
         return False
+    
+    async def async_exists(self) -> bool:
+        """Check if collection exists asynchronously by running in a thread."""
+
+        def _exists():
+            return self.exists()
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(thread_pool_executor, _exists)
 
     def get_count(self) -> int:
         """Get the count of documents in the collection."""
@@ -286,28 +369,9 @@ class ChromaDb(VectorDb):
             logger.error(f"Error clearing collection: {e}")
             return False
 
-    async def async_create(self) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
-    async def async_doc_exists(self, document: Document) -> bool:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+    
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+    
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_drop(self) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_exists(self) -> bool:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_name_exists(self, name: str) -> bool:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+    
