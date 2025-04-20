@@ -79,6 +79,7 @@ class Gemini(Model):
     seed: Optional[int] = None
     response_modalities: Optional[list[str]] = None  # "Text" and/or "Image"
     speech_config: Optional[dict[str, Any]] = None
+    cached_conent: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -168,6 +169,7 @@ class Gemini(Model):
                 "seed": self.seed,
                 "response_modalities": self.response_modalities,
                 "speech_config": self.speech_config,
+                "cached_content": self.cached_content,
             }
         )
 
