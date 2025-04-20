@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent, RunResponse
 from agno.models.base import Model
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
+from agno.models.openai import OpenAIChat
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -187,7 +188,8 @@ class AccuracyEval:
         model = self.model
         if model is None:
             try:
-                from agno.models.openai import OpenAIChat
+                # commented and moved to global import
+                # from agno.models.openai import OpenAIChat
 
                 model = OpenAIChat(id="gpt-4o-mini")
             except (ModuleNotFoundError, ImportError) as e:
@@ -210,7 +212,7 @@ class AccuracyEval:
             evaluator_context += "\n"
 
         return Agent(
-            model=OpenAIChat(id="gpt-4o-mini"),
+            model=self.model if self.model is not None else OpenAIChat(id="gpt-4o-mini"), # using the evaluator model passed to def if it's not None
             description=f"""\
 You are an Agent Evaluator tasked with assessing the accuracy of an AI Agent's answer compared to an expected answer for a given question.
 Your task is to provide a detailed analysis and assign a score on a scale of 1 to 10, where 10 indicates a perfect match to the expected answer.
