@@ -5,8 +5,8 @@ from agno.vectordb.clickhouse.index import HNSW
 
 try:
     import clickhouse_connect
-    import clickhouse_connect.driver.client
     import clickhouse_connect.driver.asyncclient
+    import clickhouse_connect.driver.client
 except ImportError:
     raise ImportError("`clickhouse-connect` not installed. Use `pip install clickhouse-connect` to install it")
 
@@ -42,7 +42,7 @@ class Clickhouse(VectorDb):
         self.dsn = dsn
         self.compress = compress
         self.database_name = database_name
-        
+
         if not client:
             client = clickhouse_connect.get_client(
                 host=self.host,
@@ -74,7 +74,7 @@ class Clickhouse(VectorDb):
 
         # Index for the collection
         self.index: Optional[HNSW] = index
-        
+
     async def _ensure_async_client(self):
         """Ensure we have an initialized async client."""
         if self.async_client is None:
@@ -86,7 +86,7 @@ class Clickhouse(VectorDb):
                 port=self.port,
                 dsn=self.dsn,
                 compress=self.compress,
-                settings={"allow_experimental_vector_similarity_index": 1}
+                settings={"allow_experimental_vector_similarity_index": 1},
             )
         return self.async_client
 
@@ -109,13 +109,13 @@ class Clickhouse(VectorDb):
         except Exception as e:
             logger.error(e)
             return False
-        
+
     async def async_table_exists(self) -> bool:
         """Check if a table exists asynchronously."""
         log_debug(f"Async checking if table exists: {self.table_name}")
         try:
             async_client = await self._ensure_async_client()
-            
+
             parameters = self._get_base_parameters()
             result = await async_client.command(
                 "EXISTS TABLE {database_name:Identifier}.{table_name:Identifier}",
@@ -167,13 +167,13 @@ class Clickhouse(VectorDb):
                 ) ENGINE = ReplacingMergeTree ORDER BY id""",
                 parameters=parameters,
             )
-            
+
     async def async_create(self) -> None:
         """Create database and table asynchronously."""
         if not await self.async_table_exists():
             log_debug(f"Async creating Database: {self.database_name}")
             async_client = await self._ensure_async_client()
-            
+
             parameters = {"database_name": self.database_name}
             await async_client.command(
                 "CREATE DATABASE IF NOT EXISTS {database_name:Identifier}",
@@ -190,8 +190,7 @@ class Clickhouse(VectorDb):
                 )
                 await async_client.command("SET allow_experimental_vector_similarity_index = 1")
             else:
-                raise NotImplementedError(
-                    f"Not implemented index {type(self.index)!r} is passed")
+                raise NotImplementedError(f"Not implemented index {type(self.index)!r} is passed")
 
             await self.async_client.command("SET enable_json_type = 1")
 
@@ -229,12 +228,12 @@ class Clickhouse(VectorDb):
             parameters=parameters,
         )
         return bool(result.result_rows)
-    
+
     async def async_doc_exists(self, document: Document) -> bool:
         """Check if a document exists asynchronously."""
         cleaned_content = document.content.replace("\x00", "\ufffd")
         async_client = await self._ensure_async_client()
-        
+
         parameters = self._get_base_parameters()
         parameters["content_hash"] = md5(cleaned_content.encode()).hexdigest()
 
@@ -259,12 +258,12 @@ class Clickhouse(VectorDb):
             parameters=parameters,
         )
         return bool(result)
-    
+
     async def async_name_exists(self, name: str) -> bool:
         """Check if a document with given name exists asynchronously."""
         parameters = self._get_base_parameters()
         async_client = await self._ensure_async_client()
-        
+
         parameters["name"] = name
 
         result = await async_client.query(
@@ -328,12 +327,12 @@ class Clickhouse(VectorDb):
             ],
         )
         log_debug(f"Inserted {len(documents)} documents")
-        
+
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents asynchronously."""
         rows: List[List[Any]] = []
         async_client = await self._ensure_async_client()
-        
+
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -393,7 +392,7 @@ class Clickhouse(VectorDb):
             "SELECT id FROM {database_name:Identifier}.{table_name:Identifier} FINAL",
             parameters=parameters,
         )
-        
+
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents asynchronously."""
         # We are using ReplacingMergeTree engine in our table, so we need to insert the documents,
@@ -464,11 +463,13 @@ class Clickhouse(VectorDb):
             )
 
         return search_results
-    
-    async def async_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """Search for documents asynchronously."""
         async_client = await self._ensure_async_client()
-        
+
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
@@ -479,8 +480,7 @@ class Clickhouse(VectorDb):
         if filters:
             query_filters: List[str] = []
             for key, value in filters.values():
-                query_filters.append(
-                    f"{{{key}_key:String}} = {{{key}_value:String}}")
+                query_filters.append(f"{{{key}_key:String}} = {{{key}_value:String}}")
                 parameters[f"{key}_key"] = key
                 parameters[f"{key}_value"] = value
             where_query = f"WHERE {' AND '.join(query_filters)}"
@@ -536,7 +536,7 @@ class Clickhouse(VectorDb):
                 "DROP TABLE {database_name:Identifier}.{table_name:Identifier}",
                 parameters=parameters,
             )
-            
+
     async def async_drop(self) -> None:
         """Drop the table asynchronously."""
         if await self.async_exists():
@@ -549,7 +549,7 @@ class Clickhouse(VectorDb):
 
     def exists(self) -> bool:
         return self.table_exists()
-    
+
     async def async_exists(self) -> bool:
         return await self.async_table_exists()
 

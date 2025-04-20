@@ -1,8 +1,9 @@
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.vectordb.clickhouse import Clickhouse
-import asyncio
 
 agent = Agent(
     storage=SqliteAgentStorage(table_name="recipe_agent"),
@@ -29,5 +30,4 @@ if __name__ == "__main__":
     asyncio.run(agent.knowledge.aload(recreate=False))
 
     # Create and use the agent
-    asyncio.run(agent.aprint_response(
-        "How to make Tom Kha Gai", markdown=True))
+    asyncio.run(agent.aprint_response("How to make Tom Kha Gai", markdown=True))
