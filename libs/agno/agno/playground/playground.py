@@ -36,13 +36,16 @@ class Playground:
 
         if self.agents:
             for agent in self.agents:
-                if not agent.agent_id:
-                    agent.agent_id = generate_id(agent.name)
+                agent.initialize_agent()
 
         if self.teams:
             for team in self.teams:
-                if not team.team_id:
-                    team.team_id = generate_id(team.name)
+                team.initialize_team()
+                for member in team.members:
+                    if isinstance(member, Agent):
+                        member.initialize_agent()
+                    elif isinstance(member, Team):
+                        member.initialize_team()
 
         if self.workflows:
             for workflow in self.workflows:
