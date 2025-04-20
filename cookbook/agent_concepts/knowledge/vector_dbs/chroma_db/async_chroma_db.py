@@ -1,13 +1,13 @@
 # install chromadb - `pip install chromadb`
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.chroma import ChromaDb
-import asyncio
 
 # Initialize ChromaDB
-vector_db = ChromaDb(collection="recipes",
-                     path="tmp/chromadb", persistent_client=True)
+vector_db = ChromaDb(collection="recipes", path="tmp/chromadb", persistent_client=True)
 
 # Create knowledge base
 knowledge_base = PDFUrlKnowledgeBase(
@@ -23,5 +23,4 @@ if __name__ == "__main__":
     asyncio.run(knowledge_base.aload(recreate=False))
 
     # Create and use the agent
-    asyncio.run(agent.aprint_response(
-        "How to make Tom Kha Gai", markdown=True))
+    asyncio.run(agent.aprint_response("How to make Tom Kha Gai", markdown=True))
