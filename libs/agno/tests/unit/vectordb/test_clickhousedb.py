@@ -1,13 +1,10 @@
 import uuid
-from hashlib import md5
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from agno.document import Document
 from agno.vectordb.clickhouse import Clickhouse
-from agno.vectordb.clickhouse.index import HNSW
-from agno.vectordb.distance import Distance
 
 # Configuration for tests
 TEST_TABLE = f"test_clickhouse_{uuid.uuid4().hex[:8]}"
