@@ -19,6 +19,7 @@ from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
+
 class ChromaDb(VectorDb):
     def __init__(
         self,
