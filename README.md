@@ -332,7 +332,7 @@ Reach out to support@agno.com to get involved.
 At Agno, we're obsessed with performance. Why? because even simple AI workflows can spawn thousands of Agents to achieve their goals. Scale that to a modest number of users and performance becomes a bottleneck. Agno is designed to power high performance agentic systems:
 
 - Agent instantiation: ~3μs on average
-- Memory footprint: ~5Kib on average
+- Memory footprint: ~6.5Kib on average
 
 > Tested on an Apple M4 Mackbook Pro.
 
@@ -366,27 +366,11 @@ Agno is on the left, notice how it finishes before LangGraph gets 1/2 way throug
 
 https://github.com/user-attachments/assets/ba466d45-75dd-45ac-917b-0a56c5742e23
 
-Dividing the average time of a Langgraph Agent by the average time of an Agno Agent:
-
-```
-0.020526s / 0.000002s ~ 10,263
-```
-
-In this particular run, **Agno Agents startup is roughly 10,000 times faster than Langgraph Agents**. The numbers continue to favor Agno as the number of tools grow, and we add memory and knowledge stores.
-
 ### Memory usage
 
 To measure memory usage, we use the `tracemalloc` library. We first calculate a baseline memory usage by running an empty function, then run the Agent 1000x times and calculate the difference. This gives a (reasonably) isolated measurement of the memory usage of the Agent.
 
 We recommend running the evaluation yourself on your own machine, and digging into the code to see how it works. If we've made a mistake, please let us know.
-
-Dividing the average memory usage of a Langgraph Agent by the average memory usage of an Agno Agent:
-
-```
-0.137273/0.002528 ~ 54.3
-```
-
-**Langgraph Agents use ~50x more memory than Agno Agents**. In our opinion, memory usage is a much more important metric than instantiation time. As we start running thousands of Agents in production, these numbers directly start affecting the cost of running the Agents.
 
 ### Conclusion
 
