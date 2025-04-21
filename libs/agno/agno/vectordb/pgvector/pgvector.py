@@ -3,7 +3,7 @@ import concurrent.futures
 import functools
 from hashlib import md5
 from math import sqrt
-from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, cast
+from typing import Any, Dict, List, Optional, Union, cast
 
 try:
     from sqlalchemy.dialects import postgresql
@@ -29,24 +29,6 @@ from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.search import SearchType
-
-# Type variable for generic function return types
-T = TypeVar("T")
-
-# Add this near the top of the file after imports
-thread_pool_executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
-
-
-def run_in_thread(func: Callable[..., T]) -> Callable[..., T]:
-    """
-    Decorator to run a function in a thread pool.
-    """
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        return thread_pool_executor.submit(func, *args, **kwargs)
-
-    return wrapper
 
 
 class PgVector(VectorDb):

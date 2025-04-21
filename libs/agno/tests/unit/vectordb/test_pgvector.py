@@ -311,8 +311,7 @@ async def test_async_name_exists(mock_pgvector):
 
         # Check result and that name_exists was called via to_thread
         assert result is True
-        mock_to_thread.assert_called_once_with(
-            mock_pgvector.name_exists, "test_name")
+        mock_to_thread.assert_called_once_with(mock_pgvector.name_exists, "test_name")
 
 
 @pytest.mark.asyncio
@@ -326,8 +325,7 @@ async def test_async_insert(mock_pgvector):
         await mock_pgvector.async_insert(docs)
 
         # Check that insert was called via to_thread
-        mock_to_thread.assert_called_once_with(
-            mock_pgvector.insert, docs, None)
+        mock_to_thread.assert_called_once_with(mock_pgvector.insert, docs, None)
 
 
 @pytest.mark.asyncio
@@ -341,8 +339,7 @@ async def test_async_upsert(mock_pgvector):
         await mock_pgvector.async_upsert(docs)
 
         # Check that upsert was called via to_thread
-        mock_to_thread.assert_called_once_with(
-            mock_pgvector.upsert, docs, None)
+        mock_to_thread.assert_called_once_with(mock_pgvector.upsert, docs, None)
 
 
 @pytest.mark.asyncio
@@ -350,15 +347,16 @@ async def test_async_search(mock_pgvector):
     """Test async_search method."""
     expected_results = [Document(id="test", content="Test document")]
 
-    with patch.object(mock_pgvector, "search", return_value=expected_results), patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pgvector, "search", return_value=expected_results), patch(
+        "asyncio.to_thread"
+    ) as mock_to_thread:
         mock_to_thread.return_value = expected_results
 
         results = await mock_pgvector.async_search("test query")
 
         # Check results and that search was called via to_thread
         assert results == expected_results
-        mock_to_thread.assert_called_once_with(
-            mock_pgvector.search, "test query", 5, None)
+        mock_to_thread.assert_called_once_with(mock_pgvector.search, "test query", 5, None)
 
 
 @pytest.mark.asyncio
