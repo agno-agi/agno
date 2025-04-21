@@ -85,13 +85,13 @@ class ReasoningTools(Toolkit):
                 formatted_reasoning_steps = ""
                 for i, step in enumerate(agent.session_state["reasoning_steps"][agent.run_id], 1):
                     step_parsed = ReasoningStep.model_validate_json(step)
-                    step_str = f"""\
+                    step_str = dedent(f"""\
 Step {i}:
 Title: {step_parsed.title}
 Reasoning: {step_parsed.reasoning}
 Action: {step_parsed.action}
 Confidence: {step_parsed.confidence}
-"""
+""")
                     formatted_reasoning_steps += step_str + "\n"
                 return formatted_reasoning_steps.strip()
             return reasoning_step.model_dump_json()
