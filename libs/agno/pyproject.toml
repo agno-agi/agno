@@ -91,6 +91,7 @@ mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
 weaviate = ["weaviate-client"]
 milvusdb = ["pymilvus"]
+clickhouse = ["clickhouse-connect"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -165,7 +166,8 @@ vectordbs = [
   "agno[mongodb]",
   "agno[singlestore]",
   "agno[weaviate]",
-  "agno[milvusdb]"
+  "agno[milvusdb]",
+  "agno[clickhouse]"
 ]
 
 # All knowledge
