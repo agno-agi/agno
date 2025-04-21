@@ -96,28 +96,6 @@ reasoning_tool_agent = Agent(
     tools=[ReasoningTools()],
 )
 
-native_model_agent = Agent(
-    model=OpenAIChat(id="o3-mini", reasoning_effort="high"),
-    name="Native Model Agent",
-    agent_id="native_model_agent",
-    tools=[
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        )
-    ],
-    instructions="Use tables to display data.",
-    show_tool_calls=True,
-    markdown=True,
-    storage=SqliteStorage(
-        table_name="native_model_agent",
-        db_file=agent_storage_file,
-        auto_upgrade_schema=True,
-    ),
-)
-
 
 web_agent = Agent(
     name="Web Search Agent",
@@ -251,7 +229,6 @@ app = Playground(
         cot_agent,
         reasoning_tool_agent,
         reasoning_model_agent,
-        native_model_agent,
         knowledge_agent,
         thinking_tool_agent,
     ],
