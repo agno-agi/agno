@@ -51,7 +51,6 @@ cot_agent = Agent(
     role="Answer basic questions",
     agent_id="cot-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)],
     storage=SqliteStorage(
         table_name="cot_agent", db_file=agent_storage_file, auto_upgrade_schema=True
     ),
