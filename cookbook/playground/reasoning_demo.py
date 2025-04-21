@@ -118,22 +118,6 @@ native_model_agent = Agent(
     ),
 )
 
-claude_thinking_agent = Agent(
-    name="Claude Thinking Agent",
-    agent_id="claude_thinking_agent",
-    model=Claude(
-        id="claude-3-7-sonnet-20250219",
-        max_tokens=2048,
-        thinking={"type": "enabled", "budget_tokens": 1024},
-    ),
-    markdown=True,
-    storage=SqliteStorage(
-        table_name="claude_thinking_agent",
-        db_file=agent_storage_file,
-        auto_upgrade_schema=True,
-    ),
-)
-
 
 web_agent = Agent(
     name="Web Search Agent",
@@ -268,7 +252,6 @@ app = Playground(
         reasoning_tool_agent,
         reasoning_model_agent,
         native_model_agent,
-        claude_thinking_agent,
         knowledge_agent,
         thinking_tool_agent,
     ],
@@ -288,6 +271,3 @@ if __name__ == "__main__":
 
 # knowledge_agent prompt
 # What does Paul Graham explain here with respect to need to read?
-
-# claude_thinking_agent prompt
-# Analyse tesal stocks
