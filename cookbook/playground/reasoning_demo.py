@@ -2,19 +2,20 @@
 
 import asyncio
 from textwrap import dedent
+
 from agno.agent import Agent
+from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.url import UrlKnowledge
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.knowledge import KnowledgeTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.thinking import ThinkingTools
 from agno.tools.yfinance import YFinanceTools
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
-from agno.tools.knowledge import KnowledgeTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 agent_storage_file: str = "tmp/agents.db"
@@ -138,9 +139,15 @@ web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests",
     model=OpenAIChat(id="gpt-4o-mini"),
+    agent_id="web_agent",
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
     add_datetime_to_instructions=True,
+    storage=SqliteStorage(
+        table_name="web_agent",
+        db_file=agent_storage_file,
+        auto_upgrade_schema=True,
+    ),
 )
 
 thinking_tool_agent = Agent(
@@ -185,11 +192,17 @@ thinking_tool_agent = Agent(
     show_tool_calls=True,
     markdown=True,
     stream_intermediate_steps=True,
+    storage=SqliteStorage(
+        table_name="thinking_tool_agent",
+        db_file=agent_storage_file,
+        auto_upgrade_schema=True,
+    ),
 )
 
 finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests",
+    agent_id="finance_agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[
         YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
@@ -202,6 +215,11 @@ finance_agent = Agent(
         "Focus on delivering the requested financial data points clearly.",
     ],
     add_datetime_to_instructions=True,
+    storage=SqliteStorage(
+        table_name="finance_agent",
+        db_file=agent_storage_file,
+        auto_upgrade_schema=True,
+    ),
 )
 
 agno_docs = UrlKnowledge(
@@ -228,20 +246,26 @@ knowledge_agent = Agent(
     tools=[knowledge_tools],
     show_tool_calls=True,
     markdown=True,
+    storage=SqliteStorage(
+        table_name="knowledge_agent",
+        db_file=agent_storage_file,
+        auto_upgrade_schema=True,
+    ),
 )
 
 reasoning_finance_team = Team(
     name="Reasoning Finance Team",
     mode="coordinate",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIChat(id="gpt-4o"),
     members=[
         web_agent,
         finance_agent,
     ],
-    reasoning=True,
-    # tools=[ReasoningTools(add_instructions=True)],
+    # reasoning=True,
+    tools=[ReasoningTools(add_instructions=True)],
     # uncomment it to use knowledge tools
     # tools=[knowledge_tools],
+    team_id="reasoning_finance_team",
     debug_mode=True,
     instructions=[
         "Only output the final answer, no other text.",
@@ -268,7 +292,7 @@ app = Playground(
         native_model_agent,
         claude_thinking_agent,
         knowledge_agent,
-        thinking_tool_agent
+        thinking_tool_agent,
     ],
     teams=[reasoning_finance_team],
 ).get_app()
@@ -278,15 +302,14 @@ if __name__ == "__main__":
     serve_playground_app("reasoning_demo:app", reload=True)
 
 
-#reasoning_tool_agent
+# reasoning_tool_agent
 # Solve this logic puzzle: A man has to take a fox, a chicken, and a sack of grain across a river.
-# The boat is only big enough for the man and one item. If left unattended together, 
+# The boat is only big enough for the man and one item. If left unattended together,
 # the fox will eat the chicken, and the chicken will eat the grain. How can the man get everything across safely?
 
 
 # knowledge_agent prompt
 # What does Paul Graham explain here with respect to need to read?
 
-#claude_thinking_agent prompt
-#Analyse tesal stocks
-
+# claude_thinking_agent prompt
+# Analyse tesal stocks
