@@ -228,6 +228,11 @@ knowledge_agent = Agent(
     tools=[knowledge_tools],
     show_tool_calls=True,
     markdown=True,
+    storage=SqliteStorage(
+        table_name="knowledge_agent",
+        db_file=agent_storage_file,
+        auto_upgrade_schema=True,
+    ),
 )
 
 reasoning_finance_team = Team(
