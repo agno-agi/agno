@@ -1,19 +1,11 @@
 import asyncio
-import concurrent.futures
-import functools
-from typing import Any, Callable, Dict, Iterable, List, Optional, TypeVar
+from typing import Any, Dict, Iterable, List, Optional
 
 from agno.document import Document
 from agno.embedder import Embedder
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
-
-# Type variable for generic function return types
-T = TypeVar("T")
-
-# Add thread pool executor with reasonable max_workers
-thread_pool_executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
 
 
 class Cassandra(VectorDb):
@@ -61,12 +53,7 @@ class Cassandra(VectorDb):
 
     async def async_create(self) -> None:
         """Create the table asynchronously by running in a thread."""
-
-        def _create():
-            self.create()
-
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(thread_pool_executor, _create)
+        await asyncio.to_thread(self.create)
 
     def _row_to_document(self, row: Dict[str, Any]) -> Document:
         return Document(
@@ -85,12 +72,7 @@ class Cassandra(VectorDb):
 
     async def async_doc_exists(self, document: Document) -> bool:
         """Check if a document exists asynchronously."""
-
-        def _doc_exists():
-            return self.doc_exists(document)
-
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(thread_pool_executor, _doc_exists)
+        return await asyncio.to_thread(self.doc_exists, document)
 
     def name_exists(self, name: str) -> bool:
         """Check if a document exists by name."""
@@ -100,12 +82,7 @@ class Cassandra(VectorDb):
 
     async def async_name_exists(self, name: str) -> bool:
         """Check if a document with given name exists asynchronously."""
-
-        def _name_exists():
-            return self.name_exists(name)
-
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(thread_pool_executor, _name_exists)
+        return await asyncio.to_thread(self.name_exists, name)
 
     def id_exists(self, id: str) -> bool:
         """Check if a document exists by ID."""
@@ -134,12 +111,7 @@ class Cassandra(VectorDb):
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents asynchronously by running in a thread."""
-
-        def _insert():
-            self.insert(documents, filters)
-
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(thread_pool_executor, _insert)
+        await asyncio.to_thread(self.insert, documents, filters)
 
     def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert or update documents based on primary key."""
@@ -147,12 +119,7 @@ class Cassandra(VectorDb):
 
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents asynchronously by running in a thread."""
-
-        def _upsert():
-            self.upsert(documents, filters)
-
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(thread_pool_executor, _upsert)
+        await asyncio.to_thread(self.upsert, documents, filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Keyword-based search on document metadata."""
@@ -163,12 +130,7 @@ class Cassandra(VectorDb):
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         """Search asynchronously by running in a thread."""
-
-        def _search():
-            return self.search(query, limit, filters)
-
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(thread_pool_executor, _search)
+        return await asyncio.to_thread(self.search, query, limit, filters)
 
     def _search_to_documents(
         self,
@@ -197,12 +159,7 @@ class Cassandra(VectorDb):
 
     async def async_drop(self) -> None:
         """Drop the table asynchronously by running in a thread."""
-
-        def _drop():
-            self.drop()
-
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(thread_pool_executor, _drop)
+        await asyncio.to_thread(self.drop)
 
     def exists(self) -> bool:
         """Check if the table exists in Cassandra."""
@@ -215,12 +172,7 @@ class Cassandra(VectorDb):
 
     async def async_exists(self) -> bool:
         """Check if table exists asynchronously by running in a thread."""
-
-        def _exists():
-            return self.exists()
-
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(thread_pool_executor, _exists)
+        return await asyncio.to_thread(self.exists)
 
     def delete(self) -> bool:
         """Delete all documents in the table."""
