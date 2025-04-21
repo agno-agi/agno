@@ -13,15 +13,15 @@ You can get your OpenAI API key from https://platform.openai.com/api-keys
 import asyncio
 import time
 import uuid
-import click
 from typing import Any, Dict, List, Optional
 
+import click
+from agno.agent import Agent, Message
+from agno.models.openai import OpenAIChat
 from zep_cloud import NotFoundError
 from zep_cloud.client import AsyncZep
 from zep_cloud.types import Message as ZepMessage
 
-from agno.agent import Agent, Message
-from agno.models.openai import OpenAIChat
 
 # Example tool
 async def get_weather(city: str) -> str:
