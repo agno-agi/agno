@@ -1,26 +1,3 @@
-"""💎 Reasoning SQL Agent - Your AI Data Analyst!
-
-This advanced example shows how to build a sophisticated text-to-SQL system that
-leverages Reasoning Agents to provide deep insights into any data.
-
-Example queries to try:
-- "Who are the top 5 drivers with the most race wins?"
-- "Compare Mercedes vs Ferrari performance in constructors championships"
-- "Show me the progression of fastest lap times at Monza"
-- "Which drivers have won championships with multiple teams?"
-- "What tracks have hosted the most races?"
-- "Show me Lewis Hamilton's win percentage by season"
-
-Examples with table joins:
-- "How many races did the championship winners win each year?"
-- "Compare the number of race wins vs championship positions for constructors in 2019"
-- "Show me Lewis Hamilton's race wins and championship positions by year"
-- "Which drivers have both won races and set fastest laps at Monaco?"
-- "Show me Ferrari's race wins and constructor championship positions from 2015-2020"
-
-View the README for instructions on how to run the application.
-"""
-
 import json
 from pathlib import Path
 from textwrap import dedent
@@ -31,6 +8,8 @@ from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.combined import CombinedKnowledgeBase
 from agno.knowledge.json import JSONKnowledgeBase
 from agno.knowledge.text import TextKnowledgeBase
+from agno.memory.v2.db.postgres import PostgresMemoryDb
+from agno.memory.v2.memory import Memory
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
@@ -39,7 +18,7 @@ from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.tools.file import FileTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.sql import SQLTools
-from agno.vectordb.pgvector import PgVector
+from agno.vectordb.pgvector import PgVector, SearchType
 
 # ************* Database Connection *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -55,10 +34,14 @@ output_dir.mkdir(parents=True, exist_ok=True)
 # *******************************
 
 # ************* Storage & Knowledge *************
-agent_storage = PostgresAgentStorage(
+sql_agent_storage = PostgresAgentStorage(
     db_url=db_url,
-    # Store agent sessions in the ai.sql_agent_sessions table
     table_name="sql_agent_sessions",
+    schema="ai",
+)
+reasoning_sql_agent_storage = PostgresAgentStorage(
+    db_url=db_url,
+    table_name="reasoning_sql_agent_sessions",
     schema="ai",
 )
 agent_knowledge = CombinedKnowledgeBase(
@@ -75,12 +58,20 @@ agent_knowledge = CombinedKnowledgeBase(
     vector_db=PgVector(
         db_url=db_url,
         table_name="sql_agent_knowledge",
-        schema="ai",
-        # Use OpenAI embeddings
+        search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
     # 5 references are added to the prompt
     num_documents=5,
+)
+# *******************************
+
+# ************* Memory *************
+memory = Memory(
+    model=OpenAIChat(id="gpt-4.1"),
+    db=PostgresMemoryDb(table_name="user_memories", db_url=db_url),
+    delete_memories=True,
+    clear_memories=True,
 )
 # *******************************
 
@@ -130,6 +121,7 @@ def get_sql_agent(
     user_id: Optional[str] = None,
     model_id: str = "openai:gpt-4o",
     session_id: Optional[str] = None,
+    reasoning: bool = False,
     debug_mode: bool = True,
 ) -> Agent:
     """Returns an instance of the SQL Agent.
@@ -154,12 +146,24 @@ def get_sql_agent(
     else:
         raise ValueError(f"Unsupported model provider: {provider}")
 
+    tools = [
+        SQLTools(db_url=db_url, list_tables=False),
+        FileTools(base_dir=output_dir),
+    ]
+    if reasoning:
+        tools.append(ReasoningTools(add_instructions=True, add_few_shot=True))
+
+    storage = reasoning_sql_agent_storage if reasoning else sql_agent_storage
+
     return Agent(
         name=name,
         model=model,
         user_id=user_id,
+        agent_id=name,
         session_id=session_id,
-        storage=agent_storage,
+        memory=memory,
+        enable_agentic_memory=True,
+        storage=storage,
         knowledge=agent_knowledge,
         # Enable Agentic RAG i.e. the ability to search the knowledge base on-demand
         search_knowledge=True,
@@ -168,21 +172,12 @@ def get_sql_agent(
         # Enable the ability to read the tool call history
         read_tool_call_history=True,
         # Add tools to the agent
-        tools=[
-            SQLTools(db_url=db_url, list_tables=False),
-            FileTools(base_dir=output_dir),
-            ReasoningTools(add_instructions=True, add_few_shot=True),
-        ],
+        tools=tools,
         debug_mode=debug_mode,
+        add_datetime_to_instructions=True,
+        add_history_to_messages=True,
         description=dedent("""\
-        You are SQrL, an elite Text2SQL Engine specializing in:
-
-        - Historical race analysis
-        - Driver performance metrics
-        - Team championship insights
-        - Track statistics and records
-        - Performance trend analysis
-        - Race strategy evaluation
+        You are SQrL, an elite Text2SQL Agent with access to a database with F1 data from 1950 to 2020.
 
         You combine deep F1 knowledge with advanced SQL expertise to uncover insights from decades of racing data."""),
         instructions=dedent(f"""\
@@ -193,29 +188,27 @@ def get_sql_agent(
 
         If you need to query the database to answer the user's question, follow these steps:
         1. First identify the tables you need to query from the semantic model.
-        2. Then, ALWAYS use the `search_knowledge_base(table_name)` tool to get table metadata, rules and sample queries.
+        2. Then, ALWAYS use the `search_knowledge_base` tool to get table metadata, rules and sample queries.
+            - Note: You must use the `search_knowledge_base` tool to get table information and rules before writing a query.
         3. If table rules are provided, ALWAYS follow them.
-        4. Then, "think" about query construction, don't rush this step.
-        5. Follow a chain of thought approach before writing SQL, ask clarifying questions where needed.
-        6. If sample queries are available, use them as a reference.
-        7. If you need more information about the table, use the `describe_table` tool.
-        8. Then, using all the information available, create one single syntactically correct PostgreSQL query to accomplish your task.
-        9. If you need to join tables, check the `semantic_model` for the relationships between the tables.
+        4. Then, "think" about query construction, don't rush this step. If sample queries are available, use them as a reference.
+        5. If you need more information about the table, use the `describe_table` tool.
+        6. Then, using all the information available, create one single syntactically correct PostgreSQL query to accomplish your task.
+        7. If you need to join tables, check the `semantic_model` for the relationships between the tables.
             - If the `semantic_model` contains a relationship between tables, use that relationship to join the tables even if the column names are different.
             - If you cannot find a relationship in the `semantic_model`, only join on the columns that have the same name and data type.
             - If you cannot find a valid relationship, ask the user to provide the column name to join.
-        10. If you cannot find relevant tables, columns or relationships, stop and ask the user for more information.
-        11. Once you have a syntactically correct query, run it using the `run_sql_query` function.
-        12. When running a query:
+        8. If you cannot find relevant tables, columns or relationships, stop and ask the user for more information.
+        9. Once you have a syntactically correct query, run it using the `run_sql_query` function.
+        10. When running a query:
             - Do not add a `;` at the end of the query.
             - Always provide a limit unless the user explicitly asks for all results.
-        13. After you run the query, "analyze" the results and return the answer in markdown format.
-        14. Make sure to always "analyze" the results of the query before returning the answer.
-        15. You Analysis should Reason about the results of the query, whether they make sense, whether they are complete, whether they are correct, could there be any data quality issues, etc.
-        16. It is really important that you "analyze" and "validate" the results of the query.
-        17. Always show the user the SQL you ran to get the answer.
-        18. Continue till you have accomplished the task.
-        19. Show results as a table or a chart if possible.
+        11. After you run the query, "analyze" the results and return the answer in markdown format.
+        12. You Analysis should Reason about the results of the query, whether they make sense, whether they are complete, whether they are correct, could there be any data quality issues, etc.
+        13. It is really important that you "analyze" and "validate" the results of the query.
+        14. Always show the user the SQL you ran to get the answer.
+        15. Continue till you have accomplished the task.
+        16. Show results as a table or a chart if possible.
 
         After finishing your task, ask the user relevant followup questions like "was the result okay, would you like me to fix any problems?"
         If the user says yes, get the previous query using the `get_tool_call_history(num_calls=3)` function and fix the problems.
@@ -224,7 +217,7 @@ def get_sql_agent(
         Finally, here are the set of rules that you MUST follow:
 
         <rules>
-        - Use the `search_knowledge_base(table_name)` tool to get table information from your knowledge base before writing a query.
+        - Always use the `search_knowledge_base()` tool to get table information from your knowledge base before writing a query.
         - Do not use phrases like "based on the information provided" or "from the knowledge base".
         - Always show the SQL queries you use to get the answer.
         - Make sure your query accounts for duplicate records.
