@@ -1,15 +1,21 @@
 """Run `pip install openai exa_py duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api python-docx agno` to install dependencies."""
 
+import asyncio
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
-from agno.tools.yfinance import YFinanceTools
 from agno.tools.thinking import ThinkingTools
+from agno.tools.yfinance import YFinanceTools
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.url import UrlKnowledge
+from agno.tools.knowledge import KnowledgeTools
+from agno.vectordb.lancedb import LanceDb, SearchType
+
 agent_storage_file: str = "tmp/agents.db"
 image_agent_storage_file: str = "tmp/image_agent.db"
 
@@ -85,32 +91,8 @@ reasoning_tool_agent = Agent(
     num_history_responses=3,
     add_datetime_to_instructions=True,
     markdown=True,
-    instructions="Use tables where possible",
-    show_tool_calls=True,
-    stream_intermediate_steps=True,
     tools=[ReasoningTools()],
 )
-
-thinking_agent = Agent(
-    name="Thinking Agent",
-    agent_id="thinking_agent",
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        ThinkingTools(add_instructions=True),
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        ),
-    ],
-    instructions="Use tables where possible",
-    show_tool_calls=True,
-    markdown=True,
-    stream_intermediate_steps=True,
-    storage=SqliteStorage(table_name="thinking_agent", db_file=agent_storage_file, auto_upgrade_schema=True),
-)
-
 
 native_model_agent = Agent(
     model=OpenAIChat(id="o3-mini", reasoning_effort="high"),
@@ -142,23 +124,12 @@ claude_thinking_agent = Agent(
         max_tokens=2048,
         thinking={"type": "enabled", "budget_tokens": 1024},
     ),
-    tools=[ThinkingTools(add_instructions=True)],
     markdown=True,
     storage=SqliteStorage(
         table_name="claude_thinking_agent",
         db_file=agent_storage_file,
         auto_upgrade_schema=True,
     ),
-)
-
-financial_news_team = Team(
-    name="Financial News Team",
-    team_id="financial_news_team",
-    model=OpenAIChat(id="gpt-4o"),
-    mode="route",
-    members=[finance_agent, reasoning_tool_agent],
-    instructions="You are a financial news team that is responsible for providing financial news to the user.",
-    storage=SqliteStorage(table_name="financial_news_team", db_file=agent_storage_file, auto_upgrade_schema=True),
 )
 
 
@@ -169,7 +140,49 @@ web_agent = Agent(
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
     add_datetime_to_instructions=True,
-    storage=SqliteStorage(table_name="financial_news_team", db_file=agent_storage_file, auto_upgrade_schema=True),
+)
+
+finance_agent = Agent(
+    name="Finance Agent",
+    role="Handle financial data requests",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[
+        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
+    ],
+    instructions=[
+        "You are a financial data specialist. Provide concise and accurate data.",
+        "Use tables to display stock prices, fundamentals (P/E, Market Cap), and recommendations.",
+        "Clearly state the company name and ticker symbol.",
+        "Briefly summarize recent company-specific news if available.",
+        "Focus on delivering the requested financial data points clearly.",
+    ],
+    add_datetime_to_instructions=True,
+)
+
+agno_docs = UrlKnowledge(
+    urls=["https://www.paulgraham.com/read.html"],
+    # Use LanceDB as the vector database and store embeddings in the `agno_docs` table
+    vector_db=LanceDb(
+        uri="tmp/lancedb",
+        table_name="agno_docs",
+        search_type=SearchType.hybrid,
+    ),
+)
+
+knowledge_tools = KnowledgeTools(
+    knowledge=agno_docs,
+    think=True,
+    search=True,
+    analyze=True,
+    add_few_shot=True,
+)
+knowledge_agent = Agent(
+    agent_id="knowledge_agent",
+    name="Knowledge Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[knowledge_tools],
+    show_tool_calls=True,
+    markdown=True,
 )
 
 reasoning_finance_team = Team(
@@ -180,7 +193,10 @@ reasoning_finance_team = Team(
         web_agent,
         finance_agent,
     ],
-    tools=[ReasoningTools(add_instructions=True)],
+    reasoning=True,
+    # uncomment it to use knowledge tools
+    # tools=[knowledge_tools],
+    debug_mode=True,
     instructions=[
         "Only output the final answer, no other text.",
         "Use tables to display data",
@@ -205,10 +221,25 @@ app = Playground(
         reasoning_model_agent,
         native_model_agent,
         claude_thinking_agent,
-        thinking_agent
+        knowledge_agent,
     ],
-    teams=[reasoning_finance_team, financial_news_team],
+    teams=[reasoning_finance_team],
 ).get_app()
 
 if __name__ == "__main__":
+    asyncio.run(agno_docs.aload(recreate=True))
     serve_playground_app("reasoning_demo:app", reload=True)
+
+
+#reasoning_tool_agent
+# Solve this logic puzzle: A man has to take a fox, a chicken, and a sack of grain across a river.
+# The boat is only big enough for the man and one item. If left unattended together, 
+# the fox will eat the chicken, and the chicken will eat the grain. How can the man get everything across safely?
+
+
+# knowledge_agent prompt
+# How do I build multi-agent teams with Agno?
+
+#claude_thinking_agent prompt
+#Analyse tesal stocks
+
