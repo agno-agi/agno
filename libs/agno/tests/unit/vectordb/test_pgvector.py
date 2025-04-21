@@ -1,14 +1,12 @@
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy.engine import URL, Engine
 from sqlalchemy.orm import Session
 
 from agno.document import Document
-from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector import PgVector
-from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.search import SearchType
 
 # Configuration for tests
@@ -277,7 +275,7 @@ def test_delete(mock_pgvector):
 @pytest.mark.asyncio
 async def test_async_create(mock_pgvector):
     """Test async_create method."""
-    with patch.object(mock_pgvector, "create") as mock_create, patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pgvector, "create"), patch("asyncio.to_thread") as mock_to_thread:
         mock_to_thread.return_value = None
 
         await mock_pgvector.async_create()
@@ -319,7 +317,7 @@ async def test_async_insert(mock_pgvector):
     """Test async_insert method."""
     docs = create_test_documents()
 
-    with patch.object(mock_pgvector, "insert") as mock_insert, patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pgvector, "insert"), patch("asyncio.to_thread") as mock_to_thread:
         mock_to_thread.return_value = None
 
         await mock_pgvector.async_insert(docs)
@@ -333,7 +331,7 @@ async def test_async_upsert(mock_pgvector):
     """Test async_upsert method."""
     docs = create_test_documents()
 
-    with patch.object(mock_pgvector, "upsert") as mock_upsert, patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pgvector, "upsert"), patch("asyncio.to_thread") as mock_to_thread:
         mock_to_thread.return_value = None
 
         await mock_pgvector.async_upsert(docs)
@@ -362,7 +360,7 @@ async def test_async_search(mock_pgvector):
 @pytest.mark.asyncio
 async def test_async_drop(mock_pgvector):
     """Test async_drop method."""
-    with patch.object(mock_pgvector, "drop") as mock_drop, patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pgvector, "drop"), patch("asyncio.to_thread") as mock_to_thread:
         mock_to_thread.return_value = None
 
         await mock_pgvector.async_drop()

@@ -1,6 +1,4 @@
 import asyncio
-import concurrent.futures
-import functools
 from hashlib import md5
 from math import sqrt
 from typing import Any, Dict, List, Optional, Union, cast
