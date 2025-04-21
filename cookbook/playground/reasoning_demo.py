@@ -285,7 +285,7 @@ if __name__ == "__main__":
 
 
 # knowledge_agent prompt
-# How do I build multi-agent teams with Agno?
+# What does Paul Graham explain here with respect to need to read?
 
 #claude_thinking_agent prompt
 #Analyse tesal stocks
