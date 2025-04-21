@@ -2,19 +2,20 @@
 
 import asyncio
 from textwrap import dedent
+
 from agno.agent import Agent
+from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.url import UrlKnowledge
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.knowledge import KnowledgeTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.thinking import ThinkingTools
 from agno.tools.yfinance import YFinanceTools
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
-from agno.tools.knowledge import KnowledgeTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 agent_storage_file: str = "tmp/agents.db"
@@ -273,7 +274,7 @@ app = Playground(
         native_model_agent,
         claude_thinking_agent,
         knowledge_agent,
-        thinking_tool_agent
+        thinking_tool_agent,
     ],
     teams=[reasoning_finance_team],
 ).get_app()
@@ -283,15 +284,14 @@ if __name__ == "__main__":
     serve_playground_app("reasoning_demo:app", reload=True)
 
 
-#reasoning_tool_agent
+# reasoning_tool_agent
 # Solve this logic puzzle: A man has to take a fox, a chicken, and a sack of grain across a river.
-# The boat is only big enough for the man and one item. If left unattended together, 
+# The boat is only big enough for the man and one item. If left unattended together,
 # the fox will eat the chicken, and the chicken will eat the grain. How can the man get everything across safely?
 
 
 # knowledge_agent prompt
 # How do I build multi-agent teams with Agno?
 
-#claude_thinking_agent prompt
-#Analyse tesal stocks
-
+# claude_thinking_agent prompt
+# Analyse tesal stocks

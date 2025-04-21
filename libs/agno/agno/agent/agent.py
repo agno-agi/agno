@@ -764,7 +764,6 @@ class Agent:
                         else:
                             self.run_response.tools = new_tool_calls_list
 
-
                         # Only iterate through new tool calls
                         for tool_call in new_tool_calls_list:
                             tool_name = tool_call.get("tool_name", "")
