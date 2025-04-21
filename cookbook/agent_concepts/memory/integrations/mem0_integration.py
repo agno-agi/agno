@@ -5,7 +5,9 @@ from agno.utils.pprint import pprint_run_response
 try:
     from mem0 import MemoryClient
 except ImportError:
-    raise ImportError("mem0 is not installed. Please install it using `pip install mem0ai`.")
+    raise ImportError(
+        "mem0 is not installed. Please install it using `pip install mem0ai`."
+    )
 
 client = MemoryClient()
 

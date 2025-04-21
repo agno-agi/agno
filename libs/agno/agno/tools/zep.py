@@ -226,13 +226,17 @@ class ZepTools(Toolkit):
 
         if results is not None and results != []:
             if search_scope == "summary":
-                search_result =  " ".join([result.get("summary", "") for result in results if result.get("summary") is not None])
+                search_result = " ".join(
+                    [result.get("summary", "") for result in results if result.get("summary") is not None]
+                )
                 if search_result == "":
                     return "No relevant summary found."
                 else:
                     return search_result
             else:
-                search_result = " ".join([result.get("content", "") for result in results if result.get("content") is not None])
+                search_result = " ".join(
+                    [result.get("content", "") for result in results if result.get("content") is not None]
+                )
                 if search_result == "":
                     return "No relevant content found."
                 else:
@@ -450,13 +454,17 @@ class ZepAsyncTools(Toolkit):
 
         if results is not None and results != []:
             if search_scope == "summary":
-                search_result = " ".join([result.get("summary", "") for result in results if result.get("summary") is not None])
+                search_result = " ".join(
+                    [result.get("summary", "") for result in results if result.get("summary") is not None]
+                )
                 if search_result == "":
                     return "No relevant summary found."
                 else:
                     return search_result
             else:
-                search_result = " ".join([result.get("content", "") for result in results if result.get("content") is not None])
+                search_result = " ".join(
+                    [result.get("content", "") for result in results if result.get("content") is not None]
+                )
                 if search_result == "":
                     return "No relevant content found."
                 else:
