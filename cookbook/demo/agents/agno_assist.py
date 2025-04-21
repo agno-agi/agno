@@ -124,8 +124,8 @@ instructions = dedent("""\
 
 # Create the agent
 agno_assist = Agent(
-    name="Agno_Assist",
-    agent_id="agno_assist",
+    name="Agno Assist",
+    agent_id="agno-assist",
     model=OpenAIChat(id="gpt-4o"),
     memory=memory,
     description=description,

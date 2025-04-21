@@ -300,7 +300,7 @@ async def test_async_exists(mock_pinecone_db):
 @pytest.mark.asyncio
 async def test_async_create(mock_pinecone_db):
     """Test async_create method."""
-    with patch.object(mock_pinecone_db, "create") as mock_create, patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pinecone_db, "create"), patch("asyncio.to_thread") as mock_to_thread:
         mock_to_thread.return_value = None
 
         await mock_pinecone_db.async_create()

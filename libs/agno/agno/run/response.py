@@ -115,13 +115,28 @@ class RunResponse:
             )
 
         if self.images is not None:
-            _dict["images"] = [img.model_dump(exclude_none=True) for img in self.images]
+            _dict["images"] = []
+            for img in self.images:
+                if isinstance(img, ImageArtifact):
+                    _dict["images"].append(img.model_dump(exclude_none=True))
+                else:
+                    _dict["images"].append(img)
 
         if self.videos is not None:
-            _dict["videos"] = [vid.model_dump(exclude_none=True) for vid in self.videos]
+            _dict["videos"] = []
+            for vid in self.videos:
+                if isinstance(vid, VideoArtifact):
+                    _dict["videos"].append(vid.model_dump(exclude_none=True))
+                else:
+                    _dict["videos"].append(vid)
 
         if self.audio is not None:
-            _dict["audio"] = [aud.model_dump(exclude_none=True) for aud in self.audio]
+            _dict["audio"] = []
+            for aud in self.audio:
+                if isinstance(aud, AudioArtifact):
+                    _dict["audio"].append(aud.model_dump(exclude_none=True))
+                else:
+                    _dict["audio"].append(aud)
 
         if self.response_audio is not None:
             _dict["response_audio"] = (
