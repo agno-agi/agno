@@ -119,7 +119,7 @@ def test_search_zep_memory_no_results(zep_tools):
 def test_search_zep_memory_not_initialized():
     tools = ZepTools(api_key=MOCK_API_KEY)  # Don't initialize
     result = tools.search_zep_memory("test query")
-    assert result == "Error: Zep client/user not initialized."
+    assert result == "Error: Zep client/user/session not initialized."
 
 
 # Async Tests

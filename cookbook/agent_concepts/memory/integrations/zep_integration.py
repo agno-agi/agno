@@ -18,9 +18,12 @@ from typing import Any, Dict, List, Optional
 import click
 from agno.agent import Agent, Message
 from agno.models.openai import OpenAIChat
-from zep_cloud import NotFoundError
-from zep_cloud.client import AsyncZep
-from zep_cloud.types import Message as ZepMessage
+try:
+    from zep_cloud import NotFoundError
+    from zep_cloud.client import AsyncZep
+    from zep_cloud.types import Message as ZepMessage
+except ImportError:
+    raise ImportError("zep_cloud is not installed. Please install it using `pip install zep-cloud`.")
 
 
 # Example tool
