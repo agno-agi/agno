@@ -4,9 +4,7 @@ import asyncio
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.url import UrlKnowledge
-from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
 from agno.storage.sqlite import SqliteStorage
