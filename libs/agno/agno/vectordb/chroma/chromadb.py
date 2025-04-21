@@ -1,8 +1,6 @@
 import asyncio
-import concurrent.futures
-import functools
 from hashlib import md5
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, Dict, List, Optional, TypeVar
 
 try:
     from chromadb import Client as ChromaDbClient
@@ -20,13 +18,6 @@ from agno.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
-
-# Type variable for generic function return types
-T = TypeVar("T")
-
-# Thread pool executor for async operations
-thread_pool_executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
-
 
 class ChromaDb(VectorDb):
     def __init__(
@@ -97,12 +88,7 @@ class ChromaDb(VectorDb):
 
     async def async_create(self) -> None:
         """Create the collection asynchronously by running in a thread."""
-
-        def _create():
-            self.create()
-
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(thread_pool_executor, _create)
+        await asyncio.to_thread(self.create)
 
     def doc_exists(self, document: Document) -> bool:
         """Check if a document exists in the collection.
@@ -128,12 +114,7 @@ class ChromaDb(VectorDb):
 
     async def async_doc_exists(self, document: Document) -> bool:
         """Check if a document exists asynchronously."""
-
-        def _doc_exists():
-            return self.doc_exists(document)
-
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(thread_pool_executor, _doc_exists)
+        return await asyncio.to_thread(self.doc_exists, document)
 
     def name_exists(self, name: str) -> bool:
         """Check if a document with a given name exists in the collection.
@@ -153,12 +134,7 @@ class ChromaDb(VectorDb):
 
     async def async_name_exists(self, name: str) -> bool:
         """Check if a document with given name exists asynchronously."""
-
-        def _name_exists():
-            return self.name_exists(name)
-
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(thread_pool_executor, _name_exists)
+        return await asyncio.to_thread(self.name_exists, name)
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the collection.
@@ -195,12 +171,7 @@ class ChromaDb(VectorDb):
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents asynchronously by running in a thread."""
-
-        def _insert():
-            self.insert(documents, filters)
-
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(thread_pool_executor, _insert)
+        await asyncio.to_thread(self.insert, documents, filters)
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in ChromaDB."""
@@ -241,12 +212,7 @@ class ChromaDb(VectorDb):
 
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents asynchronously by running in a thread."""
-
-        def _upsert():
-            self.upsert(documents, filters)
-
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(thread_pool_executor, _upsert)
+        await asyncio.to_thread(self.upsert, documents, filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Search the collection for a query.
@@ -308,12 +274,7 @@ class ChromaDb(VectorDb):
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         """Search asynchronously by running in a thread."""
-
-        def _search():
-            return self.search(query, limit, filters)
-
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(thread_pool_executor, _search)
+        return await asyncio.to_thread(self.search, query, limit, filters)
 
     def drop(self) -> None:
         """Delete the collection."""
@@ -323,12 +284,7 @@ class ChromaDb(VectorDb):
 
     async def async_drop(self) -> None:
         """Drop the collection asynchronously by running in a thread."""
-
-        def _drop():
-            self.drop()
-
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(thread_pool_executor, _drop)
+        await asyncio.to_thread(self.drop)
 
     def exists(self) -> bool:
         """Check if the collection exists."""
@@ -341,12 +297,7 @@ class ChromaDb(VectorDb):
 
     async def async_exists(self) -> bool:
         """Check if collection exists asynchronously by running in a thread."""
-
-        def _exists():
-            return self.exists()
-
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(thread_pool_executor, _exists)
+        return await asyncio.to_thread(self.exists)
 
     def get_count(self) -> int:
         """Get the count of documents in the collection."""
