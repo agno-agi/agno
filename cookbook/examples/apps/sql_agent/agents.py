@@ -126,6 +126,7 @@ semantic_model_str = json.dumps(semantic_model, indent=2)
 
 
 def get_sql_agent(
+    name: str = "SQL Agent",
     user_id: Optional[str] = None,
     model_id: str = "openai:gpt-4o",
     session_id: Optional[str] = None,
@@ -154,7 +155,7 @@ def get_sql_agent(
         raise ValueError(f"Unsupported model provider: {provider}")
 
     return Agent(
-        name="SQL Agent",
+        name=name,
         model=model,
         user_id=user_id,
         session_id=session_id,
