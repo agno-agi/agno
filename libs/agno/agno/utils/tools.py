@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional
 
+from agno.models.response import ToolExecution
 from agno.tools.function import Function, FunctionCall
 from agno.utils.functions import get_function_call
 
@@ -22,6 +23,20 @@ def get_function_call_for_tool_call(
                 )
     return None
 
+
+def get_function_call_for_tool_execution(
+    tool_execution: ToolExecution, functions: Dict[str, Function]
+) -> FunctionCall:
+    import json
+    _tool_call_id = tool_execution.tool_call_id
+    _tool_call_function_name = tool_execution.tool_name
+    _tool_call_function_arguments_str = json.dumps(tool_execution.tool_args)
+    return get_function_call(
+        name=_tool_call_function_name,
+        arguments=_tool_call_function_arguments_str,
+        call_id=_tool_call_id,
+        functions=functions,
+        )
 
 def extract_tool_call_from_string(text: str, start_tag: str = "<tool_call>", end_tag: str = "</tool_call>"):
     start_index = text.find(start_tag) + len(start_tag)

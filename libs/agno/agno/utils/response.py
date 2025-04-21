@@ -1,7 +1,8 @@
-from typing import Any, Dict, List, Set, Union
+from typing import List, Set, Union
 
 from agno.exceptions import RunCancelledException
 from agno.models.message import Message
+from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
 from agno.run.team import TeamRunResponse
@@ -53,7 +54,7 @@ def update_run_response_with_reasoning(
         run_response.extra_data.reasoning_messages.extend(reasoning_agent_messages)
 
 
-def format_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[str]:
+def format_tool_calls(tool_calls: List[ToolExecution]) -> List[str]:
     """Format tool calls for display in a readable format.
 
     Args:
@@ -64,10 +65,10 @@ def format_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[str]:
     """
     formatted_tool_calls = []
     for tool_call in tool_calls:
-        if "tool_name" in tool_call and "tool_args" in tool_call:
-            tool_name = tool_call["tool_name"]
+        if tool_call.tool_name and tool_call.tool_args:
+            tool_name = tool_call.tool_name
             args_str = ""
-            if "tool_args" in tool_call and tool_call["tool_args"] is not None:
-                args_str = ", ".join(f"{k}={v}" for k, v in tool_call["tool_args"].items())
+            if tool_call.tool_args is not None:
+                args_str = ", ".join(f"{k}={v}" for k, v in tool_call.tool_args.items())
             formatted_tool_calls.append(f"{tool_name}({args_str})")
     return formatted_tool_calls

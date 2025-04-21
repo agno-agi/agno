@@ -24,6 +24,8 @@ def tool(
     sanitize_arguments: Optional[bool] = None,
     show_result: Optional[bool] = None,
     stop_after_tool_call: Optional[bool] = None,
+    requires_confirmation: Optional[bool] = None,
+    external_execution: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
     cache_results: bool = False,
@@ -48,6 +50,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         add_instructions: bool - If True, add instructions to the system message
         show_result: Optional[bool] - If True, shows the result after function call
         stop_after_tool_call: Optional[bool] - If True, the agent will stop after the function call.
+        requires_confirmation: Optional[bool] - If True, the function will require user confirmation before execution
+        external_execution: Optional[bool] - If True, the function will be executed outside of the agent's control.
         pre_hook: Optional[Callable] - Hook that runs before the function is executed.
         post_hook: Optional[Callable] - Hook that runs after the function is executed.
         cache_results: bool - If True, enable caching of function results
@@ -81,6 +85,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "sanitize_arguments",
             "show_result",
             "stop_after_tool_call",
+            "requires_confirmation",
+            "external_execution",
             "pre_hook",
             "post_hook",
             "cache_results",
@@ -150,6 +156,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "instructions": kwargs.get("instructions"),
             "add_instructions": kwargs.get("add_instructions", True),
             "entrypoint": wrapper,
+            "requires_confirmation": kwargs.get("requires_confirmation"),
+            "external_execution": kwargs.get("external_execution"),
             "cache_results": kwargs.get("cache_results", False),
             "cache_dir": kwargs.get("cache_dir"),
             "cache_ttl": kwargs.get("cache_ttl", 3600),
@@ -160,9 +168,11 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
                 not in [
                     "name",
                     "description",
-                    "cache_results",
                     "instructions",
                     "add_instructions",
+                    "requires_confirmation",
+                    "external_execution",
+                    "cache_results",
                     "cache_dir",
                     "cache_ttl",
                 ]

@@ -3,6 +3,7 @@ from enum import Enum
 from time import time
 from typing import Any, Dict, List, Optional
 
+from agno.models.response import ToolExecution
 from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
@@ -18,12 +19,17 @@ class RunEvent(str, Enum):
     run_completed = "RunCompleted"
     run_error = "RunError"
     run_cancelled = "RunCancelled"
+
+    tool_calls_paused = "ToolCallsPaused"
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
+
     reasoning_started = "ReasoningStarted"
     reasoning_step = "ReasoningStep"
     reasoning_completed = "ReasoningCompleted"
+
     updating_memory = "UpdatingMemory"
+
     workflow_started = "WorkflowStarted"
     workflow_completed = "WorkflowCompleted"
 
@@ -51,9 +57,6 @@ class RunResponseExtraData:
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponseExtraData":
         add_messages = data.pop("add_messages", None)
         add_messages = [Message.model_validate(message) for message in add_messages] if add_messages else None
-
-        history = data.pop("history", None)
-        history = [Message.model_validate(message) for message in history] if history else None
 
         reasoning_steps = data.pop("reasoning_steps", None)
         reasoning_steps = [ReasoningStep.model_validate(step) for step in reasoning_steps] if reasoning_steps else None
@@ -89,8 +92,10 @@ class RunResponse:
     agent_id: Optional[str] = None
     session_id: Optional[str] = None
     workflow_id: Optional[str] = None
-    tools: Optional[List[Dict[str, Any]]] = None
+
+    tools: Optional[List[ToolExecution]] = None
     formatted_tool_calls: Optional[List[str]] = None
+
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response

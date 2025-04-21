@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, Callable, Dict, Optional, Type, TypeVar, get_type_hints
+from typing import Any, Callable, Dict, Literal, Optional, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
 from pydantic import BaseModel, Field, validate_call
@@ -68,6 +68,10 @@ class Function(BaseModel):
     # Hook that runs after the function is executed, regardless of success/failure.
     # If defined, can accept the FunctionCall instance as a parameter.
     post_hook: Optional[Callable] = None
+    # If True, the function will require confirmation before execution
+    requires_confirmation: Optional[bool] = None
+    # If True, the function will be executed outside the agent's control.
+    external_execution: Optional[bool] = None
 
     # Caching configuration
     cache_results: bool = False
@@ -93,7 +97,7 @@ class Function(BaseModel):
             sig = signature(c)
             type_hints = get_type_hints(c)
 
-            # If function has an the agent argument, remove the agent parameter from the type hints
+            # If function has the agent argument, remove the agent parameter from the type hints
             if "agent" in sig.parameters:
                 del type_hints["agent"]
             # log_info(f"Type hints for {function_name}: {type_hints}")
@@ -174,7 +178,7 @@ class Function(BaseModel):
             sig = signature(self.entrypoint)
             type_hints = get_type_hints(self.entrypoint)
 
-            # If function has an the agent argument, remove the agent parameter from the type hints
+            # If function has the agent argument, remove the agent parameter from the type hints
             if "agent" in sig.parameters:
                 del type_hints["agent"]
             # log_info(f"Type hints for {self.name}: {type_hints}")
@@ -341,6 +345,8 @@ class Function(BaseModel):
         except Exception as e:
             log_error(f"Error writing cache: {e}")
 
+class FunctionExecutionResult(BaseModel):
+    status: Literal["success", "failure"]
 
 class FunctionCall(BaseModel):
     """Model for Function Calls"""
@@ -361,7 +367,7 @@ class FunctionCall(BaseModel):
         """Returns a string representation of the function call."""
         import shutil
 
-        # Get terminal width, default to 80 if can't determine
+        # Get terminal width, default to 80 if it can't be determined
         term_width = shutil.get_terminal_size().columns or 80
         max_arg_len = max(20, (term_width - len(self.function.name) - 4) // 2)
 
@@ -393,7 +399,7 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has and agent argument
                 if "agent" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["agent"] = self.function._agent
-                # Check if the pre-hook has an fc argument
+                # Check if the pre-hook has a fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
                 self.function.pre_hook(**pre_hook_args)
@@ -415,7 +421,7 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has and agent argument
                 if "agent" in signature(self.function.post_hook).parameters:
                     post_hook_args["agent"] = self.function._agent
-                # Check if the post-hook has an fc argument
+                # Check if the post-hook has a fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
                 self.function.post_hook(**post_hook_args)
@@ -435,20 +441,19 @@ class FunctionCall(BaseModel):
         # Check if the entrypoint has an agent argument
         if "agent" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["agent"] = self.function._agent
-        # Check if the entrypoint has an fc argument
+        # Check if the entrypoint has a fc argument
         if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["fc"] = self
         return entrypoint_args
 
-    def execute(self) -> bool:
+    def execute(self) -> FunctionExecutionResult:
         """Runs the function call."""
         from inspect import isgenerator
 
         if self.function.entrypoint is None:
-            return False
+            return FunctionExecutionResult(status="failure")
 
         log_debug(f"Running: {self.get_call_str()}")
-        function_call_success = False
 
         # Execute pre-hook if it exists
         self._handle_pre_hook()
@@ -464,8 +469,7 @@ class FunctionCall(BaseModel):
             if cached_result is not None:
                 log_debug(f"Cache hit for: {self.get_call_str()}")
                 self.result = cached_result
-                function_call_success = True
-                return function_call_success
+                return FunctionExecutionResult(status="success")
 
         # Execute function
         try:
@@ -485,8 +489,6 @@ class FunctionCall(BaseModel):
                     cache_file = self.function._get_cache_file_path(cache_key)
                     self.function._save_to_cache(cache_file, self.result)
 
-            function_call_success = True
-
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
@@ -495,12 +497,12 @@ class FunctionCall(BaseModel):
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return function_call_success
+            return FunctionExecutionResult(status="failure")
 
         # Execute post-hook if it exists
         self._handle_post_hook()
 
-        return function_call_success
+        return FunctionExecutionResult(status="success")
 
     async def _handle_pre_hook_async(self):
         """Handles the async pre-hook for the function call."""
@@ -512,7 +514,7 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an agent argument
                 if "agent" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["agent"] = self.function._agent
-                # Check if the pre-hook has an fc argument
+                # Check if the pre-hook has a fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
 
@@ -535,7 +537,7 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an agent argument
                 if "agent" in signature(self.function.post_hook).parameters:
                     post_hook_args["agent"] = self.function._agent
-                # Check if the post-hook has an fc argument
+                # Check if the post-hook has a fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
 
@@ -548,15 +550,14 @@ class FunctionCall(BaseModel):
                 log_warning(f"Error in post-hook callback: {e}")
                 log_exception(e)
 
-    async def aexecute(self) -> bool:
+    async def aexecute(self) -> FunctionExecutionResult:
         """Runs the function call asynchronously."""
         from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
 
         if self.function.entrypoint is None:
-            return False
+            return FunctionExecutionResult(status="failure")
 
         log_debug(f"Running: {self.get_call_str()}")
-        function_call_success = False
 
         # Execute pre-hook if it exists
         if iscoroutinefunction(self.function.pre_hook):
@@ -576,8 +577,7 @@ class FunctionCall(BaseModel):
             if cached_result is not None:
                 log_debug(f"Cache hit for: {self.get_call_str()}")
                 self.result = cached_result
-                function_call_success = True
-                return function_call_success
+                return FunctionExecutionResult(status="success")
 
         # Execute function
         try:
@@ -600,8 +600,6 @@ class FunctionCall(BaseModel):
                 cache_file = self.function._get_cache_file_path(cache_key)
                 self.function._save_to_cache(cache_file, self.result)
 
-            function_call_success = True
-
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
@@ -610,7 +608,7 @@ class FunctionCall(BaseModel):
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return function_call_success
+            return FunctionExecutionResult(status="failure")
 
         # Execute post-hook if it exists
         if iscoroutinefunction(self.function.post_hook):
@@ -618,4 +616,4 @@ class FunctionCall(BaseModel):
         else:
             self._handle_post_hook()
 
-        return function_call_success
+        return FunctionExecutionResult(status="success")

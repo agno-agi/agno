@@ -430,7 +430,7 @@ class AwsBedrock(Model):
                 should_yield = True
 
             if model_response.response_usage is not None:
-                self._add_usage_metrics_to_assistant_message(
+                _add_usage_metrics_to_assistant_message(
                     assistant_message=assistant_message, response_usage=model_response.response_usage
                 )
 

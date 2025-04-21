@@ -199,7 +199,6 @@ class OpenAIChat(Model):
 
             if self.tool_choice is not None:
                 request_params["tool_choice"] = self.tool_choice
-
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
@@ -294,7 +293,7 @@ class OpenAIChat(Model):
         # Manually add the content field even if it is None
         if message.content is None:
             message_dict["content"] = None
-
+        
         return message_dict
 
     def invoke(self, messages: List[Message]) -> Union[ChatCompletion, ParsedChatCompletion]:
@@ -664,7 +663,7 @@ class OpenAIChat(Model):
 
         if response.usage is not None:
             model_response.response_usage = response.usage
-
+            
         return model_response
 
     def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:

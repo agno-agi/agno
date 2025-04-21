@@ -10,10 +10,32 @@ from agno.models.message import Citations
 class ModelResponseEvent(str, Enum):
     """Events that can be sent by the model provider"""
 
+    tool_call_confirmation_required = "ToolCallConfirmationRequired"
+    tool_call_external_execution_required = "ToolCallExternalExecutionRequired"
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     assistant_response = "AssistantResponse"
 
+
+@dataclass
+class ToolExecution:
+    """Execution of a tool"""
+
+    tool_call_id: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_args: Optional[Dict[str, Any]] = None
+    tool_call_error: Optional[bool] = None
+    result: Optional[str] = None
+
+    # If True, the agent will stop executing after this tool call.
+    stop_after_tool_call: bool = False
+
+    created_at: int = int(time())
+
+    confirmation_required: Optional[bool] = None
+    confirmed: Optional[bool] = None
+
+    external_execution_required: Optional[bool] = None
 
 @dataclass
 class ModelResponse:
@@ -25,7 +47,13 @@ class ModelResponse:
     parsed: Optional[Any] = None
     audio: Optional[AudioResponse] = None
     image: Optional[ImageArtifact] = None
+
+    # Model tool calls
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+
+    # Actual tool executions
+    tool_executions: Optional[List[ToolExecution]] = field(default_factory=list)
+
     event: str = ModelResponseEvent.assistant_response.value
 
     provider_data: Optional[Dict[str, Any]] = None

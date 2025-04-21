@@ -376,7 +376,7 @@ class Cohere(Model):
             and response.delta.usage is not None
             and response.delta.usage.tokens is not None
         ):
-            self._add_usage_metrics_to_assistant_message(
+            _add_usage_metrics_to_assistant_message(
                 assistant_message=assistant_message,
                 response_usage={
                     "input_tokens": int(response.delta.usage.tokens.input_tokens) or 0,  # type: ignore

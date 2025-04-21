@@ -735,7 +735,7 @@ class OpenAIResponses(Model):
             if stream_event.response.usage is not None:
                 model_response.response_usage = stream_event.response.usage
 
-            self._add_usage_metrics_to_assistant_message(
+            _add_usage_metrics_to_assistant_message(
                 assistant_message=assistant_message,
                 response_usage=model_response.response_usage,
             )
