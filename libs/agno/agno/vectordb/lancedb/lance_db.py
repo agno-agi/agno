@@ -220,7 +220,8 @@ class LanceDb(VectorDb):
         data = []
 
         for document in documents:
-            if self.doc_exists(document): continue
+            if self.doc_exists(document):
+                continue
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = str(md5(cleaned_content.encode()).hexdigest())
@@ -271,7 +272,8 @@ class LanceDb(VectorDb):
 
         # Prepare documents for insertion
         for document in documents:
-            if await self.async_doc_exists(document): continue
+            if await self.async_doc_exists(document):
+                continue
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = str(md5(cleaned_content.encode()).hexdigest())
