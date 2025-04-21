@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Dict, List, Optional, Union
 
 try:
@@ -163,6 +164,10 @@ class PineconeDb(VectorDb):
         list_indexes = self.client.list_indexes()
         return self.name in list_indexes.names()
 
+    async def async_exists(self) -> bool:
+        """Check if the index exists asynchronously."""
+        return await asyncio.to_thread(self.exists)
+
     def create(self) -> None:
         """Create the index if it does not exist."""
         if not self.exists():
@@ -178,6 +183,10 @@ class PineconeDb(VectorDb):
                 metric=self.metric if self.metric is not None else "cosine",
                 timeout=self.timeout,
             )
+
+    async def async_create(self) -> None:
+        """Create the index asynchronously if it does not exist."""
+        await asyncio.to_thread(self.create)
 
     def drop(self) -> None:
         """Delete the index if it exists."""
@@ -198,6 +207,10 @@ class PineconeDb(VectorDb):
         response = self.index.fetch(ids=[document.id])
         return len(response.vectors) > 0
 
+    async def async_doc_exists(self, document: Document) -> bool:
+        """Check if a document exists in the index asynchronously."""
+        return await asyncio.to_thread(self.doc_exists, document)
+
     def name_exists(self, name: str) -> bool:
         """Check if an index with the given name exists.
 
@@ -213,6 +226,10 @@ class PineconeDb(VectorDb):
             return True
         except Exception:
             return False
+
+    async def async_name_exists(self, name: str) -> bool:
+        """Check if an index with the given name exists asynchronously."""
+        return await asyncio.to_thread(self.name_exists, name)
 
     def upsert(
         self,
@@ -252,6 +269,72 @@ class PineconeDb(VectorDb):
             batch_size=batch_size,
             show_progress=show_progress,
         )
+
+    async def async_upsert(
+        self,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        namespace: Optional[str] = None,
+        batch_size: Optional[int] = None,
+        show_progress: bool = False,
+    ) -> None:
+        """Upsert documents into the index asynchronously with batching."""
+        if not documents:
+            return
+
+        # Pinecone has its own batching mechanism, but we'll add an additional layer
+        # to process document embedding in parallel
+        _batch_size = batch_size or 100
+
+        # Split documents into batches
+        batches = [documents[i : i + _batch_size] for i in range(0, len(documents), _batch_size)]
+        log_debug(f"Processing {len(documents)} documents in {len(batches)} batches for upsert")
+
+        # Process each batch in parallel
+        async def process_batch(batch_docs):
+            return await asyncio.to_thread(self._prepare_vectors, batch_docs)
+
+        # Run all batches in parallel
+        batch_vectors = await asyncio.gather(*[process_batch(batch) for batch in batches])
+
+        # Flatten vectors
+        all_vectors = [vector for batch in batch_vectors for vector in batch]
+
+        # Upsert all vectors
+        await asyncio.to_thread(
+            self._upsert_vectors, all_vectors, namespace or self.namespace, batch_size, show_progress
+        )
+
+        log_debug(f"Finished async upsert of {len(documents)} documents")
+
+    def _prepare_vectors(self, documents):
+        """Prepare vectors for upsert."""
+        vectors = []
+        for doc in documents:
+            doc.embed(embedder=self.embedder)
+            doc.meta_data["text"] = doc.content
+            data_to_upsert = {
+                "id": doc.id,
+                "values": doc.embedding,
+                "metadata": doc.meta_data,
+            }
+            if self.use_hybrid_search:
+                data_to_upsert["sparse_values"] = self.sparse_encoder.encode_documents(doc.content)
+            vectors.append(data_to_upsert)
+        return vectors
+
+    def _upsert_vectors(self, vectors, namespace, batch_size, show_progress):
+        """Upsert vectors to the index."""
+        self.index.upsert(
+            vectors=vectors,
+            namespace=namespace,
+            batch_size=batch_size,
+            show_progress=show_progress,
+        )
+
+    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        """Pinecone doesn't support insert. Raise an error."""
+        raise NotImplementedError("Pinecone does not support insert operations. Use async_upsert instead.")
 
     def upsert_available(self) -> bool:
         """Check if upsert operation is available.
@@ -361,6 +444,17 @@ class PineconeDb(VectorDb):
             search_results = self.reranker.rerank(query=query, documents=search_results)
         return search_results
 
+    async def async_search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
+        namespace: Optional[str] = None,
+        include_values: Optional[bool] = None,
+    ) -> List[Document]:
+        """Search for similar documents in the index asynchronously."""
+        return await asyncio.to_thread(self.search, query, limit, filters, namespace, include_values)
+
     def optimize(self) -> None:
         """Optimize the index.
 
@@ -382,28 +476,5 @@ class PineconeDb(VectorDb):
         except Exception:
             return False
 
-    async def async_create(self) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
     async def async_drop(self) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_exists(self) -> bool:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
