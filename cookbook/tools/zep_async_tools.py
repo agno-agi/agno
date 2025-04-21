@@ -1,3 +1,11 @@
+"""
+This example demonstrates how to use the ZepAsyncTools class to interact with memories stored in Zep.
+
+To get started, please export your Zep API key as an environment variable. You can get your Zep API key from https://app.getzep.com/
+
+export ZEP_API_KEY=<your-zep-api-key>
+"""
+
 import asyncio
 import time
 
@@ -11,7 +19,6 @@ async def main():
     zep_tools = ZepAsyncTools(
         user_id="agno", session_id="agno-async-session", add_instructions=True
     )
-    await zep_tools.initialize()
 
     # Initialize the Agent
     agent = Agent(

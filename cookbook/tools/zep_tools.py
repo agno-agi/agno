@@ -1,3 +1,11 @@
+"""
+This example demonstrates how to use the ZepTools class to interact with memories stored in Zep.
+
+To get started, please export your Zep API key as an environment variable. You can get your Zep API key from https://app.getzep.com/
+
+export ZEP_API_KEY=<your-zep-api-key>
+"""
+
 import time
 
 from agno.agent import Agent
@@ -6,7 +14,6 @@ from agno.tools.zep import ZepTools
 
 # Initialize the ZepTools
 zep_tools = ZepTools(user_id="agno", session_id="agno-session", add_instructions=True)
-zep_tools.initialize()
 
 # Initialize the Agent
 agent = Agent(

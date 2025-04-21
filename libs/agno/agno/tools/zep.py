@@ -64,6 +64,8 @@ class ZepTools(Toolkit):
         self.session_id: Optional[str] = None
         self.user_id: Optional[str] = None
 
+        self.initialize()
+
         # Register methods as tools conditionally
         if add_zep_message:
             self.register(self.add_zep_message)
@@ -190,14 +192,15 @@ class ZepTools(Toolkit):
 
     def search_zep_memory(self, query: str, search_scope: str = "messages") -> str:
         """
-        Searches the Zep user graph for relevant facts associated with the configured user_id.
+        Searches the Zep memory store for relevant messages or summaries associated with the configured user_id.
         Args:
             query: The search term to find relevant facts.
             search_scope: The scope of the search to perform. Can be "messages" or "summary".
         Returns:
-            A list of search result dictionaries, or an empty list if an error occurs.
+            A string of the search result
         """
         results: List = []
+        search_result = ""
         if not self.zep_client or not self.user_id or not self.session_id:
             log_error("Zep client or user ID or session ID not initialized. Cannot search memory.")
             return "Error: Zep client/user/session not initialized."
@@ -223,9 +226,17 @@ class ZepTools(Toolkit):
 
         if results is not None and results != []:
             if search_scope == "summary":
-                return " ".join([result.get("summary", "") for result in results if result.get("summary") is not None])
+                search_result =  " ".join([result.get("summary", "") for result in results if result.get("summary") is not None])
+                if search_result == "":
+                    return "No relevant summary found."
+                else:
+                    return search_result
             else:
-                return " ".join([result.get("content", "") for result in results if result.get("content") is not None])
+                search_result = " ".join([result.get("content", "") for result in results if result.get("content") is not None])
+                if search_result == "":
+                    return "No relevant content found."
+                else:
+                    return search_result
         else:
             return "No relevant messages found."
 
@@ -264,6 +275,8 @@ class ZepAsyncTools(Toolkit):
 
         self.session_id: Optional[str] = None
         self.user_id: Optional[str] = None
+
+        self._initialized = False
 
         # Register methods as tools conditionally
         if add_zep_message:
@@ -326,6 +339,9 @@ class ZepAsyncTools(Toolkit):
         Returns:
             A confirmation message or an error string.
         """
+        if not self._initialized:
+            await self.initialize()
+
         if not self.zep_client or not self.session_id:
             log_error("Zep client or session ID not initialized. Cannot add message.")
             return "Error: Zep client/session not initialized."
@@ -359,6 +375,9 @@ class ZepAsyncTools(Toolkit):
         Returns:
             The requested memory content as a string, or an error string.
         """
+        if not self._initialized:
+            await self.initialize()
+
         if not self.zep_client or not self.session_id:
             log_error("Zep client or session ID not initialized. Cannot get memory.")
             return "Error: Zep client/session not initialized."
@@ -391,14 +410,19 @@ class ZepAsyncTools(Toolkit):
 
     async def search_zep_memory(self, query: str, search_scope: str = "messages") -> str:
         """
-        Searches the Zep user graph for relevant facts associated with the configured user_id.
+        Searches the Zep memory store for relevant messages or summaries associated with the configured user_id.
         Args:
             query: The search term to find relevant facts.
             search_scope: The scope of the search to perform. Can be "messages" or "summary".
         Returns:
-            A list of search result dictionaries, or an empty list if an error occurs.
+            A string of the search result
         """
+        if not self._initialized:
+            await self.initialize()
+
         results: List = []
+        search_result = ""
+
         if not self.zep_client or not self.user_id or not self.session_id:
             log_error("Zep client or user ID or session ID not initialized. Cannot search memory.")
             return "Error: Zep client/user/session not initialized."
@@ -426,8 +450,16 @@ class ZepAsyncTools(Toolkit):
 
         if results is not None and results != []:
             if search_scope == "summary":
-                return " ".join([result.get("summary", "") for result in results if result.get("summary") is not None])
+                search_result = " ".join([result.get("summary", "") for result in results if result.get("summary") is not None])
+                if search_result == "":
+                    return "No relevant summary found."
+                else:
+                    return search_result
             else:
-                return " ".join([result.get("content", "") for result in results if result.get("content") is not None])
+                search_result = " ".join([result.get("content", "") for result in results if result.get("content") is not None])
+                if search_result == "":
+                    return "No relevant content found."
+                else:
+                    return search_result
         else:
             return "No relevant messages found."
