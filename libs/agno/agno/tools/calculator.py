@@ -22,22 +22,33 @@ class CalculatorTools(Toolkit):
         super().__init__(name="calculator", **kwargs)
 
         # Register functions in the toolkit
-        if add or enable_all:
-            self.register(self.add)
-        if subtract or enable_all:
-            self.register(self.subtract)
-        if multiply or enable_all:
-            self.register(self.multiply)
-        if divide or enable_all:
-            self.register(self.divide)
-        if exponentiate or enable_all:
-            self.register(self.exponentiate)
-        if factorial or enable_all:
-            self.register(self.factorial)
-        if is_prime or enable_all:
-            self.register(self.is_prime)
-        if square_root or enable_all:
-            self.register(self.square_root)
+        if not self.include_tools:
+            self.include_tools = []
+            if add or enable_all:
+                self.include_tools.append("add")
+            if subtract or enable_all:
+                self.include_tools.append("subtract")
+            if multiply or enable_all:
+                self.include_tools.append("multiply")
+            if divide or enable_all:
+                self.include_tools.append("divide")
+            if exponentiate or enable_all:
+                self.include_tools.append("exponentiate")
+            if factorial or enable_all:
+                self.include_tools.append("factorial")
+            if is_prime or enable_all:
+                self.include_tools.append("is_prime")
+            if square_root or enable_all:
+                self.include_tools.append("square_root")
+        
+        self.register(self.add)
+        self.register(self.subtract)
+        self.register(self.multiply)
+        self.register(self.divide)
+        self.register(self.exponentiate)
+        self.register(self.factorial)
+        self.register(self.is_prime)
+        self.register(self.square_root)
 
     def add(self, a: float, b: float) -> str:
         """Add two numbers and return the result.

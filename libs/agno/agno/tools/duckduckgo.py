@@ -48,10 +48,15 @@ class DuckDuckGoTools(Toolkit):
         self.modifier: Optional[str] = modifier
         self.verify_ssl: bool = verify_ssl
 
-        if search:
-            self.register(self.duckduckgo_search)
-        if news:
-            self.register(self.duckduckgo_news)
+        if not self.include_tools:
+            self.include_tools = []
+            if search:
+                self.include_tools.append("search")
+            if news:
+                self.include_tools.append("news")
+        
+        self.register(self.duckduckgo_search)
+        self.register(self.duckduckgo_news)
 
     def duckduckgo_search(self, query: str, max_results: int = 5) -> str:
         """Use this function to search DuckDuckGo for a query.

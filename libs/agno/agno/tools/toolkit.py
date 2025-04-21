@@ -11,6 +11,8 @@ class Toolkit:
         name: str = "toolkit",
         instructions: Optional[str] = None,
         add_instructions: bool = False,
+        include_tools: Optional[list[str]] = None,
+        exclude_tools: Optional[list[str]] = None,
         cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
@@ -21,6 +23,8 @@ class Toolkit:
             name: A descriptive name for the toolkit
             instructions: Instructions for the toolkit
             add_instructions: Whether to add instructions to the toolkit
+            include_tools: List of tool names to include in the toolkit
+            exclude_tools: List of tool names to exclude from the toolkit
             cache_results (bool): Enable in-memory caching of function results.
             cache_ttl (int): Time-to-live for cached results in seconds.
             cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
@@ -29,6 +33,10 @@ class Toolkit:
         self.functions: Dict[str, Function] = OrderedDict()
         self.instructions: Optional[str] = instructions
         self.add_instructions: bool = add_instructions
+
+        self.include_tools = include_tools
+        self.exclude_tools = exclude_tools or []
+        
         self.cache_results: bool = cache_results
         self.cache_ttl: int = cache_ttl
         self.cache_dir: Optional[str] = cache_dir
@@ -43,8 +51,14 @@ class Toolkit:
             The registered function
         """
         try:
+            tool_name = name or function.__name__
+            if self.include_tools is not None and tool_name not in self.include_tools:
+                return
+            if self.exclude_tools is not None and tool_name in self.exclude_tools:
+                return
+
             f = Function(
-                name=name or function.__name__,
+                name=tool_name,
                 entrypoint=function,
                 sanitize_arguments=sanitize_arguments,
                 cache_results=self.cache_results,
