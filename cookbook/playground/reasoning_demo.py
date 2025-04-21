@@ -1,6 +1,7 @@
 """Run `pip install openai exa_py duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api python-docx agno` to install dependencies."""
 
 import asyncio
+from textwrap import dedent
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
@@ -50,6 +51,7 @@ cot_agent = Agent(
     role="Answer basic questions",
     agent_id="cot-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)],
     storage=SqliteStorage(
         table_name="cot_agent", db_file=agent_storage_file, auto_upgrade_schema=True
     ),
@@ -142,6 +144,50 @@ web_agent = Agent(
     add_datetime_to_instructions=True,
 )
 
+thinking_tool_agent = Agent(
+    name="Thinking Tool Agent",
+    agent_id="thinking_tool_agent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[ThinkingTools(add_instructions=True), YFinanceTools(enable_all=True)],
+    instructions=dedent("""\
+        You are a seasoned Wall Street analyst with deep expertise in market analysis! 📊
+
+        Follow these steps for comprehensive financial analysis:
+        1. Market Overview
+           - Latest stock price
+           - 52-week high and low
+        2. Financial Deep Dive
+           - Key metrics (P/E, Market Cap, EPS)
+        3. Professional Insights
+           - Analyst recommendations breakdown
+           - Recent rating changes
+
+        4. Market Context
+           - Industry trends and positioning
+           - Competitive analysis
+           - Market sentiment indicators
+
+        Your reporting style:
+        - Begin with an executive summary
+        - Use tables for data presentation
+        - Include clear section headers
+        - Add emoji indicators for trends (📈 📉)
+        - Highlight key insights with bullet points
+        - Compare metrics to industry averages
+        - Include technical term explanations
+        - End with a forward-looking analysis
+
+        Risk Disclosure:
+        - Always highlight potential risk factors
+        - Note market uncertainties
+        - Mention relevant regulatory concerns\
+    """),
+    add_datetime_to_instructions=True,
+    show_tool_calls=True,
+    markdown=True,
+    stream_intermediate_steps=True,
+)
+
 finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests",
@@ -194,6 +240,7 @@ reasoning_finance_team = Team(
         finance_agent,
     ],
     reasoning=True,
+    # tools=[ReasoningTools(add_instructions=True)],
     # uncomment it to use knowledge tools
     # tools=[knowledge_tools],
     debug_mode=True,
@@ -222,6 +269,7 @@ app = Playground(
         native_model_agent,
         claude_thinking_agent,
         knowledge_agent,
+        thinking_tool_agent
     ],
     teams=[reasoning_finance_team],
 ).get_app()
