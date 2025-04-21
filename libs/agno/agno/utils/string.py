@@ -79,7 +79,7 @@ def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> O
             content = "".join(parts)
         elif "```" in content:
             content = content.split("```")[1].strip()
-            
+
         # Clean the JSON string
         # Remove markdown formatting
         content = re.sub(r"[*`#]", "", content)

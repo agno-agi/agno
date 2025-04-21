@@ -3,7 +3,7 @@ import csv
 import io
 import os
 from pathlib import Path
-from typing import IO, Any, List, Union
+from typing import IO, Any, List, Optional, Union
 from urllib.parse import urlparse
 
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
@@ -134,13 +134,17 @@ class CSVReader(Reader):
 class CSVUrlReader(Reader):
     """Reader for CSV files"""
 
+    def __init__(self, proxy: Optional[str] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.proxy = proxy
+
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No URL provided")
 
         logger.info(f"Reading: {url}")
         # Retry the request up to 3 times with exponential backoff
-        response = fetch_with_retry(url)
+        response = fetch_with_retry(url, proxy=self.proxy)
 
         parsed_url = urlparse(url)
         filename = os.path.basename(parsed_url.path) or "data.csv"
@@ -162,7 +166,8 @@ class CSVUrlReader(Reader):
 
         logger.info(f"Reading async: {url}")
 
-        async with httpx.AsyncClient() as client:
+        client_args = {"proxy": self.proxy} if self.proxy else {}
+        async with httpx.AsyncClient(**client_args) as client:
             response = await async_fetch_with_retry(url, client=client)
 
             parsed_url = urlparse(url)
