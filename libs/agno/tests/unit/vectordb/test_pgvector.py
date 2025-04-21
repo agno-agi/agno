@@ -274,17 +274,16 @@ def test_delete(mock_pgvector):
 
 # Asynchronous Tests
 @pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_async_create(mock_pgvector):
     """Test async_create method."""
-    with patch.object(mock_pgvector, "create") as mock_create, patch("asyncio.get_event_loop") as mock_get_loop:
-        mock_loop = AsyncMock()
-        mock_get_loop.return_value = mock_loop
-        mock_loop.run_in_executor.return_value = None
+    with patch.object(mock_pgvector, "create") as mock_create, patch("asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.return_value = None
 
         await mock_pgvector.async_create()
 
-        # Check that create was called via run_in_executor
-        mock_loop.run_in_executor.assert_called_once()
+        # Check that create was called via to_thread
+        mock_to_thread.assert_called_once_with(mock_pgvector.create)
 
 
 @pytest.mark.asyncio
@@ -292,33 +291,28 @@ async def test_async_doc_exists(mock_pgvector):
     """Test async_doc_exists method."""
     doc = create_test_documents(1)[0]
 
-    with patch.object(mock_pgvector, "doc_exists", return_value=True), patch("asyncio.get_event_loop") as mock_get_loop:
-        mock_loop = AsyncMock()
-        mock_get_loop.return_value = mock_loop
-        mock_loop.run_in_executor.return_value = True
+    with patch.object(mock_pgvector, "doc_exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.return_value = True
 
         result = await mock_pgvector.async_doc_exists(doc)
 
-        # Check result and that doc_exists was called via run_in_executor
+        # Check result and that doc_exists was called via to_thread
         assert result is True
-        mock_loop.run_in_executor.assert_called_once()
+        mock_to_thread.assert_called_once_with(mock_pgvector.doc_exists, doc)
 
 
 @pytest.mark.asyncio
 async def test_async_name_exists(mock_pgvector):
     """Test async_name_exists method."""
-    with patch.object(mock_pgvector, "name_exists", return_value=True), patch(
-        "asyncio.get_event_loop"
-    ) as mock_get_loop:
-        mock_loop = AsyncMock()
-        mock_get_loop.return_value = mock_loop
-        mock_loop.run_in_executor.return_value = True
+    with patch.object(mock_pgvector, "name_exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.return_value = True
 
         result = await mock_pgvector.async_name_exists("test_name")
 
-        # Check result and that name_exists was called via run_in_executor
+        # Check result and that name_exists was called via to_thread
         assert result is True
-        mock_loop.run_in_executor.assert_called_once()
+        mock_to_thread.assert_called_once_with(
+            mock_pgvector.name_exists, "test_name")
 
 
 @pytest.mark.asyncio
@@ -326,15 +320,14 @@ async def test_async_insert(mock_pgvector):
     """Test async_insert method."""
     docs = create_test_documents()
 
-    with patch.object(mock_pgvector, "insert") as mock_insert, patch("asyncio.get_event_loop") as mock_get_loop:
-        mock_loop = AsyncMock()
-        mock_get_loop.return_value = mock_loop
-        mock_loop.run_in_executor.return_value = None
+    with patch.object(mock_pgvector, "insert") as mock_insert, patch("asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.return_value = None
 
         await mock_pgvector.async_insert(docs)
 
-        # Check that insert was called via run_in_executor
-        mock_loop.run_in_executor.assert_called_once()
+        # Check that insert was called via to_thread
+        mock_to_thread.assert_called_once_with(
+            mock_pgvector.insert, docs, None)
 
 
 @pytest.mark.asyncio
@@ -342,15 +335,14 @@ async def test_async_upsert(mock_pgvector):
     """Test async_upsert method."""
     docs = create_test_documents()
 
-    with patch.object(mock_pgvector, "upsert") as mock_upsert, patch("asyncio.get_event_loop") as mock_get_loop:
-        mock_loop = AsyncMock()
-        mock_get_loop.return_value = mock_loop
-        mock_loop.run_in_executor.return_value = None
+    with patch.object(mock_pgvector, "upsert") as mock_upsert, patch("asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.return_value = None
 
         await mock_pgvector.async_upsert(docs)
 
-        # Check that upsert was called via run_in_executor
-        mock_loop.run_in_executor.assert_called_once()
+        # Check that upsert was called via to_thread
+        mock_to_thread.assert_called_once_with(
+            mock_pgvector.upsert, docs, None)
 
 
 @pytest.mark.asyncio
@@ -358,44 +350,37 @@ async def test_async_search(mock_pgvector):
     """Test async_search method."""
     expected_results = [Document(id="test", content="Test document")]
 
-    with patch.object(mock_pgvector, "search", return_value=expected_results), patch(
-        "asyncio.get_event_loop"
-    ) as mock_get_loop:
-        mock_loop = AsyncMock()
-        mock_get_loop.return_value = mock_loop
-        mock_loop.run_in_executor.return_value = expected_results
+    with patch.object(mock_pgvector, "search", return_value=expected_results), patch("asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.return_value = expected_results
 
         results = await mock_pgvector.async_search("test query")
 
-        # Check results and that search was called via run_in_executor
+        # Check results and that search was called via to_thread
         assert results == expected_results
-        mock_loop.run_in_executor.assert_called_once()
+        mock_to_thread.assert_called_once_with(
+            mock_pgvector.search, "test query", 5, None)
 
 
 @pytest.mark.asyncio
 async def test_async_drop(mock_pgvector):
     """Test async_drop method."""
-    with patch.object(mock_pgvector, "drop") as mock_drop, patch("asyncio.get_event_loop") as mock_get_loop:
-        mock_loop = AsyncMock()
-        mock_get_loop.return_value = mock_loop
-        mock_loop.run_in_executor.return_value = None
+    with patch.object(mock_pgvector, "drop") as mock_drop, patch("asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.return_value = None
 
         await mock_pgvector.async_drop()
 
-        # Check that drop was called via run_in_executor
-        mock_loop.run_in_executor.assert_called_once()
+        # Check that drop was called via to_thread
+        mock_to_thread.assert_called_once_with(mock_pgvector.drop)
 
 
 @pytest.mark.asyncio
 async def test_async_exists(mock_pgvector):
     """Test async_exists method."""
-    with patch.object(mock_pgvector, "exists", return_value=True), patch("asyncio.get_event_loop") as mock_get_loop:
-        mock_loop = AsyncMock()
-        mock_get_loop.return_value = mock_loop
-        mock_loop.run_in_executor.return_value = True
+    with patch.object(mock_pgvector, "exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
+        mock_to_thread.return_value = True
 
         result = await mock_pgvector.async_exists()
 
-        # Check result and that exists was called via run_in_executor
+        # Check result and that exists was called via to_thread
         assert result is True
-        mock_loop.run_in_executor.assert_called_once()
+        mock_to_thread.assert_called_once_with(mock_pgvector.exists)
