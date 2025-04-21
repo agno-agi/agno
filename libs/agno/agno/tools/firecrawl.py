@@ -11,6 +11,16 @@ except ImportError:
     raise ImportError("`firecrawl-py` not installed. Please install using `pip install firecrawl-py`")
 
 
+class CustomJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles non-serializable types by converting them to strings."""
+
+    def default(self, obj):
+        try:
+            return super().default(obj)
+        except TypeError:
+            return str(obj)
+
+
 class FirecrawlTools(Toolkit):
     """
     Firecrawl is a tool for scraping and crawling websites.
@@ -70,8 +80,8 @@ class FirecrawlTools(Toolkit):
         if self.formats:
             params["formats"] = self.formats
 
-        scrape_result = self.app.scrape_url(url, params=params)
-        return json.dumps(scrape_result)
+        scrape_result = self.app.scrape_url(url, **params)
+        return json.dumps(scrape_result.model_dump(), cls=CustomJSONEncoder)
 
     def crawl_website(self, url: str, limit: Optional[int] = None) -> str:
         """Use this function to Crawls a website using Firecrawl.
