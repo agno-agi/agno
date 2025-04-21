@@ -48,7 +48,7 @@ finance_agent = Agent(
 )
 
 cot_agent = Agent(
-    name="COT Agent",
+    name="Chain-of-Thought Agent",
     role="Answer basic questions",
     agent_id="cot-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -199,28 +199,6 @@ thinking_tool_agent = Agent(
     ),
 )
 
-finance_agent = Agent(
-    name="Finance Agent",
-    role="Handle financial data requests",
-    agent_id="finance_agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[
-        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
-    ],
-    instructions=[
-        "You are a financial data specialist. Provide concise and accurate data.",
-        "Use tables to display stock prices, fundamentals (P/E, Market Cap), and recommendations.",
-        "Clearly state the company name and ticker symbol.",
-        "Briefly summarize recent company-specific news if available.",
-        "Focus on delivering the requested financial data points clearly.",
-    ],
-    add_datetime_to_instructions=True,
-    storage=SqliteStorage(
-        table_name="finance_agent",
-        db_file=agent_storage_file,
-        auto_upgrade_schema=True,
-    ),
-)
 
 agno_docs = UrlKnowledge(
     urls=["https://www.paulgraham.com/read.html"],
