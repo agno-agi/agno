@@ -6325,7 +6325,7 @@ class Team:
 
                     # Add the metrics message to the reasoning_messages
                     self.run_response.extra_data.reasoning_messages.append(metrics_message)
-                except Exception as e:
+                except Exception:
                     # Fallback: If Message object fails, try with a simple dictionary
                     metrics_dict = {
                         "role": "assistant",

@@ -4,7 +4,6 @@ This test verifies that reasoning_content is properly populated in the RunRespon
 when using KnowledgeTools, in both streaming and non-streaming modes.
 """
 
-import os
 from textwrap import dedent
 
 import pytest
@@ -47,7 +46,7 @@ def knowledge_base():
     # Only load if it doesn't exist yet (saves time in repeat tests)
     try:
         url_kb.load(recreate=False)
-    except:
+    except Exception:
         url_kb.load(recreate=True)
 
     return url_kb
