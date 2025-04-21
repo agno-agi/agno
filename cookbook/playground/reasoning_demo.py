@@ -139,9 +139,15 @@ web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests",
     model=OpenAIChat(id="gpt-4o-mini"),
+    agent_id="web_agent",
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
     add_datetime_to_instructions=True,
+    storage=SqliteStorage(
+        table_name="web_agent",
+        db_file=agent_storage_file,
+        auto_upgrade_schema=True,
+    ),
 )
 
 thinking_tool_agent = Agent(
@@ -186,11 +192,17 @@ thinking_tool_agent = Agent(
     show_tool_calls=True,
     markdown=True,
     stream_intermediate_steps=True,
+    storage=SqliteStorage(
+        table_name="thinking_tool_agent",
+        db_file=agent_storage_file,
+        auto_upgrade_schema=True,
+    ),
 )
 
 finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests",
+    agent_id="finance_agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[
         YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
@@ -203,6 +215,11 @@ finance_agent = Agent(
         "Focus on delivering the requested financial data points clearly.",
     ],
     add_datetime_to_instructions=True,
+    storage=SqliteStorage(
+        table_name="finance_agent",
+        db_file=agent_storage_file,
+        auto_upgrade_schema=True,
+    ),
 )
 
 agno_docs = UrlKnowledge(
@@ -239,15 +256,16 @@ knowledge_agent = Agent(
 reasoning_finance_team = Team(
     name="Reasoning Finance Team",
     mode="coordinate",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=OpenAIChat(id="gpt-4o"),
     members=[
         web_agent,
         finance_agent,
     ],
-    reasoning=True,
-    # tools=[ReasoningTools(add_instructions=True)],
+    # reasoning=True,
+    tools=[ReasoningTools(add_instructions=True)],
     # uncomment it to use knowledge tools
     # tools=[knowledge_tools],
+    team_id="reasoning_finance_team",
     debug_mode=True,
     instructions=[
         "Only output the final answer, no other text.",
