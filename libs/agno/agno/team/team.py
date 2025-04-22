@@ -1153,13 +1153,13 @@ class Team:
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
 
         if stream_intermediate_steps and reasoning_started:
-            all_reasoning_steps = []
+            all_reasoning_steps: List[ReasoningStep] = []
             if (
                 self.run_response
                 and self.run_response.extra_data
                 and hasattr(self.run_response.extra_data, "reasoning_steps")
             ):
-                all_reasoning_steps = self.run_response.extra_data.reasoning_steps
+                all_reasoning_steps = cast(List[ReasoningStep], self.run_response.extra_data.reasoning_steps)
 
             if all_reasoning_steps:
                 self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
@@ -1228,7 +1228,7 @@ class Team:
             yield self._create_run_response(
                 from_run_response=run_response,
                 event=RunEvent.run_completed,
-                reasoning_content=self.run_response.reasoning_content,
+                reasoning_content=run_response.reasoning_content,
                 session_id=session_id,
             )
 
@@ -1706,7 +1706,7 @@ class Team:
         self.model = cast(Model, self.model)
 
         reasoning_started = False
-        reasoning_time_taken = 0
+        reasoning_time_taken = 0.0
 
         # 1. Reason about the task(s) if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
@@ -1815,7 +1815,7 @@ class Team:
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
-                reasoning_step: ReasoningStep = None
+                reasoning_step: Optional[ReasoningStep] = None
                 new_tool_calls_list = model_response_chunk.tool_calls
                 if new_tool_calls_list is not None:
                     # Update the existing tool call in the run_response
@@ -1846,7 +1846,8 @@ class Team:
                             )
 
                             metrics = tool_call.get("metrics")
-                            reasoning_time_taken = reasoning_time_taken + float(metrics.time)
+                            if metrics is not None:
+                                reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if stream_intermediate_steps:
                         if reasoning_step is not None:
@@ -1862,7 +1863,7 @@ class Team:
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,
                                 event=RunEvent.reasoning_step,
-                                reasoning_content=self.run_response.reasoning_content,
+                                reasoning_content=run_response.reasoning_content,
                                 session_id=session_id,
                             )
 
@@ -1898,13 +1899,13 @@ class Team:
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
 
         if stream_intermediate_steps and reasoning_started:
-            all_reasoning_steps = []
+            all_reasoning_steps: List[ReasoningStep] = []
             if (
                 self.run_response
                 and self.run_response.extra_data
                 and hasattr(self.run_response.extra_data, "reasoning_steps")
             ):
-                all_reasoning_steps = self.run_response.extra_data.reasoning_steps
+                all_reasoning_steps = cast(List[ReasoningStep], self.run_response.extra_data.reasoning_steps)
 
             if all_reasoning_steps:
                 self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
@@ -1974,7 +1975,7 @@ class Team:
             yield self._create_run_response(
                 from_run_response=run_response,
                 event=RunEvent.run_completed,
-                reasoning_content=self.run_response.reasoning_content,
+                reasoning_content=run_response.reasoning_content,
                 session_id=session_id,
             )
 
@@ -3866,12 +3867,12 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-            if stream_intermediate_steps:
-                yield self.create_run_response(
-                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
-                    session_id=session_id,
-                    event=RunEvent.reasoning_completed,
-                )
+                if stream_intermediate_steps:
+                    yield self._create_run_response(
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
+                        session_id=session_id,
+                        event=RunEvent.reasoning_completed,
+                    )
         else:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
@@ -4043,12 +4044,12 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-            if stream_intermediate_steps:
-                yield self._create_run_response(
-                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
-                    session_id=session_id,
-                    event=RunEvent.reasoning_completed,
-                )
+                if stream_intermediate_steps:
+                    yield self._create_run_response(
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
+                        session_id=session_id,
+                        event=RunEvent.reasoning_completed,
+                    )
         else:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
@@ -6220,7 +6221,7 @@ class Team:
         return self.audio
 
     def update_reasoning_content_from_tool_call(
-        self, run_response: RunResponse, tool_name: str, tool_args: Dict[str, Any]
+        self, run_response: TeamRunResponse, tool_name: str, tool_args: Dict[str, Any]
     ) -> Optional[ReasoningStep]:
         """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
 
@@ -6317,7 +6318,7 @@ class Team:
             run_response.reasoning_content += content  # type: ignore
 
     def _add_reasoning_step_to_extra_data(self, run_response: RunResponse, reasoning_step: ReasoningStep) -> None:
-        if run_response.extra_data is not None:
+        if run_response.extra_data is None:
             run_response.extra_data = RunResponseExtraData()
 
         if run_response.extra_data.reasoning_steps is None:
