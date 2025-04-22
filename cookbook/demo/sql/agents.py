@@ -170,13 +170,18 @@ instructions = dedent(f"""\
     </rules>
 """)
 
-additional_context = dedent("""\n
+additional_context = (
+    dedent("""\n
     The `semantic_model` contains information about tables and the relationships between them.
     If the users asks about the tables you have access to, simply share the table names from the `semantic_model`.
     <semantic_model>
-    """) + semantic_model_str + dedent("""
+    """)
+    + semantic_model_str
+    + dedent("""
     </semantic_model>\
 """)
+)
+
 
 def get_sql_agent(
     name: str = "SQL Agent",
