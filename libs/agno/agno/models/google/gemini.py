@@ -293,7 +293,9 @@ class Gemini(Model):
                 message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
+            import traceback
             log_error(f"Unknown error from Gemini API: {e}")
+            traceback.print_exc()
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]):
@@ -765,3 +767,49 @@ class Gemini(Model):
             }
 
         return model_response
+    
+    def __deepcopy__(self, memo):
+        """
+        Creates a deep copy of the Gemini model instance but sets the client to None.
+        
+        This is useful when we need to copy the model configuration without duplicating
+        the client connection.
+        
+        Args:
+            memo (dict): Dictionary of objects already copied during the current copying pass
+            
+        Returns:
+            GeminiModel: A new instance with all attributes deep copied except client
+        """
+        from copy import deepcopy, copy
+        
+        # Create a new instance without calling __init__
+        cls = self.__class__
+        new_instance = cls.__new__(cls)
+        
+        # Update memo with the new instance to avoid circular references
+        memo[id(self)] = new_instance
+        
+        # Deep copy all attributes except client and unpickleable attributes
+        for key, value in self.__dict__.items():
+            # Skip client and other unpickleable attributes
+            if key in {"client", "response_format", "_tools", "_functions", "_function_call_stack"}:
+                continue
+                
+            # Try deep copy first, fall back to shallow copy, then direct assignment
+            try:
+                setattr(new_instance, key, deepcopy(value, memo))
+            except Exception as e:
+                try:
+                    setattr(new_instance, key, copy(value))
+                except Exception as e:
+                    setattr(new_instance, key, value)
+        
+        # Explicitly set client to None
+        setattr(new_instance, "client", None)
+        
+        # Clear the new model to remove any references to the old model
+        if hasattr(new_instance, "clear"):
+            new_instance.clear()
+        
+        return new_instance

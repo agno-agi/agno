@@ -1,6 +1,7 @@
 import asyncio
 import collections.abc
 from abc import ABC, abstractmethod
+from copy import copy
 from dataclasses import dataclass, field
 from types import AsyncGeneratorType, GeneratorType
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union
@@ -1213,7 +1214,13 @@ class Model(ABC):
         for k, v in self.__dict__.items():
             if k in {"response_format", "_tools", "_functions", "_function_call_stack"}:
                 continue
-            setattr(new_model, k, deepcopy(v, memo))
+            try:
+                setattr(new_model, k, deepcopy(v, memo))
+            except Exception as e:
+                try:
+                    setattr(new_model, k, copy(v))
+                except Exception as e:
+                    setattr(new_model, k, v)
 
         # Clear the new model to remove any references to the old model
         new_model.clear()
