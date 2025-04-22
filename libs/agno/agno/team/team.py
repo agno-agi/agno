@@ -557,7 +557,7 @@ class Team:
 
         # Initialize memory if not yet set
         if self.memory is None:
-            self.memory = TeamMemory()
+            self.memory = Memory()
 
         # Default to the team's model if no model is provided
         if isinstance(self.memory, Memory):
@@ -1300,7 +1300,7 @@ class Team:
 
         # Initialize memory if not yet set
         if self.memory is None:
-            self.memory = TeamMemory()
+            self.memory = Memory()
 
         # Default to the team's model if no model is provided
         if isinstance(self.memory, Memory):

@@ -528,7 +528,8 @@ class Agent:
         log_debug(f"Agent ID: {self.agent_id}", center=True)
 
         if self.memory is None:
-            self.memory = AgentMemory()
+            self.memory = Memory()
+            
         # Default to the agent's model if no model is provided
         if isinstance(self.memory, Memory):
             if self.memory.model is None and self.model is not None:

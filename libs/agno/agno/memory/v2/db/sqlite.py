@@ -88,7 +88,7 @@ class SqliteMemoryDb(MemoryDb):
             self.table_name,
             self.metadata,
             Column("id", String, primary_key=True),
-            Column("user_id", String),
+            Column("user_id", String, index=True),
             Column("memory", String),
             Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
             Column(
