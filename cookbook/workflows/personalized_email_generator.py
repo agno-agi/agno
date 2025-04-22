@@ -415,7 +415,7 @@ class PersonalisedEmailGenerator(Workflow):
                 self.cache_email(company_name, self.email_creator.run_response.content)
 
                 # Obtain final email content:
-                email_content = self.email_creator.run_response.content
+                email_content = self.email_creator.run_response.content  
 
                 # 3. If not in demo mode, you'd handle sending the email here.
                 #    Implementation details omitted.

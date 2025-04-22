@@ -1,6 +1,5 @@
 from collections import OrderedDict
-import inspect
-from typing import Any, Callable, Dict, Optional, List, Set
+from typing import Any, Callable, Dict, Optional, List
 
 from agno.tools.function import Function
 from agno.utils.log import log_debug, logger

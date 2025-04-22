@@ -1,8 +1,5 @@
 """Unit tests for Toolkit class."""
 
-import json
-from unittest.mock import patch, MagicMock
-
 import pytest
 
 from agno.tools.toolkit import Toolkit

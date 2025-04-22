@@ -86,7 +86,7 @@ class TeamWorkflow(Workflow):
     )
 
     def run(self) -> Iterator[RunResponse]:
-        logger.info(f"Getting top stories from HackerNews.")
+        logger.info("Getting top stories from HackerNews.")
         discussion: RunResponse = self.agent_team.run(
             "Getting 2 top stories from HackerNews and reddit and write a brief report on them"
         )
