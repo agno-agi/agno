@@ -1967,8 +1967,9 @@ class Team:
         self, run_messages: RunMessages, session_id: str, user_id: Optional[str] = None
     ) -> None:
         self.memory = cast(Memory, self.memory)
-        if self.enable_user_memories and run_messages.user_message is not None:
-            self.memory.create_user_memories(message=run_messages.user_message.get_content_string(), user_id=user_id)
+        user_message_str = run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+        if self.enable_user_memories and user_message_str is not None and user_message_str:
+            self.memory.create_user_memories(message=user_message_str, user_id=user_id)
 
         # Update the session summary if needed
         if self.enable_session_summaries:
@@ -1978,9 +1979,10 @@ class Team:
         self, run_messages: RunMessages, session_id: str, user_id: Optional[str] = None
     ) -> None:
         self.memory = cast(Memory, self.memory)
-        if self.enable_user_memories and run_messages.user_message is not None:
+        user_message_str = run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+        if self.enable_user_memories and user_message_str is not None and user_message_str:
             await self.memory.acreate_user_memories(
-                message=run_messages.user_message.get_content_string(), user_id=user_id
+                message=user_message_str, user_id=user_id
             )
 
         # Update the session summary if needed
