@@ -19,36 +19,31 @@ class CalculatorTools(Toolkit):
         enable_all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="calculator", **kwargs)
-
-        # Register functions in the toolkit
-        if not self.include_tools:
-            self.include_tools = []
-            if add or enable_all:
-                self.include_tools.append("add")
-            if subtract or enable_all:
-                self.include_tools.append("subtract")
-            if multiply or enable_all:
-                self.include_tools.append("multiply")
-            if divide or enable_all:
-                self.include_tools.append("divide")
-            if exponentiate or enable_all:
-                self.include_tools.append("exponentiate")
-            if factorial or enable_all:
-                self.include_tools.append("factorial")
-            if is_prime or enable_all:
-                self.include_tools.append("is_prime")
-            if square_root or enable_all:
-                self.include_tools.append("square_root")
-        
-        self.register(self.add)
-        self.register(self.subtract)
-        self.register(self.multiply)
-        self.register(self.divide)
-        self.register(self.exponentiate)
-        self.register(self.factorial)
-        self.register(self.is_prime)
-        self.register(self.square_root)
+        # Build the include_tools list based on enabled functions
+        tools = []
+        if add or enable_all:
+            tools.append(self.add)
+        if subtract or enable_all:
+            tools.append(self.subtract)
+        if multiply or enable_all:
+            tools.append(self.multiply)
+        if divide or enable_all:
+            tools.append(self.divide)
+        if exponentiate or enable_all:
+            tools.append(self.exponentiate)
+        if factorial or enable_all:
+            tools.append(self.factorial)
+        if is_prime or enable_all:
+            tools.append(self.is_prime)
+        if square_root or enable_all:
+            tools.append(self.square_root)
+            
+        # Initialize the toolkit with auto-registration enabled
+        super().__init__(
+            name="calculator",
+            tools=tools,
+            **kwargs
+        )
 
     def add(self, a: float, b: float) -> str:
         """Add two numbers and return the result.
@@ -108,7 +103,7 @@ class CalculatorTools(Toolkit):
         try:
             result = a / b
         except Exception as e:
-            return json.dumps({"operation": "division", "error": e, "result": "Error"})
+            return json.dumps({"operation": "division", "error": str(e), "result": "Error"})
         log_info(f"Dividing {a} by {b} to get {result}")
         return json.dumps({"operation": "division", "result": result})
 
