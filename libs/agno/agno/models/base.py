@@ -929,7 +929,9 @@ class Model(ABC):
             ):
                 success = await function_call.aexecute()
             # If any of the hooks are async, we need to run the function call asynchronously
-            elif any(iscoroutinefunction(f) for f in function_call.function.tool_execution_hooks):
+            elif function_call.function.tool_execution_hooks is not None and any(
+                iscoroutinefunction(f) for f in function_call.function.tool_execution_hooks
+            ):
                 success = await function_call.aexecute()
             else:
                 success = await asyncio.to_thread(function_call.execute)

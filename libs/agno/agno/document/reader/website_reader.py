@@ -199,7 +199,7 @@ class WebsiteReader(Reader):
         self._urls_to_crawl = [(url, starting_depth)]
 
         client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             while self._urls_to_crawl and num_links < self.max_links:
                 current_url, current_depth = self._urls_to_crawl.pop(0)
 

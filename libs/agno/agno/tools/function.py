@@ -458,7 +458,7 @@ class FunctionCall(BaseModel):
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
-            return self.function.entrypoint(**arguments)
+            return self.function.entrypoint(**arguments)  # type: ignore
 
         # If no hooks, just return the entrypoint execution function
         if not self.function.tool_execution_hooks:
@@ -608,7 +608,7 @@ class FunctionCall(BaseModel):
             if self.arguments is not None:
                 arguments.update(self.arguments)
 
-            result = self.function.entrypoint(**arguments)
+            result = self.function.entrypoint(**arguments)  # type: ignore
             if iscoroutinefunction(self.function.entrypoint) and not (
                 isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint)
             ):
@@ -619,7 +619,7 @@ class FunctionCall(BaseModel):
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
-            return self.function.entrypoint(**arguments)
+            return self.function.entrypoint(**arguments)  # type: ignore
 
         # If no hooks, just return the entrypoint execution function
         if not self.function.tool_execution_hooks:

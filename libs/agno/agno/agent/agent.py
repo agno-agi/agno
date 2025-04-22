@@ -652,7 +652,7 @@ class Agent:
         model_response: ModelResponse
         self.model = cast(Model, self.model)
         reasoning_started = False
-        reasoning_time_taken = 0
+        reasoning_time_taken = 0.0
         if self.stream:
             model_response = ModelResponse()
             for model_response_chunk in self.model.response_stream(messages=run_messages.messages):
@@ -755,7 +755,7 @@ class Agent:
 
                 # If the model response is a tool_call_completed, update the existing tool call in the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
-                    reasoning_step: ReasoningStep = None
+                    reasoning_step: Optional[ReasoningStep] = None
 
                     new_tool_calls_list = model_response_chunk.tool_calls
                     if new_tool_calls_list is not None:
@@ -785,7 +785,8 @@ class Agent:
                                 reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                                 metrics = tool_call.get("metrics")
-                                reasoning_time_taken = reasoning_time_taken + float(metrics.time)
+                                if metrics is not None and metrics.time is not None:
+                                    reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if self.stream_intermediate_steps:
                         if reasoning_step is not None:
@@ -867,7 +868,7 @@ class Agent:
             self.run_response.created_at = model_response.created_at
 
         if self.stream_intermediate_steps and reasoning_started:
-            all_reasoning_steps = []
+            all_reasoning_steps: List[ReasoningStep] = []
             if (
                 self.run_response
                 and self.run_response.extra_data
@@ -1397,7 +1398,7 @@ class Agent:
 
                 # If the model response is a tool_call_completed, update the existing tool call in the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
-                    reasoning_step: ReasoningStep = None
+                    reasoning_step: Optional[ReasoningStep] = None
                     new_tool_calls_list = model_response_chunk.tool_calls
                     if new_tool_calls_list is not None:
                         # Update the existing tool call in the run_response
@@ -1426,7 +1427,8 @@ class Agent:
                                 reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                                 metrics = tool_call.get("metrics")
-                                reasoning_time_taken = reasoning_time_taken + float(metrics.time)
+                                if metrics is not None and metrics.time is not None:
+                                    reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if self.stream_intermediate_steps:
                         if reasoning_step is not None:
@@ -1507,7 +1509,7 @@ class Agent:
             self.run_response.created_at = model_response.created_at
 
         if self.stream_intermediate_steps and reasoning_started:
-            all_reasoning_steps = []
+            all_reasoning_steps: List[ReasoningStep] = []
             if (
                 self.run_response
                 and self.run_response.extra_data
