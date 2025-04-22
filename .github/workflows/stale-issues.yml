@@ -20,10 +20,10 @@ jobs:
             and will now be closed.
 
           # Mark issues as stale after 14 days
-          days-before-issue-stale: 15
+          days-before-issue-stale: 14
 
           # Close issues immediately after marking as stale
-          days-before-issue-close: 15
+          days-before-issue-close: 0
 
           # Label to apply when marking issues as stale
           stale-issue-label: "stale"
