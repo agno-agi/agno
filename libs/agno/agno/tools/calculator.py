@@ -37,13 +37,9 @@ class CalculatorTools(Toolkit):
             tools.append(self.is_prime)
         if square_root or enable_all:
             tools.append(self.square_root)
-            
+
         # Initialize the toolkit with auto-registration enabled
-        super().__init__(
-            name="calculator",
-            tools=tools,
-            **kwargs
-        )
+        super().__init__(name="calculator", tools=tools, **kwargs)
 
     def add(self, a: float, b: float) -> str:
         """Add two numbers and return the result.

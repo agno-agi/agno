@@ -5,14 +5,8 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.exceptions import ModelProviderError
-from agno.memory import AgentMemory
-from agno.memory.classifier import MemoryClassifier
-from agno.memory.db.sqlite import SqliteMemoryDb
-from agno.memory.manager import MemoryManager
-from agno.memory.summarizer import MemorySummarizer
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 
 def _assert_metrics(response: RunResponse):

@@ -714,7 +714,6 @@ class Memory:
                         messages_from_history.append(system_message)
                 else:
                     messages_from_history.append(message)
-                    
 
         log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
