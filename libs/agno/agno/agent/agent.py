@@ -1252,7 +1252,7 @@ class Agent:
         self.update_model(async_mode=True, user_id=user_id, session_id=session_id)
         self.run_response.model = self.model.id if self.model is not None else None
         if self.context is not None and self.resolve_context:
-            self.resolve_run_context()
+            await self.aresolve_run_context()
 
         # 3. Read existing session from storage
         self.read_from_storage(session_id=session_id, user_id=user_id)
@@ -1693,7 +1693,6 @@ class Agent:
         last_exception = None
         num_attempts = retries + 1
         for attempt in range(num_attempts):
-            log_debug(f"Attempt {attempt + 1}/{num_attempts}")
             try:
                 # If a response_model is set, return the response as a structured output
                 if self.response_model is not None and self.parse_response:
@@ -2120,24 +2119,45 @@ class Agent:
         from inspect import signature
 
         log_debug("Resolving context")
-        if self.context is not None:
-            if isinstance(self.context, dict):
-                for ctx_key, ctx_value in self.context.items():
-                    if callable(ctx_value):
-                        try:
-                            sig = signature(ctx_value)
-                            if "agent" in sig.parameters:
-                                resolved_ctx_value = ctx_value(agent=self)
-                            else:
-                                resolved_ctx_value = ctx_value()
-                            if resolved_ctx_value is not None:
-                                self.context[ctx_key] = resolved_ctx_value
-                        except Exception as e:
-                            log_warning(f"Failed to resolve context for {ctx_key}: {e}")
-                    else:
-                        self.context[ctx_key] = ctx_value
+        if not isinstance(self.context, dict):
+            log_warning("Context is not a dict")
+            return
+
+        for key, value in self.context.items():
+            if callable(value):
+                try:
+                    sig = signature(value)
+                    result = value(agent=self) if "agent" in sig.parameters else value()
+                    if result is not None:
+                        self.context[key] = result
+                except Exception as e:
+                    log_warning(f"Failed to resolve context for '{key}': {e}")
             else:
-                log_warning("Context is not a dict")
+                self.context[key] = value
+
+    async def aresolve_run_context(self) -> None:
+        from inspect import iscoroutine, signature
+
+        log_debug("Resolving context (async)")
+        if not isinstance(self.context, dict):
+            log_warning("Context is not a dict")
+            return
+
+        for key, value in self.context.items():
+            if not callable(value):
+                self.context[key] = value
+                continue
+
+            try:
+                sig = signature(value)
+                result = value(agent=self) if "agent" in sig.parameters else value()
+
+                if iscoroutine(result):
+                    result = await result
+
+                self.context[key] = result
+            except Exception as e:
+                log_warning(f"Failed to resolve context for '{key}': {e}")
 
     def get_agent_data(self) -> Dict[str, Any]:
         agent_data: Dict[str, Any] = {}

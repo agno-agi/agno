@@ -39,7 +39,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
+dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
 
 # Dependencies for Models
 azure = ["azure-ai-inference", "aiohttp"]
