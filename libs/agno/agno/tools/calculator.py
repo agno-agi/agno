@@ -19,25 +19,31 @@ class CalculatorTools(Toolkit):
         enable_all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="calculator", **kwargs)
-
-        # Register functions in the toolkit
+        # Build the include_tools list based on enabled functions
+        tools = []
         if add or enable_all:
-            self.register(self.add)
+            tools.append(self.add)
         if subtract or enable_all:
-            self.register(self.subtract)
+            tools.append(self.subtract)
         if multiply or enable_all:
-            self.register(self.multiply)
+            tools.append(self.multiply)
         if divide or enable_all:
-            self.register(self.divide)
+            tools.append(self.divide)
         if exponentiate or enable_all:
-            self.register(self.exponentiate)
+            tools.append(self.exponentiate)
         if factorial or enable_all:
-            self.register(self.factorial)
+            tools.append(self.factorial)
         if is_prime or enable_all:
-            self.register(self.is_prime)
+            tools.append(self.is_prime)
         if square_root or enable_all:
-            self.register(self.square_root)
+            tools.append(self.square_root)
+            
+        # Initialize the toolkit with auto-registration enabled
+        super().__init__(
+            name="calculator",
+            tools=tools,
+            **kwargs
+        )
 
     def add(self, a: float, b: float) -> str:
         """Add two numbers and return the result.
@@ -97,7 +103,7 @@ class CalculatorTools(Toolkit):
         try:
             result = a / b
         except Exception as e:
-            return json.dumps({"operation": "division", "error": e, "result": "Error"})
+            return json.dumps({"operation": "division", "error": str(e), "result": "Error"})
         log_info(f"Dividing {a} by {b} to get {result}")
         return json.dumps({"operation": "division", "result": result})
 
