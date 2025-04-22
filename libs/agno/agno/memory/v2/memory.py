@@ -155,11 +155,11 @@ class Memory:
     def set_model(self, model: Model) -> None:
         if self.memory_manager is None:
             self.memory_manager = MemoryManager(model=deepcopy(model))
-        if self.memory_manager.model is None:
+        if self.memory_manager.model is None and self.memory_manager.model is None:
             self.memory_manager.model = deepcopy(model)
         if self.summary_manager is None:
             self.summary_manager = SessionSummarizer(model=deepcopy(model))
-        if self.summary_manager.model is None:
+        if self.summary_manager.model is None and self.summary_manager.model is None:
             self.summary_manager.model = deepcopy(model)
 
     def get_model(self) -> Model:
