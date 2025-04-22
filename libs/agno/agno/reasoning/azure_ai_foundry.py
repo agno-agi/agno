@@ -45,11 +45,6 @@ def get_ai_foundry_reasoning(reasoning_agent: "Agent", messages: List[Message]) 
 async def aget_ai_foundry_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
     from agno.run.response import RunResponse
 
-    # Update system message role to "system"
-    for message in messages:
-        if message.role == "developer":
-            message.role = "system"
-
     try:
         reasoning_agent_response: RunResponse = await reasoning_agent.arun(messages=messages)
     except Exception as e:
