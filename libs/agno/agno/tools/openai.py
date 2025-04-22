@@ -79,7 +79,6 @@ class OpenAITools(Toolkit):
     ) -> str:
         """Generate images based on a text prompt.
         Args:
-            agent (Agent): The agent to add the generated images to.
             prompt (str): The text prompt to generate the image from.
         Returns:
             str: Return the result of the model.
@@ -118,7 +117,6 @@ class OpenAITools(Toolkit):
     ) -> str:
         """Generate speech from text using OpenAI's Text-to-Speech API.
         Args:
-            agent (Agent): The agent instance to add the artifact to.
             text_input (str): The text to synthesize into speech.
         Returns:
             str: Return the result of the model.

@@ -12,7 +12,7 @@ from agno.models.openai import OpenAIChat
 from agno.tools.openai import OpenAITools
 from agno.utils.media import save_audio
 
-output_file: str = Path("tmp/speech_output2.mp3")
+output_file: str = Path("tmp/speech_output.mp3")
 
 agent: Agent = Agent(
     model=OpenAIChat(id="gpt-4o"),

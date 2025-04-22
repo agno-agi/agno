@@ -19,7 +19,7 @@ input_audio_url: str = (
     "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/sample_audio.mp3"
 )
 
-local_audio_path = Path("tmp/meeting_recording2.mp3")
+local_audio_path = Path("tmp/meeting_recording.mp3")
 print(f"Downloading file to local path: {local_audio_path}")
 download_file(input_audio_url, local_audio_path)
 
