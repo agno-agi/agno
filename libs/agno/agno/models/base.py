@@ -1202,7 +1202,7 @@ class Model(ABC):
         Returns:
             Model: A new Model instance with deeply copied attributes.
         """
-        from copy import deepcopy, copy
+        from copy import copy, deepcopy
 
         # Create a new instance without calling __init__
         cls = self.__class__
@@ -1215,10 +1215,10 @@ class Model(ABC):
                 continue
             try:
                 setattr(new_model, k, deepcopy(v, memo))
-            except Exception as e:
+            except Exception:
                 try:
                     setattr(new_model, k, copy(v))
-                except Exception as e:
+                except Exception:
                     setattr(new_model, k, v)
 
         # Clear the new model to remove any references to the old model
