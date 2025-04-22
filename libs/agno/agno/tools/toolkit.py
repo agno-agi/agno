@@ -41,8 +41,18 @@ class Toolkit:
         self.add_instructions: bool = add_instructions
 
         self.include_tools = include_tools
-        self.exclude_tools = exclude_tools or []
+        self.exclude_tools = exclude_tools
         
+        if include_tools:
+            for included_tool in include_tools:
+                if included_tool not in [tool.__name__ for tool in tools]:
+                    raise ValueError(f"Included tool '{included_tool}' is not in the provided tools list.")
+
+        if exclude_tools:
+            for excluded_tool in exclude_tools:
+                if excluded_tool not in [tool.__name__ for tool in tools]:
+                    raise ValueError(f"Excluded tool '{excluded_tool}' is in the provided tools list.")
+
         self.cache_results: bool = cache_results
         self.cache_ttl: int = cache_ttl
         self.cache_dir: Optional[str] = cache_dir
