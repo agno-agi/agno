@@ -4,20 +4,16 @@ from typing import List, Optional
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.openai.like import OpenAILike
 from agno.utils.log import logger
 
 
 def is_ai_foundry_reasoning_model(reasoning_model: Model) -> bool:
-    return (
-        reasoning_model.__class__.__name__ == "AzureAIFoundry"
-        and (
-            ("deepseek" in reasoning_model.id.lower())
-            or ("o1" in reasoning_model.id.lower())
-            or ("o3" in reasoning_model.id.lower())
-            or ("o4" in reasoning_model.id.lower())
-        )
-    ) 
+    return reasoning_model.__class__.__name__ == "AzureAIFoundry" and (
+        ("deepseek" in reasoning_model.id.lower())
+        or ("o1" in reasoning_model.id.lower())
+        or ("o3" in reasoning_model.id.lower())
+        or ("o4" in reasoning_model.id.lower())
+    )
 
 
 def get_ai_foundry_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821

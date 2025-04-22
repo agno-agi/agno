@@ -1,7 +1,7 @@
 import os
+
 from agno.agent import Agent
 from agno.models.azure import AzureAIFoundry
-
 
 agent = Agent(
     model=AzureAIFoundry(id="gpt-4o"),
