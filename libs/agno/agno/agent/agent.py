@@ -3313,9 +3313,9 @@ class Agent:
 
         import json
 
-        return json.dumps(docs, indent=2)
-
-    def convert_context_to_string(self, context: Dict[str, Any]) -> str:
+        return json.dumps(docs, indent=2, ensure_ascii=False)
+    
+   def convert_context_to_string(self, context: Dict[str, Any]) -> str:
         """Convert the context dictionary to a string representation.
 
         Args:
@@ -3657,6 +3657,7 @@ class Agent:
 
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
+            from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
             from agno.reasoning.deepseek import is_deepseek_reasoning_model
             from agno.reasoning.groq import is_groq_reasoning_model
             from agno.reasoning.helpers import get_reasoning_agent
@@ -3666,13 +3667,13 @@ class Agent:
             reasoning_agent = self.reasoning_agent or get_reasoning_agent(
                 reasoning_model=reasoning_model, monitoring=self.monitoring
             )
+            is_deepseek = is_deepseek_reasoning_model(reasoning_model)
+            is_groq = is_groq_reasoning_model(reasoning_model)
+            is_openai = is_openai_reasoning_model(reasoning_model)
+            is_ollama = is_ollama_reasoning_model(reasoning_model)
+            is_ai_foundry = is_ai_foundry_reasoning_model(reasoning_model)
 
-            if (
-                (is_deepseek := is_deepseek_reasoning_model(reasoning_model))
-                or (is_groq := is_groq_reasoning_model(reasoning_model))
-                or (is_openai := is_openai_reasoning_model(reasoning_model))
-                or (is_ollama := is_ollama_reasoning_model(reasoning_model))
-            ):
+            if is_deepseek or is_groq or is_openai or is_ollama or is_ai_foundry:
                 reasoning_message: Optional[Message] = None
                 if is_deepseek:
                     from agno.reasoning.deepseek import get_deepseek_reasoning
@@ -3700,6 +3701,13 @@ class Agent:
 
                     log_debug("Starting Ollama Reasoning", center=True, symbol="=")
                     reasoning_message = get_ollama_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_ai_foundry:
+                    from agno.reasoning.azure_ai_foundry import get_ai_foundry_reasoning
+
+                    log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
+                    reasoning_message = get_ai_foundry_reasoning(
                         reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
                     )
 
@@ -3858,6 +3866,7 @@ class Agent:
 
         # If a reasoning model is provided, use it to generate reasoning
         if reasoning_model_provided:
+            from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
             from agno.reasoning.deepseek import is_deepseek_reasoning_model
             from agno.reasoning.groq import is_groq_reasoning_model
             from agno.reasoning.helpers import get_reasoning_agent
@@ -3867,13 +3876,13 @@ class Agent:
             reasoning_agent = self.reasoning_agent or get_reasoning_agent(
                 reasoning_model=reasoning_model, monitoring=self.monitoring
             )
+            is_deepseek = is_deepseek_reasoning_model(reasoning_model)
+            is_groq = is_groq_reasoning_model(reasoning_model)
+            is_openai = is_openai_reasoning_model(reasoning_model)
+            is_ollama = is_ollama_reasoning_model(reasoning_model)
+            is_ai_foundry = is_ai_foundry_reasoning_model(reasoning_model)
 
-            if (
-                (is_deepseek := is_deepseek_reasoning_model(reasoning_model))
-                or (is_groq := is_groq_reasoning_model(reasoning_model))
-                or (is_openai := is_openai_reasoning_model(reasoning_model))
-                or (is_ollama := is_ollama_reasoning_model(reasoning_model))
-            ):
+            if is_deepseek or is_groq or is_openai or is_ollama or is_ai_foundry:
                 reasoning_message: Optional[Message] = None
                 if is_deepseek:
                     from agno.reasoning.deepseek import aget_deepseek_reasoning
@@ -3901,6 +3910,13 @@ class Agent:
 
                     log_debug("Starting Ollama Reasoning", center=True, symbol="=")
                     reasoning_message = get_ollama_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_ai_foundry:
+                    from agno.reasoning.azure_ai_foundry import get_ai_foundry_reasoning
+
+                    log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
+                    reasoning_message = get_ai_foundry_reasoning(
                         reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
                     )
 
@@ -5335,3 +5351,4 @@ class Agent:
             self.print_response(
                 message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
+

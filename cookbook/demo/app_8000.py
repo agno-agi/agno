@@ -38,4 +38,4 @@ app = Playground(
 ).get_app()
 
 if __name__ == "__main__":
-    serve_playground_app("app:app", reload=True)
+    serve_playground_app("app_8000:app", port=8000)
