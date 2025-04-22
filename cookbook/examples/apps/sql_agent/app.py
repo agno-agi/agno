@@ -42,8 +42,10 @@ def main() -> None:
     # Model selector
     ####################################################################
     model_options = {
-        "gpt-4.1": "openai:gpt-4.1",
+        "o4-mini": "openai:o4-mini",
         "claude-3-7-sonnet": "anthropic:claude-3-7-sonnet-latest",
+        "gpt-4.1": "openai:gpt-4.1",
+        "o3": "openai:o3",
         "gemini-2.5-pro": "google:gemini-2.5-pro-preview-03-25",
         "llama-4-scout": "groq:meta-llama/llama-4-scout-17b-16e-instruct",
         "gpt-4o": "openai:gpt-4o",
