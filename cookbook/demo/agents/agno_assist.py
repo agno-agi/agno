@@ -25,32 +25,6 @@ output_dir = cwd.joinpath("output")
 output_dir.mkdir(parents=True, exist_ok=True)
 # *******************************
 
-# ************* Storage & Knowledge *************
-agno_assist_storage = PostgresAgentStorage(
-    db_url=db_url,
-    table_name="agno_assist_sessions",
-)
-# Initialize knowledge base
-agno_assist_knowledge = UrlKnowledge(
-    urls=["https://docs.agno.com/llms-full.txt"],
-    vector_db=PgVector(
-        db_url=db_url,
-        table_name="agno_assist_knowledge",
-        search_type=SearchType.hybrid,
-        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-    ),
-)
-# *******************************
-
-# ************* Memory *************
-memory = Memory(
-    model=OpenAIChat(id="gpt-4.1"),
-    db=PostgresMemoryDb(table_name="user_memories", db_url=db_url),
-    delete_memories=True,
-    clear_memories=True,
-)
-# *******************************
-
 # ************* Description & Instructions *************
 description = dedent("""\
     You are AgnoAssist, an advanced AI Agent specialized in the Agno framework.
@@ -112,6 +86,7 @@ instructions = dedent("""\
     5. **Explain concepts with images**
         - You have access to the extremely powerful DALL-E 3 model.
         - Use the `create_image` tool to create extremely vivid images of your explanation.
+        - Don't provide the URL of the image in the response. Only describe what image was generated.
 
     Key topics to cover:
     - Agent levels and capabilities
@@ -126,11 +101,32 @@ agno_assist = Agent(
     name="Agno Assist",
     agent_id="agno-assist",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
     description=description,
     instructions=instructions,
-    knowledge=agno_assist_knowledge,
+    memory=Memory(
+        model=OpenAIChat(id="gpt-4.1"),
+        db=PostgresMemoryDb(table_name="user_memories", db_url=db_url),
+        delete_memories=True,
+        clear_memories=True,
+    ),
     enable_agentic_memory=True,
+    knowledge=UrlKnowledge(
+        urls=["https://docs.agno.com/llms-full.txt"],
+        vector_db=PgVector(
+            db_url=db_url,
+            table_name="agno_assist_knowledge",
+            search_type=SearchType.hybrid,
+            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+        ),
+    ),
+    search_knowledge=True,
+    storage=PostgresAgentStorage(
+        db_url=db_url,
+        table_name="agno_assist_sessions",
+    ),
+    add_history_to_messages=True,
+    add_datetime_to_instructions=True,
+    markdown=True,
     tools=[
         ElevenLabsTools(
             voice_id="cgSgspJ2msm6clMCkdW9",
@@ -139,8 +135,4 @@ agno_assist = Agent(
         ),
         DalleTools(model="dall-e-3", size="1792x1024", quality="hd", style="vivid"),
     ],
-    storage=agno_assist_storage,
-    add_history_to_messages=True,
-    add_datetime_to_instructions=True,
-    markdown=True,
 )
