@@ -1,7 +1,6 @@
 import asyncio
 import collections.abc
 from abc import ABC, abstractmethod
-from copy import copy
 from dataclasses import dataclass, field
 from types import AsyncGeneratorType, GeneratorType
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union
@@ -1203,7 +1202,7 @@ class Model(ABC):
         Returns:
             Model: A new Model instance with deeply copied attributes.
         """
-        from copy import deepcopy
+        from copy import deepcopy, copy
 
         # Create a new instance without calling __init__
         cls = self.__class__

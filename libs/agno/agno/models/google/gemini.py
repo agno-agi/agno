@@ -1,6 +1,5 @@
 import json
 import time
-import traceback
 from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
@@ -293,9 +292,7 @@ class Gemini(Model):
                 message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
             ) from e
         except Exception as e:
-            import traceback
             log_error(f"Unknown error from Gemini API: {e}")
-            traceback.print_exc()
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]):
@@ -399,6 +396,7 @@ class Gemini(Model):
                                 if video_file is not None:
                                     message_parts.insert(0, video_file)  # type: ignore
                     except Exception as e:
+                        import traceback
                         traceback.print_exc()
                         log_warning(f"Failed to load video from {message.videos}: {e}")
                         continue
@@ -775,11 +773,7 @@ class Gemini(Model):
         This is useful when we need to copy the model configuration without duplicating
         the client connection.
         
-        Args:
-            memo (dict): Dictionary of objects already copied during the current copying pass
-            
-        Returns:
-            GeminiModel: A new instance with all attributes deep copied except client
+        This overrides the base class implementation.
         """
         from copy import deepcopy, copy
         
