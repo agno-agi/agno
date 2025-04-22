@@ -848,7 +848,7 @@ class Team:
             tool_name = tool_call.get("tool_name", "")
             if tool_name.lower() in ["think", "analyze"]:
                 tool_args = tool_call.get("tool_args", {})
-                self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+                self.update_reasoning_content_from_tool_call(run_response, tool_name, tool_args)
 
         # 4. Update Team Memory
         if isinstance(self.memory, TeamMemory):
@@ -967,7 +967,7 @@ class Team:
         self.model = cast(Model, self.model)
 
         reasoning_started = False
-        reasoning_time_taken = 0
+        reasoning_time_taken = 0.0
 
         # 1. Reason about the task(s) if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
@@ -1075,7 +1075,7 @@ class Team:
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
-                reasoning_step: ReasoningStep = None
+                reasoning_step: Optional[ReasoningStep] = None
                 new_tool_calls_list = model_response_chunk.tool_calls
                 if new_tool_calls_list is not None:
                     # Update the existing tool call in the run_response
@@ -1101,10 +1101,13 @@ class Team:
                         if tool_name.lower() in ["think", "analyze"]:
                             tool_args = tool_call.get("tool_args", {})
 
-                            reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+                            reasoning_step = self.update_reasoning_content_from_tool_call(
+                                run_response, tool_name, tool_args
+                            )
 
                             metrics = tool_call.get("metrics")
-                            reasoning_time_taken = reasoning_time_taken + float(metrics.time)
+                            if metrics is not None:
+                                reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if stream_intermediate_steps:
                         if reasoning_step is not None:
@@ -1120,7 +1123,7 @@ class Team:
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,
                                 event=RunEvent.reasoning_step,
-                                reasoning_content=self.run_response.reasoning_content,
+                                reasoning_content=run_response.reasoning_content,
                                 session_id=session_id,
                             )
 
@@ -1582,7 +1585,7 @@ class Team:
             tool_name = tool_call.get("tool_name", "")
             if tool_name.lower() in ["think", "analyze"]:
                 tool_args = tool_call.get("tool_args", {})
-                self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+                self.update_reasoning_content_from_tool_call(run_response, tool_name, tool_args)
 
         # 4. Update Team Memory
         if isinstance(self.memory, TeamMemory):
@@ -1838,7 +1841,9 @@ class Team:
                         if tool_name.lower() in ["think", "analyze"]:
                             tool_args = tool_call.get("tool_args", {})
 
-                            reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+                            reasoning_step = self.update_reasoning_content_from_tool_call(
+                                run_response, tool_name, tool_args
+                            )
 
                             metrics = tool_call.get("metrics")
                             reasoning_time_taken = reasoning_time_taken + float(metrics.time)
@@ -6215,7 +6220,7 @@ class Team:
         return self.audio
 
     def update_reasoning_content_from_tool_call(
-        self, tool_name: str, tool_args: Dict[str, Any]
+        self, run_response: RunResponse, tool_name: str, tool_args: Dict[str, Any]
     ) -> Optional[ReasoningStep]:
         """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
 
@@ -6236,7 +6241,7 @@ class Team:
             )
 
             # Add the step to the run response
-            self._add_reasoning_step_to_extra_data(reasoning_step)
+            self._add_reasoning_step_to_extra_data(run_response, reasoning_step)
 
             formatted_content = f"## {title}\n{thought}\n"
             if action:
@@ -6245,7 +6250,7 @@ class Team:
                 formatted_content += f"Confidence: {confidence}\n"
             formatted_content += "\n"
 
-            self._append_to_reasoning_content(formatted_content)
+            self._append_to_reasoning_content(run_response, formatted_content)
             return reasoning_step
 
         # Case 2: ReasoningTools.analyze (has title, result, analysis, optional next_action and confidence)
@@ -6273,7 +6278,7 @@ class Team:
             )
 
             # Add the step to the run response
-            self._add_reasoning_step_to_extra_data(reasoning_step)
+            self._add_reasoning_step_to_extra_data(run_response, reasoning_step)
 
             formatted_content = f"## {title}\n"
             if result:
@@ -6286,7 +6291,7 @@ class Team:
                 formatted_content += f"Confidence: {confidence}\n"
             formatted_content += "\n"
 
-            self._append_to_reasoning_content(formatted_content)
+            self._append_to_reasoning_content(run_response, formatted_content)
             return reasoning_step
 
         # Case 3: ThinkingTools.think (simple format, just has 'thought')
@@ -6298,30 +6303,27 @@ class Team:
                 confidence=None,
             )
             formatted_content = f"## Thinking\n{thought}\n\n"
-            self._add_reasoning_step_to_extra_data(reasoning_step)
-            self._append_to_reasoning_content(formatted_content)
+            self._add_reasoning_step_to_extra_data(run_response, reasoning_step)
+            self._append_to_reasoning_content(run_response, formatted_content)
             return reasoning_step
 
         return None
 
-    def _append_to_reasoning_content(self, content: str) -> None:
+    def _append_to_reasoning_content(self, run_response: RunResponse, content: str) -> None:
         """Helper to append content to the reasoning_content field."""
-        if not hasattr(self.run_response, "reasoning_content") or not self.run_response.reasoning_content:  # type: ignore
-            self.run_response.reasoning_content = content  # type: ignore
+        if not hasattr(run_response, "reasoning_content") or not run_response.reasoning_content:  # type: ignore
+            run_response.reasoning_content = content  # type: ignore
         else:
-            self.run_response.reasoning_content += content  # type: ignore
+            run_response.reasoning_content += content  # type: ignore
 
-    def _add_reasoning_step_to_extra_data(self, reasoning_step: ReasoningStep) -> None:
-        if hasattr(self, "run_response") and self.run_response is not None:
-            if self.run_response.extra_data is None:
-                from agno.run.response import RunResponseExtraData
+    def _add_reasoning_step_to_extra_data(self, run_response: RunResponse, reasoning_step: ReasoningStep) -> None:
+        if run_response.extra_data is not None:
+            run_response.extra_data = RunResponseExtraData()
 
-                self.run_response.extra_data = RunResponseExtraData()
+        if run_response.extra_data.reasoning_steps is None:
+            run_response.extra_data.reasoning_steps = []
 
-        if self.run_response.extra_data.reasoning_steps is None:
-            self.run_response.extra_data.reasoning_steps = []
-
-        self.run_response.extra_data.reasoning_steps.append(reasoning_step)
+        run_response.extra_data.reasoning_steps.append(reasoning_step)
 
     def _add_reasoning_metrics_to_extra_data(self, reasoning_time_taken: float) -> None:
         try:

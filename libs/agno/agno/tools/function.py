@@ -466,6 +466,7 @@ class FunctionCall(BaseModel):
 
         def create_hook_wrapper(inner_func, hook):
             """Create a nested wrapper for the hook."""
+
             def wrapper(name, func, args):
                 # Pass the inner function as next_func to the hook
                 # The hook will call next_func to continue the chain
@@ -631,6 +632,7 @@ class FunctionCall(BaseModel):
 
             async def wrapper(name, func, args):
                 """Create a nested wrapper for the hook."""
+
                 # Pass the inner function as next_func to the hook
                 # The hook will call next_func to continue the chain
                 async def next_func(**kwargs):
@@ -638,7 +640,7 @@ class FunctionCall(BaseModel):
                         return await inner_func(name, func, kwargs)
                     else:
                         return inner_func(name, func, kwargs)
-                    
+
                 if iscoroutinefunction(hook):
                     return await hook(name, next_func, args)
                 else:
