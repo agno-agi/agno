@@ -70,7 +70,7 @@ class Function(BaseModel):
     # If defined, can accept the FunctionCall instance as a parameter.
     # Deprecated: Use tool_execution_hooks instead.
     post_hook: Optional[Callable] = None
-    
+
     # A list of hooks to run around tool calls.
     tool_execution_hooks: Optional[List[Callable]] = None
 
@@ -444,26 +444,26 @@ class FunctionCall(BaseModel):
         if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["fc"] = self
         return entrypoint_args
-        
+
     def _build_nested_execution_chain(self, entrypoint_args: Dict[str, Any]):
         """Build a nested chain of hook executions with the entrypoint at the center.
-        
+
         This creates a chain where each hook wraps the next one, with the function call
         at the innermost level. Returns bubble back up through each hook.
         """
         from functools import reduce
-        
+
         # Start with the innermost function execution
         def execute_entrypoint(name, func, args):
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
             return self.function.entrypoint(**arguments)
-        
+
         # If no hooks, just return the entrypoint execution function
         if not self.function.tool_execution_hooks:
             return execute_entrypoint
-            
+
         # Create nested wrapper for each hook
         def create_hook_wrapper(inner_func, hook):
             def wrapper(name, func, args):
@@ -471,9 +471,11 @@ class FunctionCall(BaseModel):
                 # The hook will call next_func to continue the chain
                 def next_func(**kwargs):
                     return inner_func(name, func, kwargs)
+
                 return hook(name, next_func, args)
+
             return wrapper
-            
+
         # Build the chain from inside out - reverse the hooks to start from the innermost
         hooks = list(reversed(self.function.tool_execution_hooks))
         chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
@@ -511,11 +513,7 @@ class FunctionCall(BaseModel):
             # Build and execute the nested chain of hooks
             if self.function.tool_execution_hooks is not None:
                 execution_chain = self._build_nested_execution_chain(entrypoint_args=entrypoint_args)
-                result = execution_chain(
-                    self.function.name, 
-                    self.function.entrypoint, 
-                    self.arguments or {}
-                )
+                result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
                 arguments = entrypoint_args
                 if self.arguments is not None:
@@ -595,39 +593,42 @@ class FunctionCall(BaseModel):
             except Exception as e:
                 log_warning(f"Error in post-hook callback: {e}")
                 log_exception(e)
-    
+
     async def _build_nested_execution_chain_async(self, entrypoint_args: Dict[str, Any]):
         """Build a nested chain of async hook executions with the entrypoint at the center.
-        
+
         Similar to _build_nested_execution_chain but for async execution.
         """
         from functools import reduce
-        from inspect import iscoroutinefunction, isasyncgenfunction, isasyncgen
-        
+        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction
+
         # Start with the innermost function execution
         async def execute_entrypoint_async(name, func, args):
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
-            
+
             result = self.function.entrypoint(**arguments)
-            if iscoroutinefunction(self.function.entrypoint) and not (isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint)):
+            if iscoroutinefunction(self.function.entrypoint) and not (
+                isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint)
+            ):
                 result = await result
             return result
-        
+
         def execute_entrypoint(name, func, args):
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
             return self.function.entrypoint(**arguments)
-        
+
         # If no hooks, just return the entrypoint execution function
         if not self.function.tool_execution_hooks:
             return execute_entrypoint
-            
+
         # Create nested wrapper for each hook
         def create_hook_wrapper(inner_func, hook):
             if iscoroutinefunction(hook):
+
                 async def wrapper(name, func, args):
                     # Pass the inner function as next_func to the hook
                     # The hook will call next_func to continue the chain
@@ -636,8 +637,10 @@ class FunctionCall(BaseModel):
                             return await inner_func(name, func, kwargs)
                         else:
                             return inner_func(name, func, kwargs)
+
                     return await hook(name, next_func, args)
             else:
+
                 async def wrapper(name, func, args):
                     # Pass the inner function as next_func to the hook
                     # The hook will call next_func to continue the chain
@@ -646,18 +649,20 @@ class FunctionCall(BaseModel):
                             return await inner_func(name, func, kwargs)
                         else:
                             return inner_func(name, func, kwargs)
+
                     return hook(name, next_func, args)
+
             return wrapper
-            
+
         # Build the chain from inside out - reverse the hooks to start from the innermost
         hooks = list(reversed(self.function.tool_execution_hooks))
-        
+
         # Handle async and sync entrypoints
         if iscoroutinefunction(self.function.entrypoint):
             chain = reduce(create_hook_wrapper, hooks, execute_entrypoint_async)
         else:
             chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
-        
+
         return chain
 
     async def aexecute(self) -> bool:
@@ -696,17 +701,13 @@ class FunctionCall(BaseModel):
             # Build and execute the nested chain of hooks
             if self.function.tool_execution_hooks is not None:
                 execution_chain = await self._build_nested_execution_chain_async(entrypoint_args)
-                self.result = await execution_chain(
-                    self.function.name, 
-                    self.function.entrypoint, 
-                    self.arguments or {}
-                )
+                self.result = await execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
                 if self.arguments is None or self.arguments == {}:
                     result = self.function.entrypoint(**entrypoint_args)
                 else:
                     result = self.function.entrypoint(**entrypoint_args, **self.arguments)
-                
+
                 if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
                     self.result = result  # Store async generator directly
                 else:

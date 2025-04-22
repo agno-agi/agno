@@ -63,7 +63,7 @@ class Model(ABC):
     #   forces the model to call that function.
     # "none" is the default when no functions are present. "auto" is the default if functions are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
-    
+
     # A list of hooks to run around tool calls.
     tool_execution_hooks: Optional[List[Callable]] = None
 
@@ -920,7 +920,7 @@ class Model(ABC):
         function_call_timer = Timer()
         function_call_timer.start()
         success: Union[bool, AgentRunException] = False
-        
+
         try:
             if (
                 iscoroutinefunction(function_call.function.entrypoint)

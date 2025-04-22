@@ -143,7 +143,7 @@ class Agent:
     #   forces the model to call that tool.
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
-    
+
     # A function that acts as middleware and is called around tool calls.
     tool_execution_hooks: Optional[List[Callable]] = None
     tool_execution_hook: Optional[Callable] = None
@@ -397,13 +397,13 @@ class Agent:
         self.show_tool_calls = show_tool_calls
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
-        
+
         self.tool_execution_hook = tool_execution_hook
         if tool_execution_hooks is None:
             self.tool_execution_hooks = [self.tool_execution_hook] if self.tool_execution_hook is not None else None
         else:
             self.tool_execution_hooks = tool_execution_hooks
-        
+
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
         self.reasoning_agent = reasoning_agent
@@ -2109,7 +2109,7 @@ class Agent:
         # Set tool_call_limit on the Model
         if self.tool_call_limit is not None:
             self.model.tool_call_limit = self.tool_call_limit
-        
+
         # Set tool_execution_hooks on the Model
         if self.tool_execution_hooks is not None:
             self.model.tool_execution_hooks = self.tool_execution_hooks

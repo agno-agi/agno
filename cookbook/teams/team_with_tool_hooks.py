@@ -16,7 +16,7 @@ def logger_hook(function_name: str, function_call: Callable, arguments: Dict[str
     if function_name == "transfer_task_to_member":
         member_id = arguments.get("member_id")
         logger.info(f"Transferring task to member {member_id}")
-    
+
     # Start timer
     start_time = time.time()
     result = function_call(**arguments)

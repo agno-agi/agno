@@ -1,6 +1,7 @@
 import asyncio
 import json
-from typing import Callable, Dict, Any
+from typing import Any, Callable, Dict
+
 from agno.agent import Agent
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
@@ -9,7 +10,7 @@ from agno.utils.log import logger
 class CustomerDBTools(Toolkit):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
         self.register(self.retrieve_customer_profile)
         self.register(self.delete_customer_profile)
 
@@ -24,8 +25,14 @@ class CustomerDBTools(Toolkit):
             A string containing the customer profile.
         """
         logger.info(f"Looking up customer profile for {customer_id}")
-        return json.dumps({"customer_id": customer_id, "name": "John Doe", "email": "john.doe@example.com"})
-    
+        return json.dumps(
+            {
+                "customer_id": customer_id,
+                "name": "John Doe",
+                "email": "john.doe@example.com",
+            }
+        )
+
     def delete_customer_profile(self, customer_id: str):
         """
         Deletes a customer profile from the database.
@@ -35,19 +42,19 @@ class CustomerDBTools(Toolkit):
         """
         logger.info(f"Deleting customer profile for {customer_id}")
         return f"Customer profile for {customer_id}"
-    
+
+
 def validation_hook(function_name: str, call_func: Callable, arguments: Dict[str, Any]):
-    
     if function_name == "retrieve_customer_profile":
         cust_id = arguments.get("customer_id")
         if cust_id == "123":
             raise ValueError("Cannot retrieve customer profile for ID 123")
-        
+
     if function_name == "delete_customer_profile":
         cust_id = arguments.get("customer_id")
         if cust_id == "123":
             raise ValueError("Cannot delete customer profile for ID 123")
-        
+
     logger.info("Before Validation Hook")
     result = call_func(**arguments)
     logger.info("After Validation Hook")
@@ -62,12 +69,13 @@ def logger_hook(function_name: str, call_func: Callable, arguments: Dict[str, An
     result = call_func(**arguments)
     logger.info("After Logger Hook")
     return result
-    
+
 
 agent = Agent(
-    tools=[CustomerDBTools()], 
+    tools=[CustomerDBTools()],
     # Hooks are executed in order of the list
-    tool_execution_hooks=[validation_hook, logger_hook])
+    tool_execution_hooks=[validation_hook, logger_hook],
+)
 
-if __name__ == "__main__":  
+if __name__ == "__main__":
     agent.print_response("I am customer 456, please retrieve my profile.")

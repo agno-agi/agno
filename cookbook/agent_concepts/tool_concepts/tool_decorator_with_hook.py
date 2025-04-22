@@ -1,11 +1,13 @@
 import json
 import time
-from typing import Callable, Iterator, Dict, Any
+from typing import Any, Callable, Dict, Iterator
 
 import httpx
 from agno.agent import Agent
 from agno.tools import tool
 from agno.utils.log import logger
+
+
 def logger_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
     start_time = time.time()
     result = function_call(**arguments)
@@ -23,7 +25,6 @@ def get_top_hackernews_stories(agent: Agent) -> Iterator[str]:
     response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
     story_ids = response.json()
 
-    
     final_stories = {}
     for story_id in story_ids[:num_stories]:
         story_response = httpx.get(
@@ -33,7 +34,7 @@ def get_top_hackernews_stories(agent: Agent) -> Iterator[str]:
         if "text" in story:
             story.pop("text", None)
         final_stories[story_id] = story
-    
+
     return json.dumps(final_stories)
 
 
