@@ -3314,7 +3314,7 @@ class Agent:
         import json
 
         return json.dumps(docs, indent=2, ensure_ascii=False)
-    
+
     def convert_context_to_string(self, context: Dict[str, Any]) -> str:
         """Convert the context dictionary to a string representation.
 
@@ -5351,4 +5351,3 @@ class Agent:
             self.print_response(
                 message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
-
