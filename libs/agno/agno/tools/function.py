@@ -453,8 +453,8 @@ class FunctionCall(BaseModel):
         """
         from functools import reduce
 
-        # Start with the innermost function execution
         def execute_entrypoint(name, func, args):
+            """Execute the entrypoint function."""
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
@@ -464,8 +464,8 @@ class FunctionCall(BaseModel):
         if not self.function.tool_execution_hooks:
             return execute_entrypoint
 
-        # Create nested wrapper for each hook
         def create_hook_wrapper(inner_func, hook):
+            """Create a nested wrapper for the hook."""
             def wrapper(name, func, args):
                 # Pass the inner function as next_func to the hook
                 # The hook will call next_func to continue the chain
@@ -602,8 +602,8 @@ class FunctionCall(BaseModel):
         from functools import reduce
         from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction
 
-        # Start with the innermost function execution
         async def execute_entrypoint_async(name, func, args):
+            """Execute the entrypoint function asynchronously."""
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
@@ -616,6 +616,7 @@ class FunctionCall(BaseModel):
             return result
 
         def execute_entrypoint(name, func, args):
+            """Execute the entrypoint function synchronously."""
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
@@ -625,31 +626,22 @@ class FunctionCall(BaseModel):
         if not self.function.tool_execution_hooks:
             return execute_entrypoint
 
-        # Create nested wrapper for each hook
         def create_hook_wrapper(inner_func, hook):
-            if iscoroutinefunction(hook):
+            """Create a nested wrapper for the hook."""
 
-                async def wrapper(name, func, args):
-                    # Pass the inner function as next_func to the hook
-                    # The hook will call next_func to continue the chain
-                    async def next_func(**kwargs):
-                        if iscoroutinefunction(inner_func):
-                            return await inner_func(name, func, kwargs)
-                        else:
-                            return inner_func(name, func, kwargs)
-
+            async def wrapper(name, func, args):
+                """Create a nested wrapper for the hook."""
+                # Pass the inner function as next_func to the hook
+                # The hook will call next_func to continue the chain
+                async def next_func(**kwargs):
+                    if iscoroutinefunction(inner_func):
+                        return await inner_func(name, func, kwargs)
+                    else:
+                        return inner_func(name, func, kwargs)
+                    
+                if iscoroutinefunction(hook):
                     return await hook(name, next_func, args)
-            else:
-
-                async def wrapper(name, func, args):
-                    # Pass the inner function as next_func to the hook
-                    # The hook will call next_func to continue the chain
-                    async def next_func(**kwargs):
-                        if iscoroutinefunction(inner_func):
-                            return await inner_func(name, func, kwargs)
-                        else:
-                            return inner_func(name, func, kwargs)
-
+                else:
                     return hook(name, next_func, args)
 
             return wrapper
