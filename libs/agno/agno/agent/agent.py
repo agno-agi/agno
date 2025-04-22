@@ -143,6 +143,10 @@ class Agent:
     #   forces the model to call that tool.
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    
+    # A function that acts as middleware and is called around tool calls.
+    tool_execution_hooks: Optional[List[Callable]] = None
+    tool_execution_hook: Optional[Callable] = None
 
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
@@ -299,6 +303,8 @@ class Agent:
         show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_execution_hooks: Optional[List[Callable]] = None,
+        tool_execution_hook: Optional[Callable] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -391,7 +397,13 @@ class Agent:
         self.show_tool_calls = show_tool_calls
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
-
+        
+        self.tool_execution_hook = tool_execution_hook
+        if tool_execution_hooks is None:
+            self.tool_execution_hooks = [self.tool_execution_hook] if self.tool_execution_hook is not None else None
+        else:
+            self.tool_execution_hooks = tool_execution_hooks
+        
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
         self.reasoning_agent = reasoning_agent
@@ -1990,6 +2002,8 @@ class Agent:
                                 func.process_entrypoint(strict=strict)
                                 if strict:
                                     func.strict = True
+                                if self.tool_execution_hooks is not None:
+                                    func.tool_execution_hooks = self.tool_execution_hooks
                                 self._functions_for_model[name] = func
                                 self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added function {name} from {tool.name}")
@@ -2006,6 +2020,8 @@ class Agent:
                             tool.process_entrypoint(strict=strict)
                             if strict and tool.strict is None:
                                 tool.strict = True
+                            if self.tool_execution_hooks is not None:
+                                tool.tool_execution_hooks = self.tool_execution_hooks
                             self._functions_for_model[tool.name] = tool
                             self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
                             log_debug(f"Added function {tool.name}")
@@ -2024,6 +2040,8 @@ class Agent:
                                 func._agent = self
                                 if strict:
                                     func.strict = True
+                                if self.tool_execution_hooks is not None:
+                                    func.tool_execution_hooks = self.tool_execution_hooks
                                 self._functions_for_model[func.name] = func
                                 self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added function {func.name}")
@@ -2091,6 +2109,10 @@ class Agent:
         # Set tool_call_limit on the Model
         if self.tool_call_limit is not None:
             self.model.tool_call_limit = self.tool_call_limit
+        
+        # Set tool_execution_hooks on the Model
+        if self.tool_execution_hooks is not None:
+            self.model.tool_execution_hooks = self.tool_execution_hooks
 
     def resolve_run_context(self) -> None:
         from inspect import signature

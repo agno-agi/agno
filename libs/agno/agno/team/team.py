@@ -170,6 +170,10 @@ class Team:
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
+    # A list of hooks to be called before and after the tool call
+    tool_execution_hooks: Optional[List[Callable]] = None
+    # A single hook to be called before and after the tool call
+    tool_execution_hook: Optional[Callable] = None
 
     # --- Structured output ---
     # Response model for the team response
@@ -257,6 +261,8 @@ class Team:
         show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_execution_hooks: Optional[List[Callable]] = None,
+        tool_execution_hook: Optional[Callable] = None,
         response_model: Optional[Type[BaseModel]] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
@@ -321,6 +327,12 @@ class Team:
         self.show_tool_calls = show_tool_calls
         self.tool_choice = tool_choice
         self.tool_call_limit = tool_call_limit
+        
+        self.tool_execution_hook = tool_execution_hook
+        if tool_execution_hooks is None:
+            self.tool_execution_hooks = [self.tool_execution_hook] if self.tool_execution_hook is not None else None
+        else:
+            self.tool_execution_hooks = tool_execution_hooks
 
         self.response_model = response_model
         self.use_json_mode = use_json_mode
@@ -4266,6 +4278,10 @@ class Team:
         if self.tool_call_limit is not None:
             self.model.tool_call_limit = self.tool_call_limit
 
+        # Set tool_execution_hooks on the Model
+        if self.tool_execution_hooks is not None:
+            self.model.tool_execution_hooks = self.tool_execution_hooks
+
     def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
         # We have to reset for every run, because we will have new images/audio/video to attach
         self._functions_for_model = {}
@@ -4296,6 +4312,8 @@ class Team:
                             func.process_entrypoint(strict=strict)
                             if strict:
                                 func.strict = True
+                            if self.tool_execution_hooks:
+                                func.tool_execution_hooks = self.tool_execution_hooks
                             self._functions_for_model[name] = func
                             self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                             log_debug(f"Added function {name} from {tool.name}")
@@ -4312,6 +4330,8 @@ class Team:
                         tool.process_entrypoint(strict=strict)
                         if strict and tool.strict is None:
                             tool.strict = True
+                        if self.tool_execution_hooks:
+                            tool.tool_execution_hooks = self.tool_execution_hooks
                         self._functions_for_model[tool.name] = tool
                         self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
                         log_debug(f"Added function {tool.name}")
@@ -4329,6 +4349,8 @@ class Team:
                         func._agent = self
                         if strict:
                             func.strict = True
+                        if self.tool_execution_hooks:
+                            func.tool_execution_hooks = self.tool_execution_hooks
                         self._functions_for_model[func.name] = func
                         self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                         log_debug(f"Added function {func.name}")

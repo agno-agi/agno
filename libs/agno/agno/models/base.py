@@ -3,7 +3,7 @@ import collections.abc
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import AsyncGeneratorType, GeneratorType
-from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.exceptions import AgentRunException
@@ -63,6 +63,9 @@ class Model(ABC):
     #   forces the model to call that function.
     # "none" is the default when no functions are present. "auto" is the default if functions are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    
+    # A list of hooks to run around tool calls.
+    tool_execution_hooks: Optional[List[Callable]] = None
 
     # If True, shows function calls in the response. Disabled when response_model is used.
     show_tool_calls: Optional[bool] = None
@@ -917,12 +920,16 @@ class Model(ABC):
         function_call_timer = Timer()
         function_call_timer.start()
         success: Union[bool, AgentRunException] = False
+        
         try:
             if (
                 iscoroutinefunction(function_call.function.entrypoint)
                 or isasyncgenfunction(function_call.function.entrypoint)
                 or iscoroutine(function_call.function.entrypoint)
             ):
+                success = await function_call.aexecute()
+            # If any of the hooks are async, we need to run the function call asynchronously
+            elif any(iscoroutinefunction(f) for f in function_call.function.tool_execution_hooks):
                 success = await function_call.aexecute()
             else:
                 success = await asyncio.to_thread(function_call.execute)
