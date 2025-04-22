@@ -6310,14 +6310,14 @@ class Team:
 
         return None
 
-    def _append_to_reasoning_content(self, run_response: RunResponse, content: str) -> None:
+    def _append_to_reasoning_content(self, run_response: TeamRunResponse, content: str) -> None:
         """Helper to append content to the reasoning_content field."""
         if not hasattr(run_response, "reasoning_content") or not run_response.reasoning_content:  # type: ignore
             run_response.reasoning_content = content  # type: ignore
         else:
             run_response.reasoning_content += content  # type: ignore
 
-    def _add_reasoning_step_to_extra_data(self, run_response: RunResponse, reasoning_step: ReasoningStep) -> None:
+    def _add_reasoning_step_to_extra_data(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> None:
         if run_response.extra_data is None:
             run_response.extra_data = RunResponseExtraData()
 
@@ -6357,7 +6357,7 @@ class Team:
                         "content": str(self.run_response.reasoning_content),
                         "metrics": {"time": reasoning_time_taken},
                     }
-                    self.run_response.extra_data.reasoning_messages.append(metrics_dict)
+                    self.run_response.extra_data.reasoning_messages.append(metrics_dict)  # type: ignore
         except Exception as e:
             # Log the error but don't crash
             from agno.utils.log import log_error
