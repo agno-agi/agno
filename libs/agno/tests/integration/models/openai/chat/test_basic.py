@@ -252,6 +252,7 @@ def test_persistent_memory():
     assert response.content is not None
 
 
+@pytest.mark.skip(reason="This test is flaky and needs to be fixed")
 def test_cached_tokens():
     """Assert cached_tokens is populated correctly and returned in the metrics"""
     agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)

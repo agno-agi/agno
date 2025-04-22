@@ -112,6 +112,7 @@ instructions = dedent("""\
     5. **Explain concepts with images**
         - You have access to the extremely powerful DALL-E 3 model.
         - Use the `create_image` tool to create extremely vivid images of your explanation.
+        - Don't provide the URL of the image in the response. Only describe what image was generated.
 
     Key topics to cover:
     - Agent levels and capabilities
@@ -123,8 +124,8 @@ instructions = dedent("""\
 
 # Create the agent
 agno_assist = Agent(
-    name="Agno_Assist",
-    agent_id="agno_assist",
+    name="Agno Assist",
+    agent_id="agno-assist",
     model=OpenAIChat(id="gpt-4o"),
     memory=memory,
     description=description,

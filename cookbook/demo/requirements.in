@@ -18,3 +18,4 @@ streamlit
 uvicorn
 yfinance
 youtube-transcript-api
+elevenlabs
