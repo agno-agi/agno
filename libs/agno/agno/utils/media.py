@@ -80,7 +80,7 @@ def download_file(url: str, output_path: str) -> None:
         raise Exception(f"Failed to download file from {url}: {str(e)}")
 
 
-def save_audio(base64_data: str, output_path: str) -> bool:
+def save_base64_string(base64_data: str, output_path: str) -> bool:
     """
     Saves base64 string to the specified path.
     """
