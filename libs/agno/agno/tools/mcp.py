@@ -136,7 +136,7 @@ class MCPTools(Toolkit):
             # Filter tools based on include/exclude lists
             filtered_tools = []
             for tool in available_tools.tools:
-                if tool.name in self.exclude_tools:
+                if self.exclude_tools and tool.name in self.exclude_tools:
                     continue
                 if self.include_tools is None or tool.name in self.include_tools:
                     filtered_tools.append(tool)
@@ -268,7 +268,7 @@ class MultiMCPTools(Toolkit):
             # Filter tools based on include/exclude lists
             filtered_tools = []
             for tool in available_tools.tools:
-                if tool.name in self.exclude_tools:
+                if self.exclude_tools and tool.name in self.exclude_tools:
                     continue
                 if self.include_tools is None or tool.name in self.include_tools:
                     filtered_tools.append(tool)

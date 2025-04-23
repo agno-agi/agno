@@ -1,7 +1,7 @@
 from agno.agent.agent import Agent
 from agno.memory.v2.db.postgres import PostgresMemoryDb
 from agno.memory.v2.memory import Memory
-from agno.models.google.gemini import Gemini
+from agno.models.openai.chat import OpenAIChat
 from agno.storage.postgres import PostgresStorage
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -12,7 +12,7 @@ session_id = "postgres_memories"
 user_id = "postgres_user"
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=OpenAIChat(id="gpt-4o-mini"),
     memory=memory,
     storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
     enable_user_memories=True,

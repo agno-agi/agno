@@ -1,8 +1,5 @@
 """Unit tests for Toolkit class."""
 
-import json
-from unittest.mock import patch, MagicMock
-
 import pytest
 
 from agno.tools.toolkit import Toolkit
@@ -26,21 +23,13 @@ def third_func(y: float) -> float:
 @pytest.fixture
 def basic_toolkit():
     """Create a basic Toolkit instance with a single function."""
-    return Toolkit(
-        name="basic_toolkit",
-        tools=[example_func],
-        auto_register=True
-    )
+    return Toolkit(name="basic_toolkit", tools=[example_func], auto_register=True)
 
 
 @pytest.fixture
 def multi_func_toolkit():
     """Create a Toolkit instance with multiple functions."""
-    return Toolkit(
-        name="multi_func_toolkit",
-        tools=[example_func, another_func, third_func],
-        auto_register=True
-    )
+    return Toolkit(name="multi_func_toolkit", tools=[example_func, another_func, third_func], auto_register=True)
 
 
 @pytest.fixture
@@ -51,14 +40,14 @@ def toolkit_with_instructions():
         tools=[example_func],
         instructions="These are test instructions",
         add_instructions=True,
-        auto_register=True
+        auto_register=True,
     )
 
 
 def test_toolkit_initialization():
     """Test basic toolkit initialization without tools."""
     toolkit = Toolkit(name="empty_toolkit")
-    
+
     assert toolkit.name == "empty_toolkit"
     assert toolkit.tools == []
     assert len(toolkit.functions) == 0
@@ -79,11 +68,11 @@ def test_tool_registration():
     """Test manual registration of tools."""
     toolkit = Toolkit(name="manual_toolkit", auto_register=False)
     assert len(toolkit.functions) == 0
-    
+
     toolkit.register(example_func)
     assert len(toolkit.functions) == 1
     assert "example_func" in toolkit.functions
-    
+
     toolkit.register(another_func)
     assert len(toolkit.functions) == 2
     assert "another_func" in toolkit.functions
@@ -93,7 +82,7 @@ def test_custom_function_name():
     """Test registering a function with a custom name."""
     toolkit = Toolkit(name="custom_name_toolkit", auto_register=False)
     toolkit.register(example_func, name="custom_add")
-    
+
     assert len(toolkit.functions) == 1
     assert "custom_add" in toolkit.functions
     assert "example_func" not in toolkit.functions
@@ -111,9 +100,9 @@ def test_include_tools():
         name="include_toolkit",
         tools=[example_func, another_func, third_func],
         include_tools=["example_func", "third_func"],
-        auto_register=True
+        auto_register=True,
     )
-    
+
     assert len(toolkit.functions) == 2
     assert "example_func" in toolkit.functions
     assert "another_func" not in toolkit.functions
@@ -126,9 +115,9 @@ def test_exclude_tools():
         name="exclude_toolkit",
         tools=[example_func, another_func, third_func],
         exclude_tools=["another_func"],
-        auto_register=True
+        auto_register=True,
     )
-    
+
     assert len(toolkit.functions) == 2
     assert "example_func" in toolkit.functions
     assert "another_func" not in toolkit.functions
@@ -138,23 +127,13 @@ def test_exclude_tools():
 def test_invalid_include_tools():
     """Test error when including a non-existent tool."""
     with pytest.raises(ValueError):
-        Toolkit(
-            name="invalid_include",
-            tools=[example_func],
-            include_tools=["non_existent_func"],
-            auto_register=True
-        )
+        Toolkit(name="invalid_include", tools=[example_func], include_tools=["non_existent_func"], auto_register=True)
 
 
 def test_invalid_exclude_tools():
     """Test error when excluding a non-existent tool."""
     with pytest.raises(ValueError):
-        Toolkit(
-            name="invalid_exclude",
-            tools=[example_func],
-            exclude_tools=["non_existent_func"],
-            auto_register=True
-        )
+        Toolkit(name="invalid_exclude", tools=[example_func], exclude_tools=["non_existent_func"], auto_register=True)
 
 
 def test_caching_parameters():
@@ -165,19 +144,18 @@ def test_caching_parameters():
         cache_results=True,
         cache_ttl=7200,
         cache_dir="/tmp/cache",
-        auto_register=True
+        auto_register=True,
     )
-    
+
     assert toolkit.cache_results is True
     assert toolkit.cache_ttl == 7200
     assert toolkit.cache_dir == "/tmp/cache"
 
 
-
 def test_toolkit_repr(multi_func_toolkit):
     """Test the string representation of a toolkit."""
     repr_str = repr(multi_func_toolkit)
-    
+
     assert "<Toolkit" in repr_str
     assert "name=multi_func_toolkit" in repr_str
     assert "functions=" in repr_str
@@ -196,10 +174,6 @@ def test_auto_register_true(multi_func_toolkit):
 
 def test_auto_register_false():
     """Test no automatic registration with auto_register=False."""
-    toolkit = Toolkit(
-        name="no_auto_toolkit",
-        tools=[example_func, another_func],
-        auto_register=False
-    )
-    
-    assert len(toolkit.functions) == 0 
+    toolkit = Toolkit(name="no_auto_toolkit", tools=[example_func, another_func], auto_register=False)
+
+    assert len(toolkit.functions) == 0

@@ -59,7 +59,7 @@ class URLReader(Reader):
 
         log_info(f"Reading async: {url}")
         client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             for attempt in range(3):
                 try:
                     response = await client.get(url)
