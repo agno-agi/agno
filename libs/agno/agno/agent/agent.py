@@ -5307,7 +5307,6 @@ class Agent:
                 if self.run_response.extra_data.reasoning_messages is None:
                     self.run_response.extra_data.reasoning_messages = []
 
-                
                 metrics_message = Message(
                     role="assistant",
                     content=self.run_response.reasoning_content,
