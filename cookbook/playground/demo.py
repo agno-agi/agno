@@ -209,14 +209,11 @@ class MovieScript(BaseModel):
     )
 
 
+# Notice: agents with response model won't stream answers
 movie_writer = Agent(
-    name="Agent with structured outputs",
+    name="Movie Writer Agent",
     model=OpenAIChat(id="gpt-4o"),
-    structured_outputs=True,
     response_model=MovieScript,
-    markdown=True,
-    # Notice: agents with structured output / response model won't stream answers
-    stream=True,
 )
 
 app = Playground(
@@ -227,6 +224,7 @@ app = Playground(
         youtube_agent,
         research_agent,
         image_agent,
+        movie_writer,
     ],
 ).get_app()
 
