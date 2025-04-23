@@ -14,9 +14,19 @@ agent = Agent(
 # -*- Create a run
 agent.print_response("Share a 2 sentence horror story", stream=True)
 # -*- Print the messages in the memory
-pprint([m.model_dump(include={"role", "content"}) for m in agent.memory.messages])
+pprint(
+    [
+        m.model_dump(include={"role", "content"})
+        for m in agent.get_messages_for_session()
+    ]
+)
 
 # -*- Ask a follow up question that continues the conversation
 agent.print_response("What was my first message?", stream=True)
 # -*- Print the messages in the memory
-pprint([m.model_dump(include={"role", "content"}) for m in agent.memory.messages])
+pprint(
+    [
+        m.model_dump(include={"role", "content"})
+        for m in agent.get_messages_for_session()
+    ]
+)

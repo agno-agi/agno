@@ -42,17 +42,18 @@ class Toolkit:
         self.include_tools = include_tools
         self.exclude_tools = exclude_tools
 
-        _tools = [tool.__name__ for tool in tools]
+        if include_tools or exclude_tools:
+            available_tools = {tool.__name__ for tool in tools}
 
-        if include_tools:
-            for included_tool in include_tools:
-                if included_tool not in _tools:
-                    raise ValueError(f"Included tool '{included_tool}' is not present in the toolkit.")
+            if include_tools:
+                missing_includes = set(include_tools) - available_tools
+                if missing_includes:
+                    raise ValueError(f"Included tool(s) not present in the toolkit: {', '.join(missing_includes)}")
 
-        if exclude_tools:
-            for excluded_tool in exclude_tools:
-                if excluded_tool not in _tools:
-                    raise ValueError(f"Excluded tool '{excluded_tool}' is not present in the toolkit.")
+            if exclude_tools:
+                missing_excludes = set(exclude_tools) - available_tools
+                if missing_excludes:
+                    raise ValueError(f"Excluded tool(s) not present in the toolkit: {', '.join(missing_excludes)}")
 
         self.cache_results: bool = cache_results
         self.cache_ttl: int = cache_ttl

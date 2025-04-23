@@ -177,3 +177,77 @@ def test_auto_register_false():
     toolkit = Toolkit(name="no_auto_toolkit", tools=[example_func, another_func], auto_register=False)
 
     assert len(toolkit.functions) == 0
+
+
+def test_include_and_exclude_tools_interaction():
+    """Test the interaction between include_tools and exclude_tools."""
+    toolkit = Toolkit(
+        name="interaction_toolkit",
+        tools=[example_func, another_func, third_func],
+        include_tools=["example_func", "another_func"],
+        exclude_tools=["another_func"],
+        auto_register=True,
+    )
+
+    assert len(toolkit.functions) == 1
+    assert "example_func" in toolkit.functions
+    assert "another_func" not in toolkit.functions
+    assert "third_func" not in toolkit.functions
+
+
+def test_duplicate_tool_registration():
+    """Test registering the same tool multiple times."""
+    toolkit = Toolkit(name="duplicate_toolkit", auto_register=False)
+
+    toolkit.register(example_func)
+    toolkit.register(example_func)  # Register same function again
+
+    assert len(toolkit.functions) == 1
+    assert "example_func" in toolkit.functions
+
+
+def test_invalid_tool_name():
+    """Test registering a tool with an invalid name."""
+    toolkit = Toolkit(name="invalid_name_toolkit", auto_register=False)
+
+    toolkit.register(example_func, name="invalid-name")
+    assert "invalid-name" in toolkit.functions
+
+
+def test_none_tool_registration():
+    """Test registering None as a tool."""
+    toolkit = Toolkit(name="none_toolkit", auto_register=False)
+
+    toolkit.register(None, name="none_tool")
+    assert "none_tool" in toolkit.functions
+
+
+def test_non_callable_tool_registration():
+    """Test registering a non-callable object as a tool"""
+    toolkit = Toolkit(name="non_callable_toolkit", auto_register=False)
+
+    # Use a non-callable object (string) to test the error handling
+    with pytest.raises(AttributeError):
+        toolkit.register("not_a_function", name="string_tool")
+
+
+def test_empty_tool_list():
+    """Test initializing toolkit with an empty tool list."""
+    toolkit = Toolkit(name="empty_tools_toolkit", tools=[], auto_register=True)
+
+    assert len(toolkit.tools) == 0
+    assert len(toolkit.functions) == 0
+
+
+def test_toolkit_with_none_instructions():
+    """Test toolkit with None instructions."""
+    toolkit = Toolkit(
+        name="none_instructions_toolkit",
+        tools=[example_func],
+        instructions=None,
+        add_instructions=True,
+        auto_register=True,
+    )
+
+    assert toolkit.instructions is None
+    assert toolkit.add_instructions is True
