@@ -1,7 +1,9 @@
 import json
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import patch, Mock
 import requests
+
 from agno.tools.serperapi import SerperApiTools
 
 
@@ -60,15 +62,8 @@ def test_search_google_success_default_gl(api_tools, mock_search_response):
         mock_req.assert_called_once_with(
             "POST",
             "https://google.serper.dev/search",
-            headers={
-                "X-API-KEY": "test_key",
-                "Content-Type": "application/json"
-            },
-            data=json.dumps({
-                "q": "pytest testing",
-                "num": 5,
-                "gl": "us"
-            }),
+            headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
+            data=json.dumps({"q": "pytest testing", "num": 5, "gl": "us"}),
         )
 
 
@@ -81,15 +76,8 @@ def test_search_google_success_override_gl(api_tools, mock_search_response):
         mock_req.assert_called_once_with(
             "POST",
             "https://google.serper.dev/search",
-            headers={
-                "X-API-KEY": "test_key",
-                "Content-Type": "application/json"
-            },
-            data=json.dumps({
-                "q": "pytest testing",
-                "num": 5,
-                "gl": "uk"
-            }),
+            headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
+            data=json.dumps({"q": "pytest testing", "num": 5, "gl": "uk"}),
         )
 
 
