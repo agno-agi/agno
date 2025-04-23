@@ -466,8 +466,6 @@ class Agent:
         # Agent session
         self.agent_session: Optional[AgentSession] = None
 
-        self._tools_for_model: Optional[List[Dict]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
         self._tool_instructions: Optional[List[str]] = None
 
         self._formatter: Optional[SafeFormatter] = None
@@ -1957,10 +1955,22 @@ class Agent:
     def add_tools_to_model(
         self, model: Model, session_id: str, async_mode: bool = False, user_id: Optional[str] = None
     ) -> None:
-        # Skip if functions_for_model is not None
-        if self._functions_for_model is None or self._tools_for_model is None:
+        
+        agent_tools = self.get_tools(session_id=session_id, async_mode=async_mode, user_id=user_id)
+        agent_tool_names = []
+        # Get all the tool names
+        for tool in agent_tools:
+            if isinstance(tool, Function):
+                agent_tool_names.append(tool.name)
+            elif isinstance(tool, Toolkit):
+                agent_tool_names.extend([f for f in tool.functions.keys()])
+            elif callable(tool):
+                agent_tool_names.append(tool.__name__)
+        
+        # Create new functions if we don't have any set on the model OR if the list of tool names is different than what is set on the model
+        existing_model_functions = self.model.get_functions()
+        if existing_model_functions is None or set(existing_model_functions.keys()) != set(agent_tool_names):
             # Get Agent tools
-            agent_tools = self.get_tools(session_id=session_id, async_mode=async_mode, user_id=user_id)
             if agent_tools is not None and len(agent_tools) > 0:
                 log_debug("Processing tools for model")
 
@@ -1973,27 +1983,27 @@ class Agent:
                 ):
                     strict = True
 
-                self._tools_for_model = []
-                self._functions_for_model = {}
+                _tools_for_model = []
+                _functions_for_model = {}
 
                 for tool in agent_tools:
                     if isinstance(tool, Dict):
                         # If a dict is passed, it is a builtin tool
                         # that is run by the model provider and not the Agent
-                        self._tools_for_model.append(tool)
+                        _tools_for_model.append(tool)
                         log_debug(f"Included builtin tool {tool}")
 
                     elif isinstance(tool, Toolkit):
                         # For each function in the toolkit and process entrypoint
                         for name, func in tool.functions.items():
                             # If the function does not exist in self.functions
-                            if name not in self._functions_for_model:
+                            if name not in _functions_for_model:
                                 func._agent = self
                                 func.process_entrypoint(strict=strict)
                                 if strict:
                                     func.strict = True
-                                self._functions_for_model[name] = func
-                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                _functions_for_model[name] = func
+                                _tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added function {name} from {tool.name}")
 
                         # Add instructions from the toolkit
@@ -2008,8 +2018,8 @@ class Agent:
                             tool.process_entrypoint(strict=strict)
                             if strict and tool.strict is None:
                                 tool.strict = True
-                            self._functions_for_model[tool.name] = tool
-                            self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
+                            _functions_for_model[tool.name] = tool
+                            _tools_for_model.append({"type": "function", "function": tool.to_dict()})
                             log_debug(f"Added function {tool.name}")
 
                         # Add instructions from the Function
@@ -2026,16 +2036,16 @@ class Agent:
                                 func._agent = self
                                 if strict:
                                     func.strict = True
-                                self._functions_for_model[func.name] = func
-                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                _functions_for_model[func.name] = func
+                                _tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added function {func.name}")
                         except Exception as e:
                             log_warning(f"Could not add function {tool}: {e}")
 
                 # Set tools on the model
-                model.set_tools(tools=self._tools_for_model)
+                model.set_tools(tools=_tools_for_model)
                 # Set functions on the model
-                model.set_functions(functions=self._functions_for_model)
+                model.set_functions(functions=_functions_for_model)
 
     def update_model(self, session_id: str, async_mode: bool = False, user_id: Optional[str] = None) -> None:
         self.set_default_model()

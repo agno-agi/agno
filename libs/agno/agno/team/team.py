@@ -4323,7 +4323,7 @@ class Team:
                         self._tool_instructions.append(tool.instructions)
 
                 elif isinstance(tool, Function):
-                    if tool.name not in self._functions_for_model:
+                    if tool.name not in _functions_for_model:
                         tool._agent = self
                         tool.process_entrypoint(strict=strict)
                         if strict and tool.strict is None:
