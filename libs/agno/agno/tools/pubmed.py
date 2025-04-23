@@ -13,7 +13,7 @@ class PubmedTools(Toolkit):
         self,
         email: str = "your_email@example.com",
         max_results: Optional[int] = None,
-        results_expanded: bool = True,  # New parameter
+        results_expanded: bool = False,
     ):
         super().__init__(name="pubmed")
         self.max_results: Optional[int] = max_results
