@@ -1,4 +1,5 @@
-import asyncio
+"""Show how to use multiple tool execution hooks, to run logic before and after a tool is called."""
+
 import json
 from typing import Any, Callable, Dict
 

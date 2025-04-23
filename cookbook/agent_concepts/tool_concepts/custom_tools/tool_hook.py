@@ -1,3 +1,5 @@
+"""Show how to use a tool execution hook, to run logic before and after a tool is called."""
+
 import json
 from typing import Any, Callable, Dict
 

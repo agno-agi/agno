@@ -1,3 +1,5 @@
+"""Show how to use multiple tool execution hooks with async functions, to run logic before and after a tool is called."""
+
 import asyncio
 import json
 from inspect import iscoroutinefunction

@@ -1,3 +1,5 @@
+"""Show how to decorate a custom hook with a tool execution hook."""
+
 import json
 import time
 from typing import Any, Callable, Dict, Iterator
@@ -8,16 +10,21 @@ from agno.tools import tool
 from agno.utils.log import logger
 
 
-def logger_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+def duration_logger_hook(
+    function_name: str, function_call: Callable, arguments: Dict[str, Any]
+):
+    """Log the duration of the function call"""
     start_time = time.time()
+
     result = function_call(**arguments)
+
     end_time = time.time()
     duration = end_time - start_time
     logger.info(f"Function {function_name} took {duration:.2f} seconds to execute")
     return result
 
 
-@tool(tool_execution_hook=logger_hook)
+@tool(tool_execution_hook=duration_logger_hook)
 def get_top_hackernews_stories(agent: Agent) -> Iterator[str]:
     num_stories = agent.context.get("num_stories", 5) if agent.context else 5
 
