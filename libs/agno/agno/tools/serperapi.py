@@ -1,7 +1,9 @@
 import json
 from os import getenv
 from typing import Optional
+
 import requests
+
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
 
@@ -19,7 +21,7 @@ class SerperApiTools(Toolkit):
         search_google(query: str, gl: Optional[str] = None) -> str:
             Performs a Google search using the Serper API and returns the results.
     """
-    
+
     def __init__(
         self,
         api_key: str = "",
@@ -39,10 +41,10 @@ class SerperApiTools(Toolkit):
         self.api_key = api_key or getenv("SERPER_API_KEY")
         if not self.api_key:
             log_debug("No Serper API key provided")
-            
+
         self.gl = gl
         self.num_results = num_results
-        self.register(self.search_google)    
+        self.register(self.search_google)
 
     def search_google(self, query: str, gl: Optional[str] = None) -> str:
         """
@@ -64,10 +66,7 @@ class SerperApiTools(Toolkit):
             log_debug(f"Searching Google for: {query}")
 
             url = "https://google.serper.dev/search"
-            headers = {
-                "X-API-KEY": self.api_key,
-                "Content-Type": "application/json"
-            }
+            headers = {"X-API-KEY": self.api_key, "Content-Type": "application/json"}
             # Use the gl parameter from the method if provided, otherwise use the class attribute
             search_gl = gl if gl is not None else self.gl
             params = {"q": query, "num": self.num_results, "gl": search_gl}
