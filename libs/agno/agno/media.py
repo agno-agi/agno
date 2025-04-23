@@ -17,7 +17,9 @@ class VideoArtifact(Media):
 
 
 class ImageArtifact(Media):
-    url: str  # Remote location for file
+    url: Optional[str] = None  # Remote location for file
+    content: Optional[bytes] = None  # Actual image bytes content
+    mime_type: Optional[str] = None
     alt_text: Optional[str] = None
 
 
@@ -92,6 +94,10 @@ class Video(BaseModel):
         }
         return {k: v for k, v in response_dict.items() if v is not None}
 
+    @classmethod
+    def from_artifact(cls, artifact: VideoArtifact) -> "Video":
+        return cls(url=artifact.url)
+
 
 class Audio(BaseModel):
     content: Optional[Any] = None  # Actual audio bytes content
@@ -157,6 +163,10 @@ class Audio(BaseModel):
         }
 
         return {k: v for k, v in response_dict.items() if v is not None}
+
+    @classmethod
+    def from_artifact(cls, artifact: AudioArtifact) -> "Audio":
+        return cls(url=artifact.url, content=artifact.base64_audio, format=artifact.mime_type)
 
 
 class AudioResponse(BaseModel):
@@ -256,19 +266,26 @@ class Image(BaseModel):
 
         return {k: v for k, v in response_dict.items() if v is not None}
 
+    @classmethod
+    def from_artifact(cls, artifact: ImageArtifact) -> "Image":
+        return cls(url=artifact.url)
+
 
 class File(BaseModel):
     url: Optional[str] = None
     filepath: Optional[Union[Path, str]] = None
+    # Raw bytes content of a file
     content: Optional[Any] = None
     mime_type: Optional[str] = None
+    # External file object (e.g. GeminiFile, must be a valid object as expected by the model you are using)
+    external: Optional[Any] = None
 
     @model_validator(mode="before")
     @classmethod
     def check_at_least_one_source(cls, data):
         """Ensure at least one of url, filepath, or content is provided."""
-        if isinstance(data, dict) and not any(data.get(field) for field in ["url", "filepath", "content"]):
-            raise ValueError("At least one of url, filepath, or content must be provided")
+        if isinstance(data, dict) and not any(data.get(field) for field in ["url", "filepath", "content", "external"]):
+            raise ValueError("At least one of url, filepath, content or external must be provided")
         return data
 
     @field_validator("mime_type")

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_warning
 
 try:
     from ollama import AsyncClient as AsyncOllamaClient
@@ -120,8 +120,6 @@ class Ollama(Model):
                     for _, obj in tool["function"]["parameters"].get("properties", {}).items():  # type: ignore
                         if "type" in obj and isinstance(obj["type"], list) and len(obj["type"]) > 1:
                             obj["type"] = obj["type"][0]
-            if self.tool_choice is not None:
-                request_params["tool_choice"] = self.tool_choice
 
         # Add additional request params if provided
         if self.request_params:
@@ -175,13 +173,23 @@ class Ollama(Model):
                         message_images.append(image.content)
                 if message_images:
                     _message["images"] = message_images
+
+            if message.audio is not None and len(message.audio) > 0:
+                log_warning("Audio input is currently unsupported.")
+
+            if message.files is not None and len(message.files) > 0:
+                log_warning("File input is currently unsupported.")
+
+            if message.videos is not None and len(message.videos) > 0:
+                log_warning("Video input is currently unsupported.")
+
         return _message
 
     def _prepare_request_kwargs_for_invoke(self) -> Dict[str, Any]:
         request_kwargs = self.request_kwargs
         if self.response_format is not None and self.structured_outputs:
             if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
-                logger.debug("Using structured outputs")
+                log_debug("Using structured outputs")
                 format_schema = self.response_format.model_json_schema()
                 if "format" not in request_kwargs:
                     request_kwargs["format"] = format_schema
@@ -284,7 +292,7 @@ class Ollama(Model):
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
         except Exception as e:
-            logger.warning(f"Error retrieving structured outputs: {e}")
+            log_warning(f"Error retrieving structured outputs: {e}")
 
         if response_message.get("role") is not None:
             model_response.role = response_message.get("role")

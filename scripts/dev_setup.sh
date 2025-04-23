@@ -34,6 +34,7 @@ VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DIR}/requirements.txt
 
 print_heading "Installing agno in editable mode with tests dependencies"
 VIRTUAL_ENV=${VENV_DIR} uv pip install -e ${AGNO_DIR}[tests]
+VIRTUAL_ENV=${VENV_DIR} uv pip install yfinance
 
 print_heading "Installing agno-docker"
 print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DOCKER_DIR}/requirements.txt"

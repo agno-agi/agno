@@ -1,8 +1,9 @@
+import asyncio
 from typing import List
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 try:
     from youtube_transcript_api import YouTubeTranscriptApi
@@ -19,7 +20,7 @@ class YouTubeReader(Reader):
         try:
             # Extract video ID from URL
             video_id = video_url.split("v=")[-1].split("&")[0]
-            logger.info(f"Reading transcript for video: {video_id}")
+            log_info(f"Reading transcript for video: {video_id}")
 
             # Get transcript
             transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
@@ -48,3 +49,6 @@ class YouTubeReader(Reader):
         except Exception as e:
             logger.error(f"Error reading transcript for {video_url}: {e}")
             return []
+
+    async def async_read(self, video_url: str) -> List[Document]:
+        return await asyncio.get_event_loop().run_in_executor(None, self.read, video_url)

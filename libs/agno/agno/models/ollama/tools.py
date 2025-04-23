@@ -7,7 +7,7 @@ from agno.models.message import Message, MessageMetrics
 from agno.models.ollama.chat import ChatResponse, Ollama, OllamaResponseUsage
 from agno.models.response import ModelResponse
 from agno.tools.function import FunctionCall
-from agno.utils.log import logger
+from agno.utils.log import log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import (
     extract_tool_call_from_string,
@@ -186,9 +186,6 @@ class OllamaTools(Ollama):
         model_response.content += "\n\n"
         function_calls_to_run = self.get_function_calls_to_run(assistant_message, messages)
 
-        if self.show_tool_calls:
-            self._show_tool_calls(function_calls_to_run, model_response)
-
         return function_calls_to_run
 
     def process_response_stream(
@@ -236,7 +233,7 @@ class OllamaTools(Ollama):
 
         response_message = response_delta.get("message")
 
-        # logger.info(f"Response message: {response_delta}")
+        # log_info(f"Response message: {response_delta}")
 
         if response_message is not None:
             content_delta = response_message.get("content", "")
@@ -271,7 +268,7 @@ class OllamaTools(Ollama):
                         model_response.tool_calls = _parse_tool_calls_from_content(tool_call_data.tool_call_content)
                         tool_call_data = ToolCall()
                     except Exception as e:
-                        logger.warning(e)
+                        log_warning(e)
                         pass
 
             # Yield content if not a tool call and content is not None

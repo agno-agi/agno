@@ -7,7 +7,7 @@ from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.log import log_error, log_warning
 
 try:
     from mistralai import CompletionEvent
@@ -44,7 +44,7 @@ def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
 
         path = Path(image.filepath) if isinstance(image.filepath, str) else image.filepath
         if not path.exists() or not path.is_file():
-            logger.error(f"Image file not found: {image}")
+            log_error(f"Image file not found: {image}")
             raise FileNotFoundError(f"Image file not found: {image}")
 
         with open(image.filepath, "rb") as image_file:
@@ -66,6 +66,15 @@ def _format_messages(messages: List[Message]) -> List[MistralMessage]:
     for message in messages:
         mistral_message: MistralMessage
         if message.role == "user":
+            if message.audio is not None and len(message.audio) > 0:
+                log_warning("Audio input is currently unsupported.")
+
+            if message.files is not None and len(message.files) > 0:
+                log_warning("File input is currently unsupported.")
+
+            if message.videos is not None and len(message.videos) > 0:
+                log_warning("Video input is currently unsupported.")
+
             if message.images is not None:
                 content: List[Any] = [TextChunk(type="text", text=message.content)]
                 for image in message.images:
@@ -77,7 +86,6 @@ def _format_messages(messages: List[Message]) -> List[MistralMessage]:
                 mistral_message = UserMessage(role="user", content=message.content)
         elif message.role == "assistant":
             if message.reasoning_content is not None:
-                message.role = "user"
                 mistral_message = UserMessage(role="user", content=message.content)
             elif message.tool_calls is not None:
                 mistral_message = AssistantMessage(
@@ -93,6 +101,12 @@ def _format_messages(messages: List[Message]) -> List[MistralMessage]:
             raise ValueError(f"Unknown role: {message.role}")
 
         mistral_messages.append(mistral_message)
+
+    # Check if the last message is an assistant message
+    if mistral_messages and hasattr(mistral_messages[-1], "role") and mistral_messages[-1].role == "assistant":
+        # Set prefix=True for the last assistant message to allow it as the last message
+        mistral_messages[-1].prefix = True
+
     return mistral_messages
 
 
@@ -170,7 +184,7 @@ class MistralChat(Model):
 
         self.api_key = self.api_key or getenv("MISTRAL_API_KEY")
         if not self.api_key:
-            logger.error("MISTRAL_API_KEY not set. Please set the MISTRAL_API_KEY environment variable.")
+            log_error("MISTRAL_API_KEY not set. Please set the MISTRAL_API_KEY environment variable.")
 
         client_params.update(
             {
@@ -268,10 +282,10 @@ class MistralChat(Model):
             return response
 
         except HTTPValidationError as e:
-            logger.error(f"HTTPValidationError from Mistral: {e}")
+            log_error(f"HTTPValidationError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            logger.error(f"SDKError from Mistral: {e}")
+            log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
@@ -293,10 +307,10 @@ class MistralChat(Model):
             )
             return stream
         except HTTPValidationError as e:
-            logger.error(f"HTTPValidationError from Mistral: {e}")
+            log_error(f"HTTPValidationError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            logger.error(f"SDKError from Mistral: {e}")
+            log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
@@ -327,10 +341,10 @@ class MistralChat(Model):
                 )
             return response
         except HTTPValidationError as e:
-            logger.error(f"HTTPValidationError from Mistral: {e}")
+            log_error(f"HTTPValidationError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            logger.error(f"SDKError from Mistral: {e}")
+            log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> Any:
@@ -355,10 +369,10 @@ class MistralChat(Model):
             async for chunk in stream:
                 yield chunk
         except HTTPValidationError as e:
-            logger.error(f"HTTPValidationError from Mistral: {e}")
+            log_error(f"HTTPValidationError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            logger.error(f"SDKError from Mistral: {e}")
+            log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def parse_provider_response(self, response: ChatCompletionResponse) -> ModelResponse:

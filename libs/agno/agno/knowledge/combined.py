@@ -2,7 +2,7 @@ from typing import Iterator, List
 
 from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import logger
+from agno.utils.log import log_debug
 
 
 class CombinedKnowledgeBase(AgentKnowledge):
@@ -18,5 +18,5 @@ class CombinedKnowledgeBase(AgentKnowledge):
         """
 
         for kb in self.sources:
-            logger.debug(f"Loading documents from {kb.__class__.__name__}")
+            log_debug(f"Loading documents from {kb.__class__.__name__}")
             yield from kb.document_lists

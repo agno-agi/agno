@@ -3,7 +3,7 @@ from os import getenv
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 try:
     import serpapi
@@ -16,8 +16,9 @@ class SerpApiTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         search_youtube: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="serpapi_tools")
+        super().__init__(name="serpapi_tools", **kwargs)
 
         self.api_key = api_key or getenv("SERP_API_KEY")
         if not self.api_key:
@@ -51,7 +52,7 @@ class SerpApiTools(Toolkit):
             if not query:
                 return "Please provide a query to search for"
 
-            logger.info(f"Searching Google for: {query}")
+            log_info(f"Searching Google for: {query}")
 
             params = {"q": query, "api_key": self.api_key, "num": num_results}
 
@@ -92,7 +93,7 @@ class SerpApiTools(Toolkit):
             if not query:
                 return "Please provide a query to search for"
 
-            logger.info(f"Searching Youtube for: {query}")
+            log_info(f"Searching Youtube for: {query}")
 
             params = {"search_query": query, "api_key": self.api_key}
 

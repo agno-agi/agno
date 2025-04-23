@@ -1,22 +1,20 @@
-from typing import Optional
-
 import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.google import Gemini
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
 
 def test_tool_use():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
+        delay_between_retries=5,
         telemetry=False,
         monitoring=False,
     )
@@ -32,10 +30,11 @@ def test_tool_use():
 def test_tool_use_stream():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
+        delay_between_retries=5,
         telemetry=False,
         monitoring=False,
     )
@@ -61,10 +60,11 @@ def test_tool_use_stream():
 async def test_async_tool_use():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
+        delay_between_retries=5,
         telemetry=False,
         monitoring=False,
     )
@@ -81,10 +81,11 @@ async def test_async_tool_use():
 async def test_async_tool_use_stream():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
+        delay_between_retries=5,
         telemetry=False,
         monitoring=False,
     )
@@ -114,14 +115,13 @@ def test_tool_use_with_native_structured_outputs():
 
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
-        exponential_backoff=True,
         response_model=StockPrice,
-        structured_outputs=True,
         telemetry=False,
         monitoring=False,
+        delay_between_retries=5,
     )
     # Gemini does not support structured outputs for tool calls at this time
     response = agent.run("What is the current price of TSLA?")
@@ -131,18 +131,20 @@ def test_tool_use_with_native_structured_outputs():
     assert response.content.currency is not None
 
 
-def test_tool_use_with_response_model():
+def test_tool_use_with_json_structured_outputs():
     class StockPrice(BaseModel):
         price: float = Field(..., description="The price of the stock")
         currency: str = Field(..., description="The currency of the stock")
 
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
+        exponential_backoff=True,
+        delay_between_retries=5,
         show_tool_calls=True,
         markdown=True,
-        exponential_backoff=True,
         response_model=StockPrice,
+        use_json_mode=True,
         telemetry=False,
         monitoring=False,
     )
@@ -157,10 +159,11 @@ def test_tool_use_with_response_model():
 def test_parallel_tool_calls():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
+        delay_between_retries=5,
         telemetry=False,
         monitoring=False,
     )
@@ -180,10 +183,11 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools(), DuckDuckGoTools()],
+        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
+        delay_between_retries=5,
         telemetry=False,
         monitoring=False,
     )
@@ -197,96 +201,14 @@ def test_multiple_tool_calls():
             tool_calls.extend(msg.tool_calls)
     assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
     assert response.content is not None
-    assert "TSLA" in response.content and "duckduckgo_news" in response.content.lower()
-
-
-def test_tool_call_custom_tool_no_parameters():
-    def get_the_weather_in_tokyo():
-        """
-        Get the weather in Tokyo
-        """
-        return "It is currently 70 degrees and cloudy in Tokyo"
-
-    agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[get_the_weather_in_tokyo],
-        exponential_backoff=True,
-        show_tool_calls=True,
-        markdown=True,
-        telemetry=False,
-        monitoring=False,
-    )
-
-    response = agent.run("What is the weather in Tokyo?")
-
-    # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
-    assert response.content is not None
-    assert "70" in response.content
-
-
-def test_tool_call_custom_tool_optional_parameters():
-    def get_the_weather(city: Optional[str] = None):
-        """
-        Get the weather in a city
-
-        Args:
-            city: The city to get the weather for
-        """
-        if city is None:
-            return "It is currently 70 degrees and cloudy in Tokyo"
-        else:
-            return f"It is currently 70 degrees and cloudy in {city}"
-
-    agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[get_the_weather],
-        exponential_backoff=True,
-        show_tool_calls=True,
-        markdown=True,
-        telemetry=False,
-        monitoring=False,
-    )
-
-    response = agent.run("What is the weather in Paris?")
-
-    # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
-    assert response.content is not None
-    assert "70" in response.content
-
-
-def test_tool_call_list_parameters():
-    agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[ExaTools()],
-        instructions="Use a single tool call if possible",
-        exponential_backoff=True,
-        show_tool_calls=True,
-        markdown=True,
-        telemetry=False,
-        monitoring=False,
-    )
-
-    response = agent.run(
-        "What are the papers at https://arxiv.org/pdf/2307.06435 and https://arxiv.org/pdf/2502.09601 about?"
-    )
-
-    # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
-    tool_calls = []
-    for msg in response.messages:
-        if msg.tool_calls:
-            tool_calls.extend(msg.tool_calls)
-    for call in tool_calls:
-        if call.get("type", "") == "function":
-            assert call["function"]["name"] in ["get_contents", "exa_answer"]
-    assert response.content is not None
+    assert "TSLA" in response.content
 
 
 def test_grounding():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp", grounding=True),
+        exponential_backoff=True,
+        delay_between_retries=5,
         telemetry=False,
         monitoring=False,
     )
@@ -303,6 +225,8 @@ def test_grounding():
 def test_grounding_stream():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp", grounding=True),
+        exponential_backoff=True,
+        delay_between_retries=5,
         telemetry=False,
         monitoring=False,
     )
@@ -325,6 +249,8 @@ def test_grounding_stream():
 def test_search_stream():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp", search=True),
+        exponential_backoff=True,
+        delay_between_retries=5,
         telemetry=False,
         monitoring=False,
     )

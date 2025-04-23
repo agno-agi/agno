@@ -2,7 +2,7 @@
 
 Thank you for using Agno to build your hackathon project! Here you'll find setup guides, examples, and resources to bring your multimodal agents to life.
 
-> Read this documentation on [Agno Docs](https://docs.agno.com/hackathon)
+> Read this documentation on [Agno Docs](https://docs.agno.com)
 
 ## Environment Setup
 

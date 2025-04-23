@@ -16,7 +16,7 @@ Run: `pip install agno mcp openai` to install the dependencies
 Environment variables needed:
 - Create a GitHub personal access token following these steps:
     - https://github.com/modelcontextprotocol/servers/tree/main/src/github#setup
-- GITHUB_TOKEN: Your GitHub personal access token
+- export GITHUB_TOKEN: Your GitHub personal access token
 """
 
 import asyncio
@@ -25,35 +25,11 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-
-
-async def create_github_agent(session):
-    """Create and configure a GitHub agent with MCP tools."""
-    # Initialize the MCP toolkit
-    mcp_tools = MCPTools(session=session)
-    await mcp_tools.initialize()
-
-    # Create an agent with the MCP toolkit
-    return Agent(
-        tools=[mcp_tools],
-        instructions=dedent("""\
-            You are a GitHub assistant. Help users explore repositories and their activity.
-
-            - Use headings to organize your responses
-            - Be concise and focus on relevant information\
-        """),
-        markdown=True,
-        show_tool_calls=True,
-    )
+from mcp import StdioServerParameters
 
 
 async def run_agent(message: str) -> None:
     """Run the GitHub agent with the given message."""
-    github_token = os.getenv("GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN_AGNO")
-    if not github_token:
-        raise ValueError("GITHUB_TOKEN environment variable is required")
 
     # Initialize the MCP server
     server_params = StdioServerParameters(
@@ -62,12 +38,21 @@ async def run_agent(message: str) -> None:
     )
 
     # Create a client session to connect to the MCP server
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            agent = await create_github_agent(session)
+    async with MCPTools(server_params=server_params) as mcp_tools:
+        agent = Agent(
+            tools=[mcp_tools],
+            instructions=dedent("""\
+                You are a GitHub assistant. Help users explore repositories and their activity.
 
-            # Run the agent
-            await agent.aprint_response(message, stream=True)
+                - Use headings to organize your responses
+                - Be concise and focus on relevant information\
+            """),
+            markdown=True,
+            show_tool_calls=True,
+        )
+
+        # Run the agent
+        await agent.aprint_response(message, stream=True)
 
 
 # Example usage

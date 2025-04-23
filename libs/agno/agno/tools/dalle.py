@@ -1,11 +1,12 @@
 from os import getenv
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import ImageArtifact
+from agno.team.team import Team
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from openai import OpenAI
@@ -23,8 +24,9 @@ class DalleTools(Toolkit):
         quality: Literal["standard", "hd"] = "standard",
         style: Literal["vivid", "natural"] = "vivid",
         api_key: Optional[str] = None,
+        **kwargs,
     ):
-        super().__init__(name="dalle")
+        super().__init__(name="dalle", **kwargs)
 
         self.model = model
         self.n = n
@@ -56,7 +58,7 @@ class DalleTools(Toolkit):
         # - Add support for saving images
         # - Add support for editing images
 
-    def create_image(self, agent: Agent, prompt: str) -> str:
+    def create_image(self, agent: Union[Agent, Team], prompt: str) -> str:
         """Use this function to generate an image for a prompt.
 
         Args:
@@ -70,7 +72,7 @@ class DalleTools(Toolkit):
 
         try:
             client = OpenAI(api_key=self.api_key)
-            logger.debug(f"Generating image using prompt: {prompt}")
+            log_debug(f"Generating image using prompt: {prompt}")
             response: ImagesResponse = client.images.generate(
                 prompt=prompt,
                 model=self.model,
@@ -79,7 +81,7 @@ class DalleTools(Toolkit):
                 size=self.size,
                 style=self.style,
             )
-            logger.debug("Image generated successfully")
+            log_debug("Image generated successfully")
 
             # Update the run response with the image URLs
             response_str = ""

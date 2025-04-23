@@ -111,8 +111,9 @@ def test_with_memory():
     assert "John Smith" in response2.content
 
     # Verify memories were created
-    assert len(agent.memory.messages) == 5
-    assert [m.role for m in agent.memory.messages] == ["system", "user", "assistant", "user", "assistant"]
+    messages = agent.get_messages_for_session()
+    assert len(messages) == 5
+    assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
 
     # Test metrics structure and types
     _assert_metrics(response2)
@@ -149,7 +150,7 @@ def test_json_response_mode():
     agent = Agent(
         model=Fireworks(id="accounts/fireworks/models/llama-v3p1-405b-instruct"),
         response_model=MovieScript,
-        response_format="json",
+        use_json_mode=True,
         telemetry=False,
         monitoring=False,
     )

@@ -3,7 +3,7 @@ from os import getenv
 from typing import Dict, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from browserbase import Browserbase
@@ -24,6 +24,7 @@ class BrowserbaseTools(Toolkit):
         api_key: Optional[str] = None,
         project_id: Optional[str] = None,
         base_url: Optional[str] = None,
+        **kwargs,
     ):
         """Initialize BrowserbaseTools.
 
@@ -32,7 +33,7 @@ class BrowserbaseTools(Toolkit):
             project_id (str, optional): Browserbase project ID.
             base_url (str, optional): Custom Browserbase API endpoint URL (NOT the target website URL). Only use this if you're using a self-hosted Browserbase instance or need to connect to a different region.
         """
-        super().__init__(name="browserbase_tools")
+        super().__init__(name="browserbase_tools", **kwargs)
 
         self.api_key = api_key or getenv("BROWSERBASE_API_KEY")
         if not self.api_key:
@@ -51,7 +52,7 @@ class BrowserbaseTools(Toolkit):
         # Initialize the Browserbase client with optional base_url
         if self.base_url:
             self.app = Browserbase(api_key=self.api_key, base_url=self.base_url)
-            logger.debug(f"Using custom Browserbase API endpoint: {self.base_url}")
+            log_debug(f"Using custom Browserbase API endpoint: {self.base_url}")
         else:
             self.app = Browserbase(api_key=self.api_key)
 
@@ -73,7 +74,7 @@ class BrowserbaseTools(Toolkit):
                 self._session = self.app.sessions.create(project_id=self.project_id)  # type: ignore
                 self._connect_url = self._session.connect_url if self._session else ""  # type: ignore
                 if self._session:
-                    logger.debug(f"Created new session with ID: {self._session.id}")
+                    log_debug(f"Created new session with ID: {self._session.id}")
             except Exception as e:
                 logger.error(f"Failed to create session: {str(e)}")
                 raise

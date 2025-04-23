@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 try:
     from moviepy import ColorClip, CompositeVideoClip, TextClip, VideoFileClip  # type: ignore
@@ -17,8 +17,9 @@ class MoviePyVideoTools(Toolkit):
         process_video: bool = True,
         generate_captions: bool = True,
         embed_captions: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="video_tools")
+        super().__init__(name="video_tools", **kwargs)
 
         if process_video:
             self.register(self.extract_audio)
@@ -227,10 +228,10 @@ class MoviePyVideoTools(Toolkit):
             str: Path to the extracted audio file
         """
         try:
-            logger.debug(f"Extracting audio from {video_path}")
+            log_debug(f"Extracting audio from {video_path}")
             video = VideoFileClip(video_path)
             video.audio.write_audiofile(output_path)
-            logger.info(f"Audio extracted to {output_path}")
+            log_info(f"Audio extracted to {output_path}")
             return output_path
         except Exception as e:
             logger.error(f"Failed to extract audio: {str(e)}")
@@ -245,7 +246,7 @@ class MoviePyVideoTools(Toolkit):
             str: Path to the created SRT file, or error message if failed
         """
         try:
-            logger.debug(f"Creating SRT file at {output_path}")
+            log_debug(f"Creating SRT file at {output_path}")
             # Since we're getting SRT format from Whisper API now,
             # we can just write it directly to file
             with open(output_path, "w", encoding="utf-8") as f:

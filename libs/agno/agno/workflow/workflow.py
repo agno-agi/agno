@@ -5,19 +5,20 @@ import inspect
 from dataclasses import dataclass, field, fields
 from os import getenv
 from types import GeneratorType
-from typing import Any, Callable, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
+from agno.memory.v2.memory import Memory
 from agno.memory.workflow import WorkflowMemory, WorkflowRun
 from agno.run.response import RunEvent, RunResponse  # noqa: F401
 from agno.storage.base import Storage
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.common import nested_model_dump
-from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
+from agno.utils.log import log_debug, logger, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.merge_dict import merge_dictionaries
 
 
@@ -44,7 +45,7 @@ class Workflow:
     session_state: Dict[str, Any] = field(default_factory=dict)
 
     # --- Workflow Memory ---
-    memory: Optional[WorkflowMemory] = None
+    memory: Optional[Union[WorkflowMemory, Memory]] = None
 
     # --- Workflow Storage ---
     storage: Optional[Storage] = None
@@ -81,7 +82,7 @@ class Workflow:
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        memory: Optional[WorkflowMemory] = None,
+        memory: Optional[Union[WorkflowMemory, Memory]] = None,
         storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         debug_mode: bool = False,
@@ -145,7 +146,6 @@ class Workflow:
         self.set_workflow_id()
         self.set_session_id()
         self.initialize_memory()
-        self.memory = cast(WorkflowMemory, self.memory)
 
         # Create a run_id
         self.run_id = str(uuid4())
@@ -160,7 +160,7 @@ class Workflow:
         # Update the session_id for all Agent instances
         self.update_agent_session_ids()
 
-        logger.debug(f"*********** Workflow Run Start: {self.run_id} ***********")
+        log_debug(f"Workflow Run Start: {self.run_id}", center=True)
         try:
             self._subclass_run = cast(Callable, self._subclass_run)
             result = self._subclass_run(**kwargs)
@@ -176,7 +176,11 @@ class Workflow:
 
             def result_generator():
                 self.run_response = cast(RunResponse, self.run_response)
-                self.memory = cast(WorkflowMemory, self.memory)
+                if isinstance(self.memory, WorkflowMemory):
+                    self.memory = cast(WorkflowMemory, self.memory)
+                elif isinstance(self.memory, Memory):
+                    self.memory = cast(Memory, self.memory)
+
                 for item in result:
                     if isinstance(item, RunResponse):
                         # Update the run_id, session_id and workflow_id of the RunResponse
@@ -192,10 +196,13 @@ class Workflow:
                     yield item
 
                 # Add the run to the memory
-                self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
+                if isinstance(self.memory, WorkflowMemory):
+                    self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
+                elif isinstance(self.memory, Memory):
+                    self.memory.add_run(session_id=self.session_id, run=self.run_response)  # type: ignore
                 # Write this run to the database
                 self.write_to_storage()
-                logger.debug(f"*********** Workflow Run End: {self.run_id} ***********")
+                log_debug(f"Workflow Run End: {self.run_id}", center=True)
 
             return result_generator()
         # Case 2: The run method returns a RunResponse
@@ -210,10 +217,13 @@ class Workflow:
                 self.run_response.content = result.content
 
             # Add the run to the memory
-            self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
+            if isinstance(self.memory, WorkflowMemory):
+                self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
+            elif isinstance(self.memory, Memory):
+                self.memory.add_run(session_id=self.session_id, run=self.run_response)  # type: ignore
             # Write this run to the database
             self.write_to_storage()
-            logger.debug(f"*********** Workflow Run End: {self.run_id} ***********")
+            log_debug(f"Workflow Run End: {self.run_id}", center=True)
             return result
         else:
             logger.warning(f"Workflow.run() should only return RunResponse objects, got: {type(result)}")
@@ -226,20 +236,20 @@ class Workflow:
     def set_workflow_id(self) -> str:
         if self.workflow_id is None:
             self.workflow_id = str(uuid4())
-        logger.debug(f"*********** Workflow ID: {self.workflow_id} ***********")
+        log_debug(f"Workflow ID: {self.workflow_id}", center=True)
         return self.workflow_id
 
     def set_session_id(self) -> str:
         if self.session_id is None:
             self.session_id = str(uuid4())
-        logger.debug(f"*********** Session ID: {self.session_id} ***********")
+        log_debug(f"Session ID: {self.session_id}", center=True)
         return self.session_id
 
     def set_debug(self) -> None:
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             self.debug_mode = True
             set_log_level_to_debug()
-            logger.debug("Debug logs enabled")
+            log_debug("Debug logs enabled")
         else:
             set_log_level_to_info()
 
@@ -256,7 +266,7 @@ class Workflow:
 
     def initialize_memory(self) -> None:
         if self.memory is None:
-            self.memory = WorkflowMemory()
+            self.memory = Memory()
 
     def update_run_method(self):
         # Update the run() method to call run_workflow() instead of the subclass's run()
@@ -437,7 +447,7 @@ class Workflow:
                         logger.warning(f"Failed to load runs from memory: {e}")
             except Exception as e:
                 logger.warning(f"Failed to load WorkflowMemory: {e}")
-        logger.debug(f"-*- WorkflowSession loaded: {session.session_id}")
+        log_debug(f"-*- WorkflowSession loaded: {session.session_id}")
 
     def read_from_storage(self) -> Optional[WorkflowSession]:
         """Load the WorkflowSession from storage.
@@ -477,18 +487,18 @@ class Workflow:
         # Load an existing session or create a new session
         if self.storage is not None:
             # Load existing session if session_id is provided
-            logger.debug(f"Reading WorkflowSession: {self.session_id}")
+            log_debug(f"Reading WorkflowSession: {self.session_id}")
             self.read_from_storage()
 
             # Create a new session if it does not exist
             if self.workflow_session is None:
-                logger.debug("-*- Creating new WorkflowSession")
+                log_debug("-*- Creating new WorkflowSession")
                 # write_to_storage() will create a new WorkflowSession
                 # and populate self.workflow_session with the new session
                 self.write_to_storage()
                 if self.workflow_session is None:
                     raise Exception("Failed to create new WorkflowSession in storage")
-                logger.debug(f"-*- Created WorkflowSession: {self.workflow_session.session_id}")
+                log_debug(f"-*- Created WorkflowSession: {self.workflow_session.session_id}")
                 self.log_workflow_session()
         return self.session_id
 
@@ -504,7 +514,7 @@ class Workflow:
         self.load_session(force=True)
 
     def log_workflow_session(self):
-        logger.debug(f"*********** Logging WorkflowSession: {self.session_id} ***********")
+        log_debug(f"*********** Logging WorkflowSession: {self.session_id} ***********")
 
     def rename(self, name: str) -> None:
         """Rename the Workflow and save to storage"""
@@ -563,7 +573,7 @@ class Workflow:
 
         # Create a new Workflow
         new_workflow = self.__class__(**fields_for_new_workflow)
-        logger.debug(f"Created new {self.__class__.__name__}")
+        log_debug(f"Created new {self.__class__.__name__}")
         return new_workflow
 
     def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:

@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, Literal, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     import requests
@@ -22,8 +22,9 @@ class CustomApiTools(Toolkit):
         verify_ssl: bool = True,
         timeout: int = 30,
         make_request: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="api_tools")
+        super().__init__(name="api_tools", **kwargs)
 
         self.base_url = base_url
         self.username = username
@@ -75,7 +76,7 @@ class CustomApiTools(Toolkit):
         """
         try:
             url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}" if self.base_url else endpoint
-            logger.debug(f"Making {method} request to {url}")
+            log_debug(f"Making {method} request to {url}")
 
             response = requests.request(
                 method=method,

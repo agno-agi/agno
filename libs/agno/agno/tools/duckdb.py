@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 try:
     import duckdb
@@ -22,8 +22,9 @@ class DuckDbTools(Toolkit):
         create_tables: bool = True,
         summarize_tables: bool = True,
         export_tables: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="duckdb_tools")
+        super().__init__(name="duckdb_tools", **kwargs)
 
         self.db_path: Optional[str] = db_path
         self.read_only: bool = read_only
@@ -79,7 +80,7 @@ class DuckDbTools(Toolkit):
         if show_tables:
             stmt = "SHOW TABLES;"
             tables = self.run_query(stmt)
-            logger.debug(f"Tables: {tables}")
+            log_debug(f"Tables: {tables}")
             return tables
         return "No tables to show"
 
@@ -92,7 +93,7 @@ class DuckDbTools(Toolkit):
         stmt = f"DESCRIBE {table};"
         table_description = self.run_query(stmt)
 
-        logger.debug(f"Table description: {table_description}")
+        log_debug(f"Table description: {table_description}")
         return f"{table}\n{table_description}"
 
     def inspect_query(self, query: str) -> str:
@@ -104,7 +105,7 @@ class DuckDbTools(Toolkit):
         stmt = f"explain {query};"
         explain_plan = self.run_query(stmt)
 
-        logger.debug(f"Explain plan: {explain_plan}")
+        log_debug(f"Explain plan: {explain_plan}")
         return explain_plan
 
     def run_query(self, query: str) -> str:
@@ -121,7 +122,7 @@ class DuckDbTools(Toolkit):
         formatted_sql = formatted_sql.split(";")[0]
 
         try:
-            logger.info(f"Running: {formatted_sql}")
+            log_info(f"Running: {formatted_sql}")
 
             query_result = self.connection.sql(formatted_sql)
             result_output = "No output"
@@ -140,7 +141,7 @@ class DuckDbTools(Toolkit):
                 except AttributeError:
                     result_output = str(query_result)
 
-            logger.debug(f"Query result: {result_output}")
+            log_debug(f"Query result: {result_output}")
             return result_output
         except duckdb.ProgrammingError as e:
             return str(e)
@@ -159,7 +160,7 @@ class DuckDbTools(Toolkit):
         """
         table_summary = self.run_query(f"SUMMARIZE {table};")
 
-        logger.debug(f"Table description: {table_summary}")
+        log_debug(f"Table description: {table_summary}")
         return table_summary
 
     def get_table_name_from_path(self, path: str) -> str:
@@ -191,14 +192,14 @@ class DuckDbTools(Toolkit):
         if table is None:
             table = self.get_table_name_from_path(path)
 
-        logger.debug(f"Creating table {table} from {path}")
+        log_debug(f"Creating table {table} from {path}")
         create_statement = "CREATE TABLE IF NOT EXISTS"
         if replace:
             create_statement = "CREATE OR REPLACE TABLE"
 
         create_statement += f" '{table}' AS SELECT * FROM '{path}';"
         self.run_query(create_statement)
-        logger.debug(f"Created table {table} from {path}")
+        log_debug(f"Created table {table} from {path}")
         return table
 
     def export_table_to_path(self, table: str, format: Optional[str] = "PARQUET", path: Optional[str] = None) -> str:
@@ -215,14 +216,14 @@ class DuckDbTools(Toolkit):
         if format is None:
             format = "PARQUET"
 
-        logger.debug(f"Exporting Table {table} as {format.upper()} to path {path}")
+        log_debug(f"Exporting Table {table} as {format.upper()} to path {path}")
         if path is None:
             path = f"{table}.{format}"
         else:
             path = f"{path}/{table}.{format}"
         export_statement = f"COPY (SELECT * FROM {table}) TO '{path}' (FORMAT {format.upper()});"
         result = self.run_query(export_statement)
-        logger.debug(f"Exported {table} to {path}/{table}")
+        log_debug(f"Exported {table} to {path}/{table}")
         return result
 
     def load_local_path_to_table(self, path: str, table: Optional[str] = None) -> Tuple[str, str]:
@@ -234,7 +235,7 @@ class DuckDbTools(Toolkit):
         """
         import os
 
-        logger.debug(f"Loading {path} into duckdb")
+        log_debug(f"Loading {path} into duckdb")
 
         if table is None:
             # Get the file name from the s3 path
@@ -247,7 +248,7 @@ class DuckDbTools(Toolkit):
         create_statement = f"CREATE OR REPLACE TABLE '{table}' AS SELECT * FROM '{path}';"
         self.run_query(create_statement)
 
-        logger.debug(f"Loaded {path} into duckdb as {table}")
+        log_debug(f"Loaded {path} into duckdb as {table}")
         return table, create_statement
 
     def load_local_csv_to_table(
@@ -262,7 +263,7 @@ class DuckDbTools(Toolkit):
         """
         import os
 
-        logger.debug(f"Loading {path} into duckdb")
+        log_debug(f"Loading {path} into duckdb")
 
         if table is None:
             # Get the file name from the s3 path
@@ -281,7 +282,7 @@ class DuckDbTools(Toolkit):
         create_statement = f"CREATE OR REPLACE TABLE '{table}' AS {select_statement};"
         self.run_query(create_statement)
 
-        logger.debug(f"Loaded CSV {path} into duckdb as {table}")
+        log_debug(f"Loaded CSV {path} into duckdb as {table}")
         return table, create_statement
 
     def load_s3_path_to_table(self, path: str, table: Optional[str] = None) -> Tuple[str, str]:
@@ -293,7 +294,7 @@ class DuckDbTools(Toolkit):
         """
         import os
 
-        logger.debug(f"Loading {path} into duckdb")
+        log_debug(f"Loading {path} into duckdb")
 
         if table is None:
             # Get the file name from the s3 path
@@ -306,7 +307,7 @@ class DuckDbTools(Toolkit):
         create_statement = f"CREATE OR REPLACE TABLE '{table}' AS SELECT * FROM '{path}';"
         self.run_query(create_statement)
 
-        logger.debug(f"Loaded {path} into duckdb as {table}")
+        log_debug(f"Loaded {path} into duckdb as {table}")
         return table, create_statement
 
     def load_s3_csv_to_table(
@@ -320,7 +321,7 @@ class DuckDbTools(Toolkit):
         """
         import os
 
-        logger.debug(f"Loading {path} into duckdb")
+        log_debug(f"Loading {path} into duckdb")
 
         if table is None:
             # Get the file name from the s3 path
@@ -339,7 +340,7 @@ class DuckDbTools(Toolkit):
         create_statement = f"CREATE OR REPLACE TABLE '{table}' AS {select_statement};"
         self.run_query(create_statement)
 
-        logger.debug(f"Loaded CSV {path} into duckdb as {table}")
+        log_debug(f"Loaded CSV {path} into duckdb as {table}")
         return table, create_statement
 
     def create_fts_index(self, table: str, unique_key: str, input_values: list[str]) -> str:
@@ -350,16 +351,16 @@ class DuckDbTools(Toolkit):
         :param input_values: Values to index
         :return: None
         """
-        logger.debug(f"Creating FTS index on {table} for {input_values}")
+        log_debug(f"Creating FTS index on {table} for {input_values}")
         self.run_query("INSTALL fts;")
-        logger.debug("Installed FTS extension")
+        log_debug("Installed FTS extension")
         self.run_query("LOAD fts;")
-        logger.debug("Loaded FTS extension")
+        log_debug("Loaded FTS extension")
 
         create_fts_index_statement = f"PRAGMA create_fts_index('{table}', '{unique_key}', '{input_values}');"
-        logger.debug(f"Running {create_fts_index_statement}")
+        log_debug(f"Running {create_fts_index_statement}")
         result = self.run_query(create_fts_index_statement)
-        logger.debug(f"Created FTS index on {table} for {input_values}")
+        log_debug(f"Created FTS index on {table} for {input_values}")
 
         return result
 
@@ -371,14 +372,14 @@ class DuckDbTools(Toolkit):
         :param search_text: Text to search
         :return: None
         """
-        logger.debug(f"Running full_text_search for {search_text} in {table}")
+        log_debug(f"Running full_text_search for {search_text} in {table}")
         search_text_statement = f"""SELECT fts_main_corpus.match_bm25({unique_key}, '{search_text}') AS score,*
                                         FROM {table}
                                         WHERE score IS NOT NULL
                                         ORDER BY score;"""
 
-        logger.debug(f"Running {search_text_statement}")
+        log_debug(f"Running {search_text_statement}")
         result = self.run_query(search_text_statement)
-        logger.debug(f"Search results for {search_text} in {table}")
+        log_debug(f"Search results for {search_text} in {table}")
 
         return result

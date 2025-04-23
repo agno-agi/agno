@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 
 class CsvTools(Toolkit):
@@ -18,8 +18,9 @@ class CsvTools(Toolkit):
         read_column_names: bool = True,
         duckdb_connection: Optional[Any] = None,
         duckdb_kwargs: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ):
-        super().__init__(name="csv_tools")
+        super().__init__(name="csv_tools", **kwargs)
 
         self.csvs: List[Path] = []
         if csvs:
@@ -69,7 +70,7 @@ class CsvTools(Toolkit):
             if csv_name not in [_csv.stem for _csv in self.csvs]:
                 return f"File: {csv_name} not found, please use one of {self.list_csv_files()}"
 
-            logger.info(f"Reading file: {csv_name}")
+            log_info(f"Reading file: {csv_name}")
             file_path = [_csv for _csv in self.csvs if _csv.stem == csv_name][0]
 
             # Read the csv file
@@ -99,7 +100,7 @@ class CsvTools(Toolkit):
             if csv_name not in [_csv.stem for _csv in self.csvs]:
                 return f"File: {csv_name} not found, please use one of {self.list_csv_files()}"
 
-            logger.info(f"Reading columns from file: {csv_name}")
+            log_info(f"Reading columns from file: {csv_name}")
             file_path = [_csv for _csv in self.csvs if _csv.stem == csv_name][0]
 
             # Get the columns of the csv file
@@ -134,7 +135,7 @@ class CsvTools(Toolkit):
                 return f"File: {csv_name} not found, please use one of {self.list_csv_files()}"
 
             # Load the csv file into duckdb
-            logger.info(f"Loading csv file: {csv_name}")
+            log_info(f"Loading csv file: {csv_name}")
             file_path = [_csv for _csv in self.csvs if _csv.stem == csv_name][0]
 
             # Create duckdb connection
@@ -154,7 +155,7 @@ class CsvTools(Toolkit):
             # If there are multiple statements, only run the first one
             formatted_sql = formatted_sql.split(";")[0]
             # -*- Run the SQL Query
-            logger.info(f"Running query: {formatted_sql}")
+            log_info(f"Running query: {formatted_sql}")
             query_result = con.sql(formatted_sql)
             result_output = "No output"
             if query_result is not None:
@@ -172,7 +173,7 @@ class CsvTools(Toolkit):
                 except AttributeError:
                     result_output = str(query_result)
 
-            logger.debug(f"Query result: {result_output}")
+            log_debug(f"Query result: {result_output}")
             return result_output
         except Exception as e:
             logger.error(f"Error querying csv: {e}")

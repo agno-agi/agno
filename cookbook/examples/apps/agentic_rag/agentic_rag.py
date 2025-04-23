@@ -31,10 +31,9 @@ View the README for instructions on how to run the application.
 
 from typing import Optional
 
-from agno.agent import Agent, AgentMemory
+from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge import AgentKnowledge
-from agno.memory.db.postgres import PgMemoryDb
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
@@ -68,13 +67,6 @@ def get_agentic_rag_agent(
     else:
         raise ValueError(f"Unsupported model provider: {provider}")
     # Define persistent memory for chat history
-    memory = AgentMemory(
-        db=PgMemoryDb(
-            table_name="agent_memory", db_url=db_url
-        ),  # Persist memory in Postgres
-        create_user_memories=True,  # Store user preferences
-        create_session_summary=True,  # Store conversation summaries
-    )
 
     # Define the knowledge base
     knowledge_base = AgentKnowledge(
@@ -82,13 +74,14 @@ def get_agentic_rag_agent(
             db_url=db_url,
             table_name="agentic_rag_documents",
             schema="ai",
-            embedder=OpenAIEmbedder(id="text-embedding-ada-002", dimensions=1536),
+            # Use OpenAI embeddings
+            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),
         num_documents=3,  # Retrieve 3 most relevant documents
     )
 
     # Create the Agent
-    agentic_rag_agent: Agent = Agent(
+    return Agent(
         name="agentic_rag_agent",
         session_id=session_id,  # Track session ID for persistent conversations
         user_id=user_id,
@@ -96,7 +89,8 @@ def get_agentic_rag_agent(
         storage=PostgresAgentStorage(
             table_name="agentic_rag_agent_sessions", db_url=db_url
         ),  # Persist session data
-        memory=memory,  # Add memory to the agent
+        enable_user_memories=True,
+        enable_session_summaries=True,
         knowledge=knowledge_base,  # Add knowledge base
         description="You are a helpful Agent called 'Agentic RAG' and your goal is to assist the user in the best way possible.",
         instructions=[
@@ -138,5 +132,3 @@ def get_agentic_rag_agent(
         read_tool_call_history=True,
         num_history_responses=3,
     )
-
-    return agentic_rag_agent

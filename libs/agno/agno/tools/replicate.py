@@ -1,11 +1,12 @@
 import os
 from os import getenv
-from typing import Optional
+from typing import Optional, Union
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import ImageArtifact, VideoArtifact
+from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
@@ -21,15 +22,16 @@ class ReplicateTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         model: str = "minimax/video-01",
+        **kwargs,
     ):
-        super().__init__(name="replicate_toolkit")
+        super().__init__(name="replicate_toolkit", **kwargs)
         self.api_key = api_key or getenv("REPLICATE_API_TOKEN")
         if not self.api_key:
             logger.error("REPLICATE_API_TOKEN not set. Please set the REPLICATE_API_TOKEN environment variable.")
         self.model = model
         self.register(self.generate_media)
 
-    def generate_media(self, agent: Agent, prompt: str) -> str:
+    def generate_media(self, agent: Union[Agent, Team], prompt: str) -> str:
         """
         Use this function to generate an image or a video using a replicate model.
         Args:

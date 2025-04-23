@@ -1,3 +1,4 @@
+import asyncio
 from typing import List
 
 from agno.document.base import Document
@@ -39,3 +40,14 @@ class ArxivReader(Reader):
             )
 
         return documents
+
+    async def async_read(self, query: str) -> List[Document]:
+        """
+        Search a query from arXiv database asynchronously
+
+        This function gets the top_k articles based on a user's query, sorted by relevance from arxiv
+
+        @param query: Search query string
+        @return: List of documents
+        """
+        return await asyncio.to_thread(self.read, query)
