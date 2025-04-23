@@ -396,9 +396,6 @@ class Gemini(Model):
                                 if video_file is not None:
                                     message_parts.insert(0, video_file)  # type: ignore
                     except Exception as e:
-                        import traceback
-
-                        traceback.print_exc()
                         log_warning(f"Failed to load video from {message.videos}: {e}")
                         continue
 
