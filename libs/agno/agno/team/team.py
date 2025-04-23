@@ -1115,7 +1115,7 @@ class Team:
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,
                                 event=RunEvent.reasoning_step,
-                                reasoning_content=self.run_response.reasoning_content,
+                                reasoning_content=run_response.reasoning_content,
                                 session_id=session_id,
                             )
 
@@ -1220,7 +1220,7 @@ class Team:
             yield self._create_run_response(
                 from_run_response=run_response,
                 event=RunEvent.run_completed,
-                reasoning_content=self.run_response.reasoning_content,
+                reasoning_content=run_response.reasoning_content,
                 session_id=session_id,
             )
 
@@ -1855,7 +1855,7 @@ class Team:
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,
                                 event=RunEvent.reasoning_step,
-                                reasoning_content=self.run_response.reasoning_content,
+                                reasoning_content=run_response.reasoning_content,
                                 session_id=session_id,
                             )
 
@@ -1967,7 +1967,7 @@ class Team:
             yield self._create_run_response(
                 from_run_response=run_response,
                 event=RunEvent.run_completed,
-                reasoning_content=self.run_response.reasoning_content,
+                reasoning_content=run_response.reasoning_content,
                 session_id=session_id,
             )
 
@@ -3761,7 +3761,7 @@ class Team:
             model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode
         )
 
-    def _format_reasoning_step_content(self, reasoning_step: ReasoningStep) -> str:
+    def _format_reasoning_step_content(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> str:
         """Format content for a reasoning step without changing any existing logic."""
         step_content = ""
         if reasoning_step.title:
@@ -3776,8 +3776,8 @@ class Team:
 
         # Get the current reasoning_content and append this step
         current_reasoning_content = ""
-        if hasattr(self.run_response, "reasoning_content") and self.run_response.reasoning_content:  # type: ignore
-            current_reasoning_content = self.run_response.reasoning_content  # type: ignore
+        if hasattr(run_response, "reasoning_content") and run_response.reasoning_content:
+            current_reasoning_content = run_response.reasoning_content
 
         # Create updated reasoning_content
         updated_reasoning_content = current_reasoning_content + step_content
@@ -3863,12 +3863,12 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-            if stream_intermediate_steps:
-                yield self.create_run_response(
-                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
-                    session_id=session_id,
-                    event=RunEvent.reasoning_completed,
-                )
+                if stream_intermediate_steps:
+                    yield self._create_run_response(
+                        content=reasoning_time_taken = 0.0,
+                        session_id=session_id,
+                        event=RunEvent.reasoning_completed,
+                    )
         else:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
@@ -3911,7 +3911,7 @@ class Team:
                     # Yield reasoning steps
                     if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
-                            updated_reasoning_content = self._format_reasoning_step_content(reasoning_step)
+                            updated_reasoning_content = self._format_reasoning_step_content(run_response, reasoning_step)
 
                             yield self._create_run_response(
                                 content=reasoning_step,
@@ -4040,12 +4040,12 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-            if stream_intermediate_steps:
-                yield self._create_run_response(
-                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
-                    session_id=session_id,
-                    event=RunEvent.reasoning_completed,
-                )
+                if stream_intermediate_steps:
+                    yield self._create_run_response(
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
+                        session_id=session_id,
+                        event=RunEvent.reasoning_completed,
+                    )
         else:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
@@ -4088,7 +4088,7 @@ class Team:
                     # Yield reasoning steps
                     if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
-                            updated_reasoning_content = self._format_reasoning_step_content(reasoning_step)
+                            updated_reasoning_content = self._format_reasoning_step_content(run_response, reasoning_step)
 
                             yield self._create_run_response(
                                 content=reasoning_step,

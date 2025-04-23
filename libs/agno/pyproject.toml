@@ -237,6 +237,7 @@ exclude = ["tests*"]
 [[tool.mypy.overrides]]
 module = [
   "agentql.*",
+  "aiofiles.*",
   "altair.*",
   "anthropic.*",
   "apify_client.*",
@@ -344,6 +345,6 @@ module = [
   "wikipedia.*",
   "yfinance.*",
   "youtube_transcript_api.*",
-  "aiofiles.*",
+  "zep_cloud.*"
 ]
 ignore_missing_imports = true
