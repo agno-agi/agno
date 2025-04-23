@@ -167,7 +167,7 @@ class CSVUrlReader(Reader):
         logger.info(f"Reading async: {url}")
 
         client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             response = await async_fetch_with_retry(url, client=client)
 
             parsed_url = urlparse(url)

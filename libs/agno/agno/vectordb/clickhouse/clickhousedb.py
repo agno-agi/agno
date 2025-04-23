@@ -192,9 +192,9 @@ class Clickhouse(VectorDb):
             else:
                 raise NotImplementedError(f"Not implemented index {type(self.index)!r} is passed")
 
-            await self.async_client.command("SET enable_json_type = 1")
+            await self.async_client.command("SET enable_json_type = 1")  # type: ignore
 
-            await self.async_client.command(
+            await self.async_client.command(  # type: ignore
                 f"""CREATE TABLE IF NOT EXISTS {{database_name:Identifier}}.{{table_name:Identifier}}
                 (
                     id String,
@@ -400,7 +400,7 @@ class Clickhouse(VectorDb):
         await self.async_insert(documents=documents, filters=filters)
 
         parameters = self._get_base_parameters()
-        await self.async_client.query(
+        await self.async_client.query(  # type: ignore
             "SELECT id FROM {database_name:Identifier}.{table_name:Identifier} FINAL",
             parameters=parameters,
         )
@@ -542,7 +542,7 @@ class Clickhouse(VectorDb):
         if await self.async_exists():
             log_debug(f"Async dropping table: {self.table_name}")
             parameters = self._get_base_parameters()
-            await self.async_client.command(
+            await self.async_client.command(  # type: ignore
                 "DROP TABLE {database_name:Identifier}.{table_name:Identifier}",
                 parameters=parameters,
             )
