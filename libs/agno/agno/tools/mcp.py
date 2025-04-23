@@ -82,9 +82,6 @@ class MCPTools(Toolkit):
         self._session_context = None
         self._initialized = False
 
-        self.include_tools = include_tools
-        self.exclude_tools = exclude_tools or []
-
     async def __aenter__(self) -> "MCPTools":
         """Enter the async context manager."""
 
@@ -139,7 +136,7 @@ class MCPTools(Toolkit):
             # Filter tools based on include/exclude lists
             filtered_tools = []
             for tool in available_tools.tools:
-                if tool.name in self.exclude_tools:
+                if self.exclude_tools and tool.name in self.exclude_tools:
                     continue
                 if self.include_tools is None or tool.name in self.include_tools:
                     filtered_tools.append(tool)
@@ -237,9 +234,6 @@ class MultiMCPTools(Toolkit):
 
         self._client = client
 
-        self.include_tools = include_tools
-        self.exclude_tools = exclude_tools or []
-
     async def __aenter__(self) -> "MultiMCPTools":
         """Enter the async context manager."""
 
@@ -274,7 +268,7 @@ class MultiMCPTools(Toolkit):
             # Filter tools based on include/exclude lists
             filtered_tools = []
             for tool in available_tools.tools:
-                if tool.name in self.exclude_tools:
+                if self.exclude_tools and tool.name in self.exclude_tools:
                     continue
                 if self.include_tools is None or tool.name in self.include_tools:
                     filtered_tools.append(tool)

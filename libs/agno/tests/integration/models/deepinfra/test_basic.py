@@ -95,8 +95,9 @@ def test_with_memory():
     assert "John" in response2.content
     assert "Smith" in response2.content
 
-    assert len(agent.memory.messages) == 5
-    assert [m.role for m in agent.memory.messages] == ["system", "user", "assistant", "user", "assistant"]
+    messages = agent.get_messages_for_session()
+    assert len(messages) == 5
+    assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
 
     _assert_metrics(response2)
 

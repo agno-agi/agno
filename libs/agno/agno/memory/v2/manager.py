@@ -1,5 +1,6 @@
 from copy import deepcopy
 from dataclasses import dataclass
+from textwrap import dedent
 from typing import Any, Callable, Dict, List, Optional, cast
 
 from agno.memory.v2.db.base import MemoryDb
@@ -21,6 +22,9 @@ class MemoryManager:
     # Provide the system message for the manager as a string. If not provided, a default prompt will be used.
     system_message: Optional[str] = None
 
+    # Provide the memory capture instructions for the manager as a string. If not provided, a default prompt will be used.
+    memory_capture_instructions: Optional[str] = None
+
     # Additional instructions for the manager
     additional_instructions: Optional[str] = None
 
@@ -31,12 +35,14 @@ class MemoryManager:
         self,
         model: Optional[Model] = None,
         system_message: Optional[str] = None,
+        memory_capture_instructions: Optional[str] = None,
         additional_instructions: Optional[str] = None,
     ):
         self.model = model
         if self.model is not None and isinstance(self.model, str):
             raise ValueError("Model must be a Model object, not a string")
         self.system_message = system_message
+        self.memory_capture_instructions = memory_capture_instructions
         self.additional_instructions = additional_instructions
 
     def add_tools_to_model(self, model: Model, tools: List[Callable]) -> None:
@@ -72,6 +78,15 @@ class MemoryManager:
         if self.system_message is not None:
             return Message(role="system", content=self.system_message)
 
+        memory_capture_instructions = self.memory_capture_instructions or dedent("""\
+            Memories should include details that could personalize ongoing interactions with the user, such as:
+              - Personal facts: name, age, occupation, location, interests, preferences, etc.
+              - Significant life events or experiences shared by the user
+              - Important context about the user's current situation, challenges or goals
+              - What the user likes or dislikes, their opinions, beliefs, values, etc.
+              - Any other details that provide valuable insights into the user's personality, perspective or needs\
+        """)
+
         # -*- Return a system message for the memory manager
         system_prompt_lines = [
             "You are a MemoryManager that is responsible for manging key information about the user. "
@@ -90,6 +105,7 @@ class MemoryManager:
             "  - Example: If the user's message is 'My name is John Doe', a memory could be `User's name is John Doe`.",
             "- Don't make a single memory too long or complex, create multiple memories if needed to capture all the information.",
             "- Don't repeat the same information in multiple memories. Rather update existing memories if needed.",
+            "- If a user asks for a memory to be updated or forgotten, remove all reference to the information that should be forgotten. Don't say 'The user used to like ...`",
             "- When updating a memory, append the existing memory with new information rather than completely overwriting it.",
             "- When a user's preferences change, update the relevant memories to reflect the new preferences but also capture what the user's preferences used to be and what has changed.",
             "",
@@ -97,12 +113,7 @@ class MemoryManager:
             "Use the following criteria to determine if a user's message should be captured as a memory.",
             "",
             "<memories_to_capture>",
-            "Memories should include details that could personalize ongoing interactions with the user, such as:",
-            "  - Personal facts: name, age, occupation, location, interests, preferences, etc.",
-            "  - Significant life events or experiences shared by the user",
-            "  - Important context about the user's current situation, challenges or goals",
-            "  - What the user likes or dislikes, their opinions, beliefs, values, etc.",
-            "  - Any other details that provide valuable insights into the user's personality, perspective or needs",
+            memory_capture_instructions,
             "</memories_to_capture>",
             "",
             "## Updating memories",
@@ -151,9 +162,7 @@ class MemoryManager:
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
         else:
-            input_string = (
-                f"[{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}]"
-            )
+            input_string = f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -201,9 +210,7 @@ class MemoryManager:
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
         else:
-            input_string = (
-                f"[{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}]"
-            )
+            input_string = f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -364,7 +371,7 @@ class MemoryManager:
                 return f"Error adding memory: {e}"
 
         def update_memory(memory_id: str, memory: str, topics: Optional[List[str]] = None) -> str:
-            """Use this function to update a memory in the database.
+            """Use this function to update an existing memory in the database.
             Args:
                 memory_id (str): The id of the memory to be updated.
                 memory (str): The updated memory.
@@ -395,7 +402,7 @@ class MemoryManager:
                 return f"Error adding memory: {e}"
 
         def delete_memory(memory_id: str) -> str:
-            """Use this function to delete a memory from the database.
+            """Use this function to delete a single memory from the database.
             Args:
                 memory_id (str): The id of the memory to be deleted.
             Returns:
@@ -410,7 +417,8 @@ class MemoryManager:
                 return f"Error deleting memory: {e}"
 
         def clear_memory() -> str:
-            """Use this function to clear all memories from the database.
+            """Use this function to remove all (or clear all) memories from the database.
+
             Returns:
                 str: A message indicating if the memory was cleared successfully or not.
             """
