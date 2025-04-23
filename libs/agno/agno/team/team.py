@@ -380,8 +380,6 @@ class Team:
         # Team session
         self.team_session: Optional[TeamSession] = None
 
-        self._tools_for_model: Optional[List[Dict]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
         self._tool_instructions: Optional[List[str]] = None
 
         # True if we should parse a member response model
@@ -4286,8 +4284,8 @@ class Team:
 
     def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
         # We have to reset for every run, because we will have new images/audio/video to attach
-        self._functions_for_model = {}
-        self._tools_for_model = []
+        _functions_for_model: Dict[str, Function] = {}
+        _tools_for_model: List[Dict] = []
 
         # Get Agent tools
         if len(tools) > 0:
@@ -4302,7 +4300,7 @@ class Team:
                 if isinstance(tool, Dict):
                     # If a dict is passed, it is a builtin tool
                     # that is run by the model provider and not the Agent
-                    self._tools_for_model.append(tool)
+                    _tools_for_model.append(tool)
                     log_debug(f"Included builtin tool {tool}")
 
                 elif isinstance(tool, Toolkit):
@@ -4314,8 +4312,8 @@ class Team:
                             func.process_entrypoint(strict=strict)
                             if strict:
                                 func.strict = True
-                            self._functions_for_model[name] = func
-                            self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                            _functions_for_model[name] = func
+                            _tools_for_model.append({"type": "function", "function": func.to_dict()})
                             log_debug(f"Added function {name} from {tool.name}")
 
                     # Add instructions from the toolkit
@@ -4330,8 +4328,8 @@ class Team:
                         tool.process_entrypoint(strict=strict)
                         if strict and tool.strict is None:
                             tool.strict = True
-                        self._functions_for_model[tool.name] = tool
-                        self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
+                        _functions_for_model[tool.name] = tool
+                        _tools_for_model.append({"type": "function", "function": tool.to_dict()})
                         log_debug(f"Added function {tool.name}")
 
                     # Add instructions from the Function
@@ -4347,16 +4345,16 @@ class Team:
                         func._agent = self
                         if strict:
                             func.strict = True
-                        self._functions_for_model[func.name] = func
-                        self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                        _functions_for_model[func.name] = func
+                        _tools_for_model.append({"type": "function", "function": func.to_dict()})
                         log_debug(f"Added function {func.name}")
                     except Exception as e:
                         log_warning(f"Could not add function {tool}: {e}")
 
             # Set tools on the model
-            model.set_tools(tools=self._tools_for_model)
+            model.set_tools(tools=_tools_for_model)
             # Set functions on the model
-            model.set_functions(functions=self._functions_for_model)
+            model.set_functions(functions=_functions_for_model)
 
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""

@@ -55,7 +55,7 @@ class PubmedTools(Toolkit):
             )
         return articles
 
-    def search_pubmed(self, query: str, max_results: int = 10) -> str:
+    def search_pubmed(self, query: str, max_results: Optional[int] = 10) -> str:
         """Use this function to search PubMed for articles.
 
         Args:
