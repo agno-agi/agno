@@ -79,6 +79,7 @@ class Gemini(Model):
     seed: Optional[int] = None
     response_modalities: Optional[list[str]] = None  # "Text" and/or "Image"
     speech_config: Optional[dict[str, Any]] = None
+    cached_content: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -168,6 +169,7 @@ class Gemini(Model):
                 "seed": self.seed,
                 "response_modalities": self.response_modalities,
                 "speech_config": self.speech_config,
+                "cached_content": self.cached_content,
             }
         )
 
@@ -213,6 +215,7 @@ class Gemini(Model):
         # Filter out None values
         if self.request_params:
             request_params.update(self.request_params)
+
         return request_params
 
     def invoke(self, messages: List[Message]):
@@ -694,6 +697,7 @@ class Gemini(Model):
                 "input_tokens": usage.prompt_token_count or 0,
                 "output_tokens": usage.candidates_token_count or 0,
                 "total_tokens": usage.total_token_count or 0,
+                "cached_tokens": usage.cached_content_token_count or 0,
             }
 
         return model_response
@@ -757,6 +761,7 @@ class Gemini(Model):
                 "input_tokens": usage.prompt_token_count or 0,
                 "output_tokens": usage.candidates_token_count or 0,
                 "total_tokens": usage.total_token_count or 0,
+                "cached_tokens": usage.cached_content_token_count or 0,
             }
 
         return model_response
