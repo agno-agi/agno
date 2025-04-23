@@ -3,7 +3,7 @@ import collections.abc
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import AsyncGeneratorType, GeneratorType
-from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.exceptions import AgentRunException

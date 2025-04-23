@@ -4296,7 +4296,6 @@ class Team:
         if self.tool_call_limit is not None:
             self.model.tool_call_limit = self.tool_call_limit
 
-
     def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
         # We have to reset for every run, because we will have new images/audio/video to attach
         self._functions_for_model = {}
