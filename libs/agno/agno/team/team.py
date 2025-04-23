@@ -476,6 +476,10 @@ class Team:
         for member in self.members:
             self._initialize_member(member, session_id=session_id)
 
+    @property
+    def is_streamable(self) -> bool:
+        return self.response_model is None
+
     @overload
     def run(
         self,
