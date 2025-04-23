@@ -101,7 +101,7 @@ class MCPTools(Toolkit):
             self.url = command
 
         self._client = client
-        self._stdio_context = None
+        self._context = None
         self._session_context = None
         self._initialized = False
 
@@ -117,13 +117,13 @@ class MCPTools(Toolkit):
         # Create a new session using stdio_client or sse_client based on transport
         if self.transport == "sse":
             sse_args = asdict(self.sse_params) if self.sse_params is not None else {}
-            self._stdio_context = sse_client(self.url, **sse_args)  # type: ignore
+            self._context = sse_client(self.url, **sse_args)  # type: ignore
         else:
             if self.server_params is None:
                 raise ValueError("server_params must be provided when using stdio transport.")
-            self._stdio_context = stdio_client(self.server_params)  # type: ignore
+            self._context = stdio_client(self.server_params)  # type: ignore
 
-        read, write = await self._stdio_context.__aenter__()  # type: ignore
+        read, write = await self._context.__aenter__()  # type: ignore
 
         self._session_context = ClientSession(read, write)  # type: ignore
         self.session = await self._session_context.__aenter__()  # type: ignore
@@ -139,9 +139,9 @@ class MCPTools(Toolkit):
             self.session = None
             self._session_context = None
 
-        if self._stdio_context is not None:
-            await self._stdio_context.__aexit__(exc_type, exc_val, exc_tb)
-            self._stdio_context = None
+        if self._context is not None:
+            await self._context.__aexit__(exc_type, exc_val, exc_tb)
+            self._context = None
 
         self._initialized = False
 
