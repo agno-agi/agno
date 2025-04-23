@@ -104,7 +104,9 @@ class Function(BaseModel):
 
             # Filter out return type and only process parameters
             param_type_hints = {
-                name: type_hints.get(name) for name in sig.parameters if name != "return" and name not in ["agent", "team"]
+                name: type_hints.get(name)
+                for name in sig.parameters
+                if name != "return" and name not in ["agent", "team"]
             }
 
             # Parse docstring for parameters
@@ -187,7 +189,9 @@ class Function(BaseModel):
 
             # Filter out return type and only process parameters
             param_type_hints = {
-                name: type_hints.get(name) for name in sig.parameters if name != "return" and name not in ["agent", "team"]
+                name: type_hints.get(name)
+                for name in sig.parameters
+                if name != "return" and name not in ["agent", "team"]
             }
 
             # Parse docstring for parameters
@@ -225,7 +229,9 @@ class Function(BaseModel):
             if params_set_by_user:
                 self.parameters["additionalProperties"] = False
                 if strict:
-                    self.parameters["required"] = [name for name in self.parameters["properties"] if name not in ["agent", "team"]]
+                    self.parameters["required"] = [
+                        name for name in self.parameters["properties"] if name not in ["agent", "team"]
+                    ]
                 else:
                     # Mark a field as required if it has no default value
                     self.parameters["required"] = [

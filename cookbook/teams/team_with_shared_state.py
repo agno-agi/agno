@@ -6,12 +6,14 @@ from agno.team import Team
 # Define tools to manage our shopping list
 def add_item(agent: Agent, item: str) -> str:
     """Add an item to the shopping list and return confirmation.
-    
+
     Args:
         item (str): The item to add to the shopping list.
     """
     # Add the item if it's not already in the list
-    if item.lower() not in [i.lower() for i in agent.team_session_state["shopping_list"]]:
+    if item.lower() not in [
+        i.lower() for i in agent.team_session_state["shopping_list"]
+    ]:
         agent.team_session_state["shopping_list"].append(item)
         return f"Added '{item}' to the shopping list"
     else:
@@ -20,7 +22,7 @@ def add_item(agent: Agent, item: str) -> str:
 
 def remove_item(agent: Agent, item: str) -> str:
     """Remove an item from the shopping list by name.
-    
+
     Args:
         item (str): The item to remove from the shopping list.
     """
@@ -31,6 +33,7 @@ def remove_item(agent: Agent, item: str) -> str:
             return f"Removed '{list_item}' from the shopping list"
 
     return f"'{item}' was not found in the shopping list. Current shopping list: {agent.team_session_state['shopping_list']}"
+
 
 def remove_all_items(agent: Agent) -> str:
     """Remove all items from the shopping list."""
@@ -59,6 +62,7 @@ def list_items(team: Team) -> str:
     items_text = "\n".join([f"- {item}" for item in shopping_list])
     return f"Current shopping list:\n{items_text}"
 
+
 shopping_team = Team(
     name="Shopping List Team",
     mode="coordinate",
@@ -80,7 +84,9 @@ shopping_team = Team(
 )
 
 # Example usage
-shopping_team.print_response("Add milk, eggs, and bread to the shopping list", stream=True)
+shopping_team.print_response(
+    "Add milk, eggs, and bread to the shopping list", stream=True
+)
 print(f"Session state: {shopping_team.session_state}")
 
 shopping_team.print_response("I got bread", stream=True)

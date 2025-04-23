@@ -429,7 +429,7 @@ class Team:
 
         if session_id is not None:
             member.team_session_id = session_id
-        
+
         # Set the team session state on members
         if self.session_state is not None:
             if member.team_session_state is None:
@@ -5133,7 +5133,7 @@ class Team:
                 # Add the member run to the team run response
                 self.run_response = cast(TeamRunResponse, self.run_response)
                 self.run_response.add_member_run(member_agent.run_response)  # type: ignore
-            
+
                 # Update team session state
                 if member_agent.team_session_state is not None:
                     if self.session_state is None:
@@ -5241,7 +5241,7 @@ class Team:
                     # Add the member run to the team run response
                     self.run_response = cast(TeamRunResponse, self.run_response)
                     self.run_response.add_member_run(agent.run_response)
-            
+
                     # Update team session state
                     if current_agent.team_session_state is not None:
                         if self.session_state is None:
@@ -5452,7 +5452,7 @@ class Team:
             # Add the member run to the team run response
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
-            
+
             # Update team session state
             if member_agent.team_session_state is not None:
                 if self.session_state is None:
@@ -5600,7 +5600,7 @@ class Team:
             # Add the member run to the team run response
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
-            
+
             # Update team session state
             if member_agent.team_session_state is not None:
                 if self.session_state is None:
@@ -5774,7 +5774,7 @@ class Team:
             # Add the member run to the team run response
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
-            
+
             # Update team session state
             if member_agent.team_session_state is not None:
                 if self.session_state is None:
@@ -5879,7 +5879,7 @@ class Team:
             # Add the member run to the team run response
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
-            
+
             # Update team session state
             if member_agent.team_session_state is not None:
                 if self.session_state is None:

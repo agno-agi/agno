@@ -2248,7 +2248,7 @@ class Agent:
                     else:
                         # Update the current session_state
                         self.session_state = session_state_from_db
-            
+
             # Get the team_session_state from the database and update the current team_session_state
             if "team_session_state" in session.session_data:
                 team_session_state_from_db = session.session_data.get("team_session_state")
