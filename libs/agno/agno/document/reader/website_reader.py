@@ -89,7 +89,9 @@ class WebsiteReader(Reader):
                 return element.get_text(strip=True, separator=" ")
 
         # If we only have a div without specific content classes, return empty string
-        if soup.find("div") and not any(soup.find(class_=class_name) for class_name in ["content", "main-content", "post-content"]):
+        if soup.find("div") and not any(
+            soup.find(class_=class_name) for class_name in ["content", "main-content", "post-content"]
+        ):
             return ""
 
         return soup.get_text(strip=True, separator=" ")

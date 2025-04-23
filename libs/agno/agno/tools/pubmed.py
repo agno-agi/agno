@@ -168,7 +168,7 @@ class PubmedTools(Toolkit):
                     )
                 else:
                     # Concise format with just essential information
-                    summary = article.get('Summary', '')
+                    summary = article.get("Summary", "")
                     article_text = (
                         f"Title: {article.get('Title')}\n"
                         f"Published: {article.get('Published')}\n"
