@@ -1,5 +1,4 @@
 import base64
-import io
 from os import getenv
 from typing import Optional
 from uuid import uuid4
@@ -7,7 +6,7 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.media import ImageArtifact
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error
 
 try:
     from google.genai import Client
@@ -22,7 +21,7 @@ class GeminiTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         enable_image_generation: bool = True,
-        image_generation_model: str = "imagen-3.0-generate-002", 
+        image_generation_model: str = "imagen-3.0-generate-002",
         **kwargs,
     ):
         super().__init__(name="gemini_tools", **kwargs)
@@ -65,17 +64,16 @@ class GeminiTools(Toolkit):
                 prompt=prompt,
             )
 
-            log_debug(f"DEBUG: Raw Gemini API response")
+            log_debug("DEBUG: Raw Gemini API response")
 
             image_bytes = None
             actual_mime_type = "image/png"
 
-            
             if response.generated_images and response.generated_images[0].image.image_bytes:
                 image_bytes = response.generated_images[0].image.image_bytes
             else:
-                log_error(f"DEBUG: Error accessing image_bytes attribute: {e}")
-                return f"Failed to generate image: No valid image data extracted."
+                log_error("DEBUG: Error accessing image_bytes attribute.")
+                return "Failed to generate image: No valid image data extracted."
 
             base64_encoded_image = base64.b64encode(image_bytes).decode("utf-8")
 
