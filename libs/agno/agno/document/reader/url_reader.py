@@ -1,6 +1,6 @@
 import asyncio
 from time import sleep
-from typing import List
+from typing import List, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -13,6 +13,10 @@ from agno.utils.log import log_debug, log_info, logger
 class URLReader(Reader):
     """Reader for general URL content"""
 
+    def __init__(self, proxy: Optional[str] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.proxy = proxy
+
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
@@ -21,7 +25,7 @@ class URLReader(Reader):
         # Retry the request up to 3 times with exponential backoff
         for attempt in range(3):
             try:
-                response = httpx.get(url)
+                response = httpx.get(url, proxy=self.proxy) if self.proxy else httpx.get(url)
                 break
             except httpx.RequestError as e:
                 if attempt == 2:  # Last attempt
@@ -54,7 +58,8 @@ class URLReader(Reader):
             raise ValueError("No url provided")
 
         log_info(f"Reading async: {url}")
-        async with httpx.AsyncClient() as client:
+        client_args = {"proxy": self.proxy} if self.proxy else {}
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             for attempt in range(3):
                 try:
                     response = await client.get(url)

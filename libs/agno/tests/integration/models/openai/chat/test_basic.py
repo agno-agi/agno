@@ -5,14 +5,8 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.exceptions import ModelProviderError
-from agno.memory import AgentMemory
-from agno.memory.classifier import MemoryClassifier
-from agno.memory.db.sqlite import SqliteMemoryDb
-from agno.memory.manager import MemoryManager
-from agno.memory.summarizer import MemorySummarizer
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 
 def _assert_metrics(response: RunResponse):
@@ -27,6 +21,11 @@ def _assert_metrics(response: RunResponse):
 
     assert response.metrics.get("completion_tokens_details") is not None
     assert response.metrics.get("prompt_tokens_details") is not None
+    assert response.metrics.get("audio_tokens") is not None
+    assert response.metrics.get("input_audio_tokens") is not None
+    assert response.metrics.get("output_audio_tokens") is not None
+    assert response.metrics.get("cached_tokens") is not None
+    assert response.metrics.get("reasoning_tokens") is not None
 
 
 def test_basic():
@@ -114,8 +113,9 @@ def test_with_memory():
     assert "John Smith" in response2.content
 
     # Verify memories were created
-    assert len(agent.memory.messages) == 5
-    assert [m.role for m in agent.memory.messages] == ["system", "user", "assistant", "user", "assistant"]
+    messages = agent.get_messages_for_session()
+    assert len(messages) == 5
+    assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
 
     # Test metrics structure and types
     _assert_metrics(response2)
@@ -213,35 +213,29 @@ def test_history():
     assert len(agent.run_response.messages) == 8
 
 
-def test_persistent_memory():
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools(cache_results=True)],
-        markdown=True,
-        show_tool_calls=True,
-        telemetry=False,
-        monitoring=False,
-        instructions=[
-            "You can search the internet with DuckDuckGo.",
-        ],
-        storage=SqliteStorage(table_name="chat_agent", db_file="tmp/agent_storage.db"),
-        # Adds the current date and time to the instructions
-        add_datetime_to_instructions=True,
-        # Adds the history of the conversation to the messages
-        add_history_to_messages=True,
-        # Number of history responses to add to the messages
-        num_history_responses=15,
-        memory=AgentMemory(
-            db=SqliteMemoryDb(db_file="tmp/agent_memory.db"),
-            create_user_memories=True,
-            create_session_summary=True,  # troublesome
-            update_user_memories_after_run=True,
-            update_session_summary_after_run=True,
-            classifier=MemoryClassifier(model=OpenAIChat(id="gpt-4o-mini")),
-            summarizer=MemorySummarizer(model=OpenAIChat(id="gpt-4o-mini")),
-            manager=MemoryManager(model=OpenAIChat(id="gpt-4o-mini")),
-        ),
+@pytest.mark.skip(reason="This test is flaky and needs to be fixed")
+def test_cached_tokens():
+    """Assert cached_tokens is populated correctly and returned in the metrics"""
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+
+    # Multiple + one large prompt to ensure token caching is triggered
+    agent.run("Share a 2 sentence horror story")
+    response = agent.run("Share a 2 sentence horror story" * 250)
+
+    cached_tokens = response.metrics.get("cached_tokens")
+    assert cached_tokens is not None
+    assert sum(cached_tokens) > 0
+
+
+def test_reasoning_tokens():
+    """Assert reasoning_tokens is populated correctly and returned in the metrics"""
+    agent = Agent(model=OpenAIChat(id="o3-mini"), markdown=True, telemetry=False, monitoring=False)
+
+    response = agent.run(
+        "Solve the trolley problem. Evaluate multiple ethical frameworks. Include an ASCII diagram of your solution.",
+        stream=False,
     )
 
-    response = agent.run("What is current news in France?")
-    assert response.content is not None
+    reasoning_tokens = response.metrics.get("reasoning_tokens")
+    assert reasoning_tokens is not None
+    assert sum(reasoning_tokens) > 0

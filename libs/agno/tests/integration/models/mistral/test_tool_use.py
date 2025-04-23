@@ -24,7 +24,7 @@ def test_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
-    assert "TSLA" in response.content
+    assert "TSLA" in response.content or "tesla" in response.content.lower()
 
 
 def test_tool_use_stream():

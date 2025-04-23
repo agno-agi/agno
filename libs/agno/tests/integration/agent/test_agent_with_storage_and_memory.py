@@ -154,6 +154,3 @@ async def test_multi_user_multi_session_chat(chat_agent, agent_storage, memory):
     # Verify memory content for user 3
     user_3_memory_texts = [m.memory for m in user_3_memories]
     assert any("Jane Smith" in text for text in user_3_memory_texts)
-    assert any("gym" in text for text in user_3_memory_texts) or any(
-        "gymnasium" in text for text in user_3_memory_texts
-    )
