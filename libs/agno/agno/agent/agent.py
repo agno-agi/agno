@@ -641,7 +641,7 @@ class Agent:
         model_response: ModelResponse
         self.model = cast(Model, self.model)
         reasoning_started = False
-        reasoning_time_taken = 0
+        reasoning_time_taken = 0.0
         if self.stream:
             model_response = ModelResponse()
             for model_response_chunk in self.model.response_stream(messages=run_messages.messages):
@@ -744,7 +744,7 @@ class Agent:
 
                 # If the model response is a tool_call_completed, update the existing tool call in the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
-                    reasoning_step: ReasoningStep = None
+                    reasoning_step: Optional[ReasoningStep] = None
 
                     new_tool_calls_list = model_response_chunk.tool_calls
                     if new_tool_calls_list is not None:
@@ -774,7 +774,8 @@ class Agent:
                                 reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                                 metrics = tool_call.get("metrics")
-                                reasoning_time_taken = reasoning_time_taken + float(metrics.time)
+                                if metrics is not None:
+                                    reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if self.stream_intermediate_steps:
                         if reasoning_step is not None:
@@ -856,13 +857,13 @@ class Agent:
             self.run_response.created_at = model_response.created_at
 
         if self.stream_intermediate_steps and reasoning_started:
-            all_reasoning_steps = []
+            all_reasoning_steps: List[ReasoningStep] = []
             if (
                 self.run_response
                 and self.run_response.extra_data
                 and hasattr(self.run_response.extra_data, "reasoning_steps")
             ):
-                all_reasoning_steps = self.run_response.extra_data.reasoning_steps
+                all_reasoning_steps = cast(List[ReasoningStep], self.run_response.extra_data.reasoning_steps)
 
             if all_reasoning_steps:
                 self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
@@ -1282,7 +1283,7 @@ class Agent:
 
         # 7. Generate a response from the Model (includes running function calls)
         reasoning_started = False
-        reasoning_time_taken = 0
+        reasoning_time_taken = 0.0
 
         model_response: ModelResponse
         self.model = cast(Model, self.model)
@@ -1386,7 +1387,7 @@ class Agent:
 
                 # If the model response is a tool_call_completed, update the existing tool call in the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
-                    reasoning_step: ReasoningStep = None
+                    reasoning_step: Optional[ReasoningStep] = None
                     new_tool_calls_list = model_response_chunk.tool_calls
                     if new_tool_calls_list is not None:
                         # Update the existing tool call in the run_response
@@ -1415,7 +1416,8 @@ class Agent:
                                 reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                                 metrics = tool_call.get("metrics")
-                                reasoning_time_taken = reasoning_time_taken + float(metrics.time)
+                                if metrics is not None:
+                                    reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if self.stream_intermediate_steps:
                         if reasoning_step is not None:
@@ -1496,13 +1498,13 @@ class Agent:
             self.run_response.created_at = model_response.created_at
 
         if self.stream_intermediate_steps and reasoning_started:
-            all_reasoning_steps = []
+            all_reasoning_steps: List[ReasoningStep] = []
             if (
                 self.run_response
                 and self.run_response.extra_data
                 and hasattr(self.run_response.extra_data, "reasoning_steps")
             ):
-                all_reasoning_steps = self.run_response.extra_data.reasoning_steps
+                all_reasoning_steps = cast(List[ReasoningStep], self.run_response.extra_data.reasoning_steps)
 
             if all_reasoning_steps:
                 self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
@@ -5288,10 +5290,10 @@ class Agent:
 
                 self.run_response.extra_data = RunResponseExtraData()
 
-        if self.run_response.extra_data.reasoning_steps is None:
-            self.run_response.extra_data.reasoning_steps = []
+            if self.run_response.extra_data.reasoning_steps is None:
+                self.run_response.extra_data.reasoning_steps = []
 
-        self.run_response.extra_data.reasoning_steps.append(reasoning_step)
+            self.run_response.extra_data.reasoning_steps.append(reasoning_step)
 
     def _add_reasoning_metrics_to_extra_data(self, reasoning_time_taken: float) -> None:
         try:
@@ -5305,26 +5307,15 @@ class Agent:
                 if self.run_response.extra_data.reasoning_messages is None:
                     self.run_response.extra_data.reasoning_messages = []
 
-                try:
-                    # First attempt: Create a Message object with the metrics
-                    from agno.models.message import Message
+                
+                metrics_message = Message(
+                    role="assistant",
+                    content=self.run_response.reasoning_content,
+                    metrics={"time": reasoning_time_taken},
+                )
 
-                    metrics_message = Message(
-                        role="assistant",
-                        content=self.run_response.reasoning_content,
-                        metrics={"time": reasoning_time_taken},
-                    )
-
-                    # Add the metrics message to the reasoning_messages
-                    self.run_response.extra_data.reasoning_messages.append(metrics_message)
-                except Exception:
-                    # Fallback: If Message object fails, try with a simple dictionary
-                    metrics_dict = {
-                        "role": "assistant",
-                        "content": str(self.run_response.reasoning_content),
-                        "metrics": {"time": reasoning_time_taken},
-                    }
-                    self.run_response.extra_data.reasoning_messages.append(metrics_dict)
+                # Add the metrics message to the reasoning_messages
+                self.run_response.extra_data.reasoning_messages.append(metrics_message)
         except Exception as e:
             # Log the error but don't crash
             from agno.utils.log import log_error
