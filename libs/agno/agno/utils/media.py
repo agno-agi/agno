@@ -98,7 +98,7 @@ def save_audio(base64_data: str, output_path: str) -> bool:
         with open(path, "wb") as file:
             file.write(decoded_data)
 
-        print(f"Audio file successfully saved to '{path}'.")
+        print(f"Data successfully saved to '{path}'.")
         return True
     except Exception as e:
         raise Exception(f"An unexpected error occurred while saving data to '{output_path}': {e}")
