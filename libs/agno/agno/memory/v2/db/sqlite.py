@@ -198,9 +198,10 @@ class SqliteMemoryDb(MemoryDb):
 
     def clear(self) -> bool:
         with self.Session() as session:
-            stmt = delete(self.table)
-            session.execute(stmt)
-            session.commit()
+            if self.table_exists():
+                stmt = delete(self.table)
+                session.execute(stmt)
+                session.commit()
         return True
 
     def __del__(self):

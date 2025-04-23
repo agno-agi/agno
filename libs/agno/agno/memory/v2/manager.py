@@ -163,7 +163,7 @@ class MemoryManager:
             input_string = messages[0].get_content_string()
         else:
             input_string = (
-                f"[{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}]"
+                f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
             )
 
         model_copy = deepcopy(self.model)
@@ -213,7 +213,7 @@ class MemoryManager:
             input_string = messages[0].get_content_string()
         else:
             input_string = (
-                f"[{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}]"
+                f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
             )
 
         model_copy = deepcopy(self.model)
@@ -375,7 +375,7 @@ class MemoryManager:
                 return f"Error adding memory: {e}"
 
         def update_memory(memory_id: str, memory: str, topics: Optional[List[str]] = None) -> str:
-            """Use this function to update a memory in the database.
+            """Use this function to update an existing memory in the database.
             Args:
                 memory_id (str): The id of the memory to be updated.
                 memory (str): The updated memory.
@@ -406,7 +406,7 @@ class MemoryManager:
                 return f"Error adding memory: {e}"
 
         def delete_memory(memory_id: str) -> str:
-            """Use this function to delete a memory from the database.
+            """Use this function to delete a single memory from the database.
             Args:
                 memory_id (str): The id of the memory to be deleted.
             Returns:
@@ -421,7 +421,8 @@ class MemoryManager:
                 return f"Error deleting memory: {e}"
 
         def clear_memory() -> str:
-            """Use this function to clear all memories from the database.
+            """Use this function to remove all (or clear all) memories from the database.
+            
             Returns:
                 str: A message indicating if the memory was cleared successfully or not.
             """
