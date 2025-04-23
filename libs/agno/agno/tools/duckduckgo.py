@@ -38,7 +38,6 @@ class DuckDuckGoTools(Toolkit):
         verify_ssl: bool = True,
         **kwargs,
     ):
-
         self.headers: Optional[Any] = headers
         self.proxy: Optional[str] = proxy
         self.proxies: Optional[Any] = proxies
