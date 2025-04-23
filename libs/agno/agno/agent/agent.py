@@ -366,12 +366,12 @@ class Agent:
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
         if add_memory_references is None:
-            self.add_memory_references = enable_user_memories or enable_agentic_memory
+            self.add_memory_references = self.enable_user_memories or self.enable_agentic_memory
         else:
             self.add_memory_references = add_memory_references
         self.enable_session_summaries = enable_session_summaries
         if add_session_summary_references is None:
-            self.add_session_summary_references = enable_session_summaries
+            self.add_session_summary_references = self.enable_session_summaries
         else:
             self.add_session_summary_references = add_session_summary_references
 
@@ -2698,13 +2698,13 @@ class Agent:
             elif isinstance(self.memory, Memory) and (self.add_memory_references):
                 if not user_id:
                     user_id = "default"
-                user_memories = self.memory.memories.get(user_id, {})  # type: ignore
+                user_memories = self.memory.get_user_memories(user_id=user_id)  # type: ignore
                 if user_memories and len(user_memories) > 0:
                     system_message_content += (
                         "You have access to memories from previous interactions with the user that you can use:\n\n"
                     )
                     system_message_content += "<memories_from_previous_interactions>"
-                    for _memory in user_memories.values():  # type: ignore
+                    for _memory in user_memories:  # type: ignore
                         system_message_content += f"\n- {_memory.memory}"
                     system_message_content += "\n</memories_from_previous_interactions>\n\n"
                     system_message_content += (

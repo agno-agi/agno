@@ -197,7 +197,7 @@ class TodoistTools(Toolkit):
     def close_task(self, task_id: str) -> str:
         """Mark a task as completed."""
         try:
-            success = self.api.close_task(task_id)
+            success = self.api.complete_task(task_id)
             return json.dumps({"success": success})
         except Exception as e:
             logger.error(f"Failed to close task: {str(e)}")
