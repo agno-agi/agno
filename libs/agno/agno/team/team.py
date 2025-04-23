@@ -432,10 +432,16 @@ class Team:
 
         # Set the team session state on members
         if self.session_state is not None:
-            if member.team_session_state is None:
-                member.team_session_state = self.session_state
-            else:
-                merge_dictionaries(member.team_session_state, self.session_state)
+            if isinstance(member, Agent):
+                if member.team_session_state is None:
+                    member.team_session_state = self.session_state
+                else:
+                    merge_dictionaries(member.team_session_state, self.session_state)
+            elif isinstance(member, Team):
+                if member.session_state is None:
+                    member.session_state = self.session_state
+                else:
+                    merge_dictionaries(member.session_state, self.session_state)
 
         member.team_id = self.team_id
 
@@ -5135,11 +5141,16 @@ class Team:
                 self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
                 # Update team session state
-                if member_agent.team_session_state is not None:
+                if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
                     if self.session_state is None:
                         self.session_state = member_agent.team_session_state
                     else:
                         merge_dictionaries(self.session_state, member_agent.team_session_state)
+                elif isinstance(member_agent, Team) and member_agent.session_state is not None:
+                    if self.session_state is None:
+                        self.session_state = member_agent.session_state
+                    else:
+                        merge_dictionaries(self.session_state, member_agent.session_state)
 
                 # Update the team state
                 self._update_team_media(member_agent.run_response)  # type: ignore
@@ -5243,11 +5254,16 @@ class Team:
                     self.run_response.add_member_run(agent.run_response)
 
                     # Update team session state
-                    if current_agent.team_session_state is not None:
+                    if isinstance(current_agent, Agent) and current_agent.team_session_state is not None:
                         if self.session_state is None:
                             self.session_state = current_agent.team_session_state
                         else:
                             merge_dictionaries(self.session_state, current_agent.team_session_state)
+                    elif isinstance(current_agent, Team) and current_agent.session_state is not None:
+                        if self.session_state is None:
+                            self.session_state = current_agent.session_state
+                        else:
+                            merge_dictionaries(self.session_state, current_agent.session_state)
 
                     # Update the team state
                     self._update_team_media(agent.run_response)
@@ -5454,11 +5470,16 @@ class Team:
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
             # Update team session state
-            if member_agent.team_session_state is not None:
+            if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
                 if self.session_state is None:
                     self.session_state = member_agent.team_session_state
                 else:
                     merge_dictionaries(self.session_state, member_agent.team_session_state)
+            elif isinstance(member_agent, Team) and member_agent.session_state is not None:
+                if self.session_state is None:
+                    self.session_state = member_agent.session_state
+                else:
+                    merge_dictionaries(self.session_state, member_agent.session_state)
 
             # Update the team state
             self._update_team_media(member_agent.run_response)  # type: ignore
@@ -5602,11 +5623,16 @@ class Team:
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
             # Update team session state
-            if member_agent.team_session_state is not None:
+            if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
                 if self.session_state is None:
                     self.session_state = member_agent.team_session_state
                 else:
                     merge_dictionaries(self.session_state, member_agent.team_session_state)
+            elif isinstance(member_agent, Team) and member_agent.session_state is not None:
+                if self.session_state is None:
+                    self.session_state = member_agent.session_state
+                else:
+                    merge_dictionaries(self.session_state, member_agent.session_state)
 
             # Update the team state
             self._update_team_media(member_agent.run_response)  # type: ignore
@@ -5776,11 +5802,16 @@ class Team:
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
             # Update team session state
-            if member_agent.team_session_state is not None:
+            if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
                 if self.session_state is None:
                     self.session_state = member_agent.team_session_state
                 else:
                     merge_dictionaries(self.session_state, member_agent.team_session_state)
+            elif isinstance(member_agent, Team) and member_agent.session_state is not None:
+                if self.session_state is None:
+                    self.session_state = member_agent.session_state
+                else:
+                    merge_dictionaries(self.session_state, member_agent.session_state)
 
             # Update the team state
             self._update_team_media(member_agent.run_response)  # type: ignore
@@ -5881,11 +5912,16 @@ class Team:
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
             # Update team session state
-            if member_agent.team_session_state is not None:
+            if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
                 if self.session_state is None:
                     self.session_state = member_agent.team_session_state
                 else:
                     merge_dictionaries(self.session_state, member_agent.team_session_state)
+            elif isinstance(member_agent, Team) and member_agent.session_state is not None:
+                if self.session_state is None:
+                    self.session_state = member_agent.session_state
+                else:
+                    merge_dictionaries(self.session_state, member_agent.session_state)
 
             # Update the team state
             self._update_team_media(member_agent.run_response)  # type: ignore
