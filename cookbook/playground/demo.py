@@ -210,7 +210,7 @@ class MovieScript(BaseModel):
 
 
 movie_writer = Agent(
-    name="Agent with structured outputs",
+    name="Movie Writer Agent",
     model=OpenAIChat(id="gpt-4o"),
     structured_outputs=True,
     response_model=MovieScript,
