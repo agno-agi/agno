@@ -15,8 +15,6 @@ agent = Agent(
     show_tool_calls=True,
 )
 
-# Example 1: Simple Text-to-Speech
-print("--- Running Example 1: Simple Text-to-Speech ---")
 response = agent.run(
     f"""Generate a simple greeting using Text-to-Speech:
 

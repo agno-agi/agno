@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.media import AudioArtifact
 from agno.team.team import Team
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_error, log_info
 
 try:
     import cartesia  # type: ignore
@@ -70,71 +70,63 @@ class CartesiaTools(Toolkit):
                         if voice_data["id"]:  # Only add if we could get an ID
                             filtered_result.append(voice_data)
                         else:
-                            logger.warning(f"Could not extract 'id' from voice object: {voice}")
+                            log_info(f"Could not extract 'id' from voice object: {voice}")
                     except AttributeError as ae:
-                        logger.error(f"AttributeError accessing voice data: {ae}. Voice data: {voice}")
+                        log_error(f"AttributeError accessing voice data: {ae}. Voice data: {voice}")
                         continue
                     except Exception as inner_e:
-                        logger.error(f"Unexpected error processing voice: {inner_e}. Voice data: {voice}")
+                        log_error(f"Unexpected error processing voice: {inner_e}. Voice data: {voice}")
                         continue
 
             return json.dumps(filtered_result, indent=4)
         except Exception as e:
-            logger.error(f"Error listing voices from Cartesia: {e}", exc_info=True)
+            log_error(f"Error listing voices from Cartesia: {e}", exc_info=True)
             return json.dumps({"error": str(e), "detail": "Error occurred in list_voices function."})
 
     def localize_voice(
         self,
-        voice_id: str,
         name: str,
         description: str,
         language: str,
         original_speaker_gender: str,
         dialect: Optional[str] = None,
+        voice_id: Optional[str] = None,
     ) -> str:
         """Create a new voice localized to a different language.
 
         Args:
-            voice_id (str): The ID of the voice to localize.
-            name (str): The name for the new localized voice.
+            name (str): The desired name for the new localized voice.
             description (str): The description for the new localized voice.
-            language (str): The target language code.
+            language (str): The target language code (e.g., 'fr', 'es').
             original_speaker_gender (str): The gender of the original speaker ("male" or "female").
-            dialect (Optional[str], optional): The dialect code. Defaults to None.
+            voice_id (optional): The ID of an existing voice to use as the base. If None, uses the default voice ID configured in the tool. Defaults to None.
 
         Returns:
-            str: JSON string containing the localized voice information.
+            str: JSON string containing the information of the newly created localized voice, including its 'id'.
         """
-        try:
-            if dialect:
-                # Call with dialect
-                result = self.client.voices.localize(
-                    voice_id=voice_id,
-                    name=name,
-                    description=description,
-                    language=language,
-                    original_speaker_gender=original_speaker_gender,
-                    dialect=dialect,
-                )
-            else:
-                # Call without dialect
-                result = self.client.voices.localize(
-                    voice_id=voice_id,
-                    name=name,
-                    description=description,
-                    language=language,
-                    original_speaker_gender=original_speaker_gender,
-                )
+        localize_voice_id = voice_id or self.default_voice_id
+        log_debug(f"Using voice_id '{localize_voice_id}' for localization.")
 
-            return json.dumps(result, indent=4)
+        try:
+            result = self.client.voices.localize(
+                voice_id=localize_voice_id,
+                name=name,
+                description=description,
+                language=language,
+                original_speaker_gender=original_speaker_gender,
+            )
+
+            return result.model_dump_json(indent=4)
+
         except Exception as e:
-            logger.error(f"Error localizing voice with Cartesia: {e}")
-            return json.dumps({"error": str(e)})
+            log_error(f"Error localizing voice with Cartesia: {e}", exc_info=True)
+            return json.dumps({"error": str(e), "type": type(e).__name__})
 
     def text_to_speech(
         self,
         agent: Union[Agent, Team],
         transcript: str,
+        voice_id: Optional[str] = None,
     ) -> str:
         """
         Convert text to speechß.
@@ -147,12 +139,11 @@ class CartesiaTools(Toolkit):
         """
 
         try:
-            effective_voice_id = self.default_voice_id
+            effective_voice_id = voice_id or self.default_voice_id
 
-            logger.info(f"Using voice_id: {effective_voice_id} for text_to_speech.")
-            logger.info(f"Using model_id: {self.model_id} for text_to_speech.")
+            log_info(f"Using voice_id: {effective_voice_id} for text_to_speech.")
+            log_info(f"Using model_id: {self.model_id} for text_to_speech.")
 
-            # Hardcode output format to MP3
             output_format_sample_rate = 44100
             requested_bit_rate = 128000
             mime_type = "audio/mpeg"
@@ -164,28 +155,17 @@ class CartesiaTools(Toolkit):
                 "encoding": "mp3",
             }
 
-            # Base parameters for the API call
             params: Dict[str, Any] = {
                 "model_id": self.model_id,
                 "transcript": transcript,
                 "voice": {"mode": "id", "id": effective_voice_id},
-                # "language": normalized_language, # Language param removed
                 "output_format": output_format,
             }
 
-            # Log parameters just before the API call for debugging
-            logger.debug(f"Calling Cartesia tts.bytes with params: {json.dumps(params, indent=2)}")
-
-            # Make the API call - v2 returns an iterator
             audio_iterator = self.client.tts.bytes(**params)
-
-            # Concatenate the bytes from the iterator
             audio_data = b"".join(chunk for chunk in audio_iterator)
-
-            # Encode to base64
             base64_audio = b64encode(audio_data).decode("utf-8")
 
-            # Create and attach artifact
             artifact = AudioArtifact(
                 id=str(uuid4()),
                 base64_audio=base64_audio,
@@ -196,5 +176,5 @@ class CartesiaTools(Toolkit):
             return "Audio generated and attached successfully."
 
         except Exception as e:
-            logger.error(f"Error generating speech with Cartesia: {e}", exc_info=True)
+            log_error(f"Error generating speech with Cartesia: {e}", exc_info=True)
             return f"Error generating speech: {e}"
