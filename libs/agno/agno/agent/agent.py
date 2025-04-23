@@ -540,7 +540,8 @@ class Agent:
         log_debug(f"Agent ID: {self.agent_id}", center=True)
 
         if self.memory is None:
-            self.memory = AgentMemory()
+            self.memory = Memory()
+
         # Default to the agent's model if no model is provided
         if isinstance(self.memory, Memory):
             if self.memory.model is None and self.model is not None:
@@ -2111,10 +2112,6 @@ class Agent:
         if self.tool_call_limit is not None:
             self.model.tool_call_limit = self.tool_call_limit
 
-        # Set tool_execution_hooks on the Model
-        if self.tool_execution_hooks is not None:
-            self.model.tool_execution_hooks = self.tool_execution_hooks
-
     def resolve_run_context(self) -> None:
         from inspect import signature
 
@@ -3583,7 +3580,7 @@ class Agent:
         if isinstance(self.memory, AgentMemory):
             return self.memory.messages
         elif isinstance(self.memory, Memory):
-            return self.memory.get_messages_for_session(session_id=_session_id)
+            return self.memory.get_messages_from_last_n_runs(session_id=_session_id)
         else:
             return []
 

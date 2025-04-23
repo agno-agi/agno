@@ -64,9 +64,6 @@ class Model(ABC):
     # "none" is the default when no functions are present. "auto" is the default if functions are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
-    # A list of hooks to run around tool calls.
-    tool_execution_hooks: Optional[List[Callable]] = None
-
     # If True, shows function calls in the response. Disabled when response_model is used.
     show_tool_calls: Optional[bool] = None
     # Maximum number of tool calls allowed.

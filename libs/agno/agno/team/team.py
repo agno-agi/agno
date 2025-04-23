@@ -573,7 +573,7 @@ class Team:
 
         # Initialize memory if not yet set
         if self.memory is None:
-            self.memory = TeamMemory()
+            self.memory = Memory()
 
         # Default to the team's model if no model is provided
         if isinstance(self.memory, Memory):
@@ -1166,7 +1166,7 @@ class Team:
                 all_reasoning_steps = cast(List[ReasoningStep], self.run_response.extra_data.reasoning_steps)
 
             if all_reasoning_steps:
-                self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
+                self._add_reasoning_metrics_to_extra_data(run_response, reasoning_time_taken)
                 yield self._create_run_response(
                     content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__class__.__name__,
@@ -1319,7 +1319,7 @@ class Team:
 
         # Initialize memory if not yet set
         if self.memory is None:
-            self.memory = TeamMemory()
+            self.memory = Memory()
 
         # Default to the team's model if no model is provided
         if isinstance(self.memory, Memory):
@@ -1912,7 +1912,7 @@ class Team:
                 all_reasoning_steps = cast(List[ReasoningStep], self.run_response.extra_data.reasoning_steps)
 
             if all_reasoning_steps:
-                self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
+                self._add_reasoning_metrics_to_extra_data(run_response, reasoning_time_taken)
                 yield self._create_run_response(
                     content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__class__.__name__,
@@ -3773,7 +3773,7 @@ class Team:
             model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode
         )
 
-    def _format_reasoning_step_content(self, reasoning_step: ReasoningStep) -> str:
+    def _format_reasoning_step_content(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> str:
         """Format content for a reasoning step without changing any existing logic."""
         step_content = ""
         if reasoning_step.title:
@@ -3788,8 +3788,8 @@ class Team:
 
         # Get the current reasoning_content and append this step
         current_reasoning_content = ""
-        if hasattr(self.run_response, "reasoning_content") and self.run_response.reasoning_content:  # type: ignore
-            current_reasoning_content = self.run_response.reasoning_content  # type: ignore
+        if hasattr(run_response, "reasoning_content") and run_response.reasoning_content:
+            current_reasoning_content = run_response.reasoning_content
 
         # Create updated reasoning_content
         updated_reasoning_content = current_reasoning_content + step_content
@@ -3923,7 +3923,9 @@ class Team:
                     # Yield reasoning steps
                     if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
-                            updated_reasoning_content = self._format_reasoning_step_content(reasoning_step)
+                            updated_reasoning_content = self._format_reasoning_step_content(
+                                run_response, reasoning_step
+                            )
 
                             yield self._create_run_response(
                                 content=reasoning_step,
@@ -4100,7 +4102,9 @@ class Team:
                     # Yield reasoning steps
                     if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
-                            updated_reasoning_content = self._format_reasoning_step_content(reasoning_step)
+                            updated_reasoning_content = self._format_reasoning_step_content(
+                                run_response, reasoning_step
+                            )
 
                             yield self._create_run_response(
                                 content=reasoning_step,
@@ -4292,9 +4296,6 @@ class Team:
         if self.tool_call_limit is not None:
             self.model.tool_call_limit = self.tool_call_limit
 
-        # Set tool_execution_hooks on the Model
-        if self.tool_execution_hooks is not None:
-            self.model.tool_execution_hooks = self.tool_execution_hooks
 
     def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
         # We have to reset for every run, because we will have new images/audio/video to attach
@@ -6150,7 +6151,7 @@ class Team:
         if isinstance(self.memory, AgentMemory):
             return self.memory.messages
         elif isinstance(self.memory, Memory):
-            return self.memory.get_messages_for_session(session_id=_session_id)
+            return self.memory.get_messages_from_last_n_runs(session_id=_session_id)
         else:
             return []
 
@@ -6327,6 +6328,8 @@ class Team:
 
     def _add_reasoning_step_to_extra_data(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> None:
         if run_response.extra_data is None:
+            from agno.run.response import RunResponseExtraData
+
             run_response.extra_data = RunResponseExtraData()
 
         if run_response.extra_data.reasoning_steps is None:
@@ -6334,42 +6337,26 @@ class Team:
 
         run_response.extra_data.reasoning_steps.append(reasoning_step)
 
-    def _add_reasoning_metrics_to_extra_data(self, reasoning_time_taken: float) -> None:
+    def _add_reasoning_metrics_to_extra_data(self, run_response: TeamRunResponse, reasoning_time_taken: float) -> None:
         try:
-            if hasattr(self, "run_response") and self.run_response is not None:
-                if self.run_response.extra_data is None:
-                    from agno.run.response import RunResponseExtraData
+            if run_response.extra_data is None:
+                from agno.run.response import RunResponseExtraData
 
-                    self.run_response.extra_data = RunResponseExtraData()
+                run_response.extra_data = RunResponseExtraData()
 
-                # Initialize reasoning_messages if it doesn't exist
-                if self.run_response.extra_data.reasoning_messages is None:
-                    self.run_response.extra_data.reasoning_messages = []
+            # Initialize reasoning_messages if it doesn't exist
+            if run_response.extra_data.reasoning_messages is None:
+                run_response.extra_data.reasoning_messages = []
 
-                try:
-                    # First attempt: Create a Message object with the metrics
-                    from agno.models.message import Message
+            metrics_message = Message(
+                role="assistant",
+                content=run_response.reasoning_content,
+                metrics={"time": reasoning_time_taken},
+            )
 
-                    metrics_message = Message(
-                        role="assistant",
-                        content=self.run_response.reasoning_content,
-                        metrics={"time": reasoning_time_taken},
-                    )
-
-                    # Add the metrics message to the reasoning_messages
-                    self.run_response.extra_data.reasoning_messages.append(metrics_message)
-                except Exception:
-                    # Fallback: If Message object fails, try with a simple dictionary
-                    metrics_dict = {
-                        "role": "assistant",
-                        "content": str(self.run_response.reasoning_content),
-                        "metrics": {"time": reasoning_time_taken},
-                    }
-                    self.run_response.extra_data.reasoning_messages.append(metrics_dict)  # type: ignore
+            # Add the metrics message to the reasoning_messages
+            run_response.extra_data.reasoning_messages.append(metrics_message)
         except Exception as e:
-            # Log the error but don't crash
-            from agno.utils.log import log_error
-
             log_error(f"Failed to add reasoning metrics to extra_data: {str(e)}")
 
     ###########################################################################

@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import Any, Callable, Dict, Optional, List
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools.function import Function
 from agno.utils.log import log_debug, logger
@@ -63,9 +63,7 @@ class Toolkit:
             self._register_tools()
 
     def _register_tools(self) -> None:
-        """Register all tools.
-
-        """
+        """Register all tools."""
         for tool in self.tools:
             self.register(tool)
 
