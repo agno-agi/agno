@@ -13,7 +13,7 @@ except ImportError:
 
 from agno.memory.v2.db.base import MemoryDb
 from agno.memory.v2.db.schema import MemoryRow
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_info, logger
 
 
 class PostgresMemoryDb(MemoryDb):

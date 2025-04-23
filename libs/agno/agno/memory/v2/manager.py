@@ -162,9 +162,7 @@ class MemoryManager:
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
         else:
-            input_string = (
-                f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
-            )
+            input_string = f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -212,9 +210,7 @@ class MemoryManager:
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
         else:
-            input_string = (
-                f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
-            )
+            input_string = f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -422,7 +418,7 @@ class MemoryManager:
 
         def clear_memory() -> str:
             """Use this function to remove all (or clear all) memories from the database.
-            
+
             Returns:
                 str: A message indicating if the memory was cleared successfully or not.
             """
