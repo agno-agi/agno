@@ -683,7 +683,7 @@ class Memory:
         """Returns the messages from the last_n runs, excluding previously tagged history messages.
         Args:
             session_id: The session id to get the messages from.
-            last_n: The number of runs to return from the end of the conversation.
+            last_n: The number of runs to return from the end of the conversation. Defaults to all runs.
             skip_role: Skip messages with this role.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
         Returns:
@@ -695,7 +695,7 @@ class Memory:
         session_runs = self.runs.get(session_id, [])
         runs_to_process = session_runs[-last_n:] if last_n is not None else session_runs
         messages_from_history = []
-
+        system_message = None
         for run_response in runs_to_process:
             if not (run_response and run_response.messages):
                 continue
@@ -707,8 +707,13 @@ class Memory:
                 # Skip messages that were tagged as history in previous runs
                 if hasattr(message, "from_history") and message.from_history and skip_history_messages:
                     continue
-
-                messages_from_history.append(message)
+                if message.role == "system":
+                    # Only add the system message once
+                    if system_message is None:
+                        system_message = message
+                        messages_from_history.append(system_message)
+                else:
+                    messages_from_history.append(message)
 
         log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
