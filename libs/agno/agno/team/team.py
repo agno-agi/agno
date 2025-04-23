@@ -3865,7 +3865,7 @@ class Team:
                 )
                 if stream_intermediate_steps:
                     yield self._create_run_response(
-                        content=reasoning_time_taken = 0.0,
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
                         session_id=session_id,
                         event=RunEvent.reasoning_completed,
                     )
@@ -3911,7 +3911,9 @@ class Team:
                     # Yield reasoning steps
                     if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
-                            updated_reasoning_content = self._format_reasoning_step_content(run_response, reasoning_step)
+                            updated_reasoning_content = self._format_reasoning_step_content(
+                                run_response, reasoning_step
+                            )
 
                             yield self._create_run_response(
                                 content=reasoning_step,
@@ -4088,7 +4090,9 @@ class Team:
                     # Yield reasoning steps
                     if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
-                            updated_reasoning_content = self._format_reasoning_step_content(run_response, reasoning_step)
+                            updated_reasoning_content = self._format_reasoning_step_content(
+                                run_response, reasoning_step
+                            )
 
                             yield self._create_run_response(
                                 content=reasoning_step,
