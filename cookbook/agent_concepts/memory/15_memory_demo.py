@@ -8,7 +8,7 @@ from rich.pretty import pprint
 # UserId for the memories
 user_id = "ava"
 # Database file for memory and storage
-db_file = "tmp/memory.db"
+db_file = "tmp/agent.db"
 
 # Initialize memory.v2
 memory = Memory(
@@ -26,8 +26,8 @@ memory_agent = Agent(
     model=OpenAIChat(id="gpt-4.1"),
     # Store memories in a database
     memory=memory,
-    # Give the Agent the ability to update memories
-    enable_agentic_memory=True,
+    # Run the MemoryManager after each response
+    enable_user_memories=True,
     # Store the chat history in the database
     storage=storage,
     # Add the chat history to the messages
@@ -48,7 +48,7 @@ print("Memories about Ava:")
 pprint(memory.get_user_memories(user_id=user_id))
 
 memory_agent.print_response(
-    "I live in san francisco, shall i move to tahoe?",
+    "I live in san francisco, where should i move within a 4 hour drive?",
     user_id=user_id,
     stream=True,
     stream_intermediate_steps=True,
