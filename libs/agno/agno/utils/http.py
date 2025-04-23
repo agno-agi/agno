@@ -50,7 +50,7 @@ async def async_fetch_with_retry(
     async def _fetch():
         if client is None:
             client_args = {"proxy": proxy} if proxy else {}
-            async with httpx.AsyncClient(**client_args) as local_client:
+            async with httpx.AsyncClient(**client_args) as local_client:  # type: ignore
                 return await local_client.get(url)
         else:
             return await client.get(url)
