@@ -82,9 +82,6 @@ class MCPTools(Toolkit):
         self._session_context = None
         self._initialized = False
 
-        self.include_tools = include_tools
-        self.exclude_tools = exclude_tools or []
-
     async def __aenter__(self) -> "MCPTools":
         """Enter the async context manager."""
 
@@ -236,9 +233,6 @@ class MultiMCPTools(Toolkit):
         self._async_exit_stack = AsyncExitStack()
 
         self._client = client
-
-        self.include_tools = include_tools
-        self.exclude_tools = exclude_tools or []
 
     async def __aenter__(self) -> "MultiMCPTools":
         """Enter the async context manager."""
