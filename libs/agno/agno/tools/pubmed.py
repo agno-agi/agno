@@ -18,7 +18,7 @@ class PubmedTools(Toolkit):
         super().__init__(name="pubmed")
         self.max_results: Optional[int] = max_results
         self.email: str = email
-        self.results_expanded: bool = results_expanded  # Store the parameter
+        self.results_expanded: bool = results_expanded
 
         self.register(self.search_pubmed)
 
