@@ -60,4 +60,4 @@ agent = Agent(
     show_tool_calls=True,
 )
 
-asyncio.run(agent.aprint_response("Please call all the tools", stream=False))
+asyncio.run(agent.aprint_response("Please call all the tools"))

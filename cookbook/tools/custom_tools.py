@@ -58,4 +58,4 @@ agent = Agent(
     ],
     show_tool_calls=True,
 )
-agent.print_response("Please call all the tools", stream=False)
+agent.print_response("Please call all the tools")
