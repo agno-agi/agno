@@ -587,7 +587,7 @@ class Agent:
         else:
             self.memory = cast(Memory, self.memory)
         # 1.2 Set streaming and stream intermediate steps
-        
+
         self.stream = self.stream or (stream and self.is_streamable)
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
         # 1.3 Create a run_id and RunResponse
@@ -887,7 +887,7 @@ class Agent:
         # Update the run_response audio if streaming
         if self.stream and model_response.audio is not None:
             self.run_response.response_audio = model_response.audio
-        
+
         # 9. Update Agent Memory
         if isinstance(self.memory, AgentMemory):
             # Add the system message to the memory
@@ -1058,7 +1058,7 @@ class Agent:
         # If no retries are set, use the agent's default retries
         if retries is None:
             retries = self.retries
-            
+
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
@@ -4072,7 +4072,7 @@ class Agent:
             """
             self.memory = cast(Memory, self.memory)
             response = self.memory.update_memory_task(task=task, user_id=user_id)
-            
+
             return response
 
         async def aupdate_user_memory(task: str) -> str:
