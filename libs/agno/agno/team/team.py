@@ -328,25 +328,15 @@ class Team:
         self.parse_response = parse_response
 
         self.memory = memory
-
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
-        if add_memory_references is None:
-            self.add_memory_references = enable_user_memories or enable_agentic_memory
-        else:
-            self.add_memory_references = add_memory_references
-
+        self.add_memory_references = add_memory_references
         self.enable_session_summaries = enable_session_summaries
-        if add_session_summary_references is None:
-            self.add_session_summary_references = enable_session_summaries
-        else:
-            self.add_session_summary_references = add_session_summary_references
+        self.add_session_summary_references = add_session_summary_references
 
         self.enable_team_history = enable_team_history
         self.num_of_interactions_from_history = num_of_interactions_from_history
         self.num_history_runs = num_history_runs
-        if num_of_interactions_from_history is not None:
-            self.num_history_runs = num_of_interactions_from_history
 
         self.storage = storage
         self.extra_data = extra_data
@@ -402,7 +392,7 @@ class Team:
         else:
             set_log_level_to_info(source_type="team")
 
-    def _set_storage_mode(self):
+    def _set_storage_mode(self) -> None:
         if self.storage is not None:
             self.storage.mode = "team"
 
@@ -418,7 +408,7 @@ class Team:
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
-    def _initialize_member(self, member: Union["Team", Agent], session_id: Optional[str] = None):
+    def _initialize_member(self, member: Union["Team", Agent], session_id: Optional[str] = None) -> None:
         # Set debug mode for all members
         if self.debug_mode:
             member.debug_mode = True
@@ -448,7 +438,7 @@ class Team:
         if member.name is None:
             log_warning("Team member name is undefined.")
 
-    def _set_default_model(self):
+    def _set_default_model(self) -> None:
         # Set the default model
         if self.model is None:
             try:
@@ -464,9 +454,19 @@ class Team:
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
 
-    def initialize_team(self, session_id: Optional[str] = None) -> None:
-        self._set_default_model()
+    def _set_defaults(self) -> None:
+        if self.add_memory_references is None:
+            self.add_memory_references = self.enable_user_memories or self.enable_agentic_memory
 
+        if self.add_session_summary_references is None:
+            self.add_session_summary_references = self.enable_session_summaries
+
+        if self.num_of_interactions_from_history is not None:
+            self.num_history_runs = self.num_of_interactions_from_history
+
+    def initialize_team(self, session_id: Optional[str] = None) -> None:
+        self._set_defaults()
+        self._set_default_model()
         self._set_storage_mode()
 
         # Set debug mode
@@ -478,7 +478,7 @@ class Team:
         # Set monitoring and telemetry
         self._set_monitoring()
 
-        # Set the team ID if not yet set
+        # Set the team ID if not set
         self._set_team_id()
 
         log_debug(f"Team ID: {self.team_id}", center=True)

@@ -55,6 +55,7 @@ lmstudio = ["lmstudio"]
 litellm = ["litellm"]
 
 # Dependencies for Tools
+cartesia = ["cartesia"]
 exa = ["exa_py"]
 yfinance = ["yfinance"]
 ddg = ["duckduckgo-search"]
@@ -130,6 +131,7 @@ models = [
 # All tools
 tools = [
   "agno[exa]",
+  "agno[cartesia]",
   "agno[ddg]",
   "agno[duckdb]",
   "agno[newspaper]",
