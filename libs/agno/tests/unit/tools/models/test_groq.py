@@ -42,6 +42,7 @@ def mock_groq_client():
 
         yield mock_client_instance
 
+
 @patch("agno.tools.toolkit.Toolkit.__init__", return_value=None)  # Mock base init
 def test_groq_tools_init_success(mock_toolkit_init, mock_groq_client):
     """Test successful initialization with API key from env."""
