@@ -91,6 +91,8 @@ class WebsiteKnowledgeBase(AgentKnowledge):
                 # Filter out documents which already exist in the vector db
                 if not recreate:
                     document_list = [document for document in document_list if not self.vector_db.doc_exists(document)]
+                    if not document_list:
+                        continue
                 if upsert and self.vector_db.upsert_available():
                     self.vector_db.upsert(documents=document_list, filters=filters)
                 else:
