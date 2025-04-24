@@ -114,7 +114,6 @@ class GroqTools(Toolkit):
         Adds the generated audio as an AudioArtifact to the agent.
 
         Args:
-            agent: The agent instance to add the artifact to.
             text_input: The text to synthesize into speech.
         Returns:
             str: A success message with the audio artifact ID or an error message.
