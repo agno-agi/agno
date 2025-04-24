@@ -67,7 +67,7 @@ def validation_hook(
     return result
 
 
-agent = Agent(tools=[CustomerDBTools()], tool_execution_hook=validation_hook)
+agent = Agent(tools=[CustomerDBTools()], tool_execution_hooks=[validation_hook])
 
 # This should work
 agent.print_response("I am customer 456, please retrieve my profile.")

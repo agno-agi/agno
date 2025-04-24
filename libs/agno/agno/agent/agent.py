@@ -146,7 +146,6 @@ class Agent:
 
     # A function that acts as middleware and is called around tool calls.
     tool_execution_hooks: Optional[List[Callable]] = None
-    tool_execution_hook: Optional[Callable] = None
 
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
@@ -304,7 +303,6 @@ class Agent:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_execution_hooks: Optional[List[Callable]] = None,
-        tool_execution_hook: Optional[Callable] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -397,12 +395,7 @@ class Agent:
         self.show_tool_calls = show_tool_calls
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
-
-        self.tool_execution_hook = tool_execution_hook
-        if tool_execution_hooks is None:
-            self.tool_execution_hooks = [self.tool_execution_hook] if self.tool_execution_hook is not None else None
-        else:
-            self.tool_execution_hooks = tool_execution_hooks
+        self.tool_execution_hooks = tool_execution_hooks
 
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model

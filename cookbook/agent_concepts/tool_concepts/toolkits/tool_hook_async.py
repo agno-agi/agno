@@ -26,6 +26,6 @@ async def logger_hook(
     return result
 
 
-agent = Agent(tools=[DuckDuckGoTools()], tool_execution_hook=logger_hook)
+agent = Agent(tools=[DuckDuckGoTools()], tool_execution_hooks=[logger_hook])
 
 asyncio.run(agent.aprint_response("What is currently trending on Twitter?"))

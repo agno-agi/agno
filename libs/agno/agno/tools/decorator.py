@@ -26,7 +26,6 @@ def tool(
     stop_after_tool_call: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
-    tool_execution_hook: Optional[Callable] = None,
     tool_execution_hooks: Optional[List[Callable]] = None,
     cache_results: bool = False,
     cache_dir: Optional[str] = None,
@@ -52,7 +51,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         stop_after_tool_call: Optional[bool] - If True, the agent will stop after the function call.
         pre_hook: Optional[Callable] - Hook that runs before the function is executed (deprecated, use tool_execution_hook instead).
         post_hook: Optional[Callable] - Hook that runs after the function is executed (deprecated, use tool_execution_hook instead).
-        tool_execution_hook: Optional[Callable] - Hook that runs before and after the function is executed.
         tool_execution_hooks: Optional[List[Callable]] - List of hooks that run before and after the function is executed.
         cache_results: bool - If True, enable caching of function results
         cache_dir: Optional[str] - Directory to store cache files
@@ -93,12 +91,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "cache_ttl",
         }
     )
-    if "tool_execution_hook" in kwargs:
-        if "tool_execution_hooks" in kwargs:
-            raise ValueError("tool_execution_hook and tool_execution_hooks cannot both be provided")
-        else:
-            kwargs["tool_execution_hooks"] = [kwargs["tool_execution_hook"]]
-            del kwargs["tool_execution_hook"]
 
     # Improve error message with more context
     invalid_kwargs = set(kwargs.keys()) - VALID_KWARGS

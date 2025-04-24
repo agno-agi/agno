@@ -172,8 +172,6 @@ class Team:
     tool_call_limit: Optional[int] = None
     # A list of hooks to be called before and after the tool call
     tool_execution_hooks: Optional[List[Callable]] = None
-    # A single hook to be called before and after the tool call
-    tool_execution_hook: Optional[Callable] = None
 
     # --- Structured output ---
     # Response model for the team response
@@ -262,7 +260,6 @@ class Team:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_execution_hooks: Optional[List[Callable]] = None,
-        tool_execution_hook: Optional[Callable] = None,
         response_model: Optional[Type[BaseModel]] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
@@ -327,12 +324,7 @@ class Team:
         self.show_tool_calls = show_tool_calls
         self.tool_choice = tool_choice
         self.tool_call_limit = tool_call_limit
-
-        self.tool_execution_hook = tool_execution_hook
-        if tool_execution_hooks is None:
-            self.tool_execution_hooks = [self.tool_execution_hook] if self.tool_execution_hook is not None else None
-        else:
-            self.tool_execution_hooks = tool_execution_hooks
+        self.tool_execution_hooks = tool_execution_hooks
 
         self.response_model = response_model
         self.use_json_mode = use_json_mode
