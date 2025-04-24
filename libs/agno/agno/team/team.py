@@ -4997,6 +4997,18 @@ class Team:
 
         return set_shared_context
 
+    def _update_team_session_state(self, member_agent: Union[Agent, "Team"]) -> None:
+        if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
+            if self.session_state is None:
+                self.session_state = member_agent.team_session_state
+            else:
+                merge_dictionaries(self.session_state, member_agent.team_session_state)
+        elif isinstance(member_agent, Team) and member_agent.session_state is not None:
+            if self.session_state is None:
+                self.session_state = member_agent.session_state
+            else:
+                merge_dictionaries(self.session_state, member_agent.session_state)
+
     def get_run_member_agents_function(
         self,
         session_id: str,
@@ -5142,18 +5154,9 @@ class Team:
                 self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
                 # Update team session state
-                if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
-                    if self.session_state is None:
-                        self.session_state = member_agent.team_session_state
-                    else:
-                        merge_dictionaries(self.session_state, member_agent.team_session_state)
-                elif isinstance(member_agent, Team) and member_agent.session_state is not None:
-                    if self.session_state is None:
-                        self.session_state = member_agent.session_state
-                    else:
-                        merge_dictionaries(self.session_state, member_agent.session_state)
+                self._update_team_session_state(member_agent)
 
-                # Update the team state
+                # Update the team media
                 self._update_team_media(member_agent.run_response)  # type: ignore
 
             # Afterward, switch back to the team logger
@@ -5255,18 +5258,9 @@ class Team:
                     self.run_response.add_member_run(agent.run_response)
 
                     # Update team session state
-                    if isinstance(current_agent, Agent) and current_agent.team_session_state is not None:
-                        if self.session_state is None:
-                            self.session_state = current_agent.team_session_state
-                        else:
-                            merge_dictionaries(self.session_state, current_agent.team_session_state)
-                    elif isinstance(current_agent, Team) and current_agent.session_state is not None:
-                        if self.session_state is None:
-                            self.session_state = current_agent.session_state
-                        else:
-                            merge_dictionaries(self.session_state, current_agent.session_state)
+                    self._update_team_session_state(current_agent)
 
-                    # Update the team state
+                    # Update the team media
                     self._update_team_media(agent.run_response)
 
                     if response.content is None and (response.tools is None or len(response.tools) == 0):
@@ -5471,18 +5465,9 @@ class Team:
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
             # Update team session state
-            if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
-                if self.session_state is None:
-                    self.session_state = member_agent.team_session_state
-                else:
-                    merge_dictionaries(self.session_state, member_agent.team_session_state)
-            elif isinstance(member_agent, Team) and member_agent.session_state is not None:
-                if self.session_state is None:
-                    self.session_state = member_agent.session_state
-                else:
-                    merge_dictionaries(self.session_state, member_agent.session_state)
+            self._update_team_session_state(member_agent)
 
-            # Update the team state
+            # Update the team media
             self._update_team_media(member_agent.run_response)  # type: ignore
 
         async def atransfer_task_to_member(
@@ -5624,18 +5609,9 @@ class Team:
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
             # Update team session state
-            if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
-                if self.session_state is None:
-                    self.session_state = member_agent.team_session_state
-                else:
-                    merge_dictionaries(self.session_state, member_agent.team_session_state)
-            elif isinstance(member_agent, Team) and member_agent.session_state is not None:
-                if self.session_state is None:
-                    self.session_state = member_agent.session_state
-                else:
-                    merge_dictionaries(self.session_state, member_agent.session_state)
+            self._update_team_session_state(member_agent)
 
-            # Update the team state
+            # Update the team media
             self._update_team_media(member_agent.run_response)  # type: ignore
 
         if async_mode:
@@ -5803,18 +5779,9 @@ class Team:
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
             # Update team session state
-            if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
-                if self.session_state is None:
-                    self.session_state = member_agent.team_session_state
-                else:
-                    merge_dictionaries(self.session_state, member_agent.team_session_state)
-            elif isinstance(member_agent, Team) and member_agent.session_state is not None:
-                if self.session_state is None:
-                    self.session_state = member_agent.session_state
-                else:
-                    merge_dictionaries(self.session_state, member_agent.session_state)
+            self._update_team_session_state(member_agent)
 
-            # Update the team state
+            # Update the team media
             self._update_team_media(member_agent.run_response)  # type: ignore
 
         async def aforward_task_to_member(member_id: str, expected_output: Optional[str] = None) -> AsyncIterator[str]:
@@ -5913,18 +5880,9 @@ class Team:
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
             # Update team session state
-            if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
-                if self.session_state is None:
-                    self.session_state = member_agent.team_session_state
-                else:
-                    merge_dictionaries(self.session_state, member_agent.team_session_state)
-            elif isinstance(member_agent, Team) and member_agent.session_state is not None:
-                if self.session_state is None:
-                    self.session_state = member_agent.session_state
-                else:
-                    merge_dictionaries(self.session_state, member_agent.session_state)
+            self._update_team_session_state(member_agent)
 
-            # Update the team state
+            # Update the team media
             self._update_team_media(member_agent.run_response)  # type: ignore
 
         if async_mode:
