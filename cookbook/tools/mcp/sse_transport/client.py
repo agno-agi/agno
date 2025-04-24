@@ -29,7 +29,7 @@ async def run_agent(message: str) -> None:
 async def run_agent_with_multimcp(message: str) -> None:
     async with MultiMCPTools(
         commands=["npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt"],
-        server_params_list=[SSEClientParams(url=server_url)],
+        urls=[server_url],
     ) as mcp_tools:
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
