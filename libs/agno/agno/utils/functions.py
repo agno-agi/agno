@@ -167,3 +167,24 @@ def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cac
         return wrapper
 
     return decorator
+
+
+def convert_function_result(result: Any) -> str:
+    from pydantic import BaseModel
+    
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        return json.dumps(result)
+    if isinstance(result, list):
+        return json.dumps(result)
+    if isinstance(result, tuple):
+        return json.dumps(list(result))
+    if isinstance(result, set):
+        return json.dumps(list(result))
+    if isinstance(result, bool):
+        return str(result).lower()
+    if isinstance(result, BaseModel):
+        return result.model_dump_json()
+    
+    return str(result)
