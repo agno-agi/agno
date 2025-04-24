@@ -1,7 +1,9 @@
 from contextlib import AsyncExitStack
+from dataclasses import asdict, dataclass
+from datetime import timedelta
 from os import environ
 from types import TracebackType
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -10,9 +12,20 @@ from agno.utils.mcp import get_entrypoint_for_tool
 
 try:
     from mcp import ClientSession, StdioServerParameters
+    from mcp.client.sse import sse_client
     from mcp.client.stdio import stdio_client
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
+
+
+@dataclass
+class SSEClientParams:
+    """Parameters for SSE client connection."""
+
+    url: str
+    headers: Optional[Dict[str, Any]] = None
+    timeout: Optional[float] = None
+    sse_read_timeout: Optional[float] = None
 
 
 class MCPTools(Toolkit):
@@ -20,19 +33,22 @@ class MCPTools(Toolkit):
     A toolkit for integrating Model Context Protocol (MCP) servers with Agno agents.
     This allows agents to access tools, resources, and prompts exposed by MCP servers.
 
-    Can be used in two ways:
+    Can be used in three ways:
     1. Direct initialization with a ClientSession
     2. As an async context manager with StdioServerParameters
-    3. As an async context manager with `command` directly specified
+    3. As an async context manager with SSE endpoints
     """
 
     def __init__(
         self,
         command: Optional[str] = None,
         *,
+        url: Optional[str] = None,
         env: Optional[dict[str, str]] = None,
-        server_params: Optional[StdioServerParameters] = None,
+        transport: Literal["stdio", "sse"] = "stdio",
+        server_params: Optional[Union[StdioServerParameters, SSEClientParams]] = None,
         session: Optional[ClientSession] = None,
+        timeout_seconds: int = 5,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -43,20 +59,44 @@ class MCPTools(Toolkit):
 
         Args:
             session: An initialized MCP ClientSession connected to an MCP server
-            server_params: StdioServerParameters for creating a new session
+            server_params: Parameters for creating a new session
             command: The command to run to start the server. Should be used in conjunction with env.
+            url: The URL endpoint for SSE connection when transport is "sse".
             env: The environment variables to pass to the server. Should be used in conjunction with command.
             client: The underlying MCP client (optional, used to prevent garbage collection)
+            timeout_seconds: Read timeout in seconds for the MCP client
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
+            transport: The transport protocol to use, either "stdio" or "sse"
         """
-        super().__init__(name="MCPToolkit", **kwargs)
+        super().__init__(name="MCPToolkit", include_tools=include_tools, exclude_tools=exclude_tools, **kwargs)
 
-        if session is None and server_params is None and command is None:
-            raise ValueError("Either session or server_params or command must be provided")
+        if session is None and server_params is None:
+            if transport == "sse" and url is None:
+                raise ValueError("One of 'url' or 'server_params' parameters must be provided when using SSE transport")
+            if transport == "stdio" and command is None:
+                raise ValueError(
+                    "One of 'command' or 'server_params' parameters must be provided when using stdio transport"
+                )
 
+        # Ensure the received server_params are valid for the given transport
+        if server_params is not None:
+            if transport == "sse":
+                if not isinstance(server_params, SSEClientParams):
+                    raise ValueError(
+                        "If using the SSE transport, server_params must be an instance of SSEClientParams."
+                    )
+            elif transport == "stdio":
+                if not isinstance(server_params, StdioServerParameters):
+                    raise ValueError(
+                        "If using the stdio transport, server_params must be an instance of StdioServerParameters."
+                    )
+
+        self.timeout_seconds = timeout_seconds
         self.session: Optional[ClientSession] = session
-        self.server_params: Optional[StdioServerParameters] = server_params
+        self.server_params: Optional[Union[StdioServerParameters, SSEClientParams]] = server_params
+        self.transport = transport
+        self.url = url
 
         # Merge provided env with system env
         if env is not None:
@@ -67,7 +107,7 @@ class MCPTools(Toolkit):
         else:
             env = {**environ}
 
-        if command is not None:
+        if command is not None and transport != "sse":
             from shlex import split
 
             parts = split(command)
@@ -78,7 +118,7 @@ class MCPTools(Toolkit):
             self.server_params = StdioServerParameters(command=cmd, args=arguments, env=env)
 
         self._client = client
-        self._stdio_context = None
+        self._context = None
         self._session_context = None
         self._initialized = False
 
@@ -91,14 +131,20 @@ class MCPTools(Toolkit):
                 await self.initialize()
             return self
 
-        # Create a new session using stdio_client
-        if self.server_params is None:
-            raise ValueError("server_params must be provided when using as context manager")
+        # Create a new session using stdio_client or sse_client based on transport
+        if self.transport == "sse":
+            sse_args = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
+            if "url" not in sse_args:
+                sse_args["url"] = self.url
+            self._context = sse_client(**sse_args)  # type: ignore
+        else:
+            if self.server_params is None:
+                raise ValueError("server_params must be provided when using stdio transport.")
+            self._context = stdio_client(self.server_params)  # type: ignore
 
-        self._stdio_context = stdio_client(self.server_params)  # type: ignore
-        read, write = await self._stdio_context.__aenter__()  # type: ignore
+        read, write = await self._context.__aenter__()  # type: ignore
 
-        self._session_context = ClientSession(read, write)  # type: ignore
+        self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(self.timeout_seconds))  # type: ignore
         self.session = await self._session_context.__aenter__()  # type: ignore
 
         # Initialize with the new session
@@ -112,9 +158,9 @@ class MCPTools(Toolkit):
             self.session = None
             self._session_context = None
 
-        if self._stdio_context is not None:
-            await self._stdio_context.__aexit__(exc_type, exc_val, exc_tb)
-            self._stdio_context = None
+        if self._context is not None:
+            await self._context.__aexit__(exc_type, exc_val, exc_tb)
+            self._context = None
 
         self._initialized = False
 
@@ -175,17 +221,20 @@ class MultiMCPTools(Toolkit):
     A toolkit for integrating multiple Model Context Protocol (MCP) servers with Agno agents.
     This allows agents to access tools, resources, and prompts exposed by MCP servers.
 
-    Can be used in two ways:
+    Can be used in three ways:
     1. Direct initialization with a ClientSession
     2. As an async context manager with StdioServerParameters
+    3. As an async context manager with SSE endpoints
     """
 
     def __init__(
         self,
         commands: Optional[List[str]] = None,
+        urls: Optional[List[str]] = None,
         *,
         env: Optional[dict[str, str]] = None,
-        server_params_list: Optional[List[StdioServerParameters]] = None,
+        server_params_list: Optional[List[Union[SSEClientParams, StdioServerParameters]]] = None,
+        timeout_seconds: int = 5,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -195,20 +244,24 @@ class MultiMCPTools(Toolkit):
         Initialize the MCP toolkit.
 
         Args:
-            server_params_list: List of StdioServerParameters for creating new sessions
             commands: List of commands to run to start the servers. Should be used in conjunction with env.
+            urls: List of URLs for SSE endpoints.
+            server_params_list: List of StdioServerParameters or SSEClientParams for creating new sessions.
             env: The environment variables to pass to the servers. Should be used in conjunction with commands.
-            client: The underlying MCP client (optional, used to prevent garbage collection)
-            include_tools: Optional list of tool names to include (if None, includes all)
-            exclude_tools: Optional list of tool names to exclude (if None, excludes none)
+            client: The underlying MCP client (optional, used to prevent garbage collection).
+            timeout_seconds: Timeout in seconds for managing timeouts for Client Session if Agent or Tool doesn't respond.
+            include_tools: Optional list of tool names to include (if None, includes all).
+            exclude_tools: Optional list of tool names to exclude (if None, excludes none).
         """
-        super().__init__(name="MultiMCPToolkit", **kwargs)
+        super().__init__(name="MultiMCPToolkit", include_tools=include_tools, exclude_tools=exclude_tools, **kwargs)
 
-        if server_params_list is None and commands is None:
-            raise ValueError("Either server_params_list or commands must be provided")
+        if server_params_list is None and commands is None and urls is None:
+            raise ValueError("Either server_params_list or commands or urls must be provided")
 
-        self.server_params_list: List[StdioServerParameters] = server_params_list or []
+        self.server_params_list: List[Union[SSEClientParams, StdioServerParameters]] = server_params_list or []
+        self.timeout_seconds = timeout_seconds
         self.commands: Optional[List[str]] = commands
+        self.urls: Optional[List[str]] = urls
 
         # Merge provided env with system env
         if env is not None:
@@ -230,6 +283,10 @@ class MultiMCPTools(Toolkit):
                 arguments = parts[1:] if len(parts) > 1 else []
                 self.server_params_list.append(StdioServerParameters(command=cmd, args=arguments, env=env))
 
+        if urls is not None:
+            for url in urls:
+                self.server_params_list.append(SSEClientParams(url=url))
+
         self._async_exit_stack = AsyncExitStack()
 
         self._client = client
@@ -238,11 +295,24 @@ class MultiMCPTools(Toolkit):
         """Enter the async context manager."""
 
         for server_params in self.server_params_list:
-            stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
-            read, write = stdio_transport
-            session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+            # Handle stdio connections
+            if isinstance(server_params, StdioServerParameters):
+                stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
+                read, write = stdio_transport
+                session = await self._async_exit_stack.enter_async_context(
+                    ClientSession(read, write, read_timeout_seconds=timedelta(self.timeout_seconds))
+                )
 
-            await self.initialize(session)
+                await self.initialize(session)
+
+            # Handle SSE connections
+            if isinstance(server_params, SSEClientParams):
+                sse_args = asdict(server_params)
+                sse_transport = await self._async_exit_stack.enter_async_context(sse_client(**sse_args))
+                read, write = sse_transport
+                session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+
+                await self.initialize(session)
 
         return self
 

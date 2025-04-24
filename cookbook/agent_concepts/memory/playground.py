@@ -6,25 +6,29 @@ from agno.playground import Playground, serve_playground_app
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
-db_file = "tmp/memory.db"
+# Database file for memory and storage
+db_file = "tmp/agent.db"
 
-# ************* Memory *************
+# Initialize memory.v2
 memory = Memory(
+    # Use any model for creating memories
     model=OpenAIChat(id="gpt-4.1"),
     db=SqliteMemoryDb(table_name="user_memories", db_file=db_file),
     delete_memories=True,
     clear_memories=True,
 )
-# ************* Storage *************
+# Initialize storage
 storage = SqliteStorage(table_name="agent_sessions", db_file=db_file)
-# *******************************
 
+# Initialize Agent
 agent = Agent(
     name="Memory Agent",
     model=OpenAIChat(id="gpt-4.1"),
+    # Store memories in a database
     memory=memory,
-    # Enable the Agent to manage memories
+    # Give the Agent the ability to update memories
     enable_agentic_memory=True,
+    # Store the chat history in the database
     storage=storage,
     # Add chat history to the messages
     add_history_to_messages=True,
