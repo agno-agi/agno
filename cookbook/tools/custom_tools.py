@@ -45,10 +45,8 @@ def data_class_tool():
     return CustomTool(name="John", age=30, city="New York")
 
 
-model = OpenAIChat(id="gpt-4o")
-
 agent = Agent(
-    model=model,
+    model=OpenAIChat(id="gpt-4o"),
     tools=[
         dict_tool,
         list_tool,
