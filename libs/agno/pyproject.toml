@@ -8,6 +8,13 @@ license = { file = "LICENSE" }
 authors = [
   {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
 ]
+keywords = [
+  "agent",
+  "reasoning",
+  "llm",
+  "large-language-model",
+  "framework",
+]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
