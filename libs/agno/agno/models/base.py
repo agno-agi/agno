@@ -981,7 +981,7 @@ class Model(ABC):
                 function_call_success = False
 
             # Process function call output
-            function_call_output: Optional[Union[List[Any], str]] = ""
+            function_call_output: Optional[str] = ""
             if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
                 for item in fc.result:
                     function_call_output += str(item)
