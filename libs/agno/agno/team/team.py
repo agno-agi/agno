@@ -54,6 +54,7 @@ from agno.utils.log import (
     use_agent_logger,
     use_team_logger,
 )
+from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.message import get_text_from_message
 from agno.utils.response import (
     check_if_run_cancelled,
@@ -419,7 +420,21 @@ class Team:
         if session_id is not None:
             member.team_session_id = session_id
 
-        member.team_id = self.team_id
+        # Set the team session state on members
+        if self.session_state is not None:
+            if isinstance(member, Agent):
+                if member.team_session_state is None:
+                    member.team_session_state = self.session_state
+                else:
+                    merge_dictionaries(member.team_session_state, self.session_state)
+            elif isinstance(member, Team):
+                if member.session_state is None:
+                    member.session_state = self.session_state
+                else:
+                    merge_dictionaries(member.session_state, self.session_state)
+
+        if isinstance(member, Agent):
+            member.team_id = self.team_id
 
         if member.name is None:
             log_warning("Team member name is undefined.")
@@ -4311,6 +4326,7 @@ class Team:
                         # If the function does not exist in self.functions
                         if name not in self._functions_for_model:
                             func._agent = self
+                            func._team = self
                             func.process_entrypoint(strict=strict)
                             if strict:
                                 func.strict = True
@@ -4327,6 +4343,7 @@ class Team:
                 elif isinstance(tool, Function):
                     if tool.name not in self._functions_for_model:
                         tool._agent = self
+                        tool._team = self
                         tool.process_entrypoint(strict=strict)
                         if strict and tool.strict is None:
                             tool.strict = True
@@ -4345,6 +4362,7 @@ class Team:
                     try:
                         func = Function.from_callable(tool, strict=strict)
                         func._agent = self
+                        func._team = self
                         if strict:
                             func.strict = True
                         self._functions_for_model[func.name] = func
@@ -4841,7 +4859,7 @@ class Team:
         json_output_prompt += "\nMake sure it only contains valid JSON."
         return json_output_prompt
 
-    def _update_team_state(self, run_response: Union[TeamRunResponse, RunResponse]) -> None:
+    def _update_team_media(self, run_response: Union[TeamRunResponse, RunResponse]) -> None:
         """Update the team state with the run response."""
         if run_response.images is not None:
             if self.images is None:
@@ -4979,6 +4997,18 @@ class Team:
 
         return set_shared_context
 
+    def _update_team_session_state(self, member_agent: Union[Agent, "Team"]) -> None:
+        if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
+            if self.session_state is None:
+                self.session_state = member_agent.team_session_state
+            else:
+                merge_dictionaries(self.session_state, member_agent.team_session_state)
+        elif isinstance(member_agent, Team) and member_agent.session_state is not None:
+            if self.session_state is None:
+                self.session_state = member_agent.session_state
+            else:
+                merge_dictionaries(self.session_state, member_agent.session_state)
+
     def get_run_member_agents_function(
         self,
         session_id: str,
@@ -5058,6 +5088,7 @@ class Team:
                 member_agent_task += f"\n\n{team_member_interactions_str}"
 
             for member_agent_index, member_agent in enumerate(self.members):
+                self._initialize_member(member_agent, session_id=session_id)
                 if stream:
                     member_agent_run_response_stream = member_agent.run(
                         member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True
@@ -5122,8 +5153,11 @@ class Team:
                 self.run_response = cast(TeamRunResponse, self.run_response)
                 self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-                # Update the team state
-                self._update_team_state(member_agent.run_response)  # type: ignore
+                # Update team session state
+                self._update_team_session_state(member_agent)
+
+                # Update the team media
+                self._update_team_media(member_agent.run_response)  # type: ignore
 
             # Afterward, switch back to the team logger
             use_team_logger()
@@ -5195,6 +5229,7 @@ class Team:
                 # We cannot stream responses with async gather
                 current_agent = member_agent  # Create a reference to the current agent
                 current_index = member_agent_index  # Create a reference to the current index
+                self._initialize_member(current_agent, session_id=session_id)
 
                 async def run_member_agent(agent=current_agent, idx=current_index) -> str:
                     response = await agent.arun(
@@ -5222,8 +5257,11 @@ class Team:
                     self.run_response = cast(TeamRunResponse, self.run_response)
                     self.run_response.add_member_run(agent.run_response)
 
-                    # Update the team state
-                    self._update_team_state(agent.run_response)
+                    # Update team session state
+                    self._update_team_session_state(current_agent)
+
+                    # Update the team media
+                    self._update_team_media(agent.run_response)
 
                     if response.content is None and (response.tools is None or len(response.tools) == 0):
                         return f"Agent {member_name}: No response from the member agent."
@@ -5426,8 +5464,11 @@ class Team:
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-            # Update the team state
-            self._update_team_state(member_agent.run_response)  # type: ignore
+            # Update team session state
+            self._update_team_session_state(member_agent)
+
+            # Update the team media
+            self._update_team_media(member_agent.run_response)  # type: ignore
 
         async def atransfer_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
@@ -5567,8 +5608,11 @@ class Team:
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-            # Update the team state
-            self._update_team_state(member_agent.run_response)  # type: ignore
+            # Update team session state
+            self._update_team_session_state(member_agent)
+
+            # Update the team media
+            self._update_team_media(member_agent.run_response)  # type: ignore
 
         if async_mode:
             transfer_function = atransfer_task_to_member  # type: ignore
@@ -5734,8 +5778,11 @@ class Team:
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-            # Update the team state
-            self._update_team_state(member_agent.run_response)  # type: ignore
+            # Update team session state
+            self._update_team_session_state(member_agent)
+
+            # Update the team media
+            self._update_team_media(member_agent.run_response)  # type: ignore
 
         async def aforward_task_to_member(member_id: str, expected_output: Optional[str] = None) -> AsyncIterator[str]:
             """Use this function to forward a message to the selected team member.
@@ -5832,8 +5879,11 @@ class Team:
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-            # Update the team state
-            self._update_team_state(member_agent.run_response)  # type: ignore
+            # Update team session state
+            self._update_team_session_state(member_agent)
+
+            # Update the team media
+            self._update_team_media(member_agent.run_response)  # type: ignore
 
         if async_mode:
             forward_function = aforward_task_to_member  # type: ignore
