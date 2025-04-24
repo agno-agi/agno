@@ -155,6 +155,12 @@ class Model(ABC):
         if len(functions) > 0:
             self._functions = functions
 
+    def get_functions(self) -> Dict[str, Function]:
+        return self._functions or {}
+
+    def get_tools(self) -> List[Dict]:
+        return self._tools or []
+
     def reset_tools_and_functions(self) -> None:
         self._tools = None
         self._functions = None
@@ -918,11 +924,17 @@ class Model(ABC):
         function_call_timer = Timer()
         function_call_timer.start()
         success: Union[bool, AgentRunException] = False
+
         try:
             if (
                 iscoroutinefunction(function_call.function.entrypoint)
                 or isasyncgenfunction(function_call.function.entrypoint)
                 or iscoroutine(function_call.function.entrypoint)
+            ):
+                success = await function_call.aexecute()
+            # If any of the hooks are async, we need to run the function call asynchronously
+            elif function_call.function.tool_hooks is not None and any(
+                iscoroutinefunction(f) for f in function_call.function.tool_hooks
             ):
                 success = await function_call.aexecute()
             else:
