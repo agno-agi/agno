@@ -40,7 +40,7 @@ async def run_agent_with_multimcp(message: str) -> None:
 
 
 if __name__ == "__main__":
-    # asyncio.run(run_agent("Do I have any birthdays this week?"))
+    asyncio.run(run_agent("Do I have any birthdays this week?"))
     asyncio.run(
         run_agent_with_multimcp(
             "Can you check when is my mom's birthday, and if there are any AirBnb listings in SF for two people for that day?"
