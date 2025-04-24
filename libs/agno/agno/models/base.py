@@ -11,7 +11,7 @@ from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.tools.function import Function, FunctionCall
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call
 
@@ -873,20 +873,21 @@ class Model(ABC):
             function_call_timer.stop()
 
             # Process function call output
-            function_call_output: Optional[Union[List[Any], str]] = ""
+            function_call_output: Optional[str] = ""
+
             if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
                 for item in fc.result:
-                    function_call_output += item
+                    function_call_output += str(item)
                     if fc.function.show_result:
-                        yield ModelResponse(content=item)
+                        yield ModelResponse(content=str(item))
             else:
-                function_call_output = fc.result
+                function_call_output = str(fc.result)
                 if fc.function.show_result:
                     yield ModelResponse(content=function_call_output)
 
             # Create and yield function call result
             function_call_result = self._create_function_call_result(
-                fc, function_call_success, function_call_output, function_call_timer
+                fc, success=function_call_success, output=function_call_output, timer=function_call_timer
             )
             yield ModelResponse(
                 content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
@@ -983,22 +984,22 @@ class Model(ABC):
             function_call_output: Optional[Union[List[Any], str]] = ""
             if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
                 for item in fc.result:
-                    function_call_output += item
+                    function_call_output += str(item)
                     if fc.function.show_result:
-                        yield ModelResponse(content=item)
+                        yield ModelResponse(content=str(item))
             elif isinstance(fc.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
                 async for item in fc.result:
-                    function_call_output += item
+                    function_call_output += str(item)
                     if fc.function.show_result:
-                        yield ModelResponse(content=item)
+                        yield ModelResponse(content=str(item))
             else:
-                function_call_output = fc.result
+                function_call_output = str(fc.result)
                 if fc.function.show_result:
                     yield ModelResponse(content=function_call_output)
 
             # Create and yield function call result
             function_call_result = self._create_function_call_result(
-                fc, function_call_success, function_call_output, function_call_timer
+                fc, success=function_call_success, output=function_call_output, timer=function_call_timer
             )
             yield ModelResponse(
                 content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
