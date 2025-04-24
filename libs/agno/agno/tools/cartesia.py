@@ -89,7 +89,6 @@ class CartesiaTools(Toolkit):
         description: str,
         language: str,
         original_speaker_gender: str,
-        dialect: Optional[str] = None,
         voice_id: Optional[str] = None,
     ) -> str:
         """Create a new voice localized to a different language.
@@ -116,7 +115,10 @@ class CartesiaTools(Toolkit):
                 original_speaker_gender=original_speaker_gender,
             )
 
-            return result.model_dump_json(indent=4)
+            if isinstance(result, dict):
+                return json.dumps(result, indent=4)
+            else:
+                return result.model_dump_json(indent=4)
 
         except Exception as e:
             log_error(f"Error localizing voice with Cartesia: {e}", exc_info=True)
@@ -131,8 +133,8 @@ class CartesiaTools(Toolkit):
         """
         Convert text to speechß.
         Args:
-            agent: The agent or team to attach the audio artifact to.
             transcript: The text to convert to speech
+            voice_id (optional): The ID of the voice to use for the text-to-speech. If None, uses the default voice ID configured in the tool. Defaults to None.
 
         Returns:
             str: Success or error message.

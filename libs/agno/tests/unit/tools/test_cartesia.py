@@ -256,6 +256,7 @@ class TestCartesiaTools:
                 name="Localized Voice",
                 description="Test Localization",
                 original_speaker_gender="female",
+                dialect=None,
             )
             assert result_data["id"] == "localized_voice_id"
             assert result_data["language"] == "es"
