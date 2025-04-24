@@ -363,21 +363,13 @@ class Agent:
         self.memory = memory
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
-        if add_memory_references is None:
-            self.add_memory_references = self.enable_user_memories or self.enable_agentic_memory
-        else:
-            self.add_memory_references = add_memory_references
+        self.add_memory_references = add_memory_references
         self.enable_session_summaries = enable_session_summaries
-        if add_session_summary_references is None:
-            self.add_session_summary_references = self.enable_session_summaries
-        else:
-            self.add_session_summary_references = add_session_summary_references
+        self.add_session_summary_references = add_session_summary_references
 
         self.add_history_to_messages = add_history_to_messages
         self.num_history_responses = num_history_responses
         self.num_history_runs = num_history_runs
-        if num_history_responses is not None:
-            self.num_history_runs = num_history_responses
 
         self.knowledge = knowledge
         self.add_references = add_references
@@ -482,7 +474,7 @@ class Agent:
         else:
             set_log_level_to_info()
 
-    def set_storage_mode(self):
+    def set_storage_mode(self) -> None:
         if self.storage is not None:
             if self.storage.mode in ["workflow", "team"]:
                 log_warning(f"You shouldn't use storage in multiple modes. Current mode is {self.storage.mode}.")
@@ -501,7 +493,7 @@ class Agent:
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
-    def set_default_model(self):
+    def set_default_model(self) -> None:
         # Use the default Model (OpenAIChat) if no model is provided
         if self.model is None:
             try:
@@ -517,7 +509,18 @@ class Agent:
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
 
+    def set_defaults(self) -> None:
+        if self.add_memory_references is None:
+            self.add_memory_references = self.enable_user_memories or self.enable_agentic_memory
+
+        if self.add_session_summary_references is None:
+            self.add_session_summary_references = self.enable_session_summaries
+
+        if self.num_history_responses is not None:
+            self.num_history_runs = self.num_history_responses
+
     def initialize_agent(self) -> None:
+        self.set_defaults()
         self.set_default_model()
         self.set_storage_mode()
         self.set_debug()
