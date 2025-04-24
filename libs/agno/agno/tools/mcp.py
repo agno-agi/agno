@@ -1,5 +1,6 @@
 from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass
+from datetime import timedelta
 from os import environ
 from types import TracebackType
 from typing import Any, Dict, List, Literal, Optional, Union
@@ -48,6 +49,7 @@ class MCPTools(Toolkit):
         server_params: Optional[StdioServerParameters] = None,
         sse_client_params: Optional[SSEClientParams] = None,
         session: Optional[ClientSession] = None,
+        timeout_seconds: int = 5,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -64,12 +66,17 @@ class MCPTools(Toolkit):
             url: The URL endpoint for SSE connection when transport is "sse".
             env: The environment variables to pass to the server. Should be used in conjunction with command.
             client: The underlying MCP client (optional, used to prevent garbage collection)
+            timeout_seconds: Read timeout in seconds for the MCP client
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
             transport: The transport protocol to use, either "stdio" or "sse"
         """
         super().__init__(name="MCPToolkit", **kwargs)
 
+        if session is None and server_params is None and command is None:
+            raise ValueError("Either session or server_params or command must be provided")
+
+        self.timeout_seconds = timeout_seconds
         self.session: Optional[ClientSession] = session
         self.server_params: Optional[StdioServerParameters] = server_params
         self.transport = transport
@@ -130,7 +137,7 @@ class MCPTools(Toolkit):
 
         read, write = await self._context.__aenter__()  # type: ignore
 
-        self._session_context = ClientSession(read, write)  # type: ignore
+        self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(self.timeout_seconds))  # type: ignore
         self.session = await self._session_context.__aenter__()  # type: ignore
 
         # Initialize with the new session
@@ -220,6 +227,7 @@ class MultiMCPTools(Toolkit):
         env: Optional[dict[str, str]] = None,
         server_params_list: Optional[List[StdioServerParameters]] = None,
         sse_endpoints: Optional[List[Dict[str, Union[str, Optional[SSEClientParams]]]]] = None,
+        timeout_seconds: int = 5,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -234,6 +242,7 @@ class MultiMCPTools(Toolkit):
             env: The environment variables to pass to the servers. Should be used in conjunction with commands.
             sse_endpoints: List of dictionaries containing {"url": str, "params": SSEClientParams} for SSE connections
             client: The underlying MCP client (optional, used to prevent garbage collection)
+            timeout_seconds: Timeout in seconds for managing timeouts for Client Session if Agent or Tool doesn't respond.
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
         """
@@ -242,6 +251,7 @@ class MultiMCPTools(Toolkit):
         if server_params_list is None and commands is None and sse_endpoints is None:
             raise ValueError("Either server_params_list, commands, or sse_endpoints must be provided")
 
+        self.timeout_seconds = timeout_seconds
         self.server_params_list: List[StdioServerParameters] = server_params_list or []
         self.commands: Optional[List[str]] = commands
         self.sse_endpoints: Optional[List[Dict[str, Union[str, Optional[SSEClientParams]]]]] = sse_endpoints
@@ -277,7 +287,9 @@ class MultiMCPTools(Toolkit):
         for server_params in self.server_params_list:
             stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
             read, write = stdio_transport
-            session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+            session = await self._async_exit_stack.enter_async_context(
+                ClientSession(read, write, read_timeout_seconds=timedelta(self.timeout_seconds))
+            )
 
             await self.initialize(session)
 
