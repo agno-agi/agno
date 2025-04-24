@@ -36,7 +36,7 @@ reddit_agent = Agent(
     instructions=[
         "Find information about the company on Reddit",
     ],
-    tool_execution_hooks=[logger_hook],
+    tool_hooks=[logger_hook],
 )
 
 website_agent = Agent(
@@ -48,7 +48,7 @@ website_agent = Agent(
     instructions=[
         "Search the website for information",
     ],
-    tool_execution_hooks=[logger_hook],
+    tool_hooks=[logger_hook],
 )
 
 user_id = str(uuid4())
@@ -69,7 +69,7 @@ company_info_team = Team(
         "If you can find the company's website URL, then scrape the homepage and the about page.",
     ],
     show_members_responses=True,
-    tool_execution_hooks=[logger_hook],
+    tool_hooks=[logger_hook],
 )
 
 if __name__ == "__main__":

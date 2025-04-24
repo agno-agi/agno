@@ -831,7 +831,7 @@ class Model(ABC):
     def run_function_calls(
         self, function_calls: List[FunctionCall], function_call_results: List[Message]
     ) -> Iterator[ModelResponse]:
-        
+
         if self._function_call_stack is None:
             self._function_call_stack = []
 
@@ -855,7 +855,7 @@ class Model(ABC):
                 ],
                 event=ModelResponseEvent.tool_call_started.value,
             )
-            
+
             # Track if the function call was successful
             function_call_success = False
             # Run function calls sequentially
@@ -928,8 +928,8 @@ class Model(ABC):
             ):
                 success = await function_call.aexecute()
             # If any of the hooks are async, we need to run the function call asynchronously
-            elif function_call.function.tool_execution_hooks is not None and any(
-                iscoroutinefunction(f) for f in function_call.function.tool_execution_hooks
+            elif function_call.function.tool_hooks is not None and any(
+                iscoroutinefunction(f) for f in function_call.function.tool_hooks
             ):
                 success = await function_call.aexecute()
             else:

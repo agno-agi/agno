@@ -72,7 +72,7 @@ async def validation_hook(
     return result
 
 
-agent = Agent(tools=[CustomerDBTools()], tool_execution_hooks=[validation_hook])
+agent = Agent(tools=[CustomerDBTools()], tool_hooks=[validation_hook])
 
 asyncio.run(agent.aprint_response("I am customer 456, please retrieve my profile."))
 asyncio.run(agent.aprint_response("I am customer 456, please delete my profile."))

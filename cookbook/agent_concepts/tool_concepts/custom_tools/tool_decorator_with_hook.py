@@ -24,7 +24,7 @@ def duration_logger_hook(
     return result
 
 
-@tool(tool_execution_hooks=[duration_logger_hook])
+@tool(tool_hooks=[duration_logger_hook])
 def get_top_hackernews_stories(agent: Agent) -> Iterator[str]:
     num_stories = agent.context.get("num_stories", 5) if agent.context else 5
 

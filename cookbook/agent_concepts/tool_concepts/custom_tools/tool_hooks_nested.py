@@ -75,7 +75,7 @@ def logger_hook(function_name: str, call_func: Callable, arguments: Dict[str, An
 agent = Agent(
     tools=[CustomerDBTools()],
     # Hooks are executed in order of the list
-    tool_execution_hooks=[validation_hook, logger_hook],
+    tool_hooks=[validation_hook, logger_hook],
 )
 
 if __name__ == "__main__":

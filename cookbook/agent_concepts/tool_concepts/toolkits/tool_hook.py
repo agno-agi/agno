@@ -19,6 +19,6 @@ def logger_hook(function_name: str, function_call: Callable, arguments: Dict[str
     return result
 
 
-agent = Agent(tools=[DuckDuckGoTools()], tool_execution_hooks=[logger_hook])
+agent = Agent(tools=[DuckDuckGoTools()], tool_hooks=[logger_hook])
 
 agent.print_response("What is currently trending on Twitter?")

@@ -26,7 +26,7 @@ def tool(
     stop_after_tool_call: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
-    tool_execution_hooks: Optional[List[Callable]] = None,
+    tool_hooks: Optional[List[Callable]] = None,
     cache_results: bool = False,
     cache_dir: Optional[str] = None,
     cache_ttl: int = 3600,
@@ -51,7 +51,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         stop_after_tool_call: Optional[bool] - If True, the agent will stop after the function call.
         pre_hook: Optional[Callable] - Hook that runs before the function is executed (deprecated, use tool_execution_hook instead).
         post_hook: Optional[Callable] - Hook that runs after the function is executed (deprecated, use tool_execution_hook instead).
-        tool_execution_hooks: Optional[List[Callable]] - List of hooks that run before and after the function is executed.
+        tool_hooks: Optional[List[Callable]] - List of hooks that run before and after the function is executed.
         cache_results: bool - If True, enable caching of function results
         cache_dir: Optional[str] - Directory to store cache files
         cache_ttl: int - Time-to-live for cached results in seconds
@@ -85,7 +85,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "stop_after_tool_call",
             "pre_hook",
             "post_hook",
-            "tool_execution_hooks",
+            "tool_hooks",
             "cache_results",
             "cache_dir",
             "cache_ttl",
