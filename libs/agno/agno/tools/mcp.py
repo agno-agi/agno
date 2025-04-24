@@ -73,8 +73,10 @@ class MCPTools(Toolkit):
         """
         super().__init__(name="MCPToolkit", **kwargs)
 
-        if session is None and server_params is None and command is None:
+        if session is None and transport == "stdio" and server_params is None and command is None:
             raise ValueError("Either session or server_params or command must be provided")
+        if session is None and transport == "sse" and url is None and sse_client_params is None:
+            raise ValueError("Either session or url or sse_client_params must be provided")
 
         self.timeout_seconds = timeout_seconds
         self.session: Optional[ClientSession] = session
@@ -246,7 +248,7 @@ class MultiMCPTools(Toolkit):
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
         """
-        super().__init__(name="MultiMCPToolkit", **kwargs)
+        super().__init__(name="MultiMCPToolkit", include_tools=include_tools, exclude_tools=exclude_tools, **kwargs)
 
         if server_params_list is None and commands is None and sse_endpoints is None:
             raise ValueError("Either server_params_list, commands, or sse_endpoints must be provided")
