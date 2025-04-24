@@ -233,7 +233,7 @@ class MultiMCPTools(Toolkit):
         urls: Optional[List[str]] = None,
         *,
         env: Optional[dict[str, str]] = None,
-        server_params_list: List[Union[SSEClientParams, StdioServerParameters]] = [],
+        server_params_list: Optional[List[Union[SSEClientParams, StdioServerParameters]]] = None,
         timeout_seconds: int = 5,
         client=None,
         include_tools: Optional[list[str]] = None,
@@ -246,7 +246,7 @@ class MultiMCPTools(Toolkit):
         Args:
             commands: List of commands to run to start the servers. Should be used in conjunction with env.
             urls: List of URLs for SSE endpoints.
-            server_params_list: List of StdioServerParameters and SSEClientParams for creating new sessions.
+            server_params_list: List of StdioServerParameters or SSEClientParams for creating new sessions.
             env: The environment variables to pass to the servers. Should be used in conjunction with commands.
             client: The underlying MCP client (optional, used to prevent garbage collection).
             timeout_seconds: Timeout in seconds for managing timeouts for Client Session if Agent or Tool doesn't respond.
@@ -255,10 +255,10 @@ class MultiMCPTools(Toolkit):
         """
         super().__init__(name="MultiMCPToolkit", include_tools=include_tools, exclude_tools=exclude_tools, **kwargs)
 
-        if server_params_list == [] and commands is None:
-            raise ValueError("Either server_params_list or commands must be provided")
+        if server_params_list is None and commands is None and urls is None:
+            raise ValueError("Either server_params_list or commands or urls must be provided")
 
-        self.server_params_list: List[Union[SSEClientParams, StdioServerParameters]] = server_params_list
+        self.server_params_list: List[Union[SSEClientParams, StdioServerParameters]] = server_params_list or []
         self.timeout_seconds = timeout_seconds
         self.commands: Optional[List[str]] = commands
         self.urls: Optional[List[str]] = urls
