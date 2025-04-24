@@ -1960,16 +1960,17 @@ class Agent:
         agent_tools = self.get_tools(session_id=session_id, async_mode=async_mode, user_id=user_id)
         agent_tool_names = []
         # Get all the tool names
-        for tool in agent_tools:
-            if isinstance(tool, Function):
-                agent_tool_names.append(tool.name)
-            elif isinstance(tool, Toolkit):
-                agent_tool_names.extend([f for f in tool.functions.keys()])
-            elif callable(tool):
-                agent_tool_names.append(tool.__name__)
+        if agent_tools is not None: 
+            for tool in agent_tools:
+                if isinstance(tool, Function):
+                    agent_tool_names.append(tool.name)
+                elif isinstance(tool, Toolkit):
+                    agent_tool_names.extend([f for f in tool.functions.keys()])
+                elif callable(tool):
+                    agent_tool_names.append(tool.__name__)
 
         # Create new functions if we don't have any set on the model OR if the list of tool names is different than what is set on the model
-        existing_model_functions = self.model.get_functions()
+        existing_model_functions = model.get_functions()
         if existing_model_functions is None or set(existing_model_functions.keys()) != set(agent_tool_names):
             # Get Agent tools
             if agent_tools is not None and len(agent_tools) > 0:
@@ -2014,7 +2015,7 @@ class Agent:
                             self._tool_instructions.append(tool.instructions)
 
                     elif isinstance(tool, Function):
-                        if tool.name not in self._functions_for_model:
+                        if tool.name not in _functions_for_model:
                             tool._agent = self
                             tool.process_entrypoint(strict=strict)
                             if strict and tool.strict is None:
@@ -2032,7 +2033,7 @@ class Agent:
                     elif callable(tool):
                         try:
                             function_name = tool.__name__
-                            if function_name not in self._functions_for_model:
+                            if function_name not in _functions_for_model:
                                 func = Function.from_callable(tool, strict=strict)
                                 func._agent = self
                                 if strict:

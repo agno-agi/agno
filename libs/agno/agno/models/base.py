@@ -156,10 +156,10 @@ class Model(ABC):
             self._functions = functions
 
     def get_functions(self) -> Dict[str, Function]:
-        return self._functions
+        return self._functions or {}
 
     def get_tools(self) -> List[Dict]:
-        return self._tools
+        return self._tools or []
 
     def reset_tools_and_functions(self) -> None:
         self._tools = None
