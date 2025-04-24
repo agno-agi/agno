@@ -10,6 +10,7 @@ from agno.utils.log import log_error, log_warning
 
 try:
     import litellm
+    from litellm import validate_environment
 except ImportError:
     raise ImportError("`litellm` not installed. Please install it via `pip install litellm`")
 
@@ -44,7 +45,12 @@ class LiteLLM(Model):
         if not self.api_key:
             self.api_key = getenv("LITELLM_API_KEY")
             if not self.api_key:
-                log_warning("LITELLM_API_KEY not set. Please set the LITELLM_API_KEY environment variable.")
+                # Check for other present valid keys, e.g. OPENAI_API_KEY if self.id is an OpenAI model
+                env_validation = validate_environment(model=self.id, api_base=self.api_base)
+                if not env_validation.get("keys_in_environment"):
+                    log_warning(
+                        "Missing required key. Please set the LITELLM_API_KEY or other valid environment variables."
+                    )
 
     def get_client(self) -> Any:
         """

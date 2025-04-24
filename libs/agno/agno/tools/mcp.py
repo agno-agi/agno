@@ -1,4 +1,5 @@
 from contextlib import AsyncExitStack
+from datetime import timedelta
 from os import environ
 from types import TracebackType
 from typing import List, Optional, Union
@@ -33,6 +34,7 @@ class MCPTools(Toolkit):
         env: Optional[dict[str, str]] = None,
         server_params: Optional[StdioServerParameters] = None,
         session: Optional[ClientSession] = None,
+        timeout_seconds: int = 5,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -47,6 +49,7 @@ class MCPTools(Toolkit):
             command: The command to run to start the server. Should be used in conjunction with env.
             env: The environment variables to pass to the server. Should be used in conjunction with command.
             client: The underlying MCP client (optional, used to prevent garbage collection)
+            timeout_seconds: Read timeout in seconds for the MCP client
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
         """
@@ -55,6 +58,7 @@ class MCPTools(Toolkit):
         if session is None and server_params is None and command is None:
             raise ValueError("Either session or server_params or command must be provided")
 
+        self.timeout_seconds = timeout_seconds
         self.session: Optional[ClientSession] = session
         self.server_params: Optional[StdioServerParameters] = server_params
 
@@ -82,9 +86,6 @@ class MCPTools(Toolkit):
         self._session_context = None
         self._initialized = False
 
-        self.include_tools = include_tools
-        self.exclude_tools = exclude_tools or []
-
     async def __aenter__(self) -> "MCPTools":
         """Enter the async context manager."""
 
@@ -101,7 +102,7 @@ class MCPTools(Toolkit):
         self._stdio_context = stdio_client(self.server_params)  # type: ignore
         read, write = await self._stdio_context.__aenter__()  # type: ignore
 
-        self._session_context = ClientSession(read, write)  # type: ignore
+        self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(self.timeout_seconds))  # type: ignore
         self.session = await self._session_context.__aenter__()  # type: ignore
 
         # Initialize with the new session
@@ -139,7 +140,7 @@ class MCPTools(Toolkit):
             # Filter tools based on include/exclude lists
             filtered_tools = []
             for tool in available_tools.tools:
-                if tool.name in self.exclude_tools:
+                if self.exclude_tools and tool.name in self.exclude_tools:
                     continue
                 if self.include_tools is None or tool.name in self.include_tools:
                     filtered_tools.append(tool)
@@ -189,6 +190,7 @@ class MultiMCPTools(Toolkit):
         *,
         env: Optional[dict[str, str]] = None,
         server_params_list: Optional[List[StdioServerParameters]] = None,
+        timeout_seconds: int = 5,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -202,6 +204,7 @@ class MultiMCPTools(Toolkit):
             commands: List of commands to run to start the servers. Should be used in conjunction with env.
             env: The environment variables to pass to the servers. Should be used in conjunction with commands.
             client: The underlying MCP client (optional, used to prevent garbage collection)
+            timeout_seconds: Timeout in seconds for managing timeouts for Client Session if Agent or Tool doesn't respond.
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
         """
@@ -210,6 +213,7 @@ class MultiMCPTools(Toolkit):
         if server_params_list is None and commands is None:
             raise ValueError("Either server_params_list or commands must be provided")
 
+        self.timeout_seconds = timeout_seconds
         self.server_params_list: List[StdioServerParameters] = server_params_list or []
         self.commands: Optional[List[str]] = commands
 
@@ -237,16 +241,15 @@ class MultiMCPTools(Toolkit):
 
         self._client = client
 
-        self.include_tools = include_tools
-        self.exclude_tools = exclude_tools or []
-
     async def __aenter__(self) -> "MultiMCPTools":
         """Enter the async context manager."""
 
         for server_params in self.server_params_list:
             stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
             read, write = stdio_transport
-            session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+            session = await self._async_exit_stack.enter_async_context(
+                ClientSession(read, write, read_timeout_seconds=timedelta(self.timeout_seconds))
+            )
 
             await self.initialize(session)
 
@@ -274,7 +277,7 @@ class MultiMCPTools(Toolkit):
             # Filter tools based on include/exclude lists
             filtered_tools = []
             for tool in available_tools.tools:
-                if tool.name in self.exclude_tools:
+                if self.exclude_tools and tool.name in self.exclude_tools:
                     continue
                 if self.include_tools is None or tool.name in self.include_tools:
                     filtered_tools.append(tool)

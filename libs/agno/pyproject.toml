@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.3.3"
+version = "1.4.1"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -39,7 +39,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
+dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
 
 # Dependencies for Models
 azure = ["azure-ai-inference", "aiohttp"]
@@ -74,6 +74,7 @@ mcp = ["mcp"]
 browserbase = ["browserbase", "playwright"]
 agentql = ["agentql"]
 confluence = ["atlassian-python-api"]
+zep = ["zep-cloud"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -92,6 +93,8 @@ mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
 weaviate = ["weaviate-client"]
 milvusdb = ["pymilvus"]
+clickhouse = ["clickhouse-connect"]
+pinecone = ["pinecone==5.4.2"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -146,6 +149,7 @@ tools = [
   "agno[agentql]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
+  "agno[zep]"
 ]
 
 # All storage
@@ -167,7 +171,9 @@ vectordbs = [
   "agno[mongodb]",
   "agno[singlestore]",
   "agno[weaviate]",
-  "agno[milvusdb]"
+  "agno[milvusdb]",
+  "agno[clickhouse]",
+  "agno[pinecone]"
 ]
 
 # All knowledge
@@ -233,6 +239,7 @@ exclude = ["tests*"]
 [[tool.mypy.overrides]]
 module = [
   "agentql.*",
+  "aiofiles.*",
   "altair.*",
   "anthropic.*",
   "apify_client.*",
@@ -340,6 +347,6 @@ module = [
   "wikipedia.*",
   "yfinance.*",
   "youtube_transcript_api.*",
-  "aiofiles.*",
+  "zep_cloud.*"
 ]
 ignore_missing_imports = true

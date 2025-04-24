@@ -327,7 +327,7 @@ def get_async_playground_router(
                     else:
                         raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        if stream:
+        if stream and agent.is_streamable:
             return StreamingResponse(
                 chat_response_streamer(
                     agent,
@@ -697,7 +697,7 @@ def get_async_playground_router(
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        if stream:
+        if stream and team.is_streamable:
             return StreamingResponse(
                 team_chat_response_streamer(
                     team,

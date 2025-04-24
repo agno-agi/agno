@@ -48,7 +48,6 @@ agent.print_response(
 )
 
 memories = memory.get_user_memories(user_id=john_doe_id)
-
 print("Memories about John Doe:")
 pprint(memories)
 
@@ -57,7 +56,6 @@ agent.print_response(
 )
 
 memories = memory.get_user_memories(user_id=john_doe_id)
-
 print("Memories about John Doe:")
 pprint(memories)
 

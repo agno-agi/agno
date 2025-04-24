@@ -210,7 +210,7 @@ class AccuracyEval:
             evaluator_context += "\n"
 
         return Agent(
-            model=OpenAIChat(id="gpt-4o-mini"),
+            model=model,
             description=f"""\
 You are an Agent Evaluator tasked with assessing the accuracy of an AI Agent's answer compared to an expected answer for a given question.
 Your task is to provide a detailed analysis and assign a score on a scale of 1 to 10, where 10 indicates a perfect match to the expected answer.
