@@ -230,6 +230,7 @@ class MultiMCPTools(Toolkit):
     def __init__(
         self,
         commands: Optional[List[str]] = None,
+        urls: Optional[List[str]] = None,
         *,
         env: Optional[dict[str, str]] = None,
         server_params_list: List[Union[SSEClientParams, StdioServerParameters]] = [],
@@ -243,13 +244,14 @@ class MultiMCPTools(Toolkit):
         Initialize the MCP toolkit.
 
         Args:
-            server_params_list: List of StdioServerParameters and SSEClientParams for creating new sessions
             commands: List of commands to run to start the servers. Should be used in conjunction with env.
+            urls: List of URLs for SSE endpoints.
+            server_params_list: List of StdioServerParameters and SSEClientParams for creating new sessions.
             env: The environment variables to pass to the servers. Should be used in conjunction with commands.
-            client: The underlying MCP client (optional, used to prevent garbage collection)
+            client: The underlying MCP client (optional, used to prevent garbage collection).
             timeout_seconds: Timeout in seconds for managing timeouts for Client Session if Agent or Tool doesn't respond.
-            include_tools: Optional list of tool names to include (if None, includes all)
-            exclude_tools: Optional list of tool names to exclude (if None, excludes none)
+            include_tools: Optional list of tool names to include (if None, includes all).
+            exclude_tools: Optional list of tool names to exclude (if None, excludes none).
         """
         super().__init__(name="MultiMCPToolkit", include_tools=include_tools, exclude_tools=exclude_tools, **kwargs)
 
@@ -259,6 +261,7 @@ class MultiMCPTools(Toolkit):
         self.server_params_list: List[Union[SSEClientParams, StdioServerParameters]] = server_params_list
         self.timeout_seconds = timeout_seconds
         self.commands: Optional[List[str]] = commands
+        self.urls: Optional[List[str]] = urls
 
         # Merge provided env with system env
         if env is not None:
@@ -280,6 +283,10 @@ class MultiMCPTools(Toolkit):
                 arguments = parts[1:] if len(parts) > 1 else []
                 self.server_params_list.append(StdioServerParameters(command=cmd, args=arguments, env=env))
 
+        if urls is not None:
+            for url in urls:
+                self.server_params_list.append(SSEClientParams(url=url))
+
         self._async_exit_stack = AsyncExitStack()
 
         self._client = client
@@ -300,7 +307,7 @@ class MultiMCPTools(Toolkit):
 
             # Handle SSE connections
             if isinstance(server_params, SSEClientParams):
-                sse_args = asdict(server_params) 
+                sse_args = asdict(server_params)
                 sse_transport = await self._async_exit_stack.enter_async_context(sse_client(**sse_args))
                 read, write = sse_transport
                 session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
