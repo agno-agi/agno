@@ -5,44 +5,68 @@ from agno.models.openai import OpenAIChat
 from pydantic import BaseModel
 
 
-def dict_tool():
-    return {"name": "John", "age": 30, "city": "New York"}
+def dict_tool(name: str, age: int, city: str):
+    """
+    Return a dictionary with the name, age, and city of the person.
+    """
+    return {"name": name, "age": age, "city": city}
 
 
-def list_tool():
-    return ["Hello", "World"]
+def list_tool(items: list[str]):
+    """
+    Return a list of items.
+    """
+    return items
 
 
-def set_tool():
-    return {"apple", "banana", "cherry"}
+def set_tool(items: list[str]):
+    """
+    Return a set of items.
+    """
+    return set(items)
 
 
-def tuple_tool():
-    return ("John", 30, "New York")
+def tuple_tool(name: str, age: int, city: str):
+    """
+    Return a tuple with the name, age, and city of the person.
+    """
+    return (name, age, city)
 
 
-def generator_tool():
-    for i in range(5):
-        yield i
+def generator_tool(items: list[str]):
+    """
+    Return a generator of items.
+    """
+    for item in items:
+        yield item
+        yield " "
 
 
-def pydantic_tool():
+def pydantic_tool(name: str, age: int, city: str):
+    """
+    Return a Pydantic model with the name, age, and city of the person.
+    """
+
     class CustomTool(BaseModel):
         name: str
         age: int
         city: str
 
-    return CustomTool(name="John", age=30, city="New York")
+    return CustomTool(name=name, age=age, city=city)
 
 
-def data_class_tool():
+def data_class_tool(name: str, age: int, city: str):
+    """
+    Return a data class with the name, age, and city of the person.
+    """
+
     @dataclass
     class CustomTool:
         name: str
         age: int
         city: str
 
-    return CustomTool(name="John", age=30, city="New York")
+    return CustomTool(name=name, age=age, city=city)
 
 
 agent = Agent(
@@ -58,4 +82,4 @@ agent = Agent(
     ],
     show_tool_calls=True,
 )
-agent.print_response("Please call all the tools")
+agent.print_response("Call all the tools and make up interesting arguments")
