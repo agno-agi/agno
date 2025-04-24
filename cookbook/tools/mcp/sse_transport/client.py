@@ -8,7 +8,7 @@ import asyncio
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.mcp import MCPTools, MultiMCPTools
+from agno.tools.mcp import MCPTools, MultiMCPTools, SSEClientParams
 
 # This is the URL of the MCP server we want to use.
 server_url = "http://localhost:8000/sse"
@@ -29,7 +29,7 @@ async def run_agent(message: str) -> None:
 async def run_agent_with_multimcp(message: str) -> None:
     async with MultiMCPTools(
         commands=["npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt"],
-        sse_endpoints=[{"url": server_url}],
+        server_params_list=[SSEClientParams(url=server_url)],
     ) as mcp_tools:
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
