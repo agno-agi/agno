@@ -2,22 +2,21 @@ from unittest.mock import patch
 
 import pytest
 
-from agno.tools.mcp import MCPTools, MultiMCPTools
-from agno.tools.mcp import SSEClientParams
+from agno.tools.mcp import MCPTools, MultiMCPTools, SSEClientParams
 
 
 @pytest.mark.asyncio
 async def test_sse_transport_without_url():
     """Test that ValueError is raised when transport is SSE but URL is not provided."""
-    with pytest.raises(ValueError, match="Either session, server_params, command, or url"):
+    with pytest.raises(ValueError, match="The 'url' parameter must be provided"):
         async with MCPTools(transport="sse"):
             pass
 
 
 @pytest.mark.asyncio
-async def test_stdio_transport_without_server_params():
+async def test_stdio_transport_without_command_nor_server_params():
     """Test that ValueError is raised when transport is stdio but server_params is None."""
-    with pytest.raises(ValueError, match="server_params must be provided when using stdio transport"):
+    with pytest.raises(ValueError, match="One of 'command' or 'server_params' parameters must be provided"):
         async with MCPTools(transport="stdio"):
             pass
 

@@ -59,7 +59,7 @@ class MCPTools(Toolkit):
             session: An initialized MCP ClientSession connected to an MCP server
             server_params: StdioServerParameters for creating a new session
             command: The command to run to start the server. Should be used in conjunction with env.
-            url: The URL endpoint for SSE connection when transport is "sse"
+            url: The URL endpoint for SSE connection when transport is "sse". Required when using SSE transport.
             env: The environment variables to pass to the server. Should be used in conjunction with command.
             client: The underlying MCP client (optional, used to prevent garbage collection)
             include_tools: Optional list of tool names to include (if None, includes all)
@@ -69,14 +69,19 @@ class MCPTools(Toolkit):
         """
         super().__init__(name="MCPToolkit", **kwargs)
 
-        if session is None and server_params is None and command is None and (transport == "sse" and url is None):
-            raise ValueError("Either session, server_params, command, or url (with transport='sse') must be provided")
-
         self.session: Optional[ClientSession] = session
         self.server_params: Optional[StdioServerParameters] = server_params
         self.transport = transport
         self.url = url
         self.sse_params = sse_params
+
+        if session is None:
+            if transport == "sse" and url is None:
+                raise ValueError("The 'url' parameter must be provided when using SSE transport")
+            if transport == "stdio" and command is None and server_params is None:
+                raise ValueError(
+                    "One of 'command' or 'server_params' parameters must be provided when using stdio transport"
+                )
 
         # Merge provided env with system env
         if env is not None:
@@ -96,9 +101,6 @@ class MCPTools(Toolkit):
             cmd = parts[0]
             arguments = parts[1:] if len(parts) > 1 else []
             self.server_params = StdioServerParameters(command=cmd, args=arguments, env=env)
-        elif transport == "sse" and command is not None and url is None:
-            # If transport is SSE and command looks like a URL, use it as the URL
-            self.url = command
 
         self._client = client
         self._context = None
