@@ -72,7 +72,7 @@ def test_multiple_interactions(agent_with_storage, agent_storage):
     # Verify both interactions are in the same session
     stored_session = agent_storage.read(session_id)
     assert stored_session is not None
-    assert len(stored_session.memory["runs"]) >= 4  # Should have at least 4 messages (2 questions + 2 responses)
+    assert len(stored_session.memory["runs"]) >= 2  # Should have at least 2 runs (2 x (question + response))
 
 
 def test_session_retrieval_by_user(agent_with_storage, agent_storage):
