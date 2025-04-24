@@ -2,7 +2,7 @@ import asyncio
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -26,6 +26,18 @@ class WebsiteReader(Reader):
 
     _visited: Set[str] = field(default_factory=set)
     _urls_to_crawl: List[Tuple[str, int]] = field(default_factory=list)
+
+    def __init__(
+        self, max_depth: int = 3, max_links: int = 10, timeout: int = 10, proxy: Optional[str] = None, **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.max_depth = max_depth
+        self.max_links = max_links
+        self.proxy = proxy
+        self.timeout = timeout
+
+        self._visited = set()
+        self._urls_to_crawl = []
 
     def delay(self, min_seconds=1, max_seconds=3):
         """
@@ -76,7 +88,13 @@ class WebsiteReader(Reader):
             if element:
                 return element.get_text(strip=True, separator=" ")
 
-        return ""
+        # If we only have a div without specific content classes, return empty string
+        if soup.find("div") and not any(
+            soup.find(class_=class_name) for class_name in ["content", "main-content", "post-content"]
+        ):
+            return ""
+
+        return soup.get_text(strip=True, separator=" ")
 
     def crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
         """
@@ -123,7 +141,11 @@ class WebsiteReader(Reader):
 
             try:
                 log_debug(f"Crawling: {current_url}")
-                response = httpx.get(current_url, timeout=10)
+                response = (
+                    httpx.get(current_url, timeout=self.timeout, proxy=self.proxy)
+                    if self.proxy
+                    else httpx.get(current_url, timeout=self.timeout)
+                )
 
                 response.raise_for_status()
                 soup = BeautifulSoup(response.content, "html.parser")
@@ -182,7 +204,8 @@ class WebsiteReader(Reader):
         self._visited = set()
         self._urls_to_crawl = [(url, starting_depth)]
 
-        async with httpx.AsyncClient() as client:
+        client_args = {"proxy": self.proxy} if self.proxy else {}
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             while self._urls_to_crawl and num_links < self.max_links:
                 current_url, current_depth = self._urls_to_crawl.pop(0)
 
@@ -199,7 +222,7 @@ class WebsiteReader(Reader):
 
                 try:
                     log_debug(f"Crawling asynchronously: {current_url}")
-                    response = await client.get(current_url, timeout=10, follow_redirects=True)
+                    response = await client.get(current_url, timeout=self.timeout, follow_redirects=True)
                     response.raise_for_status()
 
                     soup = BeautifulSoup(response.content, "html.parser")

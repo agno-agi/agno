@@ -37,6 +37,8 @@ class TeamRunResponse:
 
     response_audio: Optional[AudioResponse] = None  # Model audio response
 
+    reasoning_content: Optional[str] = None
+
     citations: Optional[Citations] = None
 
     extra_data: Optional[RunResponseExtraData] = None

@@ -13,7 +13,7 @@ from agno.storage.session.workflow import WorkflowSession
 @pytest.fixture
 def mock_redis_client():
     """Mock Redis client with in-memory storage for testing."""
-    with patch("redis.Redis") as mock_redis:
+    with patch("agno.storage.redis.Redis") as mock_redis:
         # Create a mock Redis client
         client = MagicMock()
 

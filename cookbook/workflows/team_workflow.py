@@ -4,6 +4,7 @@ from typing import Iterator
 from agno.agent import Agent, RunResponse
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.newspaper4k import Newspaper4kTools
@@ -11,11 +12,6 @@ from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.workflow import Workflow
 
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.team.team import Team
-from agno.tools.hackernews import HackerNewsTools
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 class TeamWorkflow(Workflow):
     description: str = (
@@ -90,7 +86,7 @@ class TeamWorkflow(Workflow):
     )
 
     def run(self) -> Iterator[RunResponse]:
-        logger.info(f"Getting top stories from HackerNews.")
+        logger.info("Getting top stories from HackerNews.")
         discussion: RunResponse = self.agent_team.run(
             "Getting 2 top stories from HackerNews and reddit and write a brief report on them"
         )

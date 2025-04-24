@@ -17,9 +17,9 @@
 
 [Agno](https://docs.agno.com) is a lightweight library for building Agents with memory, knowledge, tools and reasoning.
 
-Developers use Agno to build Reasoning Agents, Multimodal Agents, Teams of Agents and Agentic Workflows. Agno also provides a beautiful UI to chat with Agents and tools to monitor and evaluate their performance.
+Developers use Agno to build Reasoning Agents, Multimodal Agents, Teams of Agents and Agentic Workflows. Agno also provides a beautiful UI to chat with your Agents, pre-built FastAPI routes to serve your Agents and tools to monitor and evaluate their performance.
 
-Here's an Agent that researches and writes a report on a stock, reasoning through each step:
+Here's an Agent that writes a report on a stock, reasoning through each step:
 
 ```python reasoning_finance_agent.py
 from agno.agent import Agent
@@ -48,19 +48,20 @@ https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
 
 Agno is simple, fast and model-agnostic. Here are some key features:
 
-- **Model Agnostic**: Agno provides a unified interface to 23+ model providers, no lock-in.
-- **Lightning Fast**: Agents instantiate in **~2μs** on average (10,000x faster than LangGraph) and use **~3.75Kib** memory on average (50x less than LangGraph) (see [benchmarks](#performance)).
-- **Reasoning is a first class citizen**: Build Agents that can "think" and "analyze" using Reasoning Models, `ReasoningTools` or our custom `CoT+Tool-use` approach.
+- **Model Agnostic**: Agno Agents can connect to 23+ model providers, no lock-in.
+- **Lightning Fast**: - **Lightning Fast**: Agents instantiate in **~3μs** and use **~5Kib** memory on average (see [performance](#performance) for more details).
+- **Reasoning is a first class citizen**: Make your Agents "think" and "analyze" using Reasoning Models, `ReasoningTools` or our custom `chain-of-thought` approach.
 - **Natively Multi Modal**: Agno Agents are natively multi modal, they can take in text, image, audio and video and generate text, image, audio and video as output.
-- **Advanced Multi Agent Architecture**: Agno provides an industry leading multi-agent architecture with 3 different modes: `route`, `collaborate` and `coordinate`.
-- **Long-term Memory & Session Storage**: Agno provides `Storage` & `Memory` classes to provide your Agents with long-term memory and session storage.
-- **20+ Vector Databases for Knowledge**: Add domain knowledge to your Agents by integrating with 20+ vector databases. **Fully async and highly performant.**
-- **Structured Outputs**: Agno Agents have first class support for structured outputs using native structured outputs or `json_mode`.
+- **Advanced Multi Agent Architecture**: Agno provides an industry leading multi-agent architecture (**Agent Teams**) with 3 different modes: `route`, `collaborate` and `coordinate`.
+- **Agentic Search built-in**: Give your Agents the ability to search for information at runtime using one of 20+ vector databases. Get access to state-of-the-art Agentic RAG that uses hybrid search with re-ranking. **Fully async and highly performant.**
+- **Long-term Memory & Session Storage**: Agno provides plug-n-play `Storage` & `Memory` drivers that give your Agents long-term memory and session storage.
+- **Pre-built FastAPI Routes**: Agno provides pre-built FastAPI routes to serve your Agents, Teams and Workflows.
+- **Structured Outputs**: Agno Agents can return fully-typed responses using model provided structured outputs or `json_mode`.
 - **Monitoring**: Monitor agent sessions and performance in real-time on [agno.com](https://app.agno.com).
 
 ## Building Agents with Agno
 
-If you're new to Agno, start by building your [first Agent](https://docs.agno.com/introduction/agents), then chat with it on the [playground](https://docs.agno.com/introduction/playground) and finally, monitor it on [agno.com](https://docs.agno.com/introduction/monitoring).
+If you're new to Agno, start by building your [first Agent](https://docs.agno.com/introduction/agents), chat with it on the [playground](https://docs.agno.com/introduction/playground) and finally, monitor it on [agno.com](https://docs.agno.com/introduction/monitoring).
 
 After that, checkout the [Examples Gallery](https://docs.agno.com/examples) and build real-world applications with Agno.
 
@@ -74,16 +75,10 @@ pip install -U agno
 
 **Agents** are AI programs that operate autonomously.
 
-- The **brain** of an Agent is the model that it uses to reason, execute, and respond to the user.
-- The **body** of an Agent is the tools it uses to interact with the real world.
-- The **behavior** of an Agent is defined by instructions; the better the model, the better it is at following instructions.
+- The core of an Agent is a model, tools and instructions.
+- Agents also have **memory**, **knowledge**, **storage** and the ability to **reason**.
 
-Agents also have **memory**, **knowledge**, **storage** and the ability to **reason**:
-
-- **reasoning:** enables Agents to "think" before responding and "analyze" the results of their actions (i.e. tool calls), this improves the Agents' ability to solve problems that require sequential tool calls.
-- **knowledge:** is domain-specific information the Agent can **_search on demand_** to make better decisions and provide accurate responses. Knowledge is stored in a vector database and this **_search on demand_** pattern is known as Agentic RAG.
-- **storage:** is used by Agents to save session history and state in a database. Model APIs are stateless and storage enables us to continue conversations from where they left off. This makes Agents stateful, enabling multi-turn conversations.
-- **memory:** gives Agents the ability to store and recall information from previous interactions, allowing them to learn user preferences and personalize their responses.
+Read more about each of these in the [docs](https://docs.agno.com/introduction/agents#what-are-agents%3F).
 
 > Let's build a few Agents to see how they work.
 
@@ -102,7 +97,7 @@ from agno.tools.yfinance import YFinanceTools
 agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),
     tools=[
-        ReasoningTools(add_instructions=True, add_few_shot=True),
+        ReasoningTools(add_instructions=True),
         YFinanceTools(
             stock_price=True,
             analyst_recommendations=True,
@@ -336,8 +331,8 @@ Reach out to support@agno.com to get involved.
 
 At Agno, we're obsessed with performance. Why? because even simple AI workflows can spawn thousands of Agents to achieve their goals. Scale that to a modest number of users and performance becomes a bottleneck. Agno is designed to power high performance agentic systems:
 
-- Agent instantiation: ~2μs on average (~10,000x faster than LangGraph).
-- Memory footprint: ~3.75Kib on average (~50x less memory than LangGraph).
+- Agent instantiation: ~3μs on average
+- Memory footprint: ~6.5Kib on average
 
 > Tested on an Apple M4 Mackbook Pro.
 
@@ -371,33 +366,17 @@ Agno is on the left, notice how it finishes before LangGraph gets 1/2 way throug
 
 https://github.com/user-attachments/assets/ba466d45-75dd-45ac-917b-0a56c5742e23
 
-Dividing the average time of a Langgraph Agent by the average time of an Agno Agent:
-
-```
-0.020526s / 0.000002s ~ 10,263
-```
-
-In this particular run, **Agno Agents startup is roughly 10,000 times faster than Langgraph Agents**. The numbers continue to favor Agno as the number of tools grow, and we add memory and knowledge stores.
-
 ### Memory usage
 
 To measure memory usage, we use the `tracemalloc` library. We first calculate a baseline memory usage by running an empty function, then run the Agent 1000x times and calculate the difference. This gives a (reasonably) isolated measurement of the memory usage of the Agent.
 
 We recommend running the evaluation yourself on your own machine, and digging into the code to see how it works. If we've made a mistake, please let us know.
 
-Dividing the average memory usage of a Langgraph Agent by the average memory usage of an Agno Agent:
-
-```
-0.137273/0.002528 ~ 54.3
-```
-
-**Langgraph Agents use ~50x more memory than Agno Agents**. In our opinion, memory usage is a much more important metric than instantiation time. As we start running thousands of Agents in production, these numbers directly start affecting the cost of running the Agents.
-
 ### Conclusion
 
 Agno agents are designed for performance and while we do share some benchmarks against other frameworks, we should be mindful that accuracy and reliability are more important than speed.
 
-We'll be publishing accuracy and reliability benchmarks running on Github actions in the coming weeks. Given that each framework is different and we won't be able to tune their performance like we do with Agno, for future benchmarks we'll only be comparing against ourselves.
+We'll be publishing accuracy and reliability benchmarks running on Github actions in the future. Given that each framework is different and we won't be able to tune their performance like we do with Agno, for future benchmarks we'll only be comparing against ourselves.
 
 ## Cursor Setup
 

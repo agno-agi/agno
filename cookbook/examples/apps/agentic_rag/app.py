@@ -55,22 +55,6 @@ def get_reader(file_type: str):
     return readers.get(file_type.lower(), None)
 
 
-def initialize_agent(model_id: str):
-    """Initialize or retrieve the Agentic RAG."""
-    if (
-        "agentic_rag_agent" not in st.session_state
-        or st.session_state["agentic_rag_agent"] is None
-    ):
-        logger.info(f"---*--- Creating {model_id} Agent ---*---")
-        agent: Agent = get_agentic_rag_agent(
-            model_id=model_id,
-            session_id=st.session_state.get("agentic_rag_agent_session_id"),
-        )
-        st.session_state["agentic_rag_agent"] = agent
-        st.session_state["agentic_rag_agent_session_id"] = agent.session_id
-    return st.session_state["agentic_rag_agent"]
-
-
 def main():
     ####################################################################
     # App header

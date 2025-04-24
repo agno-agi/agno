@@ -8,6 +8,25 @@ from pydantic import BaseModel, ValidationError
 from agno.utils.log import logger
 
 
+def is_valid_uuid(uuid_str: str) -> bool:
+    """
+    Check if a string is a valid UUID
+
+    Args:
+        uuid_str: String to check
+
+    Returns:
+        bool: True if string is a valid UUID, False otherwise
+    """
+    from uuid import UUID
+
+    try:
+        UUID(str(uuid_str))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
 def url_safe_string(input_string):
     # Replace spaces with dashes
     safe_string = input_string.replace(" ", "-")
@@ -54,7 +73,10 @@ def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> O
 
         # Handle code blocks
         if "```json" in content:
-            content = content.split("```json")[-1].split("```")[0].strip()
+            content = content.split("```json")[-1].strip()
+            parts = content.split("```")
+            parts.pop(-1)
+            content = "".join(parts)
         elif "```" in content:
             content = content.split("```")[1].strip()
 
