@@ -67,18 +67,21 @@ class GeminiTools(Toolkit):
             if response.generated_images and response.generated_images[0].image.image_bytes:
                 image_bytes = response.generated_images[0].image.image_bytes
             else:
-                log_error("DEBUG: Error accessing image_bytes attribute.")
+                log_error("No image data found in the response structure.")
                 return "Failed to generate image: No valid image data extracted."
 
-            base64_encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+            if image_bytes is None:
+                log_error("image_bytes is None after extraction.")
+                return "Failed to generate image: No valid image data extracted."
+
+            base64_encoded_image_bytes = base64.b64encode(image_bytes)
 
             media_id = str(uuid4())
             agent.add_image(
                 ImageArtifact(
                     id=media_id,
-                    content=base64_encoded_image,
-                    prompt=prompt,
-                    model=self.image_model,
+                    content=base64_encoded_image_bytes,
+                    original_prompt=prompt,
                     mime_type=actual_mime_type,
                 )
             )

@@ -26,12 +26,11 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[GeminiTools()],
     show_tool_calls=True,
-    debug_mode=True,
 )
 
-response = agent.run(
+agent.print_response(
     "Create an artistic portrait of a cyberpunk samurai in a rainy city",
 )
-
+response = agent.run_response
 if response.images:
     save_base64_data(response.images[0].content, "tmp/cyberpunk_samurai.png")
