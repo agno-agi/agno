@@ -45,8 +45,7 @@ class MCPTools(Toolkit):
         url: Optional[str] = None,
         env: Optional[dict[str, str]] = None,
         transport: Literal["stdio", "sse"] = "stdio",
-        server_params: Optional[StdioServerParameters] = None,
-        sse_client_params: Optional[SSEClientParams] = None,
+        server_params: Optional[Union[StdioServerParameters, SSEClientParams]] = None,
         session: Optional[ClientSession] = None,
         client=None,
         include_tools: Optional[list[str]] = None,
@@ -58,8 +57,7 @@ class MCPTools(Toolkit):
 
         Args:
             session: An initialized MCP ClientSession connected to an MCP server
-            server_params: StdioServerParameters for creating a new session
-            sse_client_params: Parameters for creating a new session when using SSE transport
+            server_params: Parameters for creating a new session
             command: The command to run to start the server. Should be used in conjunction with env.
             url: The URL endpoint for SSE connection when transport is "sse".
             env: The environment variables to pass to the server. Should be used in conjunction with command.
@@ -71,20 +69,30 @@ class MCPTools(Toolkit):
         super().__init__(name="MCPToolkit", **kwargs)
 
         self.session: Optional[ClientSession] = session
-        self.server_params: Optional[StdioServerParameters] = server_params
+        self.server_params: Optional[Union[StdioServerParameters, SSEClientParams]] = server_params
         self.transport = transport
         self.url = url
-        self.sse_client_params = sse_client_params
 
-        if session is None:
-            if transport == "sse" and url is None and sse_client_params is None:
-                raise ValueError(
-                    "One of 'url' or 'sse_client_params' parameters must be provided when using SSE transport"
-                )
-            if transport == "stdio" and command is None and server_params is None:
+        if session is None and server_params is None:
+            if transport == "sse" and url is None:
+                raise ValueError("One of 'url' or 'server_params' parameters must be provided when using SSE transport")
+            if transport == "stdio" and command is None:
                 raise ValueError(
                     "One of 'command' or 'server_params' parameters must be provided when using stdio transport"
                 )
+
+        # Ensure the received server_params are valid for the given transport
+        if server_params is not None:
+            if transport == "sse":
+                if not isinstance(server_params, SSEClientParams):
+                    raise ValueError(
+                        "If using the SSE transport, server_params must be an instance of SSEClientParams."
+                    )
+            elif transport == "stdio":
+                if not isinstance(server_params, StdioServerParameters):
+                    raise ValueError(
+                        "If using the stdio transport, server_params must be an instance of StdioServerParameters."
+                    )
 
         # Merge provided env with system env
         if env is not None:
@@ -121,7 +129,7 @@ class MCPTools(Toolkit):
 
         # Create a new session using stdio_client or sse_client based on transport
         if self.transport == "sse":
-            sse_args = asdict(self.sse_client_params) if self.sse_client_params is not None else {}
+            sse_args = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
             self._context = sse_client(url=sse_args.get("url", self.url), **sse_args)  # type: ignore
         else:
             if self.server_params is None:
@@ -218,8 +226,7 @@ class MultiMCPTools(Toolkit):
         commands: Optional[List[str]] = None,
         *,
         env: Optional[dict[str, str]] = None,
-        server_params_list: Optional[List[StdioServerParameters]] = None,
-        sse_endpoints: Optional[List[Dict[str, Union[str, Optional[SSEClientParams]]]]] = None,
+        server_params_list: List[Union[SSEClientParams, StdioServerParameters]] = [],
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -229,22 +236,20 @@ class MultiMCPTools(Toolkit):
         Initialize the MCP toolkit.
 
         Args:
-            server_params_list: List of StdioServerParameters for creating new sessions
+            server_params_list: List of StdioServerParameters and SSEClientParams for creating new sessions
             commands: List of commands to run to start the servers. Should be used in conjunction with env.
             env: The environment variables to pass to the servers. Should be used in conjunction with commands.
-            sse_endpoints: List of dictionaries containing {"url": str, "params": SSEClientParams} for SSE connections
             client: The underlying MCP client (optional, used to prevent garbage collection)
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
         """
         super().__init__(name="MultiMCPToolkit", **kwargs)
 
-        if server_params_list is None and commands is None and sse_endpoints is None:
-            raise ValueError("Either server_params_list, commands, or sse_endpoints must be provided")
+        if server_params_list == [] and commands is None:
+            raise ValueError("Either server_params_list or commands must be provided")
 
-        self.server_params_list: List[StdioServerParameters] = server_params_list or []
+        self.server_params_list: List[Union[SSEClientParams, StdioServerParameters]] = server_params_list
         self.commands: Optional[List[str]] = commands
-        self.sse_endpoints: Optional[List[Dict[str, Union[str, Optional[SSEClientParams]]]]] = sse_endpoints
 
         # Merge provided env with system env
         if env is not None:
@@ -273,30 +278,21 @@ class MultiMCPTools(Toolkit):
     async def __aenter__(self) -> "MultiMCPTools":
         """Enter the async context manager."""
 
-        # Handle stdio connections
         for server_params in self.server_params_list:
-            stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
-            read, write = stdio_transport
-            session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+            # Handle stdio connections
+            if isinstance(server_params, StdioServerParameters):
+                stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
+                read, write = stdio_transport
+                session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
 
-            await self.initialize(session)
+                await self.initialize(session)
 
-        # Handle SSE connections
-        if self.sse_endpoints:
-            for endpoint in self.sse_endpoints:
-                url = endpoint.get("url")
-                if not url or not isinstance(url, str):
-                    raise ValueError("URL must be provided as a string for SSE endpoint")
-
-                params = endpoint.get("params", None)
-                sse_args = {}
-                if params is not None:
-                    if isinstance(params, SSEClientParams):
-                        sse_args = asdict(params)
-                    else:
-                        raise ValueError("SSE params must be an instance of SSEClientParams")
-
-                sse_transport = await self._async_exit_stack.enter_async_context(sse_client(url, **sse_args))
+            # Handle SSE connections
+            if isinstance(server_params, SSEClientParams):
+                sse_args = asdict(server_params)
+                sse_transport = await self._async_exit_stack.enter_async_context(
+                    sse_client(server_params.url, **sse_args)
+                )
                 read, write = sse_transport
                 session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
 

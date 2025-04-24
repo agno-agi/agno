@@ -8,7 +8,7 @@ from agno.tools.mcp import MCPTools, MultiMCPTools
 @pytest.mark.asyncio
 async def test_sse_transport_without_url_nor_sse_client_params():
     """Test that ValueError is raised when transport is SSE but URL is not provided."""
-    with pytest.raises(ValueError, match="One of 'url' or 'sse_client_params' parameters must be provided"):
+    with pytest.raises(ValueError, match="One of 'url' or 'server_params' parameters must be provided"):
         async with MCPTools(transport="sse"):
             pass
 
@@ -32,7 +32,7 @@ def test_empty_command_string():
 @pytest.mark.asyncio
 async def test_multimcp_without_endpoints():
     """Test that ValueError is raised when no endpoints are provided."""
-    with pytest.raises(ValueError, match="Either server_params_list, commands, or sse_endpoints must be provided"):
+    with pytest.raises(ValueError, match="Either server_params_list or commands must be provided"):
         async with MultiMCPTools():
             pass
 
