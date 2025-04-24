@@ -48,7 +48,7 @@ class PubmedTools(Toolkit):
             # Get existing fields
             pub_date = article.find(".//PubDate/Year")
             title = article.find(".//ArticleTitle")
-            
+
             # Handle abstract sections with labels (methods, results, etc.)
             abstract_sections = article.findall(".//AbstractText")
             abstract_text = ""
@@ -62,7 +62,7 @@ class PubmedTools(Toolkit):
                 abstract_text = abstract_text.strip()
             else:
                 abstract_text = "No abstract available"
-            
+
             # Get first author
             first_author_elem = article.find(".//AuthorList/Author[1]")
             first_author = "Unknown"
@@ -71,18 +71,18 @@ class PubmedTools(Toolkit):
                 fore_name = first_author_elem.find("ForeName")
                 if last_name is not None and fore_name is not None:
                     first_author = f"{last_name.text}, {fore_name.text}"
-                elif last_name is not None:
+                elif last_name is not None and last_name.text:
                     first_author = last_name.text
-            
+
             # Get DOI
             doi_elem = article.find(".//ArticleIdList/ArticleId[@IdType='doi']")
             doi = doi_elem.text if doi_elem is not None else "No DOI available"
-            
+
             # Get PMID for URL construction
             pmid_elem = article.find(".//PMID")
             pmid = pmid_elem.text if pmid_elem is not None else ""
             pubmed_url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else "No URL available"
-            
+
             # Check if full text is available via PMC
             pmc_elem = article.find(".//ArticleIdList/ArticleId[@IdType='pmc']")
             full_text_url = "Not available"
@@ -90,43 +90,45 @@ class PubmedTools(Toolkit):
                 full_text_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_elem.text}/"
             elif doi_elem is not None:
                 full_text_url = f"https://doi.org/{doi}"
-            
+
             # Get keywords
             keywords = []
             for keyword in article.findall(".//KeywordList/Keyword"):
                 if keyword.text:
                     keywords.append(keyword.text)
-            
+
             # Get MeSH terms (useful for understanding medical context)
             mesh_terms = []
             for mesh in article.findall(".//MeshHeading/DescriptorName"):
                 if mesh.text:
                     mesh_terms.append(mesh.text)
-                    
+
             # Get journal info
             journal_elem = article.find(".//Journal/Title")
             journal = journal_elem.text if journal_elem is not None else "Unknown Journal"
-            
+
             # Publication type (research article, review, etc.)
             pub_types = []
             for pub_type in article.findall(".//PublicationTypeList/PublicationType"):
                 if pub_type.text:
                     pub_types.append(pub_type.text)
-            
-            articles.append({
-                "Published": pub_date.text if pub_date is not None else "No date available",
-                "Title": title.text if title is not None else "No title available",
-                "Summary": abstract_text,
-                "First_Author": first_author,
-                "DOI": doi,
-                "PubMed_URL": pubmed_url,
-                "Full_Text_URL": full_text_url,
-                "Keywords": ", ".join(keywords) if keywords else "No keywords available",
-                "MeSH_Terms": ", ".join(mesh_terms) if mesh_terms else "No MeSH terms available",
-                "Journal": journal,
-                "Publication_Type": ", ".join(pub_types) if pub_types else "Not specified"
-            })
-        
+
+            articles.append(
+                {
+                    "Published": pub_date.text if pub_date is not None else "No date available",
+                    "Title": title.text if title is not None else "No title available",
+                    "Summary": abstract_text,
+                    "First_Author": first_author,
+                    "DOI": doi,
+                    "PubMed_URL": pubmed_url,
+                    "Full_Text_URL": full_text_url,
+                    "Keywords": ", ".join(keywords) if keywords else "No keywords available",
+                    "MeSH_Terms": ", ".join(mesh_terms) if mesh_terms else "No MeSH terms available",
+                    "Journal": journal,
+                    "Publication_Type": ", ".join(pub_types) if pub_types else "Not specified",
+                }
+            )
+
         return articles
 
     def search_pubmed(self, query: str, max_results: Optional[int] = 10) -> str:
@@ -141,10 +143,11 @@ class PubmedTools(Toolkit):
         """
         try:
             log_debug(f"Searching PubMed for: {query}")
-            ids = self.fetch_pubmed_ids(query, self.max_results or max_results, self.email)
+            max_results = max_results or self.max_results or 10
+            ids = self.fetch_pubmed_ids(query, max_results, self.email)
             details_root = self.fetch_details(ids)
             articles = self.parse_details(details_root)
-            
+
             # Create result strings based on configured detail level
             results = []
             for article in articles:
@@ -165,14 +168,16 @@ class PubmedTools(Toolkit):
                     )
                 else:
                     # Concise format with just essential information
+                    summary = article.get('Summary', '')
                     article_text = (
                         f"Title: {article.get('Title')}\n"
                         f"Published: {article.get('Published')}\n"
-                        f"Summary: {article.get('Summary')[:200]}..." if len(article.get('Summary', '')) > 200 
-                        else f"Summary: {article.get('Summary')}"
+                        f"Summary: {summary[:200]}..."
+                        if len(summary) > 200
+                        else f"Summary: {summary}"
                     )
                 results.append(article_text)
-            
+
             return json.dumps(results)
         except Exception as e:
             return f"Could not fetch articles. Error: {e}"

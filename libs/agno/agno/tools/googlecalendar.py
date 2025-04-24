@@ -137,8 +137,7 @@ class GoogleCalendarTools(Toolkit):
         location: Optional[str] = None,
         timezone: Optional[str] = None,
         attendees: List[str] = [],
-        send_updates: Optional[str] = 'all',
-        
+        send_updates: Optional[str] = "all",
     ) -> str:
         """
         Create a new event in the user's primary calendar.
@@ -168,7 +167,9 @@ class GoogleCalendarTools(Toolkit):
                 "attendees": attendees_list,
             }
             if self.service:
-                event_result = self.service.events().insert(calendarId="primary", body=event, sendUpdates=send_updates).execute()
+                event_result = (
+                    self.service.events().insert(calendarId="primary", body=event, sendUpdates=send_updates).execute()
+                )
                 return json.dumps(event_result)
             else:
                 return json.dumps({"error": "authentication issue"})
