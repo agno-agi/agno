@@ -9,7 +9,6 @@ import asyncio
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools, MultiMCPTools
-from agno.utils.pprint import apprint_run_response
 
 # This is the URL of the MCP server we want to use.
 server_url = "http://localhost:8000/sse"
@@ -22,8 +21,7 @@ async def run_agent(message: str) -> None:
             tools=[mcp_tools],
             markdown=True,
         )
-        response_stream = await agent.arun(message, stream=True)
-        await apprint_run_response(response_stream, markdown=True)
+        await agent.aprint_response(message=message, stream=True, markdown=True)
 
 
 # Using MultiMCPTools, we can connect to multiple MCP servers at once, even if they use different transports.
@@ -38,8 +36,7 @@ async def run_agent_with_multimcp(message: str) -> None:
             tools=[mcp_tools],
             markdown=True,
         )
-        response_stream = await agent.arun(message, stream=True)
-        await apprint_run_response(response_stream, markdown=True)
+        await agent.aprint_response(message=message, stream=True, markdown=True)
 
 
 if __name__ == "__main__":

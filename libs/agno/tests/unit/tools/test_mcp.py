@@ -2,13 +2,13 @@ from unittest.mock import patch
 
 import pytest
 
-from agno.tools.mcp import MCPTools, MultiMCPTools, SSEClientParams
+from agno.tools.mcp import MCPTools, MultiMCPTools
 
 
 @pytest.mark.asyncio
-async def test_sse_transport_without_url():
+async def test_sse_transport_without_url_nor_sse_client_params():
     """Test that ValueError is raised when transport is SSE but URL is not provided."""
-    with pytest.raises(ValueError, match="The 'url' parameter must be provided"):
+    with pytest.raises(ValueError, match="One of 'url' or 'sse_client_params' parameters must be provided"):
         async with MCPTools(transport="sse"):
             pass
 
@@ -34,15 +34,6 @@ async def test_multimcp_without_endpoints():
     """Test that ValueError is raised when no endpoints are provided."""
     with pytest.raises(ValueError, match="Either server_params_list, commands, or sse_endpoints must be provided"):
         async with MultiMCPTools():
-            pass
-
-
-@pytest.mark.asyncio
-async def test_multimcp_sse_endpoint_without_url():
-    """Test that ValueError is raised when an SSE endpoint doesn't have a URL."""
-    sse_params = SSEClientParams()
-    with pytest.raises(ValueError, match="URL must be provided as a string for SSE endpoint"):
-        async with MultiMCPTools(sse_endpoints=[{"params": sse_params}]):
             pass
 
 

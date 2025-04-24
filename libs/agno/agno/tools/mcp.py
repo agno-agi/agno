@@ -21,6 +21,7 @@ except (ImportError, ModuleNotFoundError):
 class SSEClientParams:
     """Parameters for SSE client connection."""
 
+    url: str
     headers: Optional[Dict[str, Any]] = None
     timeout: Optional[float] = None
     sse_read_timeout: Optional[float] = None
@@ -45,7 +46,7 @@ class MCPTools(Toolkit):
         env: Optional[dict[str, str]] = None,
         transport: Literal["stdio", "sse"] = "stdio",
         server_params: Optional[StdioServerParameters] = None,
-        sse_params: Optional[SSEClientParams] = None,
+        sse_client_params: Optional[SSEClientParams] = None,
         session: Optional[ClientSession] = None,
         client=None,
         include_tools: Optional[list[str]] = None,
@@ -58,14 +59,14 @@ class MCPTools(Toolkit):
         Args:
             session: An initialized MCP ClientSession connected to an MCP server
             server_params: StdioServerParameters for creating a new session
+            sse_client_params: Parameters for creating a new session when using SSE transport
             command: The command to run to start the server. Should be used in conjunction with env.
-            url: The URL endpoint for SSE connection when transport is "sse". Required when using SSE transport.
+            url: The URL endpoint for SSE connection when transport is "sse".
             env: The environment variables to pass to the server. Should be used in conjunction with command.
             client: The underlying MCP client (optional, used to prevent garbage collection)
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
             transport: The transport protocol to use, either "stdio" or "sse"
-            sse_params: Optional dataclass with SSE client parameters
         """
         super().__init__(name="MCPToolkit", **kwargs)
 
@@ -73,11 +74,13 @@ class MCPTools(Toolkit):
         self.server_params: Optional[StdioServerParameters] = server_params
         self.transport = transport
         self.url = url
-        self.sse_params = sse_params
+        self.sse_client_params = sse_client_params
 
         if session is None:
-            if transport == "sse" and url is None:
-                raise ValueError("The 'url' parameter must be provided when using SSE transport")
+            if transport == "sse" and url is None and sse_client_params is None:
+                raise ValueError(
+                    "One of 'url' or 'sse_client_params' parameters must be provided when using SSE transport"
+                )
             if transport == "stdio" and command is None and server_params is None:
                 raise ValueError(
                     "One of 'command' or 'server_params' parameters must be provided when using stdio transport"
@@ -118,8 +121,8 @@ class MCPTools(Toolkit):
 
         # Create a new session using stdio_client or sse_client based on transport
         if self.transport == "sse":
-            sse_args = asdict(self.sse_params) if self.sse_params is not None else {}
-            self._context = sse_client(self.url, **sse_args)  # type: ignore
+            sse_args = asdict(self.sse_client_params) if self.sse_client_params is not None else {}
+            self._context = sse_client(url=sse_args.get("url", self.url), **sse_args)  # type: ignore
         else:
             if self.server_params is None:
                 raise ValueError("server_params must be provided when using stdio transport.")
