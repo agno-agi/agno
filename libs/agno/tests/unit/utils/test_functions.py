@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from agno.utils.functions import convert_function_result
 from pydantic import BaseModel
 
@@ -19,3 +20,10 @@ def test_convert_function_result():
         rating: float
     
     assert convert_function_result(MovieScript(title="The Dark Knight", director="Christopher Nolan", year=2008, rating=9.0)) == '{"title":"The Dark Knight","director":"Christopher Nolan","year":2008,"rating":9.0}'
+
+    @dataclass
+    class MyResult:
+        success: bool
+        message: str
+
+    assert convert_function_result(MyResult(success=True, message="Success")) == '{"success": true, "message": "Success"}'

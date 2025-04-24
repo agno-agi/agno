@@ -1,3 +1,4 @@
+
 import json
 from typing import Any, Callable, Dict, Optional, TypeVar
 
@@ -170,7 +171,6 @@ def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cac
 
 
 def convert_function_result(result: Any) -> str:
-    from pydantic import BaseModel
     
     if isinstance(result, str):
         return result
@@ -184,7 +184,13 @@ def convert_function_result(result: Any) -> str:
         return json.dumps(list(result))
     if isinstance(result, bool):
         return str(result).lower()
+    
+    from pydantic import BaseModel
     if isinstance(result, BaseModel):
         return result.model_dump_json()
+    
+    from dataclasses import asdict, is_dataclass
+    if is_dataclass(result):
+        return json.dumps(asdict(result))
     
     return str(result)
