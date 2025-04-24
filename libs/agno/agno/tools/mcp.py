@@ -71,7 +71,7 @@ class MCPTools(Toolkit):
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
             transport: The transport protocol to use, either "stdio" or "sse"
         """
-        super().__init__(name="MCPToolkit", **kwargs)
+        super().__init__(name="MCPToolkit", include_tools=include_tools, exclude_tools=exclude_tools, **kwargs)
 
         if session is None and transport == "stdio" and server_params is None and command is None:
             raise ValueError("Either session or server_params or command must be provided")
