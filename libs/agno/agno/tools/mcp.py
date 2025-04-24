@@ -34,7 +34,7 @@ class MCPTools(Toolkit):
         env: Optional[dict[str, str]] = None,
         server_params: Optional[StdioServerParameters] = None,
         session: Optional[ClientSession] = None,
-        timeout_in_seconds=5
+        timeout=5
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -49,6 +49,7 @@ class MCPTools(Toolkit):
             command: The command to run to start the server. Should be used in conjunction with env.
             env: The environment variables to pass to the server. Should be used in conjunction with command.
             client: The underlying MCP client (optional, used to prevent garbage collection)
+            timeout: Timeout in seconds for managing timeouts for Client Session if Agent or Tool doesn't respond.
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
         """
@@ -100,7 +101,7 @@ class MCPTools(Toolkit):
         self._stdio_context = stdio_client(self.server_params)  # type: ignore
         read, write = await self._stdio_context.__aenter__()  # type: ignore
 
-        self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(self.readtimeout_in_seconds))  # type: ignore
+        self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(self.timeout))  # type: ignore
         self.session = await self._session_context.__aenter__()  # type: ignore
 
         # Initialize with the new session
@@ -188,7 +189,7 @@ class MultiMCPTools(Toolkit):
         *,
         env: Optional[dict[str, str]] = None,
         server_params_list: Optional[List[StdioServerParameters]] = None,
-        readtimeout_in_seconds=5,
+        timeout=5,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -202,6 +203,7 @@ class MultiMCPTools(Toolkit):
             commands: List of commands to run to start the servers. Should be used in conjunction with env.
             env: The environment variables to pass to the servers. Should be used in conjunction with commands.
             client: The underlying MCP client (optional, used to prevent garbage collection)
+            timeout: Timeout in seconds for managing timeouts for Client Session if Agent or Tool doesn't respond.
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
         """
@@ -243,7 +245,7 @@ class MultiMCPTools(Toolkit):
         for server_params in self.server_params_list:
             stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
             read, write = stdio_transport
-            session = await self._async_exit_stack.enter_async_context(ClientSession(read, write, read_timeout_seconds=timedelta(self.readtimeout_in_seconds)))
+            session = await self._async_exit_stack.enter_async_context(ClientSession(read, write, read_timeout_seconds=timedelta(self.timeout)))
 
             await self.initialize(session)
 
