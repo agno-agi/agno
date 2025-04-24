@@ -64,6 +64,9 @@ class Model(ABC):
     # "none" is the default when no functions are present. "auto" is the default if functions are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
+    # If set, limits the number of tool call and tool result pairs included in messages sent to the model (i.e. older ones are dropped)
+    num_tools_calls_to_include: Optional[int] = None
+
     # If True, shows function calls in the response. Disabled when response_model is used.
     show_tool_calls: Optional[bool] = None
     # Maximum number of tool calls allowed.
@@ -298,6 +301,34 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
         return model_response
 
+    def _filter_messages(self, messages: List[Message]) -> List[Message]:
+        """
+        Filter messages to include only the most recent tool calls while preserving message order.
+
+        This keeps all non-tool related messages and only the most recent tool call pairs
+        (assistant message with tool calls + corresponding tool response messages).
+        """
+        # First pass: identify all tool-related messages
+        filtered_messages = []
+        count_tool_msg = 0
+        reverse_messages = messages[::-1]
+        for msg in reverse_messages:
+            if (
+                msg.role == self.assistant_message_role and hasattr(msg, "tool_calls") and msg.tool_calls
+            ) or msg.role == self.tool_message_role:
+                # This is a tool-related message
+                if count_tool_msg < self.num_tools_calls_to_include * 2:
+                    filtered_messages.append(msg)
+                    count_tool_msg += 1
+            else:
+                # This is a normal message we'll keep
+                filtered_messages.append(msg)
+
+        # Restore the original order
+        filtered_messages = filtered_messages[::-1]
+
+        return filtered_messages
+
     def _process_model_response(
         self,
         messages: List[Message],
@@ -311,6 +342,10 @@ class Model(ABC):
         """
         # Create assistant message
         assistant_message = Message(role=self.assistant_message_role)
+
+        if self.num_tools_calls_to_include is not None:
+            # Filter messages to include only the most recent tool calls
+            messages = self._filter_messages(messages=messages)
 
         # Generate response
         assistant_message.metrics.start_timer()
@@ -369,6 +404,9 @@ class Model(ABC):
         """
         # Create assistant message
         assistant_message = Message(role=self.assistant_message_role)
+
+        if self.num_tools_calls_to_include is not None:
+            messages = self._filter_messages(messages=messages)
 
         # Generate response
         assistant_message.metrics.start_timer()
@@ -483,6 +521,10 @@ class Model(ABC):
         """
         Process a streaming response from the model.
         """
+        # Apply message filtering if needed
+        if self.num_tools_calls_to_include is not None:
+            messages = self._filter_messages(messages=messages)
+
         for response_delta in self.invoke_stream(messages=messages):
             model_response_delta = self.parse_provider_response_delta(response_delta)
             yield from self._populate_stream_data_and_assistant_message(
@@ -577,6 +619,10 @@ class Model(ABC):
         """
         Process a streaming response from the model.
         """
+        # Apply message filtering if needed
+        if self.num_tools_calls_to_include is not None:
+            messages = self._filter_messages(messages=messages)
+
         async for response_delta in self.ainvoke_stream(messages=messages):  # type: ignore
             model_response_delta = self.parse_provider_response_delta(response_delta)
             for model_response in self._populate_stream_data_and_assistant_message(

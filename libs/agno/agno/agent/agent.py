@@ -144,6 +144,9 @@ class Agent:
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
+    # If set, limits the number of tool call and tool result pairs included in messages sent to the model (i.e. older ones are dropped)
+    num_tools_calls_to_include: Optional[int] = None
+
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
     reasoning: bool = False
@@ -301,6 +304,7 @@ class Agent:
         show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        num_tools_calls_to_include: Optional[int] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -385,6 +389,7 @@ class Agent:
         self.show_tool_calls = show_tool_calls
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
+        self.num_tools_calls_to_include = num_tools_calls_to_include
 
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
@@ -2093,6 +2098,10 @@ class Agent:
         # Set tool_choice on the Model
         if self.tool_choice is not None:
             self.model.tool_choice = self.tool_choice
+
+        # Set num_tools_calls_to_include on the Model
+        if self.num_tools_calls_to_include is not None:
+            self.model.num_tools_calls_to_include = self.num_tools_calls_to_include
 
         # Set tool_call_limit on the Model
         if self.tool_call_limit is not None:

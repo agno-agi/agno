@@ -25,4 +25,3 @@ class OpenRouter(OpenAILike):
 
     api_key: Optional[str] = getenv("OPENROUTER_API_KEY")
     base_url: str = "https://openrouter.ai/api/v1"
-    max_tokens: int = 1024
