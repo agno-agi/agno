@@ -77,6 +77,8 @@ class Function(BaseModel):
     # --*-- FOR INTERNAL USE ONLY --*--
     # The agent that the function is associated with
     _agent: Optional[Any] = None
+    # The team that the function is associated with
+    _team: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(exclude_none=True, include={"name", "description", "parameters", "strict"})
@@ -96,11 +98,15 @@ class Function(BaseModel):
             # If function has an the agent argument, remove the agent parameter from the type hints
             if "agent" in sig.parameters:
                 del type_hints["agent"]
+            if "team" in sig.parameters:
+                del type_hints["team"]
             # log_info(f"Type hints for {function_name}: {type_hints}")
 
             # Filter out return type and only process parameters
             param_type_hints = {
-                name: type_hints.get(name) for name in sig.parameters if name != "return" and name != "agent"
+                name: type_hints.get(name)
+                for name in sig.parameters
+                if name != "return" and name not in ["agent", "team"]
             }
 
             # Parse docstring for parameters
@@ -126,13 +132,13 @@ class Function(BaseModel):
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name != "agent"]
+                parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team"]]
             else:
                 # Mark a field as required if it has no default value
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name != "agent"
+                    if param.default == param.empty and name != "self" and name not in ["agent", "team"]
                 ]
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
@@ -177,11 +183,15 @@ class Function(BaseModel):
             # If function has an the agent argument, remove the agent parameter from the type hints
             if "agent" in sig.parameters:
                 del type_hints["agent"]
+            if "team" in sig.parameters:
+                del type_hints["team"]
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
             param_type_hints = {
-                name: type_hints.get(name) for name in sig.parameters if name != "return" and name != "agent"
+                name: type_hints.get(name)
+                for name in sig.parameters
+                if name != "return" and name not in ["agent", "team"]
             }
 
             # Parse docstring for parameters
@@ -207,25 +217,27 @@ class Function(BaseModel):
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name != "agent"]
+                parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team"]]
             else:
                 # Mark a field as required if it has no default value
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name != "agent"
+                    if param.default == param.empty and name != "self" and name not in ["agent", "team"]
                 ]
 
             if params_set_by_user:
                 self.parameters["additionalProperties"] = False
                 if strict:
-                    self.parameters["required"] = [name for name in self.parameters["properties"] if name != "agent"]
+                    self.parameters["required"] = [
+                        name for name in self.parameters["properties"] if name not in ["agent", "team"]
+                    ]
                 else:
                     # Mark a field as required if it has no default value
                     self.parameters["required"] = [
                         name
                         for name, param in sig.parameters.items()
-                        if param.default == param.empty and name != "self" and name != "agent"
+                        if param.default == param.empty and name != "self" and name not in ["agent", "team"]
                     ]
 
             # log_debug(f"JSON schema for {self.name}: {parameters}")
@@ -287,6 +299,8 @@ class Function(BaseModel):
         # Remove agent from entrypoint_args
         if "agent" in copy_entrypoint_args:
             del copy_entrypoint_args["agent"]
+        if "team" in copy_entrypoint_args:
+            del copy_entrypoint_args["team"]
         args_str = str(copy_entrypoint_args)
 
         kwargs_str = str(sorted((call_args or {}).items()))
@@ -393,6 +407,9 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has and agent argument
                 if "agent" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["agent"] = self.function._agent
+                # Check if the pre-hook has an team argument
+                if "team" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["team"] = self.function._team
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -415,6 +432,9 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has and agent argument
                 if "agent" in signature(self.function.post_hook).parameters:
                     post_hook_args["agent"] = self.function._agent
+                # Check if the post-hook has an team argument
+                if "team" in signature(self.function.post_hook).parameters:
+                    post_hook_args["team"] = self.function._team
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
@@ -435,6 +455,9 @@ class FunctionCall(BaseModel):
         # Check if the entrypoint has an agent argument
         if "agent" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["agent"] = self.function._agent
+        # Check if the entrypoint has an team argument
+        if "team" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["team"] = self.function._team
         # Check if the entrypoint has an fc argument
         if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["fc"] = self
@@ -512,6 +535,9 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an agent argument
                 if "agent" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["agent"] = self.function._agent
+                # Check if the pre-hook has an team argument
+                if "team" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["team"] = self.function._team
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -535,6 +561,9 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an agent argument
                 if "agent" in signature(self.function.post_hook).parameters:
                     post_hook_args["agent"] = self.function._agent
+                # Check if the post-hook has an team argument
+                if "team" in signature(self.function.post_hook).parameters:
+                    post_hook_args["team"] = self.function._team
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
