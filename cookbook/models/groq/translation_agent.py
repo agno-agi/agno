@@ -3,7 +3,7 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.models.groq import GroqTools
-from agno.utils.media import save_audio
+from agno.utils.media import save_base64_data
 
 path = "tmp/sample-fr.mp3"
 
@@ -20,4 +20,4 @@ agent.print_response(
 response = agent.run_response
 
 if response.audio:
-    save_audio(response.audio[0].base64_audio, Path("tmp/sample-en.mp3"))
+    save_base64_data(response.audio[0].base64_audio, Path("tmp/sample-en.mp3"))
