@@ -536,7 +536,6 @@ class Memory:
 
     def update_memory_task(self, task: str, user_id: Optional[str] = None) -> str:
         """Updates the memory with a task"""
-        self.set_log_level()
         if not self.memory_manager:
             raise ValueError("Memory manager not initialized")
 
