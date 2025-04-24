@@ -50,12 +50,11 @@ class GroqTools(Toolkit):
             str: Transcribed text
         """
         log_debug(f"Transcribing audio from {audio_source} using Groq model {self.transcription_model}")
-        transcript_obj = None
         try:
             # Check if the audio source as a local file or a URL
             if not os.path.exists(audio_source):
                 log_debug(f"Audio source '{audio_source}' not found locally, attempting as URL.")
-                transcript_obj = self.client.audio.transcriptions.create(
+                transcription_text = self.client.audio.transcriptions.create(
                     url=audio_source,
                     model=self.transcription_model,
                     response_format="text",
@@ -63,12 +62,11 @@ class GroqTools(Toolkit):
             else:
                 log_debug(f"Transcribing local file: {audio_source}")
                 with open(audio_source, "rb") as audio_file:
-                    transcript_obj = self.client.audio.transcriptions.create(
+                    transcription_text = self.client.audio.transcriptions.create(
                         file=(os.path.basename(audio_source), audio_file.read()),
                         model=self.transcription_model,
                         response_format="text",
                     )
-            transcription_text = transcript_obj.text
             log_debug(f"Transcript Generated: {transcription_text}")
             return transcription_text
 
@@ -84,11 +82,10 @@ class GroqTools(Toolkit):
             str: Translated English text
         """
         log_debug(f"Translating audio from {audio_source} to English using Groq model {self.translation_model}")
-        translation_obj = None
         try:
             if not os.path.exists(audio_source):
                 log_debug(f"Audio source '{audio_source}' not found locally.")
-                translation_obj = self.client.audio.translations.create(
+                translation = self.client.audio.translations.create(
                     url=audio_source,
                     model=self.translation_model,
                     response_format="text",
@@ -96,14 +93,13 @@ class GroqTools(Toolkit):
             else:
                 log_debug(f"Translating local file: {audio_source}")
                 with open(audio_source, "rb") as audio_file:
-                    translation_obj = self.client.audio.translations.create(
+                    translation = self.client.audio.translations.create(
                         file=(os.path.basename(audio_source), audio_file.read()),
                         model=self.translation_model,
                         response_format="text",
                     )
-            translation_text = translation_obj.text
-            log_debug(f"Groq Translation: {translation_text}")
-            return translation_text
+            log_debug(f"Groq Translation: {translation}")
+            return translation
 
         except Exception as e:
             log_error(f"Failed to translate audio source '{audio_source}' with Groq: {str(e)}")
