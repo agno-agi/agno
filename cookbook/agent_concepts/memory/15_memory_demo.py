@@ -3,6 +3,7 @@ from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
+from agno.tools.duckduckgo import DuckDuckGoTools
 from rich.pretty import pprint
 
 # UserId for the memories
@@ -34,10 +35,14 @@ memory_agent = Agent(
     add_history_to_messages=True,
     # Number of history runs
     num_history_runs=3,
+    tools=[DuckDuckGoTools()],
     markdown=True,
 )
 
-memory.clear()
+# memory.clear()
+print("Memories about Ava:")
+pprint(memory.get_user_memories(user_id=user_id))
+
 memory_agent.print_response(
     "My name is Ava and I like to ski.",
     user_id=user_id,

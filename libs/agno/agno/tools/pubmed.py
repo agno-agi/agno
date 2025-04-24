@@ -71,7 +71,7 @@ class PubmedTools(Toolkit):
                 fore_name = first_author_elem.find("ForeName")
                 if last_name is not None and fore_name is not None:
                     first_author = f"{last_name.text}, {fore_name.text}"
-                elif last_name is not None:
+                elif last_name is not None and last_name.text:
                     first_author = last_name.text
 
             # Get DOI
@@ -143,7 +143,8 @@ class PubmedTools(Toolkit):
         """
         try:
             log_debug(f"Searching PubMed for: {query}")
-            ids = self.fetch_pubmed_ids(query, self.max_results or max_results, self.email)
+            max_results = max_results or self.max_results or 10
+            ids = self.fetch_pubmed_ids(query, max_results, self.email)
             details_root = self.fetch_details(ids)
             articles = self.parse_details(details_root)
 
@@ -167,12 +168,13 @@ class PubmedTools(Toolkit):
                     )
                 else:
                     # Concise format with just essential information
+                    summary = article.get("Summary", "")
                     article_text = (
                         f"Title: {article.get('Title')}\n"
                         f"Published: {article.get('Published')}\n"
-                        f"Summary: {article.get('Summary')[:200]}..."
-                        if len(article.get("Summary", "")) > 200
-                        else f"Summary: {article.get('Summary')}"
+                        f"Summary: {summary[:200]}..."
+                        if len(summary) > 200
+                        else f"Summary: {summary}"
                     )
                 results.append(article_text)
 
