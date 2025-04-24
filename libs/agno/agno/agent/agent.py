@@ -144,6 +144,9 @@ class Agent:
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
+    # A function that acts as middleware and is called around tool calls.
+    tool_hooks: Optional[List[Callable]] = None
+
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
     reasoning: bool = False
@@ -301,6 +304,7 @@ class Agent:
         show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_hooks: Optional[List[Callable]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -385,6 +389,7 @@ class Agent:
         self.show_tool_calls = show_tool_calls
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
+        self.tool_hooks = tool_hooks
 
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
@@ -460,8 +465,6 @@ class Agent:
         # Agent session
         self.agent_session: Optional[AgentSession] = None
 
-        self._tools_for_model: Optional[List[Dict]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
         self._tool_instructions: Optional[List[str]] = None
 
         self._formatter: Optional[SafeFormatter] = None
@@ -779,7 +782,7 @@ class Agent:
                                 reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                                 metrics = tool_call.get("metrics")
-                                if metrics is not None:
+                                if metrics is not None and metrics.time is not None:
                                     reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if self.stream_intermediate_steps:
@@ -1420,7 +1423,7 @@ class Agent:
                                 reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                                 metrics = tool_call.get("metrics")
-                                if metrics is not None:
+                                if metrics is not None and metrics.time is not None:
                                     reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if self.stream_intermediate_steps:
@@ -1961,10 +1964,22 @@ class Agent:
     def add_tools_to_model(
         self, model: Model, session_id: str, async_mode: bool = False, user_id: Optional[str] = None
     ) -> None:
-        # Skip if functions_for_model is not None
-        if self._functions_for_model is None or self._tools_for_model is None:
+        agent_tools = self.get_tools(session_id=session_id, async_mode=async_mode, user_id=user_id)
+        agent_tool_names = []
+        # Get all the tool names
+        if agent_tools is not None:
+            for tool in agent_tools:
+                if isinstance(tool, Function):
+                    agent_tool_names.append(tool.name)
+                elif isinstance(tool, Toolkit):
+                    agent_tool_names.extend([f for f in tool.functions.keys()])
+                elif callable(tool):
+                    agent_tool_names.append(tool.__name__)
+
+        # Create new functions if we don't have any set on the model OR if the list of tool names is different than what is set on the model
+        existing_model_functions = model.get_functions()
+        if existing_model_functions is None or set(existing_model_functions.keys()) != set(agent_tool_names):
             # Get Agent tools
-            agent_tools = self.get_tools(session_id=session_id, async_mode=async_mode, user_id=user_id)
             if agent_tools is not None and len(agent_tools) > 0:
                 log_debug("Processing tools for model")
 
@@ -1977,27 +1992,29 @@ class Agent:
                 ):
                     strict = True
 
-                self._tools_for_model = []
-                self._functions_for_model = {}
+                _tools_for_model = []
+                _functions_for_model = {}
 
                 for tool in agent_tools:
                     if isinstance(tool, Dict):
                         # If a dict is passed, it is a builtin tool
                         # that is run by the model provider and not the Agent
-                        self._tools_for_model.append(tool)
+                        _tools_for_model.append(tool)
                         log_debug(f"Included builtin tool {tool}")
 
                     elif isinstance(tool, Toolkit):
                         # For each function in the toolkit and process entrypoint
                         for name, func in tool.functions.items():
                             # If the function does not exist in self.functions
-                            if name not in self._functions_for_model:
+                            if name not in _functions_for_model:
                                 func._agent = self
                                 func.process_entrypoint(strict=strict)
                                 if strict:
                                     func.strict = True
-                                self._functions_for_model[name] = func
-                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                if self.tool_hooks is not None:
+                                    func.tool_hooks = self.tool_hooks
+                                _functions_for_model[name] = func
+                                _tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added function {name} from {tool.name}")
 
                         # Add instructions from the toolkit
@@ -2007,13 +2024,15 @@ class Agent:
                             self._tool_instructions.append(tool.instructions)
 
                     elif isinstance(tool, Function):
-                        if tool.name not in self._functions_for_model:
+                        if tool.name not in _functions_for_model:
                             tool._agent = self
                             tool.process_entrypoint(strict=strict)
                             if strict and tool.strict is None:
                                 tool.strict = True
-                            self._functions_for_model[tool.name] = tool
-                            self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
+                            if self.tool_hooks is not None:
+                                tool.tool_hooks = self.tool_hooks
+                            _functions_for_model[tool.name] = tool
+                            _tools_for_model.append({"type": "function", "function": tool.to_dict()})
                             log_debug(f"Added function {tool.name}")
 
                         # Add instructions from the Function
@@ -2025,21 +2044,23 @@ class Agent:
                     elif callable(tool):
                         try:
                             function_name = tool.__name__
-                            if function_name not in self._functions_for_model:
+                            if function_name not in _functions_for_model:
                                 func = Function.from_callable(tool, strict=strict)
                                 func._agent = self
                                 if strict:
                                     func.strict = True
-                                self._functions_for_model[func.name] = func
-                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                if self.tool_hooks is not None:
+                                    func.tool_hooks = self.tool_hooks
+                                _functions_for_model[func.name] = func
+                                _tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added function {func.name}")
                         except Exception as e:
                             log_warning(f"Could not add function {tool}: {e}")
 
                 # Set tools on the model
-                model.set_tools(tools=self._tools_for_model)
+                model.set_tools(tools=_tools_for_model)
                 # Set functions on the model
-                model.set_functions(functions=self._functions_for_model)
+                model.set_functions(functions=_functions_for_model)
 
     def update_model(self, session_id: str, async_mode: bool = False, user_id: Optional[str] = None) -> None:
         self.set_default_model()
@@ -5341,6 +5362,7 @@ class Agent:
 
                 # Add the metrics message to the reasoning_messages
                 self.run_response.extra_data.reasoning_messages.append(metrics_message)
+
         except Exception as e:
             # Log the error but don't crash
             from agno.utils.log import log_error
