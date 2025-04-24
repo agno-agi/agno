@@ -20,11 +20,10 @@ class GeminiTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_image_generation: bool = True,
         image_generation_model: str = "imagen-3.0-generate-002",
         **kwargs,
     ):
-        super().__init__(name="gemini_tools", **kwargs)
+        super().__init__(name="gemini_tools", tools=[self.generate_image], **kwargs)
 
         self.api_key = api_key or getenv("GOOGLE_API_KEY")
         if not self.api_key:
@@ -41,9 +40,6 @@ class GeminiTools(Toolkit):
 
         self.image_model = image_generation_model
 
-        if enable_image_generation:
-            self.register(self.generate_image)
-
     def generate_image(
         self,
         agent: Agent,
@@ -52,7 +48,6 @@ class GeminiTools(Toolkit):
         """Generate images based on a text prompt using Google Imagen.
 
         Args:
-            agent (Agent): The agent instance to add the artifact to.
             prompt (str): The text prompt to generate the image from.
         Returns:
             str: A message indicating success (including media ID) or failure.

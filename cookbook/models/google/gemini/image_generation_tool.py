@@ -19,8 +19,8 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.model_tools.gemini import GeminiTools
-from agno.utils.media import save_base64_string
+from agno.tools.models.gemini import GeminiTools
+from agno.utils.media import save_base64_data
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
@@ -34,4 +34,4 @@ response = agent.run(
 )
 
 if response.images:
-    save_base64_string(response.images[0].content, "tmp/cyberpunk_samurai.png")
+    save_base64_data(response.images[0].content, "tmp/cyberpunk_samurai.png")
