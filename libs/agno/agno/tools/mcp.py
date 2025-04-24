@@ -134,7 +134,9 @@ class MCPTools(Toolkit):
         # Create a new session using stdio_client or sse_client based on transport
         if self.transport == "sse":
             sse_args = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
-            self._context = sse_client(url=sse_args.get("url", self.url), **sse_args)  # type: ignore
+            if "url" not in sse_args:
+                sse_args["url"] = self.url
+            self._context = sse_client(**sse_args)  # type: ignore
         else:
             if self.server_params is None:
                 raise ValueError("server_params must be provided when using stdio transport.")
@@ -298,10 +300,8 @@ class MultiMCPTools(Toolkit):
 
             # Handle SSE connections
             if isinstance(server_params, SSEClientParams):
-                sse_args = asdict(server_params)
-                sse_transport = await self._async_exit_stack.enter_async_context(
-                    sse_client(server_params.url, **sse_args)
-                )
+                sse_args = asdict(server_params) 
+                sse_transport = await self._async_exit_stack.enter_async_context(sse_client(**sse_args))
                 read, write = sse_transport
                 session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
 
