@@ -5,10 +5,9 @@ from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
-# Assuming agno structure, adjust imports if necessary
 from agno.agent import Agent
 from agno.media import AudioArtifact
-from agno.tools.model_tools.groq import GroqTools
+from agno.tools.models.groq import GroqTools
 
 MOCK_API_KEY = "test-groq-api-key"
 
@@ -22,7 +21,7 @@ def mock_groq_env_key(monkeypatch):
 @pytest.fixture
 def mock_groq_client():
     """Fixture to mock the GroqClient."""
-    with patch("agno.tools.model_tools.groq.GroqClient") as mock_client_constructor:
+    with patch("agno.tools.models.groq.GroqClient") as mock_client_constructor:
         mock_client_instance = MagicMock()
         mock_client_constructor.return_value = mock_client_instance
 
@@ -239,9 +238,9 @@ def test_translate_audio_error(mock_exists, mock_toolkit_init, mock_groq_client)
 @patch("agno.tools.toolkit.Toolkit.__init__", return_value=None)  # Mock base init
 # Configure the mock UUID object to return 'testuuid' when converted to string
 # Patch uuid4 where it's imported in the groq module
-@patch("agno.tools.model_tools.groq.uuid4", return_value=MagicMock(hex="testuuid", __str__=lambda self: "testuuid"))
+@patch("agno.tools.models.groq.uuid4", return_value=MagicMock(hex="testuuid", __str__=lambda self: "testuuid"))
 @patch(
-    "agno.tools.model_tools.groq.base64.b64encode", return_value=b"bW9ja19hdWRpb19ieXRlcw=="
+    "agno.tools.models.groq.base64.b64encode", return_value=b"bW9ja19hdWRpb19ieXRlcw=="
 )  # "mock_audio_bytes" base64
 def test_generate_speech_success(mock_b64encode, mock_uuid, mock_toolkit_init, mock_groq_client):
     """Test successful generate_speech call."""

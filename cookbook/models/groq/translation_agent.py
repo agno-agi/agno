@@ -1,16 +1,11 @@
-# groq transcription agent
-
-import asyncio
-import os
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
 from agno.tools.models.groq import GroqTools
 from agno.utils.media import save_audio
 
-path = "christmas-fr.mp3"
+path = "tmp/sample-fr.mp3"
 
 agent = Agent(
     name="Groq Translation Agent",
@@ -25,4 +20,4 @@ agent.print_response(
 response = agent.run_response
 
 if response.audio:
-    save_audio(response.audio[0].base64_audio, Path("tmp/christmas-en.mp3"))
+    save_audio(response.audio[0].base64_audio, Path("tmp/sample-en.mp3"))
