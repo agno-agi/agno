@@ -4326,7 +4326,7 @@ class Team:
                     # For each function in the toolkit and process entrypoint
                     for name, func in tool.functions.items():
                         # If the function does not exist in self.functions
-                        if name not in self._functions_for_model:
+                        if name not in _functions_for_model:
                             func._agent = self
                             func._team = self
                             func.process_entrypoint(strict=strict)

@@ -1967,7 +1967,7 @@ class Agent:
         agent_tools = self.get_tools(session_id=session_id, async_mode=async_mode, user_id=user_id)
         agent_tool_names = []
         # Get all the tool names
-        if agent_tools is not None: 
+        if agent_tools is not None:
             for tool in agent_tools:
                 if isinstance(tool, Function):
                     agent_tool_names.append(tool.name)
