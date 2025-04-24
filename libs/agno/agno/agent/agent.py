@@ -144,6 +144,9 @@ class Agent:
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
+    # A function that acts as middleware and is called around tool calls.
+    tool_hooks: Optional[List[Callable]] = None
+
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
     reasoning: bool = False
@@ -301,6 +304,7 @@ class Agent:
         show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_hooks: Optional[List[Callable]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -385,6 +389,7 @@ class Agent:
         self.show_tool_calls = show_tool_calls
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
+        self.tool_hooks = tool_hooks
 
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
@@ -777,7 +782,7 @@ class Agent:
                                 reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                                 metrics = tool_call.get("metrics")
-                                if metrics is not None:
+                                if metrics is not None and metrics.time is not None:
                                     reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if self.stream_intermediate_steps:
@@ -1418,7 +1423,7 @@ class Agent:
                                 reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                                 metrics = tool_call.get("metrics")
-                                if metrics is not None:
+                                if metrics is not None and metrics.time is not None:
                                     reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if self.stream_intermediate_steps:
@@ -2006,6 +2011,8 @@ class Agent:
                                 func.process_entrypoint(strict=strict)
                                 if strict:
                                     func.strict = True
+                                if self.tool_hooks is not None:
+                                    func.tool_hooks = self.tool_hooks
                                 _functions_for_model[name] = func
                                 _tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added function {name} from {tool.name}")
@@ -2022,6 +2029,8 @@ class Agent:
                             tool.process_entrypoint(strict=strict)
                             if strict and tool.strict is None:
                                 tool.strict = True
+                            if self.tool_hooks is not None:
+                                tool.tool_hooks = self.tool_hooks
                             _functions_for_model[tool.name] = tool
                             _tools_for_model.append({"type": "function", "function": tool.to_dict()})
                             log_debug(f"Added function {tool.name}")
@@ -2040,6 +2049,8 @@ class Agent:
                                 func._agent = self
                                 if strict:
                                     func.strict = True
+                                if self.tool_hooks is not None:
+                                    func.tool_hooks = self.tool_hooks
                                 _functions_for_model[func.name] = func
                                 _tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added function {func.name}")
@@ -5351,6 +5362,7 @@ class Agent:
 
                 # Add the metrics message to the reasoning_messages
                 self.run_response.extra_data.reasoning_messages.append(metrics_message)
+
         except Exception as e:
             # Log the error but don't crash
             from agno.utils.log import log_error

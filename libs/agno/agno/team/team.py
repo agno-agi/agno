@@ -171,6 +171,8 @@ class Team:
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
+    # A list of hooks to be called before and after the tool call
+    tool_hooks: Optional[List[Callable]] = None
 
     # --- Structured output ---
     # Response model for the team response
@@ -258,6 +260,7 @@ class Team:
         show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_hooks: Optional[List[Callable]] = None,
         response_model: Optional[Type[BaseModel]] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
@@ -322,6 +325,7 @@ class Team:
         self.show_tool_calls = show_tool_calls
         self.tool_choice = tool_choice
         self.tool_call_limit = tool_call_limit
+        self.tool_hooks = tool_hooks
 
         self.response_model = response_model
         self.use_json_mode = use_json_mode
@@ -4328,6 +4332,8 @@ class Team:
                             func.process_entrypoint(strict=strict)
                             if strict:
                                 func.strict = True
+                            if self.tool_hooks:
+                                func.tool_hooks = self.tool_hooks
                             _functions_for_model[name] = func
                             _tools_for_model.append({"type": "function", "function": func.to_dict()})
                             log_debug(f"Added function {name} from {tool.name}")
@@ -4345,6 +4351,8 @@ class Team:
                         tool.process_entrypoint(strict=strict)
                         if strict and tool.strict is None:
                             tool.strict = True
+                        if self.tool_hooks:
+                            tool.tool_hooks = self.tool_hooks
                         _functions_for_model[tool.name] = tool
                         _tools_for_model.append({"type": "function", "function": tool.to_dict()})
                         log_debug(f"Added function {tool.name}")
@@ -4363,6 +4371,8 @@ class Team:
                         func._team = self
                         if strict:
                             func.strict = True
+                        if self.tool_hooks:
+                            func.tool_hooks = self.tool_hooks
                         _functions_for_model[func.name] = func
                         _tools_for_model.append({"type": "function", "function": func.to_dict()})
                         log_debug(f"Added function {func.name}")
