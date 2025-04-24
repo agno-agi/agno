@@ -433,7 +433,8 @@ class Team:
                 else:
                     merge_dictionaries(member.session_state, self.session_state)
 
-        member.team_id = self.team_id
+        if isinstance(member, Agent):
+            member.team_id = self.team_id
 
         if member.name is None:
             log_warning("Team member name is undefined.")
