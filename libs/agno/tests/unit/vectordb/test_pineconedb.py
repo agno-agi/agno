@@ -9,6 +9,7 @@ from agno.vectordb.pineconedb import PineconeDb
 # Configuration for tests
 TEST_INDEX_NAME = f"test_index_{uuid.uuid4().hex[:8]}"
 TEST_DIMENSION = 1024
+TEST_NAMESPACE = "test_namespace"
 
 
 @pytest.fixture
@@ -54,6 +55,7 @@ def mock_pinecone_db(mock_pinecone_client, mock_pinecone_index, mock_embedder):
         db = PineconeDb(
             name=TEST_INDEX_NAME,
             dimension=TEST_DIMENSION,
+            namespace=TEST_NAMESPACE,
             spec={"serverless": {"cloud": "aws", "region": "us-west-2"}},
             embedder=mock_embedder,
             api_key="fake-api-key",
@@ -86,12 +88,14 @@ def test_initialization():
         db = PineconeDb(
             name=TEST_INDEX_NAME,
             dimension=TEST_DIMENSION,
+            namespace=TEST_NAMESPACE,
             spec={"serverless": {"cloud": "aws", "region": "us-west-2"}},
             api_key="fake-api-key",
         )
 
         assert db.name == TEST_INDEX_NAME
         assert db.dimension == TEST_DIMENSION
+        assert db.namespace == TEST_NAMESPACE
         assert db.api_key == "fake-api-key"
         assert db._client is None
         assert db._index is None
@@ -184,7 +188,7 @@ def test_doc_exists(mock_pinecone_db):
     mock_pinecone_db.index.fetch.return_value.vectors = {}
 
     assert mock_pinecone_db.doc_exists(doc) is False
-    mock_pinecone_db.index.fetch.assert_called_with(ids=[doc.id])
+    mock_pinecone_db.index.fetch.assert_called_with(ids=[doc.id], namespace=TEST_NAMESPACE)
 
     # Test when document exists
     mock_pinecone_db.index.fetch.return_value.vectors = {doc.id: {"id": doc.id}}
@@ -251,7 +255,7 @@ def test_search(mock_pinecone_db, mock_embedder):
 
     # Check that index.query was called with the right arguments
     mock_pinecone_db.index.query.assert_called_with(
-        vector=[0.1] * 1024, top_k=2, namespace=None, filter=None, include_values=None, include_metadata=True
+        vector=[0.1] * 1024, top_k=2, namespace=TEST_NAMESPACE, filter=None, include_values=None, include_metadata=True
     )
 
     # Check the results
