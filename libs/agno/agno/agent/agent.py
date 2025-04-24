@@ -1957,7 +1957,6 @@ class Agent:
     def add_tools_to_model(
         self, model: Model, session_id: str, async_mode: bool = False, user_id: Optional[str] = None
     ) -> None:
-        
         agent_tools = self.get_tools(session_id=session_id, async_mode=async_mode, user_id=user_id)
         agent_tool_names = []
         # Get all the tool names
@@ -1968,7 +1967,7 @@ class Agent:
                 agent_tool_names.extend([f for f in tool.functions.keys()])
             elif callable(tool):
                 agent_tool_names.append(tool.__name__)
-        
+
         # Create new functions if we don't have any set on the model OR if the list of tool names is different than what is set on the model
         existing_model_functions = self.model.get_functions()
         if existing_model_functions is None or set(existing_model_functions.keys()) != set(agent_tool_names):

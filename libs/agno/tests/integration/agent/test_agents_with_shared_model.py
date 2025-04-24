@@ -2,7 +2,6 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
-from agno.team.team import Team
 
 
 @pytest.fixture(scope="session")
@@ -37,13 +36,12 @@ def finance_agent(shared_model):
 
 
 def test_tools_available_to_agents(web_agent, finance_agent):
-   
     finance_agent.run("What is the current stock price of AAPL?")
-    
+
     assert list(finance_agent.model._functions.keys()) == [
         "get_current_stock_price",
     ]
-    
+
     web_agent.run("What is currently happening in the news?")
     assert list(web_agent.model._functions.keys()) == [
         "duckduckgo_search",

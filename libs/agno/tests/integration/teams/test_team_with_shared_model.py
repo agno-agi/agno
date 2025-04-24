@@ -53,19 +53,19 @@ def route_team(web_agent, finance_agent, analysis_agent, shared_model):
         enable_user_memories=True,
     )
 
+
 def test_tools_available_to_agents(route_team, shared_model):
     route_team.run("What is the current stock price of AAPL?")
-    
+
     # Since the finance model was called last, the model should only have the finance functions
     assert list(shared_model._functions.keys()) == [
         "get_current_stock_price",
     ]
-    
+
     route_team.run("What is currently happening in the news?")
-    
+
     # Since the web model was called last, the model should only have the web functions
     assert list(shared_model._functions.keys()) == [
         "duckduckgo_search",
         "duckduckgo_news",
     ]
-    

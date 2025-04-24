@@ -154,7 +154,7 @@ class Model(ABC):
     def set_functions(self, functions: Dict[str, Function]) -> None:
         if len(functions) > 0:
             self._functions = functions
-    
+
     def get_functions(self) -> Dict[str, Function]:
         return self._functions
 
