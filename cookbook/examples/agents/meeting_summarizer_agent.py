@@ -13,7 +13,7 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.openai import OpenAITools
 from agno.tools.reasoning import ReasoningTools
-from agno.utils.media import download_file, save_audio
+from agno.utils.media import download_file, save_base64_data
 
 input_audio_url: str = (
     "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/sample_audio.mp3"
@@ -47,5 +47,5 @@ response = meeting_agent.run(
     f"Please process the meeting recording located at '{local_audio_path}'",
 )
 if response.audio:
-    save_audio(response.audio[0].base64_audio, Path("tmp/meeting_summary.mp3"))
+    save_base64_data(response.audio[0].base64_audio, Path("tmp/meeting_summary.mp3"))
     print(f"Meeting summary saved to: {Path('tmp/meeting_summary.mp3')}")
