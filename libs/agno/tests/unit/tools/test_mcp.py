@@ -32,7 +32,7 @@ def test_empty_command_string():
 @pytest.mark.asyncio
 async def test_multimcp_without_endpoints():
     """Test that ValueError is raised when no endpoints are provided."""
-    with pytest.raises(ValueError, match="Either server_params_list or commands must be provided"):
+    with pytest.raises(ValueError, match="Either server_params_list or commands or urls must be provided"):
         async with MultiMCPTools():
             pass
 
