@@ -2,6 +2,7 @@ import asyncio
 import collections.abc
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from inspect import iscoroutinefunction
 from types import AsyncGeneratorType, GeneratorType
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
@@ -830,6 +831,7 @@ class Model(ABC):
     def run_function_calls(
         self, function_calls: List[FunctionCall], function_call_results: List[Message]
     ) -> Iterator[ModelResponse]:
+        
         if self._function_call_stack is None:
             self._function_call_stack = []
 
@@ -853,7 +855,7 @@ class Model(ABC):
                 ],
                 event=ModelResponseEvent.tool_call_started.value,
             )
-
+            
             # Track if the function call was successful
             function_call_success = False
             # Run function calls sequentially

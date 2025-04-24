@@ -452,6 +452,7 @@ class FunctionCall(BaseModel):
         at the innermost level. Returns bubble back up through each hook.
         """
         from functools import reduce
+        from inspect import iscoroutinefunction
 
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function."""
@@ -476,9 +477,17 @@ class FunctionCall(BaseModel):
                 return hook(name, next_func, args)
 
             return wrapper
+        
+        # Remove coroutine hooks
+        final_hooks = []
+        for hook in self.function.tool_execution_hooks:
+            if iscoroutinefunction(hook):
+                log_warning(f"Cannot use async hooks with sync function calls. Skipping hook: {hook.__name__}")
+            else:
+                final_hooks.append(hook)
 
         # Build the chain from inside out - reverse the hooks to start from the innermost
-        hooks = list(reversed(self.function.tool_execution_hooks))
+        hooks = list(reversed(final_hooks))
         chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
         return chain
 
