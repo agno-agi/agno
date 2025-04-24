@@ -586,8 +586,8 @@ class Agent:
             self.memory = cast(AgentMemory, self.memory)
         else:
             self.memory = cast(Memory, self.memory)
-
         # 1.2 Set streaming and stream intermediate steps
+        
         self.stream = self.stream or (stream and self.is_streamable)
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
         # 1.3 Create a run_id and RunResponse
@@ -878,7 +878,6 @@ class Agent:
 
         # 8. Update RunResponse
         # Build a list of messages that should be added to the RunResponse
-
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         # Update the RunResponse messages
         self.run_response.messages = messages_for_run_response
@@ -888,7 +887,7 @@ class Agent:
         # Update the run_response audio if streaming
         if self.stream and model_response.audio is not None:
             self.run_response.response_audio = model_response.audio
-
+        
         # 9. Update Agent Memory
         if isinstance(self.memory, AgentMemory):
             # Add the system message to the memory
@@ -1059,7 +1058,7 @@ class Agent:
         # If no retries are set, use the agent's default retries
         if retries is None:
             retries = self.retries
-
+            
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
@@ -4073,6 +4072,7 @@ class Agent:
             """
             self.memory = cast(Memory, self.memory)
             response = self.memory.update_memory_task(task=task, user_id=user_id)
+            
             return response
 
         async def aupdate_user_memory(task: str) -> str:
@@ -4408,7 +4408,7 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         markdown: bool = False,
         show_message: bool = True,
@@ -4436,6 +4436,7 @@ class Agent:
             stream = False
 
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
+        stream = stream or self.stream or False
 
         if stream:
             _response_content: str = ""
@@ -4805,7 +4806,7 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         markdown: bool = False,
         show_message: bool = True,
@@ -4833,7 +4834,7 @@ class Agent:
             stream = False
 
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
-
+        stream = stream or self.stream or False
         if stream:
             _response_content: str = ""
             _response_thinking: str = ""
