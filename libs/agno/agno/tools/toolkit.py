@@ -39,9 +39,21 @@ class Toolkit:
         self.instructions: Optional[str] = instructions
         self.add_instructions: bool = add_instructions
 
+        self._check_tools_filters(tools, include_tools, exclude_tools)
+
         self.include_tools = include_tools
         self.exclude_tools = exclude_tools
 
+        self.cache_results: bool = cache_results
+        self.cache_ttl: int = cache_ttl
+        self.cache_dir: Optional[str] = cache_dir
+
+        # Automatically register all methods if auto_register is True
+        if auto_register and self.tools:
+            self._register_tools()
+
+    def _check_tools_filters(self, tools, include_tools, exclude_tools) -> None:
+        """Check if `include_tools` and `exclude_tools` are valid"""
         if include_tools or exclude_tools:
             available_tools = {tool.__name__ for tool in tools}
 
@@ -54,14 +66,6 @@ class Toolkit:
                 missing_excludes = set(exclude_tools) - available_tools
                 if missing_excludes:
                     raise ValueError(f"Excluded tool(s) not present in the toolkit: {', '.join(missing_excludes)}")
-
-        self.cache_results: bool = cache_results
-        self.cache_ttl: int = cache_ttl
-        self.cache_dir: Optional[str] = cache_dir
-
-        # Automatically register all methods if auto_register is True
-        if auto_register and self.tools:
-            self._register_tools()
 
     def _register_tools(self) -> None:
         """Register all tools."""
