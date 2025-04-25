@@ -28,7 +28,9 @@ class AgnoCliSettings(BaseSettings):
     alpha_features: bool = False
     api_url: str = Field("https://api.agno.com", validate_default=True)
     signin_url: str = Field("https://app.agno.com/login", validate_default=True)
-    playground_url: str = Field("https://app.agno.com/playground", validate_default=True)
+    playground_url: str = Field(
+        "https://app.agno.com/playground", validate_default=True
+    )
 
     model_config = SettingsConfigDict(env_prefix="AGNO_")
 
@@ -78,7 +80,9 @@ class AgnoCliSettings(BaseSettings):
 
     def gate_alpha_feature(self):
         if not self.alpha_features:
-            logger.error("This is an Alpha feature not for general use.\nPlease message the Agno team for access.")
+            logger.error(
+                "This is an Alpha feature not for general use.\nPlease message the Agno team for access."
+            )
             exit(1)
 
 

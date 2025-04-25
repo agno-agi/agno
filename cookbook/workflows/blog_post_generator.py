@@ -30,6 +30,8 @@ import json
 from textwrap import dedent
 from typing import Dict, Iterator, Optional
 
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
@@ -38,7 +40,6 @@ from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.workflow import RunEvent, RunResponse, Workflow
-from pydantic import BaseModel, Field
 
 
 class NewsArticle(BaseModel):

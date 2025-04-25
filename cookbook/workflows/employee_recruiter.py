@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List
 
 import requests
+
 from agno.run.response import RunResponse
 from agno.tools.zoom import ZoomTools
 
@@ -13,12 +14,13 @@ except ImportError:
     raise ImportError(
         "pypdf is not installed. Please install it using `pip install pypdf`"
     )
+from pydantic import BaseModel, Field
+
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.tools.resend import ResendTools
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
-from pydantic import BaseModel, Field
 
 
 class ScreeningResult(BaseModel):

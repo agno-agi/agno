@@ -5,14 +5,11 @@ from agno.media import Image
 from agno.utils.log import log_error, log_warning
 
 try:
-    from google.genai.types import (
-        FunctionDeclaration,
-        Schema,
-        Tool,
-        Type,
-    )
+    from google.genai.types import FunctionDeclaration, Schema, Tool, Type
 except ImportError:
-    raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
+    raise ImportError(
+        "`google-genai` not installed. Please install it using `pip install google-genai`"
+    )
 
 
 def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
@@ -59,7 +56,10 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     elif image.content is not None and isinstance(image.content, bytes):
         import base64
 
-        image_data = {"mime_type": "image/jpeg", "data": base64.b64encode(image.content).decode("utf-8")}
+        image_data = {
+            "mime_type": "image/jpeg",
+            "data": base64.b64encode(image.content).decode("utf-8"),
+        }
         return image_data
     else:
         log_warning(f"Unknown image type: {type(image)}")

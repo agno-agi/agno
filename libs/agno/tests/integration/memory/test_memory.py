@@ -47,7 +47,11 @@ def memory_with_db(model, memory_db):
 def test_add_user_memory_with_db(memory_with_db):
     """Test adding a user memory with database persistence."""
     # Create a user memory
-    user_memory = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
+    user_memory = UserMemory(
+        memory="The user's name is John Doe",
+        topics=["name", "user"],
+        last_updated=datetime.now(),
+    )
 
     # Add the memory
     memory_id = memory_with_db.add_user_memory(memory=user_memory, user_id="test_user")
@@ -60,8 +64,13 @@ def test_add_user_memory_with_db(memory_with_db):
     new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify the memory was loaded from the database
-    assert new_memory.get_user_memory(user_id="test_user", memory_id=memory_id) is not None
-    assert new_memory.get_user_memory(user_id="test_user", memory_id=memory_id).memory == "The user's name is John Doe"
+    assert (
+        new_memory.get_user_memory(user_id="test_user", memory_id=memory_id) is not None
+    )
+    assert (
+        new_memory.get_user_memory(user_id="test_user", memory_id=memory_id).memory
+        == "The user's name is John Doe"
+    )
 
 
 def test_create_user_memory_with_db(memory_with_db):
@@ -149,7 +158,9 @@ async def test_acreate_user_memories_with_db(memory_with_db):
     ]
 
     # Create memories from the messages
-    result = await memory_with_db.acreate_user_memories(messages=messages, user_id="test_user")
+    result = await memory_with_db.acreate_user_memories(
+        messages=messages, user_id="test_user"
+    )
 
     # Verify memories were created
     assert len(result) > 0
@@ -171,14 +182,22 @@ async def test_acreate_user_memories_with_db(memory_with_db):
 def test_search_user_memories_semantic(memory_with_db):
     """Test semantic search of user memories."""
     # Add multiple memories with different content
-    memory1 = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
+    memory1 = UserMemory(
+        memory="The user's name is John Doe",
+        topics=["name", "user"],
+        last_updated=datetime.now(),
+    )
 
     memory2 = UserMemory(
-        memory="The user likes to play basketball", topics=["sports", "hobbies"], last_updated=datetime.now()
+        memory="The user likes to play basketball",
+        topics=["sports", "hobbies"],
+        last_updated=datetime.now(),
     )
 
     memory3 = UserMemory(
-        memory="The user's favorite color is blue", topics=["preferences", "colors"], last_updated=datetime.now()
+        memory="The user's favorite color is blue",
+        topics=["preferences", "colors"],
+        last_updated=datetime.now(),
     )
 
     # Add the memories
@@ -213,7 +232,9 @@ def test_create_session_summary_with_db(memory_with_db):
     memory_with_db.add_run(session_id, run_response)
 
     # Create the summary
-    summary = memory_with_db.create_session_summary(session_id=session_id, user_id=user_id)
+    summary = memory_with_db.create_session_summary(
+        session_id=session_id, user_id=user_id
+    )
 
     # Verify the summary was created
     assert summary is not None
@@ -251,7 +272,11 @@ def test_memory_persistence_across_instances(model, memory_db):
     memory1 = Memory(model=model, db=memory_db)
 
     # Add a user memory
-    user_memory = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
+    user_memory = UserMemory(
+        memory="The user's name is John Doe",
+        topics=["name", "user"],
+        last_updated=datetime.now(),
+    )
 
     memory_id = memory1.add_user_memory(memory=user_memory, user_id="test_user")
 
@@ -260,26 +285,38 @@ def test_memory_persistence_across_instances(model, memory_db):
 
     # Verify the memory is accessible from the second instance
     assert memory2.get_user_memory(user_id="test_user", memory_id=memory_id) is not None
-    assert memory2.get_user_memory(user_id="test_user", memory_id=memory_id).memory == "The user's name is John Doe"
+    assert (
+        memory2.get_user_memory(user_id="test_user", memory_id=memory_id).memory
+        == "The user's name is John Doe"
+    )
 
 
 def test_memory_operations_with_db(memory_with_db):
     """Test various memory operations with database persistence."""
     # Add a user memory
-    user_memory = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
+    user_memory = UserMemory(
+        memory="The user's name is John Doe",
+        topics=["name", "user"],
+        last_updated=datetime.now(),
+    )
 
     memory_id = memory_with_db.add_user_memory(memory=user_memory, user_id="test_user")
 
     # Replace the memory
     updated_memory = UserMemory(
-        memory="The user's name is Jane Doe", topics=["name", "user"], last_updated=datetime.now()
+        memory="The user's name is Jane Doe",
+        topics=["name", "user"],
+        last_updated=datetime.now(),
     )
 
-    memory_with_db.replace_user_memory(memory_id=memory_id, memory=updated_memory, user_id="test_user")
+    memory_with_db.replace_user_memory(
+        memory_id=memory_id, memory=updated_memory, user_id="test_user"
+    )
 
     # Verify the memory was updated
     assert (
-        memory_with_db.get_user_memory(user_id="test_user", memory_id=memory_id).memory == "The user's name is Jane Doe"
+        memory_with_db.get_user_memory(user_id="test_user", memory_id=memory_id).memory
+        == "The user's name is Jane Doe"
     )
 
     # Delete the memory
@@ -292,7 +329,10 @@ def test_memory_operations_with_db(memory_with_db):
     new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify the memory is still deleted in the new instance
-    assert "test_user" not in new_memory.memories or memory_id not in new_memory.memories["test_user"]
+    assert (
+        "test_user" not in new_memory.memories
+        or memory_id not in new_memory.memories["test_user"]
+    )
 
 
 def test_summary_operations_with_db(memory_with_db):
@@ -327,13 +367,20 @@ def test_summary_operations_with_db(memory_with_db):
     new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify the summary is still deleted in the new instance
-    assert "test_user" not in new_memory.summaries or session_id not in new_memory.summaries["test_user"]
+    assert (
+        "test_user" not in new_memory.summaries
+        or session_id not in new_memory.summaries["test_user"]
+    )
 
 
 def test_clear_memory_with_db(memory_with_db):
     """Test clearing memory with database persistence."""
     # Add a user memory
-    user_memory = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
+    user_memory = UserMemory(
+        memory="The user's name is John Doe",
+        topics=["name", "user"],
+        last_updated=datetime.now(),
+    )
 
     memory_with_db.add_user_memory(memory=user_memory, user_id="test_user")
 
@@ -372,11 +419,17 @@ def test_clear_memory_with_db(memory_with_db):
 def test_search_user_memories_last_n(memory_with_db):
     """Test retrieving the most recent memories."""
     # Add multiple memories with different timestamps
-    memory1 = UserMemory(memory="First memory", topics=["test"], last_updated=datetime(2023, 1, 1))
+    memory1 = UserMemory(
+        memory="First memory", topics=["test"], last_updated=datetime(2023, 1, 1)
+    )
 
-    memory2 = UserMemory(memory="Second memory", topics=["test"], last_updated=datetime(2023, 1, 2))
+    memory2 = UserMemory(
+        memory="Second memory", topics=["test"], last_updated=datetime(2023, 1, 2)
+    )
 
-    memory3 = UserMemory(memory="Third memory", topics=["test"], last_updated=datetime(2023, 1, 3))
+    memory3 = UserMemory(
+        memory="Third memory", topics=["test"], last_updated=datetime(2023, 1, 3)
+    )
 
     # Add the memories
     memory_with_db.add_user_memory(memory=memory1, user_id="test_user")
@@ -384,7 +437,9 @@ def test_search_user_memories_last_n(memory_with_db):
     memory_with_db.add_user_memory(memory=memory3, user_id="test_user")
 
     # Get the last 2 memories
-    results = memory_with_db.search_user_memories(retrieval_method="last_n", limit=2, user_id="test_user")
+    results = memory_with_db.search_user_memories(
+        retrieval_method="last_n", limit=2, user_id="test_user"
+    )
 
     # Verify the search returned the most recent memories
     assert len(results) == 2
@@ -395,11 +450,17 @@ def test_search_user_memories_last_n(memory_with_db):
 def test_search_user_memories_first_n(memory_with_db):
     """Test retrieving the oldest memories."""
     # Add multiple memories with different timestamps
-    memory1 = UserMemory(memory="First memory", topics=["test"], last_updated=datetime(2023, 1, 1))
+    memory1 = UserMemory(
+        memory="First memory", topics=["test"], last_updated=datetime(2023, 1, 1)
+    )
 
-    memory2 = UserMemory(memory="Second memory", topics=["test"], last_updated=datetime(2023, 1, 2))
+    memory2 = UserMemory(
+        memory="Second memory", topics=["test"], last_updated=datetime(2023, 1, 2)
+    )
 
-    memory3 = UserMemory(memory="Third memory", topics=["test"], last_updated=datetime(2023, 1, 3))
+    memory3 = UserMemory(
+        memory="Third memory", topics=["test"], last_updated=datetime(2023, 1, 3)
+    )
 
     # Add the memories
     memory_with_db.add_user_memory(memory=memory1, user_id="test_user")
@@ -407,7 +468,9 @@ def test_search_user_memories_first_n(memory_with_db):
     memory_with_db.add_user_memory(memory=memory3, user_id="test_user")
 
     # Get the first 2 memories
-    results = memory_with_db.search_user_memories(retrieval_method="first_n", limit=2, user_id="test_user")
+    results = memory_with_db.search_user_memories(
+        retrieval_method="first_n", limit=2, user_id="test_user"
+    )
 
     # Verify the search returned the oldest memories
     assert len(results) == 2
@@ -418,12 +481,20 @@ def test_search_user_memories_first_n(memory_with_db):
 def test_update_memory_task_with_db(memory_with_db):
     """Test updating memory with a task using database persistence."""
     # Add multiple memories with different content
-    memory1 = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
+    memory1 = UserMemory(
+        memory="The user's name is John Doe",
+        topics=["name", "user"],
+        last_updated=datetime.now(),
+    )
     memory2 = UserMemory(
-        memory="The user likes to play basketball", topics=["sports", "hobbies"], last_updated=datetime.now()
+        memory="The user likes to play basketball",
+        topics=["sports", "hobbies"],
+        last_updated=datetime.now(),
     )
     memory3 = UserMemory(
-        memory="The user's favorite color is blue", topics=["preferences", "colors"], last_updated=datetime.now()
+        memory="The user's favorite color is blue",
+        topics=["preferences", "colors"],
+        last_updated=datetime.now(),
     )
 
     # Add the memories
@@ -445,7 +516,9 @@ def test_update_memory_task_with_db(memory_with_db):
     assert len(memories) > 0
     assert any("30" in memory.memory for memory in memories)
 
-    response = memory_with_db.update_memory_task(task="Delete any memories of the user's name", user_id="test_user")
+    response = memory_with_db.update_memory_task(
+        task="Delete any memories of the user's name", user_id="test_user"
+    )
 
     # Verify the task was processed
     assert response is not None
@@ -460,12 +533,20 @@ def test_update_memory_task_with_db(memory_with_db):
 async def test_aupdate_memory_task_with_db(memory_with_db):
     """Test async updating memory with a task using database persistence."""
     # Add multiple memories with different content
-    memory1 = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
+    memory1 = UserMemory(
+        memory="The user's name is John Doe",
+        topics=["name", "user"],
+        last_updated=datetime.now(),
+    )
     memory2 = UserMemory(
-        memory="The user likes to play basketball", topics=["sports", "hobbies"], last_updated=datetime.now()
+        memory="The user likes to play basketball",
+        topics=["sports", "hobbies"],
+        last_updated=datetime.now(),
     )
     memory3 = UserMemory(
-        memory="The user's favorite color is blue", topics=["preferences", "colors"], last_updated=datetime.now()
+        memory="The user's favorite color is blue",
+        topics=["preferences", "colors"],
+        last_updated=datetime.now(),
     )
 
     # Add the memories
@@ -486,7 +567,9 @@ async def test_aupdate_memory_task_with_db(memory_with_db):
     # Verify memories were updated
     assert len(memories) > 0
     assert any(
-        "occupation" in memory.memory.lower() and "software engineer" in memory.memory.lower() for memory in memories
+        "occupation" in memory.memory.lower()
+        and "software engineer" in memory.memory.lower()
+        for memory in memories
     )
 
     response = await memory_with_db.aupdate_memory_task(

@@ -7,7 +7,9 @@ from agno.utils.log import log_info, logger
 try:
     import resend  # type: ignore
 except ImportError:
-    raise ImportError("`resend` not installed. Please install using `pip install resend`.")
+    raise ImportError(
+        "`resend` not installed. Please install using `pip install resend`."
+    )
 
 
 class ResendTools(Toolkit):

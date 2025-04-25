@@ -15,19 +15,20 @@ from agno.utils.log import log_error, log_warning
 from agno.utils.openai import audio_to_message, images_to_message
 
 try:
-    from openai import APIConnectionError, APIStatusError, RateLimitError
+    from openai import APIConnectionError, APIStatusError
     from openai import AsyncOpenAI as AsyncOpenAIClient
     from openai import OpenAI as OpenAIClient
+    from openai import RateLimitError
     from openai.types.chat import ChatCompletionAudio
     from openai.types.chat.chat_completion import ChatCompletion
-    from openai.types.chat.chat_completion_chunk import (
-        ChatCompletionChunk,
-        ChoiceDelta,
-        ChoiceDeltaToolCall,
-    )
+    from openai.types.chat.chat_completion_chunk import (ChatCompletionChunk,
+                                                         ChoiceDelta,
+                                                         ChoiceDeltaToolCall)
     from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
 except (ImportError, ModuleNotFoundError):
-    raise ImportError("`openai` not installed. Please install using `pip install openai`")
+    raise ImportError(
+        "`openai` not installed. Please install using `pip install openai`"
+    )
 
 
 @dataclass
@@ -101,7 +102,9 @@ class OpenAIChat(Model):
         if not self.api_key:
             self.api_key = getenv("OPENAI_API_KEY")
             if not self.api_key:
-                log_error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
+                log_error(
+                    "OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable."
+                )
 
         # Define base client params
         base_params = {
@@ -225,9 +228,11 @@ class OpenAIChat(Model):
                 "modalities": self.modalities,
                 "audio": self.audio,
                 "presence_penalty": self.presence_penalty,
-                "response_format": self.response_format
-                if isinstance(self.response_format, dict)
-                else str(self.response_format),
+                "response_format": (
+                    self.response_format
+                    if isinstance(self.response_format, dict)
+                    else str(self.response_format)
+                ),
                 "seed": self.seed,
                 "stop": self.stop,
                 "temperature": self.temperature,
@@ -275,10 +280,14 @@ class OpenAIChat(Model):
             if isinstance(message.content, str):
                 message_dict["content"] = [{"type": "text", "text": message.content}]
                 if message.images is not None:
-                    message_dict["content"].extend(images_to_message(images=message.images))
+                    message_dict["content"].extend(
+                        images_to_message(images=message.images)
+                    )
 
                 if message.audio is not None:
-                    message_dict["content"].extend(audio_to_message(audio=message.audio))
+                    message_dict["content"].extend(
+                        audio_to_message(audio=message.audio)
+                    )
 
         if message.audio_output is not None:
             message_dict["content"] = None
@@ -297,7 +306,9 @@ class OpenAIChat(Model):
 
         return message_dict
 
-    def invoke(self, messages: List[Message]) -> Union[ChatCompletion, ParsedChatCompletion]:
+    def invoke(
+        self, messages: List[Message]
+    ) -> Union[ChatCompletion, ParsedChatCompletion]:
         """
         Send a chat completion request to the OpenAI API.
 
@@ -310,14 +321,18 @@ class OpenAIChat(Model):
 
         try:
             if self.response_format is not None and self.structured_outputs:
-                if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+                if isinstance(self.response_format, type) and issubclass(
+                    self.response_format, BaseModel
+                ):
                     return self.get_client().beta.chat.completions.parse(
                         model=self.id,
                         messages=[self._format_message(m) for m in messages],  # type: ignore
                         **self.request_kwargs,
                     )
                 else:
-                    raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
+                    raise ValueError(
+                        "response_format must be a subclass of BaseModel if structured_outputs=True"
+                    )
 
             return self.get_client().chat.completions.create(
                 model=self.id,
@@ -340,7 +355,9 @@ class OpenAIChat(Model):
             ) from e
         except APIConnectionError as e:
             log_error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"API status error from OpenAI API: {e}")
             try:
@@ -360,9 +377,13 @@ class OpenAIChat(Model):
             ) from e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
-    async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletion, ParsedChatCompletion]:
+    async def ainvoke(
+        self, messages: List[Message]
+    ) -> Union[ChatCompletion, ParsedChatCompletion]:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
 
@@ -375,14 +396,18 @@ class OpenAIChat(Model):
 
         try:
             if self.response_format is not None and self.structured_outputs:
-                if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+                if isinstance(self.response_format, type) and issubclass(
+                    self.response_format, BaseModel
+                ):
                     return await self.get_async_client().beta.chat.completions.parse(
                         model=self.id,
                         messages=[self._format_message(m) for m in messages],  # type: ignore
                         **self.request_kwargs,
                     )
                 else:
-                    raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
+                    raise ValueError(
+                        "response_format must be a subclass of BaseModel if structured_outputs=True"
+                    )
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
@@ -404,7 +429,9 @@ class OpenAIChat(Model):
             ) from e
         except APIConnectionError as e:
             log_error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"API status error from OpenAI API: {e}")
             try:
@@ -424,7 +451,9 @@ class OpenAIChat(Model):
             ) from e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
         """
@@ -461,7 +490,9 @@ class OpenAIChat(Model):
             ) from e
         except APIConnectionError as e:
             log_error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"API status error from OpenAI API: {e}")
             try:
@@ -481,9 +512,13 @@ class OpenAIChat(Model):
             ) from e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[ChatCompletionChunk]:
+    async def ainvoke_stream(
+        self, messages: List[Message]
+    ) -> AsyncIterator[ChatCompletionChunk]:
         """
         Sends an asynchronous streaming chat completion request to the OpenAI API.
 
@@ -520,7 +555,9 @@ class OpenAIChat(Model):
             ) from e
         except APIConnectionError as e:
             log_error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"API status error from OpenAI API: {e}")
             try:
@@ -540,11 +577,15 @@ class OpenAIChat(Model):
             ) from e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     # Override base method
     @staticmethod
-    def parse_tool_calls(tool_calls_data: List[ChoiceDeltaToolCall]) -> List[Dict[str, Any]]:
+    def parse_tool_calls(
+        tool_calls_data: List[ChoiceDeltaToolCall],
+    ) -> List[Dict[str, Any]]:
         """
         Build tool calls from streamed tool call data.
 
@@ -560,7 +601,9 @@ class OpenAIChat(Model):
             _tool_call_id = _tool_call.id
             _tool_call_type = _tool_call.type
             _function_name = _tool_call.function.name if _tool_call.function else None
-            _function_arguments = _tool_call.function.arguments if _tool_call.function else None
+            _function_arguments = (
+                _tool_call.function.arguments if _tool_call.function else None
+            )
 
             if len(tool_calls) <= _index:
                 tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
@@ -583,7 +626,9 @@ class OpenAIChat(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion]) -> ModelResponse:
+    def parse_provider_response(
+        self, response: Union[ChatCompletion, ParsedChatCompletion]
+    ) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
 
@@ -627,9 +672,14 @@ class OpenAIChat(Model):
             model_response.content = response_message.content
 
         # Add tool calls
-        if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
+        if (
+            response_message.tool_calls is not None
+            and len(response_message.tool_calls) > 0
+        ):
             try:
-                model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
+                model_response.tool_calls = [
+                    t.model_dump() for t in response_message.tool_calls
+                ]
             except Exception as e:
                 log_warning(f"Error processing tool calls: {e}")
 
@@ -659,7 +709,10 @@ class OpenAIChat(Model):
             except Exception as e:
                 log_warning(f"Error processing audio: {e}")
 
-        if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
+        if (
+            hasattr(response_message, "reasoning_content")
+            and response_message.reasoning_content is not None
+        ):
             model_response.reasoning_content = response_message.reasoning_content
 
         if response.usage is not None:
@@ -667,7 +720,9 @@ class OpenAIChat(Model):
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
+    def parse_provider_response_delta(
+        self, response_delta: ChatCompletionChunk
+    ) -> ModelResponse:
         """
         Parse the OpenAI streaming response into a ModelResponse.
 

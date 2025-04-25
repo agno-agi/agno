@@ -9,7 +9,9 @@ def get_python_objects_from_module(module_path: Path) -> Dict:
 
     # https://docs.python.org/3/library/importlib.html#importing-a-source-file-directly
     # Create a ModuleSpec
-    module_spec: Optional[ModuleSpec] = importlib.util.spec_from_file_location("module", module_path)
+    module_spec: Optional[ModuleSpec] = importlib.util.spec_from_file_location(
+        "module", module_path
+    )
     # Using the ModuleSpec create a module
     if module_spec:
         module = importlib.util.module_from_spec(module_spec)

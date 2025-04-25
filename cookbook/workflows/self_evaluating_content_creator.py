@@ -1,9 +1,10 @@
+from pydantic import BaseModel, Field
+
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.run.response import RunResponse
 from agno.utils.pprint import pprint_run_response
 from agno.workflow.workflow import Workflow
-from pydantic import BaseModel, Field
 
 
 class Feedback(BaseModel):

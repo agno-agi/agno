@@ -45,7 +45,9 @@ class CsvTools(Toolkit):
             try:
                 import duckdb  # noqa: F401
             except ImportError:
-                raise ImportError("`duckdb` not installed. Please install using `pip install duckdb`.")
+                raise ImportError(
+                    "`duckdb` not installed. Please install using `pip install duckdb`."
+                )
             self.register(self.query_csv_file)
 
     def list_csv_files(self) -> str:
@@ -147,7 +149,9 @@ class CsvTools(Toolkit):
                 return "Error connecting to DuckDB, please check the connection."
 
             # Create a table from the csv file
-            con.execute(f"CREATE TABLE {csv_name} AS SELECT * FROM read_csv_auto('{file_path}')")
+            con.execute(
+                f"CREATE TABLE {csv_name} AS SELECT * FROM read_csv_auto('{file_path}')"
+            )
 
             # -*- Format the SQL Query
             # Remove backticks

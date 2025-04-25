@@ -60,7 +60,9 @@ class MemoryManager(BaseModel):
                 if function_name not in self._functions_for_model:
                     func = Function.from_callable(tool)  # type: ignore
                     self._functions_for_model[func.name] = func
-                    self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                    self._tools_for_model.append(
+                        {"type": "function", "function": func.to_dict()}
+                    )
                     log_debug(f"Added function {func.name}")
             except Exception as e:
                 logger.warning(f"Could not add function {tool}: {e}")
@@ -85,7 +87,12 @@ class MemoryManager(BaseModel):
         try:
             if self.db:
                 self.db.upsert_memory(
-                    MemoryRow(user_id=self.user_id, memory=Memory(memory=memory, input=self.input_message).to_dict())
+                    MemoryRow(
+                        user_id=self.user_id,
+                        memory=Memory(
+                            memory=memory, input=self.input_message
+                        ).to_dict(),
+                    )
                 )
             return "Memory added successfully"
         except Exception as e:
@@ -119,7 +126,11 @@ class MemoryManager(BaseModel):
             if self.db:
                 self.db.upsert_memory(
                     MemoryRow(
-                        id=id, user_id=self.user_id, memory=Memory(memory=memory, input=self.input_message).to_dict()
+                        id=id,
+                        user_id=self.user_id,
+                        memory=Memory(
+                            memory=memory, input=self.input_message
+                        ).to_dict(),
                     )
                 )
             return "Memory updated successfully"
@@ -160,7 +171,12 @@ class MemoryManager(BaseModel):
                 [
                     "\nExisting memories:",
                     "<existing_memories>\n"
-                    + "\n".join([f"  - id: {m.id} | memory: {m.memory}" for m in existing_memories])
+                    + "\n".join(
+                        [
+                            f"  - id: {m.id} | memory: {m.memory}"
+                            for m in existing_memories
+                        ]
+                    )
                     + "\n</existing_memories>",
                 ]
             )
@@ -180,7 +196,9 @@ class MemoryManager(BaseModel):
         messages_for_model: List[Message] = [self.get_system_message()]
 
         # Add the user prompt message
-        user_prompt_message = Message(role="user", content=message, **kwargs) if message else None
+        user_prompt_message = (
+            Message(role="user", content=message, **kwargs) if message else None
+        )
         if user_prompt_message is not None:
             messages_for_model += [user_prompt_message]
 
@@ -206,7 +224,9 @@ class MemoryManager(BaseModel):
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [self.get_system_message()]
         # Add the user prompt message
-        user_prompt_message = Message(role="user", content=message, **kwargs) if message else None
+        user_prompt_message = (
+            Message(role="user", content=message, **kwargs) if message else None
+        )
         if user_prompt_message is not None:
             messages_for_model += [user_prompt_message]
 

@@ -29,10 +29,14 @@ def fetch_with_retry(
                 logger.error(f"Failed to fetch {url} after {max_retries} attempts: {e}")
                 raise
             wait_time = backoff_factor**attempt
-            logger.warning(f"Request failed (attempt {attempt + 1}), retrying in {wait_time} seconds...")
+            logger.warning(
+                f"Request failed (attempt {attempt + 1}), retrying in {wait_time} seconds..."
+            )
             sleep(wait_time)
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
+            logger.error(
+                f"HTTP error for {url}: {e.response.status_code} - {e.response.text}"
+            )
             raise
 
     raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")
@@ -65,10 +69,14 @@ async def async_fetch_with_retry(
                 logger.error(f"Failed to fetch {url} after {max_retries} attempts: {e}")
                 raise
             wait_time = backoff_factor**attempt
-            logger.warning(f"Request failed (attempt {attempt + 1}), retrying in {wait_time} seconds...")
+            logger.warning(
+                f"Request failed (attempt {attempt + 1}), retrying in {wait_time} seconds..."
+            )
             await asyncio.sleep(wait_time)
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
+            logger.error(
+                f"HTTP error for {url}: {e.response.status_code} - {e.response.text}"
+            )
             raise
 
     raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")

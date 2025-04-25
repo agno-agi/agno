@@ -43,7 +43,10 @@ class DocumentChunking(ChunkingStrategy):
                 if current_chunk:
                     chunks.append(
                         Document(
-                            id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk)
+                            id=chunk_id,
+                            name=document.name,
+                            meta_data=meta_data,
+                            content="\n\n".join(current_chunk),
                         )
                     )
                 current_chunk = [para]
@@ -59,7 +62,12 @@ class DocumentChunking(ChunkingStrategy):
                 chunk_id = f"{document.name}_{chunk_number}"
             meta_data["chunk_size"] = len("\n\n".join(current_chunk))
             chunks.append(
-                Document(id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk))
+                Document(
+                    id=chunk_id,
+                    name=document.name,
+                    meta_data=meta_data,
+                    content="\n\n".join(current_chunk),
+                )
             )
 
         # Handle overlap if specified

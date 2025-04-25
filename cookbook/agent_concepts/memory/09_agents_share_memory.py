@@ -2,12 +2,13 @@
 In this example, we have two agents that share the same memory.
 """
 
+from rich.pretty import pprint
+
 from agno.agent.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.google.gemini import Gemini
 from agno.tools.duckduckgo import DuckDuckGoTools
-from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 

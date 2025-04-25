@@ -12,7 +12,9 @@ try:
     from zep_cloud.types import MemorySearchResult
     from zep_cloud.types import Message as ZepMessage
 except ImportError:
-    raise ImportError("`zep-cloud` package not found. Please install it with `pip install zep-cloud`")
+    raise ImportError(
+        "`zep-cloud` package not found. Please install it with `pip install zep-cloud`"
+    )
 
 DEFAULT_INSTRUCTIONS = dedent(
     """\
@@ -43,7 +45,12 @@ class ZepTools(Toolkit):
         add_instructions: bool = False,
         **kwargs,
     ):
-        super().__init__(name="zep_tools", instructions=instructions, add_instructions=add_instructions, **kwargs)
+        super().__init__(
+            name="zep_tools",
+            instructions=instructions,
+            add_instructions=add_instructions,
+            **kwargs,
+        )
 
         self._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
@@ -52,7 +59,11 @@ class ZepTools(Toolkit):
             )
 
         if instructions is None:
-            self.instructions = "<Memory Instructions>\n" + DEFAULT_INSTRUCTIONS + "\n</Memory Instructions>"
+            self.instructions = (
+                "<Memory Instructions>\n"
+                + DEFAULT_INSTRUCTIONS
+                + "\n</Memory Instructions>"
+            )
 
         self.zep_client: Optional[Zep] = None
         self._initialized = False
@@ -104,7 +115,9 @@ class ZepTools(Toolkit):
                     try:
                         self.zep_client.user.add(user_id=self.user_id)  # type: ignore
                     except BadRequestError as add_err:
-                        log_error(f"Failed to create provided user {self.user_id}: {add_err}")
+                        log_error(
+                            f"Failed to create provided user {self.user_id}: {add_err}"
+                        )
                         self.zep_client = None  # Reset client on failure
                         return False  # Initialization failed
 
@@ -138,7 +151,9 @@ class ZepTools(Toolkit):
             )
 
             # Prepare ignore_roles if needed
-            ignore_roles_list = ["assistant"] if self.ignore_assistant_messages else None
+            ignore_roles_list = (
+                ["assistant"] if self.ignore_assistant_messages else None
+            )
 
             # Add message to Zep memory
             self.zep_client.memory.add(  # type: ignore
@@ -180,7 +195,11 @@ class ZepTools(Toolkit):
                 )
             elif memory_type == "messages":
                 # Ensure messages string representation is returned
-                return str(memory_data.messages) if memory_data.messages else "No messages available."
+                return (
+                    str(memory_data.messages)
+                    if memory_data.messages
+                    else "No messages available."
+                )
             else:
                 warning_msg = f"Unsupported memory_type requested: {memory_type}. Returning empty string."
                 log_warning(warning_msg)
@@ -202,7 +221,9 @@ class ZepTools(Toolkit):
         results: List = []
         search_result = ""
         if not self.zep_client or not self.user_id or not self.session_id:
-            log_error("Zep client or user ID or session ID not initialized. Cannot search memory.")
+            log_error(
+                "Zep client or user ID or session ID not initialized. Cannot search memory."
+            )
             return "Error: Zep client/user/session not initialized."
 
         try:
@@ -227,7 +248,11 @@ class ZepTools(Toolkit):
         if results is not None and results != []:
             if search_scope == "summary":
                 search_result = " ".join(
-                    [result.get("summary", "") for result in results if result.get("summary") is not None]
+                    [
+                        result.get("summary", "")
+                        for result in results
+                        if result.get("summary") is not None
+                    ]
                 )
                 if search_result == "":
                     return "No relevant summary found."
@@ -235,7 +260,11 @@ class ZepTools(Toolkit):
                     return search_result
             else:
                 search_result = " ".join(
-                    [result.get("content", "") for result in results if result.get("content") is not None]
+                    [
+                        result.get("content", "")
+                        for result in results
+                        if result.get("content") is not None
+                    ]
                 )
                 if search_result == "":
                     return "No relevant content found."
@@ -259,7 +288,12 @@ class ZepAsyncTools(Toolkit):
         add_instructions: bool = False,
         **kwargs,
     ):
-        super().__init__(name="zep_tools", instructions=instructions, add_instructions=add_instructions, **kwargs)
+        super().__init__(
+            name="zep_tools",
+            instructions=instructions,
+            add_instructions=add_instructions,
+            **kwargs,
+        )
 
         self._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
@@ -268,7 +302,11 @@ class ZepAsyncTools(Toolkit):
             )
 
         if instructions is None:
-            self.instructions = "<Memory Instructions>\n" + DEFAULT_INSTRUCTIONS + "\n</Memory Instructions>"
+            self.instructions = (
+                "<Memory Instructions>\n"
+                + DEFAULT_INSTRUCTIONS
+                + "\n</Memory Instructions>"
+            )
 
         self.zep_client: Optional[AsyncZep] = None
         self._initialized = False
@@ -320,7 +358,9 @@ class ZepAsyncTools(Toolkit):
                     try:
                         await self.zep_client.user.add(user_id=self.user_id)  # type: ignore
                     except BadRequestError as add_err:
-                        log_error(f"Failed to create provided user {self.user_id}: {add_err}")
+                        log_error(
+                            f"Failed to create provided user {self.user_id}: {add_err}"
+                        )
                         self.zep_client = None  # Reset client on failure
                         return False  # Initialization failed
 
@@ -357,7 +397,9 @@ class ZepAsyncTools(Toolkit):
             )
 
             # Prepare ignore_roles if needed
-            ignore_roles_list = ["assistant"] if self.ignore_assistant_messages else None
+            ignore_roles_list = (
+                ["assistant"] if self.ignore_assistant_messages else None
+            )
 
             # Add message to Zep memory
             await self.zep_client.memory.add(  # type: ignore
@@ -401,7 +443,11 @@ class ZepAsyncTools(Toolkit):
                 )
             elif memory_type == "messages":
                 # Ensure messages string representation is returned
-                return str(memory_data.messages) if memory_data.messages else "No messages available."
+                return (
+                    str(memory_data.messages)
+                    if memory_data.messages
+                    else "No messages available."
+                )
             else:
                 warning_msg = f"Unsupported memory_type requested: {memory_type}. Returning empty string."
                 log_warning(warning_msg)
@@ -412,7 +458,9 @@ class ZepAsyncTools(Toolkit):
             log_error(error_msg)
             return f"Error getting memory: {e}"
 
-    async def search_zep_memory(self, query: str, search_scope: str = "messages") -> str:
+    async def search_zep_memory(
+        self, query: str, search_scope: str = "messages"
+    ) -> str:
         """
         Searches the Zep memory store for relevant messages or summaries associated with the configured user_id.
         Args:
@@ -428,12 +476,16 @@ class ZepAsyncTools(Toolkit):
         search_result = ""
 
         if not self.zep_client or not self.user_id or not self.session_id:
-            log_error("Zep client or user ID or session ID not initialized. Cannot search memory.")
+            log_error(
+                "Zep client or user ID or session ID not initialized. Cannot search memory."
+            )
             return "Error: Zep client/user/session not initialized."
 
         try:
-            search_response: List[MemorySearchResult] = await self.zep_client.memory.search(
-                text=query, session_id=self.session_id, search_scope=search_scope
+            search_response: List[MemorySearchResult] = (
+                await self.zep_client.memory.search(
+                    text=query, session_id=self.session_id, search_scope=search_scope
+                )
             )
 
             results = [
@@ -455,7 +507,11 @@ class ZepAsyncTools(Toolkit):
         if results is not None and results != []:
             if search_scope == "summary":
                 search_result = " ".join(
-                    [result.get("summary", "") for result in results if result.get("summary") is not None]
+                    [
+                        result.get("summary", "")
+                        for result in results
+                        if result.get("summary") is not None
+                    ]
                 )
                 if search_result == "":
                     return "No relevant summary found."
@@ -463,7 +519,11 @@ class ZepAsyncTools(Toolkit):
                     return search_result
             else:
                 search_result = " ".join(
-                    [result.get("content", "") for result in results if result.get("content") is not None]
+                    [
+                        result.get("content", "")
+                        for result in results
+                        if result.get("content") is not None
+                    ]
                 )
                 if search_result == "":
                     return "No relevant content found."

@@ -2,6 +2,8 @@ import os
 from datetime import datetime
 from typing import Dict, List, Optional
 
+from pydantic import BaseModel, Field
+
 from agno.agent.agent import Agent
 from agno.run.response import RunEvent, RunResponse
 from agno.storage.postgres import PostgresStorage
@@ -9,7 +11,6 @@ from agno.tools.linear import LinearTools
 from agno.tools.slack import SlackTools
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
-from pydantic import BaseModel, Field
 
 
 class Task(BaseModel):

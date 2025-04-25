@@ -9,7 +9,9 @@ from agno.utils.log import log_info, logger
 try:
     from docx import Document as DocxDocument  # type: ignore
 except ImportError:
-    raise ImportError("The `python-docx` package is not installed. Please install it via `pip install python-docx`.")
+    raise ImportError(
+        "The `python-docx` package is not installed. Please install it via `pip install python-docx`."
+    )
 
 
 class DocxReader(Reader):

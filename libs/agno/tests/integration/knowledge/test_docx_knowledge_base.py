@@ -43,7 +43,9 @@ def test_docx_knowledge_base_directory(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "search_knowledge_base" for call in function_calls
+    )
 
 
 def test_docx_knowledge_base_single_file(setup_vector_db):
@@ -66,7 +68,9 @@ def test_docx_knowledge_base_single_file(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "search_knowledge_base" for call in function_calls
+    )
 
 
 @pytest.mark.asyncio
@@ -82,7 +86,9 @@ async def test_docx_knowledge_base_async_directory(setup_vector_db):
 
     # Enable search on the agent
     agent = Agent(knowledge=kb, search_knowledge=True)
-    response = await agent.arun("What is the story of little prince about?", markdown=True)
+    response = await agent.arun(
+        "What is the story of little prince about?", markdown=True
+    )
 
     tool_calls = []
     for msg in response.messages:
@@ -91,7 +97,10 @@ async def test_docx_knowledge_base_async_directory(setup_vector_db):
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
     # For async operations, we use async_search_knowledge_base
-    assert any(call["function"]["name"] == "async_search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "async_search_knowledge_base"
+        for call in function_calls
+    )
 
 
 @pytest.mark.asyncio
@@ -107,7 +116,9 @@ async def test_docx_knowledge_base_async_single_file(setup_vector_db):
 
     # Enable search on the agent
     agent = Agent(knowledge=kb, search_knowledge=True)
-    response = await agent.arun("What is the story of little prince about?", markdown=True)
+    response = await agent.arun(
+        "What is the story of little prince about?", markdown=True
+    )
 
     tool_calls = []
     for msg in response.messages:
@@ -116,4 +127,7 @@ async def test_docx_knowledge_base_async_single_file(setup_vector_db):
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
     # For async operations, we use async_search_knowledge_base
-    assert any(call["function"]["name"] == "async_search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "async_search_knowledge_base"
+        for call in function_calls
+    )

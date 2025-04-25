@@ -112,7 +112,13 @@ def test_with_memory():
     # Verify memories were created
     messages = agent.get_messages_for_session()
     assert len(messages) == 5
-    assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
+    assert [m.role for m in messages] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
 
     # Test metrics structure and types
     _assert_metrics(response2)
@@ -190,7 +196,9 @@ def test_structured_outputs_deprecated():
 def test_history():
     agent = Agent(
         model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(
+            table_name="agent_sessions", db_file="tmp/agent_storage.db"
+        ),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,

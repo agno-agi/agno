@@ -25,7 +25,12 @@ def team():
         tools=[YFinanceTools(stock_price=True)],
     )
 
-    team = Team(name="Router Team", mode="route", model=OpenAIChat("gpt-4o"), members=[web_agent, finance_agent])
+    team = Team(
+        name="Router Team",
+        mode="route",
+        model=OpenAIChat("gpt-4o"),
+        members=[web_agent, finance_agent],
+    )
     return team
 
 
@@ -53,16 +58,26 @@ def test_transfer_to_wrong_member(team):
     function = team.get_transfer_task_function(session_id="test-session")
     response = list(
         function.entrypoint(
-            member_id="wrong-agent", task_description="Get the current stock price of AAPL", expected_output=""
+            member_id="wrong-agent",
+            task_description="Get the current stock price of AAPL",
+            expected_output="",
         )
     )
-    assert "Member with ID wrong-agent not found in the team or any subteams" in response[0]
+    assert (
+        "Member with ID wrong-agent not found in the team or any subteams"
+        in response[0]
+    )
 
 
 def test_forward_to_wrong_member(team):
-    function = team.get_forward_task_function(message="Hello, world!", session_id="test-session")
+    function = team.get_forward_task_function(
+        message="Hello, world!", session_id="test-session"
+    )
     response = list(function.entrypoint(member_id="wrong-agent", expected_output=""))
-    assert "Member with ID wrong-agent not found in the team or any subteams" in response[0]
+    assert (
+        "Member with ID wrong-agent not found in the team or any subteams"
+        in response[0]
+    )
 
 
 def test_get_member_id():

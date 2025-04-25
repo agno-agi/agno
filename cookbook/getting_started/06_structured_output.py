@@ -11,9 +11,10 @@ Run `pip install openai agno` to install dependencies.
 from textwrap import dedent
 from typing import List
 
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.openai import OpenAIChat
-from pydantic import BaseModel, Field
 
 
 class MovieScript(BaseModel):

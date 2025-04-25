@@ -8,7 +8,8 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
-from agno.api.playground import PlaygroundEndpointCreate, create_playground_endpoint
+from agno.api.playground import (PlaygroundEndpointCreate,
+                                 create_playground_endpoint)
 from agno.playground.async_router import get_async_playground_router
 from agno.playground.settings import PlaygroundSettings
 from agno.playground.sync_router import get_sync_playground_router
@@ -76,7 +77,9 @@ class Playground:
             raise Exception("API App could not be created.")
 
         @self.api_app.exception_handler(HTTPException)
-        async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        async def http_exception_handler(
+            request: Request, exc: HTTPException
+        ) -> JSONResponse:
             return JSONResponse(
                 status_code=exc.status_code,
                 content={"detail": str(exc.detail)},
@@ -123,7 +126,9 @@ class Playground:
         try:
             logger.info(f"Creating playground endpoint: {endpoint}")
             create_playground_endpoint(
-                playground=PlaygroundEndpointCreate(endpoint=endpoint, playground_data={"prefix": prefix})
+                playground=PlaygroundEndpointCreate(
+                    endpoint=endpoint, playground_data={"prefix": prefix}
+                )
             )
         except Exception as e:
             logger.error(f"Could not create playground endpoint: {e}")

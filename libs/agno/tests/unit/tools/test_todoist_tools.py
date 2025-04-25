@@ -86,12 +86,21 @@ def test_create_task_success(todoist_tools, mock_todoist_api):
     mock_task.creator_id = "user_1"
     mock_task.created_at = "2024-01-01T10:00:00Z"
     mock_task.labels = ["test_label"]
-    mock_task.due = Mock(date="2024-01-02", string="tomorrow at 10:00", datetime="2024-01-02T10:00:00Z", timezone="UTC")
+    mock_task.due = Mock(
+        date="2024-01-02",
+        string="tomorrow at 10:00",
+        datetime="2024-01-02T10:00:00Z",
+        timezone="UTC",
+    )
 
     mock_todoist_api.add_task.return_value = mock_task
 
     result = todoist_tools.create_task(
-        content="Test Task", project_id="project_1", due_string="tomorrow at 10:00", priority=4, labels=["test_label"]
+        content="Test Task",
+        project_id="project_1",
+        due_string="tomorrow at 10:00",
+        priority=4,
+        labels=["test_label"],
     )
 
     result_data = json.loads(result)
@@ -136,7 +145,9 @@ def test_update_task_success(todoist_tools, mock_todoist_api):
     result_data = json.loads(result)
 
     assert result_data["success"] is True
-    mock_todoist_api.update_task.assert_called_once_with(task_id="123", content="Updated Task")
+    mock_todoist_api.update_task.assert_called_once_with(
+        task_id="123", content="Updated Task"
+    )
 
 
 def test_close_task_success(todoist_tools, mock_todoist_api):
@@ -263,7 +274,9 @@ def test_create_task_with_due_date(todoist_tools, mock_todoist_api):
 
     mock_todoist_api.add_task.return_value = mock_task
 
-    result = todoist_tools.create_task(content="Test Task", due_string="tomorrow at 10:00")
+    result = todoist_tools.create_task(
+        content="Test Task", due_string="tomorrow at 10:00"
+    )
 
     result_data = json.loads(result)
     assert result_data["due"]["date"] == "2024-01-02"
@@ -290,7 +303,9 @@ def test_create_task_with_labels(todoist_tools, mock_todoist_api):
 
     mock_todoist_api.add_task.return_value = mock_task
 
-    result = todoist_tools.create_task(content="Test Task", labels=["work", "important"])
+    result = todoist_tools.create_task(
+        content="Test Task", labels=["work", "important"]
+    )
 
     result_data = json.loads(result)
     assert "work" in result_data["labels"]

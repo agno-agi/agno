@@ -20,7 +20,11 @@ def test_image_input():
 
     response = agent.run(
         "Tell me about this image.",
-        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+        images=[
+            Image(
+                url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+            )
+        ],
     )
 
     assert "golden" in response.content.lower()
@@ -42,7 +46,9 @@ def test_audio_input_bytes():
         telemetry=False,
         monitoring=False,
     )
-    response = agent.run("What is in this audio?", audio=[Audio(content=wav_data, format="wav")])
+    response = agent.run(
+        "What is in this audio?", audio=[Audio(content=wav_data, format="wav")]
+    )
 
     assert response.content is not None
 
@@ -59,7 +65,11 @@ def test_audio_input_url():
 
     response = agent.run(
         "What is in this audio?",
-        audio=[Audio(url="https://openaiassets.blob.core.windows.net/$web/API/docs/audio/alloy.wav")],
+        audio=[
+            Audio(
+                url="https://openaiassets.blob.core.windows.net/$web/API/docs/audio/alloy.wav"
+            )
+        ],
     )
 
     assert response.content is not None
@@ -75,7 +85,9 @@ def test_video_input_bytes():
         monitoring=False,
     )
 
-    url = "https://videos.pexels.com/video-files/5752729/5752729-uhd_2560_1440_30fps.mp4"
+    url = (
+        "https://videos.pexels.com/video-files/5752729/5752729-uhd_2560_1440_30fps.mp4"
+    )
 
     # Download the video file from the URL as bytes
     response = requests.get(url)
@@ -163,9 +175,13 @@ def test_image_editing():
         system_message=None,
     )
 
-    sample_image_url = "https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+    sample_image_url = (
+        "https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+    )
 
-    agent.run("Can you add a rainbow over this bridge?", images=[Image(url=sample_image_url)])
+    agent.run(
+        "Can you add a rainbow over this bridge?", images=[Image(url=sample_image_url)]
+    )
 
     images = agent.get_images()
     assert images is not None
@@ -227,7 +243,9 @@ def test_combined_text_and_image_generation():
         system_message=None,
     )
 
-    response = agent.run("Create an image of a sunset over mountains and describe what you generated.")
+    response = agent.run(
+        "Create an image of a sunset over mountains and describe what you generated."
+    )
 
     # Check text response
     assert response.content is not None

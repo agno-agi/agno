@@ -8,9 +8,10 @@ from pathlib import Path
 from time import sleep
 
 import requests
+from google import genai
+
 from agno.agent import Agent
 from agno.models.google import Gemini
-from google import genai
 
 client = genai.Client()
 

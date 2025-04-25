@@ -14,7 +14,9 @@ def pickle_object_to_file(obj: Any, file_path: Path) -> Any:
     pickle.dump(obj, file_path.open("wb"))
 
 
-def unpickle_object_from_file(file_path: Path, verify_class: Optional[Any] = None) -> Any:
+def unpickle_object_from_file(
+    file_path: Path, verify_class: Optional[Any] = None
+) -> Any:
     """Reads the contents of file_path and unpickles the binary content into an object.
     If verify_class is provided, checks if the object is an instance of that class.
     """

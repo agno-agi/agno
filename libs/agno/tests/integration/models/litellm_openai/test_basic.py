@@ -25,12 +25,19 @@ def _assert_metrics(response: RunResponse):
     total_tokens = sum(response.metrics.get("total_tokens", []))
 
     # The total should be at least the sum of input and output
-    assert total_tokens >= input_tokens + output_tokens - 5  # Allow small margin of error
+    assert (
+        total_tokens >= input_tokens + output_tokens - 5
+    )  # Allow small margin of error
 
 
 def test_basic():
     """Test basic functionality with LiteLLM Proxy"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=LiteLLMOpenAI(id="gpt-4o"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     # Get the response
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -44,7 +51,12 @@ def test_basic():
 
 def test_basic_stream():
     """Test streaming functionality with LiteLLM Proxy"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=LiteLLMOpenAI(id="gpt-4o"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -63,7 +75,12 @@ def test_basic_stream():
 @pytest.mark.asyncio
 async def test_async_basic():
     """Test async functionality with LiteLLM"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=LiteLLMOpenAI(id="gpt-4o"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -76,7 +93,12 @@ async def test_async_basic():
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     """Test async streaming functionality with LiteLLM"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=LiteLLMOpenAI(id="gpt-4o"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -107,7 +129,13 @@ def test_with_memory():
     # Verify memories were created
     messages = agent.get_messages_for_session()
     assert len(messages) == 5
-    assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
+    assert [m.role for m in messages] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
 
     _assert_metrics(response2)
 
@@ -138,7 +166,9 @@ def test_response_model():
 def test_history():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
-        storage=SqliteStorage(table_name="agent_sessions_storage", db_file="tmp/data.db"),
+        storage=SqliteStorage(
+            table_name="agent_sessions_storage", db_file="tmp/data.db"
+        ),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,

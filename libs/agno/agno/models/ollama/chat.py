@@ -15,7 +15,9 @@ try:
     from ollama._types import ChatResponse
     from ollama._types import Message as OllamaMessage
 except ImportError:
-    raise ImportError("`ollama` not installed. Please install using `pip install ollama`")
+    raise ImportError(
+        "`ollama` not installed. Please install using `pip install ollama`"
+    )
 
 
 @dataclass
@@ -118,7 +120,11 @@ class Ollama(Model):
             for tool in request_params["tools"]:  # type: ignore
                 if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
                     for _, obj in tool["function"]["parameters"].get("properties", {}).items():  # type: ignore
-                        if "type" in obj and isinstance(obj["type"], list) and len(obj["type"]) > 1:
+                        if (
+                            "type" in obj
+                            and isinstance(obj["type"], list)
+                            and len(obj["type"]) > 1
+                        ):
                             obj["type"] = obj["type"][0]
 
         # Add additional request params if provided
@@ -188,7 +194,9 @@ class Ollama(Model):
     def _prepare_request_kwargs_for_invoke(self) -> Dict[str, Any]:
         request_kwargs = self.request_kwargs
         if self.response_format is not None and self.structured_outputs:
-            if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+            if isinstance(self.response_format, type) and issubclass(
+                self.response_format, BaseModel
+            ):
                 log_debug("Using structured outputs")
                 format_schema = self.response_format.model_json_schema()
                 if "format" not in request_kwargs:
@@ -310,9 +318,13 @@ class Ollama(Model):
 
                 function_def = {
                     "name": tool_name,
-                    "arguments": (json.dumps(tool_args) if tool_args is not None else None),
+                    "arguments": (
+                        json.dumps(tool_args) if tool_args is not None else None
+                    ),
                 }
-                model_response.tool_calls.append({"type": "function", "function": function_def})
+                model_response.tool_calls.append(
+                    {"type": "function", "function": function_def}
+                )
 
         # if response_message.get("images") is not None:
         #     model_response.images = response_message.get("images")
@@ -322,7 +334,8 @@ class Ollama(Model):
             model_response.response_usage = {
                 "input_tokens": response.get("prompt_eval_count", 0),
                 "output_tokens": response.get("eval_count", 0),
-                "total_tokens": response.get("prompt_eval_count", 0) + response.get("eval_count", 0),
+                "total_tokens": response.get("prompt_eval_count", 0)
+                + response.get("eval_count", 0),
                 "additional_metrics": {
                     "total_duration": response.get("total_duration", 0),
                     "load_duration": response.get("load_duration", 0),
@@ -333,7 +346,9 @@ class Ollama(Model):
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: ChatResponse) -> ModelResponse:
+    def parse_provider_response_delta(
+        self, response_delta: ChatResponse
+    ) -> ModelResponse:
         """
         Parse the provider response delta.
 
@@ -360,19 +375,26 @@ class Ollama(Model):
                     tool_args = tc.get("arguments")
                     function_def = {
                         "name": tool_name,
-                        "arguments": json.dumps(tool_args) if tool_args is not None else None,
+                        "arguments": (
+                            json.dumps(tool_args) if tool_args is not None else None
+                        ),
                     }
-                    model_response.tool_calls.append({"type": "function", "function": function_def})
+                    model_response.tool_calls.append(
+                        {"type": "function", "function": function_def}
+                    )
 
         if response_delta.get("done"):
             model_response.response_usage = {
                 "input_tokens": response_delta.get("prompt_eval_count", 0),
                 "output_tokens": response_delta.get("eval_count", 0),
-                "total_tokens": response_delta.get("prompt_eval_count", 0) + response_delta.get("eval_count", 0),
+                "total_tokens": response_delta.get("prompt_eval_count", 0)
+                + response_delta.get("eval_count", 0),
                 "additional_metrics": {
                     "total_duration": response_delta.get("total_duration", 0),
                     "load_duration": response_delta.get("load_duration", 0),
-                    "prompt_eval_duration": response_delta.get("prompt_eval_duration", 0),
+                    "prompt_eval_duration": response_delta.get(
+                        "prompt_eval_duration", 0
+                    ),
                     "eval_duration": response_delta.get("eval_duration", 0),
                 },
             }

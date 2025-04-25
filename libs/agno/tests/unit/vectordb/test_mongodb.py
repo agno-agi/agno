@@ -44,7 +44,9 @@ def mock_mongodb_client() -> Generator[MagicMock, None, None]:
 
         # Setup common collection methods
         mock_collection.create_search_index = MagicMock(return_value=None)
-        mock_collection.list_search_indexes = MagicMock(return_value=[{"name": "vector_index_1"}])
+        mock_collection.list_search_indexes = MagicMock(
+            return_value=[{"name": "vector_index_1"}]
+        )
         mock_collection.drop_search_index = MagicMock(return_value=None)
         mock_collection.aggregate = MagicMock(return_value=[])
         mock_collection.insert_many = MagicMock(return_value=None)
@@ -96,7 +98,9 @@ def mock_async_mongodb_client() -> Generator[AsyncMock, None, None]:
 
         # Setup collection methods
         mock_collection.create_search_index = AsyncMock()
-        mock_collection.list_search_indexes = AsyncMock(return_value=[{"name": "vector_index_1"}])
+        mock_collection.list_search_indexes = AsyncMock(
+            return_value=[{"name": "vector_index_1"}]
+        )
         mock_collection.drop_search_index = AsyncMock()
 
         # Setup cursor for aggregate
@@ -140,7 +144,9 @@ def vector_db(mock_mongodb_client: MagicMock, mock_embedder: MagicMock) -> Mongo
 
 
 @pytest.fixture(scope="function")
-def async_vector_db(mock_async_mongodb_client: AsyncMock, mock_embedder: MagicMock) -> MongoDb:
+def async_vector_db(
+    mock_async_mongodb_client: AsyncMock, mock_embedder: MagicMock
+) -> MongoDb:
     """Create a VectorDB instance for async tests."""
     collection_name = f"test_vectors_{uuid.uuid4().hex[:8]}"
 
@@ -172,24 +178,33 @@ def create_test_documents(num_docs: int = 3) -> List[Document]:
     ]
 
 
-def test_initialization(mock_mongodb_client: MagicMock, mock_embedder: MagicMock) -> None:
+def test_initialization(
+    mock_mongodb_client: MagicMock, mock_embedder: MagicMock
+) -> None:
     """Test MongoDB VectorDB initialization."""
     # Test successful initialization
     db = MongoDb(
-        collection_name="test_vectors", database="test_vectordb", client=mock_mongodb_client, embedder=mock_embedder
+        collection_name="test_vectors",
+        database="test_vectordb",
+        client=mock_mongodb_client,
+        embedder=mock_embedder,
     )
     assert db.collection_name == "test_vectors"
     assert db.database == "test_vectordb"
 
     # Test initialization failures for empty collection_name
     with pytest.raises(ValueError):
-        MongoDb(collection_name="", database="test_vectordb", client=mock_mongodb_client)
+        MongoDb(
+            collection_name="", database="test_vectordb", client=mock_mongodb_client
+        )
 
     with pytest.raises(ValueError):
         MongoDb(collection_name="test_vectors", database="", client=mock_mongodb_client)
 
 
-def test_insert_and_search(vector_db: MongoDb, mock_mongodb_client: MagicMock, mock_embedder: MagicMock) -> None:
+def test_insert_and_search(
+    vector_db: MongoDb, mock_mongodb_client: MagicMock, mock_embedder: MagicMock
+) -> None:
     """Test document insertion and search functionality."""
     # Setup mock response for search
     mock_search_result = [
@@ -247,14 +262,29 @@ def test_document_existence(vector_db: MongoDb, mock_mongodb_client: MagicMock) 
     # Setup mock responses for find_one
     def mock_find_one(query: Dict[str, Any]) -> Dict[str, Any]:
         # For doc_exists
-        if "_id" in query and query["_id"] == md5(docs[0].content.encode("utf-8")).hexdigest():
-            return {"_id": "doc_0", "content": "This is test document 0", "name": "test_doc_0"}
+        if (
+            "_id" in query
+            and query["_id"] == md5(docs[0].content.encode("utf-8")).hexdigest()
+        ):
+            return {
+                "_id": "doc_0",
+                "content": "This is test document 0",
+                "name": "test_doc_0",
+            }
         # For name_exists
         if "name" in query and query["name"] == "test_doc_0":
-            return {"_id": "doc_0", "content": "This is test document 0", "name": "test_doc_0"}
+            return {
+                "_id": "doc_0",
+                "content": "This is test document 0",
+                "name": "test_doc_0",
+            }
         # For id_exists
         if "_id" in query and query["_id"] == "doc_0":
-            return {"_id": "doc_0", "content": "This is test document 0", "name": "test_doc_0"}
+            return {
+                "_id": "doc_0",
+                "content": "This is test document 0",
+                "name": "test_doc_0",
+            }
         return None
 
     collection.find_one.side_effect = mock_find_one
@@ -271,17 +301,29 @@ def test_document_existence(vector_db: MongoDb, mock_mongodb_client: MagicMock) 
     assert not vector_db.id_exists("nonexistent")
 
 
-def test_upsert(vector_db: MongoDb, mock_mongodb_client: MagicMock, mock_embedder: MagicMock) -> None:
+def test_upsert(
+    vector_db: MongoDb, mock_mongodb_client: MagicMock, mock_embedder: MagicMock
+) -> None:
     """Test upsert functionality."""
     collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]
 
     # Setup mock responses
-    mock_doc = {"_id": "doc_0", "content": "Modified content", "name": "test_doc_0", "meta_data": {"type": "modified"}}
+    mock_doc = {
+        "_id": "doc_0",
+        "content": "Modified content",
+        "name": "test_doc_0",
+        "meta_data": {"type": "modified"},
+    }
     collection.find_one.return_value = mock_doc
     collection.update_one = MagicMock(return_value=MagicMock(modified_count=1))
 
     # Modify document and upsert
-    modified_doc = Document(id="doc_0", content="Modified content", meta_data={"type": "modified"}, name="test_doc_0")
+    modified_doc = Document(
+        id="doc_0",
+        content="Modified content",
+        meta_data={"type": "modified"},
+        name="test_doc_0",
+    )
 
     # Set the embedding for the document
     modified_doc.embedding = mock_embedder.get_embedding(modified_doc.content)
@@ -329,7 +371,9 @@ def test_exists(vector_db: MongoDb, mock_mongodb_client: MagicMock) -> None:
     assert vector_db.exists() is False
 
 
-def test_search_with_filters(vector_db: MongoDb, mock_mongodb_client: MagicMock, mock_embedder: MagicMock) -> None:
+def test_search_with_filters(
+    vector_db: MongoDb, mock_mongodb_client: MagicMock, mock_embedder: MagicMock
+) -> None:
     """Test search functionality with filters."""
     collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]
 
@@ -374,7 +418,9 @@ async def test_async_get_collection(async_vector_db: MongoDb) -> None:
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock) -> None:
+async def test_async_doc_exists(
+    async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock
+) -> None:
     """Test checking if a document exists asynchronously."""
     docs = create_test_documents(1)
 
@@ -408,7 +454,9 @@ async def test_async_doc_exists(async_vector_db: MongoDb, mock_async_mongodb_cli
 
 @pytest.mark.asyncio
 async def test_async_insert(
-    async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock, mock_embedder: MagicMock
+    async_vector_db: MongoDb,
+    mock_async_mongodb_client: AsyncMock,
+    mock_embedder: MagicMock,
 ) -> None:
     """Test inserting documents asynchronously."""
     docs = create_test_documents(2)
@@ -446,7 +494,9 @@ async def test_async_insert(
 
 @pytest.mark.asyncio
 async def test_async_search(
-    async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock, mock_embedder: MagicMock
+    async_vector_db: MongoDb,
+    mock_async_mongodb_client: AsyncMock,
+    mock_embedder: MagicMock,
 ) -> None:
     """Test searching documents asynchronously."""
     # Get reference to the mocked collection
@@ -488,12 +538,16 @@ async def test_async_search(
 
 
 @pytest.mark.asyncio
-async def test_async_exists(async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock) -> None:
+async def test_async_exists(
+    async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock
+) -> None:
     """Test checking if a collection exists asynchronously."""
     mock_db = mock_async_mongodb_client["test_vectordb"]
 
     # Test when collection exists
-    mock_db.list_collection_names = AsyncMock(return_value=[async_vector_db.collection_name])
+    mock_db.list_collection_names = AsyncMock(
+        return_value=[async_vector_db.collection_name]
+    )
     exists = await async_vector_db.async_exists()
     assert exists is True
 
@@ -504,7 +558,9 @@ async def test_async_exists(async_vector_db: MongoDb, mock_async_mongodb_client:
 
 
 @pytest.mark.asyncio
-async def test_async_name_exists(async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock) -> None:
+async def test_async_name_exists(
+    async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock
+) -> None:
     """Test checking if a document with a given name exists asynchronously."""
     # Get reference to the mocked collection
     mock_db = mock_async_mongodb_client["test_vectordb"]
@@ -532,7 +588,9 @@ async def test_async_name_exists(async_vector_db: MongoDb, mock_async_mongodb_cl
 
 @pytest.mark.asyncio
 async def test_async_upsert(
-    async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock, mock_embedder: MagicMock
+    async_vector_db: MongoDb,
+    mock_async_mongodb_client: AsyncMock,
+    mock_embedder: MagicMock,
 ) -> None:
     """Test upserting documents asynchronously."""
     doc = create_test_documents(1)[0]
@@ -568,7 +626,9 @@ async def test_async_upsert(
 
 
 @pytest.mark.asyncio
-async def test_async_drop(async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock) -> None:
+async def test_async_drop(
+    async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock
+) -> None:
     """Test dropping a collection asynchronously."""
     # Get reference to the mocked collection
     mock_db = mock_async_mongodb_client["test_vectordb"]

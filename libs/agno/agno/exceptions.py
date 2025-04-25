@@ -30,7 +30,11 @@ class RetryAgentRun(AgentRunException):
         messages: Optional[List[Union[dict, Message]]] = None,
     ):
         super().__init__(
-            exc, user_message=user_message, agent_message=agent_message, messages=messages, stop_execution=False
+            exc,
+            user_message=user_message,
+            agent_message=agent_message,
+            messages=messages,
+            stop_execution=False,
         )
 
 
@@ -45,7 +49,11 @@ class StopAgentRun(AgentRunException):
         messages: Optional[List[Union[dict, Message]]] = None,
     ):
         super().__init__(
-            exc, user_message=user_message, agent_message=agent_message, messages=messages, stop_execution=True
+            exc,
+            user_message=user_message,
+            agent_message=agent_message,
+            messages=messages,
+            stop_execution=True,
         )
 
 
@@ -72,7 +80,11 @@ class ModelProviderError(AgnoError):
     """Exception raised when a model provider returns an error."""
 
     def __init__(
-        self, message: str, status_code: int = 502, model_name: Optional[str] = None, model_id: Optional[str] = None
+        self,
+        message: str,
+        status_code: int = 502,
+        model_name: Optional[str] = None,
+        model_id: Optional[str] = None,
     ):
         super().__init__(message, status_code)
         self.model_name = model_name
@@ -83,6 +95,10 @@ class ModelRateLimitError(ModelProviderError):
     """Exception raised when a model provider returns a rate limit error."""
 
     def __init__(
-        self, message: str, status_code: int = 429, model_name: Optional[str] = None, model_id: Optional[str] = None
+        self,
+        message: str,
+        status_code: int = 429,
+        model_name: Optional[str] = None,
+        model_id: Optional[str] = None,
     ):
         super().__init__(message, status_code, model_name, model_id)

@@ -8,7 +8,9 @@ from agno.utils.log import log_debug, logger
 try:
     from browserbase import Browserbase
 except ImportError:
-    raise ImportError("`browserbase` not installed. Please install using `pip install browserbase`")
+    raise ImportError(
+        "`browserbase` not installed. Please install using `pip install browserbase`"
+    )
 
 try:
     from playwright.sync_api import sync_playwright
@@ -92,7 +94,9 @@ class BrowserbaseTools(Toolkit):
         if not self._playwright:
             self._playwright = sync_playwright().start()  # type: ignore
             if self._playwright:
-                self._browser = self._playwright.chromium.connect_over_cdp(self._connect_url)
+                self._browser = self._playwright.chromium.connect_over_cdp(
+                    self._connect_url
+                )
             context = self._browser.contexts[0] if self._browser else ""
             self._page = context.pages[0] or context.new_page()  # type: ignore
 
@@ -132,13 +136,19 @@ class BrowserbaseTools(Toolkit):
             self._initialize_browser(connect_url)
             if self._page:
                 self._page.goto(url, wait_until="networkidle")
-            result = {"status": "complete", "title": self._page.title() if self._page else "", "url": url}
+            result = {
+                "status": "complete",
+                "title": self._page.title() if self._page else "",
+                "url": url,
+            }
             return json.dumps(result)
         except Exception as e:
             self._cleanup()
             raise e
 
-    def screenshot(self, path: str, full_page: bool = True, connect_url: Optional[str] = None) -> str:
+    def screenshot(
+        self, path: str, full_page: bool = True, connect_url: Optional[str] = None
+    ) -> str:
         """Takes a screenshot of the current page.
 
         Args:
@@ -196,4 +206,9 @@ class BrowserbaseTools(Toolkit):
                 }
             )
         except Exception as e:
-            return json.dumps({"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"})
+            return json.dumps(
+                {
+                    "status": "warning",
+                    "message": f"Cleanup completed with warning: {str(e)}",
+                }
+            )

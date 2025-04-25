@@ -1,9 +1,10 @@
 import os
 
 import streamlit as st
-from agno.media import Image as AgnoImage
 from medical_agent import agent
 from PIL import Image as PILImage
+
+from agno.media import Image as AgnoImage
 
 st.set_page_config(
     page_title="Medical Imaging Analysis",

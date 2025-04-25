@@ -11,7 +11,9 @@ try:
     from pypdf import PdfReader as DocumentReader  # noqa: F401
     from pypdf.errors import PdfStreamError
 except ImportError:
-    raise ImportError("`pypdf` not installed. Please install it via `pip install pypdf`.")
+    raise ImportError(
+        "`pypdf` not installed. Please install it via `pip install pypdf`."
+    )
 
 
 def process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
@@ -48,7 +50,9 @@ def process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
     )
 
 
-async def async_process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
+async def async_process_image_page(
+    doc_name: str, page_number: int, page: Any
+) -> Document:
     try:
         import rapidocr_onnxruntime as rapidocr
     except ImportError:
@@ -141,7 +145,9 @@ class PDFReader(BasePDFReader):
             logger.error(f"Error reading PDF: {e}")
             return []
 
-        async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
+        async def _process_document(
+            doc_name: str, page_number: int, page: Any
+        ) -> Document:
             return Document(
                 name=doc_name,
                 id=f"{doc_name}_{page_number}",
@@ -214,7 +220,9 @@ class PDFUrlReader(BasePDFReader):
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
 
-        async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
+        async def _process_document(
+            doc_name: str, page_number: int, page: Any
+        ) -> Document:
             return Document(
                 name=doc_name,
                 id=f"{doc_name}_{page_number}",

@@ -8,7 +8,9 @@ from agno.utils.log import log_debug, logger
 try:
     from github import Auth, Github, GithubException
 except ImportError:
-    raise ImportError("`PyGithub` not installed. Please install using `pip install pygithub`")
+    raise ImportError(
+        "`PyGithub` not installed. Please install using `pip install pygithub`"
+    )
 
 
 class GithubTools(Toolkit):
@@ -186,12 +188,16 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing a list of repositories matching the search query.
         """
-        log_debug(f"Searching repositories with query: '{query}', page: {page}, per_page: {per_page}")
+        log_debug(
+            f"Searching repositories with query: '{query}', page: {page}, per_page: {per_page}"
+        )
         try:
             # Ensure per_page doesn't exceed GitHub's max of 100
             per_page = min(per_page, 100)
 
-            repositories = self.g.search_repositories(query=query, sort=sort, order=order)
+            repositories = self.g.search_repositories(
+                query=query, sort=sort, order=order
+            )
 
             # Get the specified page of results
             repo_list = []
@@ -338,7 +344,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing a list of pull requests.
         """
-        log_debug(f"Listing pull requests for repository: {repo_name} with state: {state}")
+        log_debug(
+            f"Listing pull requests for repository: {repo_name} with state: {state}"
+        )
         try:
             repo = self.g.get_repo(repo_name)
             pulls = repo.get_pulls(state=state)
@@ -378,7 +386,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the count of pull requests.
         """
-        log_debug(f"Counting pull requests for repository: {repo_name} with state: {state}")
+        log_debug(
+            f"Counting pull requests for repository: {repo_name} with state: {state}"
+        )
         try:
             repo = self.g.get_repo(repo_name)
             pulls = repo.get_pulls(state=state, base=base, head=head)
@@ -387,7 +397,11 @@ class GithubTools(Toolkit):
             if author:
                 # If we need to filter by author and state, make sure both conditions are met
                 if state != "all":
-                    count = sum(1 for pr in pulls if pr.user.login == author and pr.state == state)
+                    count = sum(
+                        1
+                        for pr in pulls
+                        if pr.user.login == author and pr.state == state
+                    )
                 else:
                     count = sum(1 for pr in pulls if pr.user.login == author)
             else:
@@ -440,7 +454,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the list of changed files.
         """
-        log_debug(f"Getting changes for pull request #{pr_number} in repository: {repo_name}")
+        log_debug(
+            f"Getting changes for pull request #{pr_number} in repository: {repo_name}"
+        )
         try:
             repo = self.g.get_repo(repo_name)
             pr = repo.get_pull(pr_number)
@@ -463,7 +479,9 @@ class GithubTools(Toolkit):
             logger.error(f"Error getting pull request changes: {e}")
             return json.dumps({"error": str(e)})
 
-    def create_issue(self, repo_name: str, title: str, body: Optional[str] = None) -> str:
+    def create_issue(
+        self, repo_name: str, title: str, body: Optional[str] = None
+    ) -> str:
         """Create an issue in a repository.
 
         Args:
@@ -556,7 +574,9 @@ class GithubTools(Toolkit):
             logger.error(f"Error getting issue: {e}")
             return json.dumps({"error": str(e)})
 
-    def comment_on_issue(self, repo_name: str, issue_number: int, comment_body: str) -> str:
+    def comment_on_issue(
+        self, repo_name: str, issue_number: int, comment_body: str
+    ) -> str:
         """Add a comment to an issue.
 
         Args:
@@ -624,7 +644,9 @@ class GithubTools(Toolkit):
             logger.error(f"Error reopening issue: {e}")
             return json.dumps({"error": str(e)})
 
-    def assign_issue(self, repo_name: str, issue_number: int, assignees: List[str]) -> str:
+    def assign_issue(
+        self, repo_name: str, issue_number: int, assignees: List[str]
+    ) -> str:
         """Assign users to an issue.
 
         Args:
@@ -635,12 +657,16 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string confirming the assignees.
         """
-        log_debug(f"Assigning users to issue #{issue_number} in repository: {repo_name}")
+        log_debug(
+            f"Assigning users to issue #{issue_number} in repository: {repo_name}"
+        )
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
             issue.edit(assignees=assignees)
-            return json.dumps({"message": f"Issue #{issue_number} assigned to {assignees}."}, indent=2)
+            return json.dumps(
+                {"message": f"Issue #{issue_number} assigned to {assignees}."}, indent=2
+            )
         except GithubException as e:
             logger.error(f"Error assigning issue: {e}")
             return json.dumps({"error": str(e)})
@@ -679,7 +705,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing a list of comments.
         """
-        log_debug(f"Listing comments for issue #{issue_number} in repository: {repo_name}")
+        log_debug(
+            f"Listing comments for issue #{issue_number} in repository: {repo_name}"
+        )
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
@@ -740,7 +768,9 @@ class GithubTools(Toolkit):
         try:
             repo = self.g.get_repo(repo_name)
             repo.delete()
-            return json.dumps({"message": f"Repository {repo_name} deleted successfully"}, indent=2)
+            return json.dumps(
+                {"message": f"Repository {repo_name} deleted successfully"}, indent=2
+            )
         except GithubException as e:
             logger.error(f"Error deleting repository: {e}")
             return json.dumps({"error": str(e)})
@@ -801,10 +831,14 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing a list of pull requests.
         """
-        log_debug(f"Getting pull requests for repository: {repo_name} with state: {state}, sort: {sort}, base: {base}")
+        log_debug(
+            f"Getting pull requests for repository: {repo_name} with state: {state}, sort: {sort}, base: {base}"
+        )
         try:
             repo = self.g.get_repo(repo_name)
-            pulls = repo.get_pulls(state=state, sort=sort, direction=direction, base=base, head=head)
+            pulls = repo.get_pulls(
+                state=state, sort=sort, direction=direction, base=base, head=head
+            )
 
             pr_list = []
             for pr in pulls:
@@ -826,7 +860,9 @@ class GithubTools(Toolkit):
             logger.error(f"Error getting pull requests by query: {e}")
             return json.dumps({"error": str(e)})
 
-    def get_pull_request_comments(self, repo_name: str, pr_number: int, include_issue_comments: bool = True) -> str:
+    def get_pull_request_comments(
+        self, repo_name: str, pr_number: int, include_issue_comments: bool = True
+    ) -> str:
         """Get all comments on a pull request.
 
         Args:
@@ -837,7 +873,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing a list of pull request comments.
         """
-        log_debug(f"Getting comments for pull request #{pr_number} in repository: {repo_name}")
+        log_debug(
+            f"Getting comments for pull request #{pr_number} in repository: {repo_name}"
+        )
         try:
             repo = self.g.get_repo(repo_name)
             pr = repo.get_pull(pr_number)
@@ -906,7 +944,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the created comment details.
         """
-        log_debug(f"Creating comment on pull request #{pr_number} in repository: {repo_name}")
+        log_debug(
+            f"Creating comment on pull request #{pr_number} in repository: {repo_name}"
+        )
         try:
             repo = self.g.get_repo(repo_name)
             pr = repo.get_pull(pr_number)
@@ -929,7 +969,9 @@ class GithubTools(Toolkit):
             logger.error(f"Error creating pull request comment: {e}")
             return json.dumps({"error": str(e)})
 
-    def edit_pull_request_comment(self, repo_name: str, comment_id: int, body: str) -> str:
+    def edit_pull_request_comment(
+        self, repo_name: str, comment_id: int, body: str
+    ) -> str:
         """Edit an existing pull request comment.
 
         Args:
@@ -950,7 +992,9 @@ class GithubTools(Toolkit):
                     comment.edit(body)
 
             if not comment:
-                return f"Could not find comment #{comment_id} in repository: {repo_name}"
+                return (
+                    f"Could not find comment #{comment_id} in repository: {repo_name}"
+                )
 
             comment_info = {
                 "id": comment.id,
@@ -978,7 +1022,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing detailed pull request information.
         """
-        log_debug(f"Getting comprehensive details for PR #{pr_number} in repository: {repo_name}")
+        log_debug(
+            f"Getting comprehensive details for PR #{pr_number} in repository: {repo_name}"
+        )
         try:
             repo = self.g.get_repo(repo_name)
             pr = repo.get_pull(pr_number)
@@ -1020,8 +1066,14 @@ class GithubTools(Toolkit):
                 commit_info = {
                     "sha": commit.sha,
                     "message": commit.commit.message,
-                    "author": (commit.commit.author.name if commit.commit.author else "Unknown"),
-                    "date": (commit.commit.author.date.isoformat() if commit.commit.author else None),
+                    "author": (
+                        commit.commit.author.name if commit.commit.author else "Unknown"
+                    ),
+                    "date": (
+                        commit.commit.author.date.isoformat()
+                        if commit.commit.author
+                        else None
+                    ),
                     "url": commit.html_url,
                 }
                 commits.append(commit_info)
@@ -1118,13 +1170,19 @@ class GithubTools(Toolkit):
                 "open_issues_count": int(repo.open_issues_count),
                 "default_branch": str(repo.default_branch),
                 "topics": [str(topic) for topic in repo.get_topics()],
-                "license": (str(repo.license.name) if repo.license and hasattr(repo.license, "name") else None),
+                "license": (
+                    str(repo.license.name)
+                    if repo.license and hasattr(repo.license, "name")
+                    else None
+                ),
                 "private": bool(repo.private),
                 "archived": bool(repo.archived),
             }
 
             # Get languages
-            repo_info["languages"] = {str(lang): int(count) for lang, count in repo.get_languages().items()}
+            repo_info["languages"] = {
+                str(lang): int(count) for lang, count in repo.get_languages().items()
+            }
 
             # Calculate actual open issues (GitHub's count includes PRs)
             try:
@@ -1202,14 +1260,22 @@ class GithubTools(Toolkit):
                 merge_times = []
                 for pr in merged_prs:
                     if pr.merged_at and pr.created_at:
-                        merge_time = (pr.merged_at - pr.created_at).total_seconds() / 3600
+                        merge_time = (
+                            pr.merged_at - pr.created_at
+                        ).total_seconds() / 3600
                         merge_times.append(merge_time)
 
                 pr_metrics = {
                     "total_prs": len(all_prs_list),
                     "merged_prs": len(merged_prs),
-                    "acceptance_rate": ((len(merged_prs) / len(all_prs_list) * 100) if len(all_prs_list) > 0 else 0),
-                    "avg_time_to_merge": (sum(merge_times) / len(merge_times) if merge_times else None),
+                    "acceptance_rate": (
+                        (len(merged_prs) / len(all_prs_list) * 100)
+                        if len(all_prs_list) > 0
+                        else 0
+                    ),
+                    "avg_time_to_merge": (
+                        sum(merge_times) / len(merge_times) if merge_times else None
+                    ),
                 }
                 repo_info["pr_metrics"] = pr_metrics
             except Exception as e:
@@ -1311,11 +1377,15 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string with the success message or error.
         """
-        log_debug(f"Creating review request for PR #{pr_number} in repository: {repo_name}")
+        log_debug(
+            f"Creating review request for PR #{pr_number} in repository: {repo_name}"
+        )
         try:
             repo = self.g.get_repo(repo_name)
             pr = repo.get_pull(pr_number)
-            pr.create_review_request(reviewers=reviewers, team_reviewers=team_reviewers or [])
+            pr.create_review_request(
+                reviewers=reviewers, team_reviewers=team_reviewers or []
+            )
 
             return json.dumps(
                 {
@@ -1357,7 +1427,9 @@ class GithubTools(Toolkit):
             content_bytes = content.encode("utf-8")
 
             # Create the file
-            result = repo.create_file(path=path, message=message, content=content_bytes, branch=branch)
+            result = repo.create_file(
+                path=path, message=message, content=content_bytes, branch=branch
+            )
 
             # Extract relevant information
             file_info = {
@@ -1376,7 +1448,9 @@ class GithubTools(Toolkit):
             logger.error(f"Error creating file: {e}")
             return json.dumps({"error": str(e)})
 
-    def get_file_content(self, repo_name: str, path: str, ref: Optional[str] = None) -> str:
+    def get_file_content(
+        self, repo_name: str, path: str, ref: Optional[str] = None
+    ) -> str:
         """Get the content of a file in a repository.
 
         Args:
@@ -1410,7 +1484,9 @@ class GithubTools(Toolkit):
             # Make sure we don't try to display binary content even if decoding doesn't raise an error
             # Check if content looks like binary data (contains null bytes or too many non-printable chars)
             if isinstance(decoded_content, str) and (
-                "\x00" in decoded_content or sum(1 for c in decoded_content[:1000] if not (32 <= ord(c) <= 126)) > 200
+                "\x00" in decoded_content
+                or sum(1 for c in decoded_content[:1000] if not (32 <= ord(c) <= 126))
+                > 200
             ):
                 decoded_content = "Binary file (content not displayed)"
 
@@ -1510,7 +1586,9 @@ class GithubTools(Toolkit):
             repo = self.g.get_repo(repo_name)
 
             # Delete the file
-            result = repo.delete_file(path=path, message=message, sha=sha, branch=branch)
+            result = repo.delete_file(
+                path=path, message=message, sha=sha, branch=branch
+            )
 
             # Extract relevant information
             commit_info = {
@@ -1527,7 +1605,9 @@ class GithubTools(Toolkit):
             logger.error(f"Error deleting file: {e}")
             return json.dumps({"error": str(e)})
 
-    def get_directory_content(self, repo_name: str, path: str, ref: Optional[str] = None) -> str:
+    def get_directory_content(
+        self, repo_name: str, path: str, ref: Optional[str] = None
+    ) -> str:
         """Get the contents of a directory in a repository.
 
         Args:
@@ -1587,7 +1667,9 @@ class GithubTools(Toolkit):
             logger.error(f"Error getting branch contents: {e}")
             return json.dumps({"error": str(e)})
 
-    def create_branch(self, repo_name: str, branch_name: str, source_branch: Optional[str] = None) -> str:
+    def create_branch(
+        self, repo_name: str, branch_name: str, source_branch: Optional[str] = None
+    ) -> str:
         """Create a new branch in a repository.
 
         Args:
@@ -1616,7 +1698,9 @@ class GithubTools(Toolkit):
             branch_info = {
                 "name": branch_name,
                 "sha": new_branch.object.sha,
-                "url": new_branch.url.replace("api.github.com/repos", "github.com").replace("git/refs/heads", "tree"),
+                "url": new_branch.url.replace(
+                    "api.github.com/repos", "github.com"
+                ).replace("git/refs/heads", "tree"),
             }
 
             return json.dumps(branch_info, indent=2)
@@ -1798,7 +1882,8 @@ class GithubTools(Toolkit):
                         "updated_at": issue.updated_at.isoformat(),
                         "html_url": issue.html_url,
                         "user": issue.user.login,
-                        "is_pull_request": hasattr(issue, "pull_request") and issue.pull_request is not None,
+                        "is_pull_request": hasattr(issue, "pull_request")
+                        and issue.pull_request is not None,
                         "comments": issue.comments,
                         "labels": [label.name for label in issue.labels],
                     }
@@ -1853,7 +1938,9 @@ class GithubTools(Toolkit):
         )
         try:
             repo = self.g.get_repo(repo_name)
-            pulls = repo.get_pulls(state=state, sort=sort, direction=direction, base=base, head=head)
+            pulls = repo.get_pulls(
+                state=state, sort=sort, direction=direction, base=base, head=head
+            )
 
             pull_list = []
             for pr in pulls:

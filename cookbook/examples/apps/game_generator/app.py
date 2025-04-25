@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import streamlit as st
-from agno.utils.string import hash_string_sha256
 from game_generator import GameGenerator, SqliteWorkflowStorage
+
+from agno.utils.string import hash_string_sha256
 
 st.set_page_config(
     page_title="HTML5 Game Generator",

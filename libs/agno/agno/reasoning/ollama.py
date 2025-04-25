@@ -38,7 +38,9 @@ def get_ollama_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> O
             reasoning_content = content
 
     return Message(
-        role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
+        role="assistant",
+        content=f"<thinking>\n{reasoning_content}\n</thinking>",
+        reasoning_content=reasoning_content,
     )
 
 
@@ -46,7 +48,9 @@ async def aget_ollama_reasoning(reasoning_agent: "Agent", messages: List[Message
     from agno.run.response import RunResponse
 
     try:
-        reasoning_agent_response: RunResponse = await reasoning_agent.arun(messages=messages)
+        reasoning_agent_response: RunResponse = await reasoning_agent.arun(
+            messages=messages
+        )
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
@@ -63,5 +67,7 @@ async def aget_ollama_reasoning(reasoning_agent: "Agent", messages: List[Message
             reasoning_content = content
 
     return Message(
-        role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
+        role="assistant",
+        content=f"<thinking>\n{reasoning_content}\n</thinking>",
+        reasoning_content=reasoning_content,
     )

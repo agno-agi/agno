@@ -66,10 +66,14 @@ def test_lance_db_sync_search_types():
 
     test_docs = [
         Document(
-            name="python", content="Python is a popular programming language", meta_data={"category": "programming"}
+            name="python",
+            content="Python is a popular programming language",
+            meta_data={"category": "programming"},
         ),
         Document(
-            name="fastapi", content="FastAPI is a modern web framework for Python", meta_data={"category": "framework"}
+            name="fastapi",
+            content="FastAPI is a modern web framework for Python",
+            meta_data={"category": "framework"},
         ),
     ]
 
@@ -168,7 +172,9 @@ async def test_lance_db_async_operations():
     # Test concurrent searches
     search_queries = ["concurrent operations", "test document", "operations test"]
 
-    search_results = await asyncio.gather(*[vector_db.async_search(query, limit=2) for query in search_queries])
+    search_results = await asyncio.gather(
+        *[vector_db.async_search(query, limit=2) for query in search_queries]
+    )
 
     # Verify all searches returned results
     assert all(len(results) > 0 for results in search_results)

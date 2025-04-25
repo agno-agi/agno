@@ -54,7 +54,9 @@ def test_read_path(csv_reader, csv_file):
     assert documents[0].name == "test"
     assert documents[0].id == "test_1"
 
-    expected_content = "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago "
+    expected_content = (
+        "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago "
+    )
     assert documents[0].content == expected_content
 
 
@@ -68,7 +70,9 @@ def test_read_file_object(csv_reader):
     assert documents[0].name == "memory"
     assert documents[0].id == "memory_1"
 
-    expected_content = "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago "
+    expected_content = (
+        "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago "
+    )
     assert documents[0].content == expected_content
 
 
@@ -91,8 +95,16 @@ def test_read_nonexistent_file(csv_reader, temp_dir):
 def test_read_with_chunking(csv_reader, csv_file):
     def mock_chunk(doc):
         return [
-            Document(name=f"{doc.name}_chunk1", id=f"{doc.id}_chunk1", content="Chunk 1 content"),
-            Document(name=f"{doc.name}_chunk2", id=f"{doc.id}_chunk2", content="Chunk 2 content"),
+            Document(
+                name=f"{doc.name}_chunk1",
+                id=f"{doc.id}_chunk1",
+                content="Chunk 1 content",
+            ),
+            Document(
+                name=f"{doc.name}_chunk2",
+                id=f"{doc.id}_chunk2",
+                content="Chunk 2 content",
+            ),
         ]
 
     csv_reader.chunk = True
@@ -116,7 +128,10 @@ async def test_async_read_path(csv_reader, csv_file):
     assert len(documents) == 1
     assert documents[0].name == "test"
     assert documents[0].id == "test_1"
-    assert documents[0].content == "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago"
+    assert (
+        documents[0].content
+        == "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago"
+    )
 
 
 @pytest.fixture
@@ -169,8 +184,16 @@ async def test_async_read_multi_page_csv(csv_reader, multi_page_csv_file):
 async def test_async_read_with_chunking(csv_reader, csv_file):
     def mock_chunk(doc):
         return [
-            Document(name=f"{doc.name}_chunk1", id=f"{doc.id}_chunk1", content=f"{doc.content}_chunked1"),
-            Document(name=f"{doc.name}_chunk2", id=f"{doc.id}_chunk2", content=f"{doc.content}_chunked2"),
+            Document(
+                name=f"{doc.name}_chunk1",
+                id=f"{doc.id}_chunk1",
+                content=f"{doc.content}_chunked1",
+            ),
+            Document(
+                name=f"{doc.name}_chunk2",
+                id=f"{doc.id}_chunk2",
+                content=f"{doc.content}_chunked2",
+            ),
         ]
 
     csv_reader.chunk = True
@@ -207,8 +230,14 @@ def test_read_url(csv_url_reader):
     assert documents[0].id == "employees_1"
 
     content = documents[0].content
-    assert all(field in content for field in ["EmployeeID", "FirstName", "LastName", "Department"])
-    assert all(value in content for value in ["John", "Doe", "Engineering", "Software Engineer", "75000"])
+    assert all(
+        field in content
+        for field in ["EmployeeID", "FirstName", "LastName", "Department"]
+    )
+    assert all(
+        value in content
+        for value in ["John", "Doe", "Engineering", "Software Engineer", "75000"]
+    )
 
 
 @pytest.mark.asyncio
@@ -220,8 +249,12 @@ async def test_async_read_url(csv_url_reader):
     assert documents[0].id == "employees_page1_1"
     assert documents[1].id == "employees_page1_2"
 
-    expected_first_row = "EmployeeID, FirstName, LastName, Department, Role, Age, Salary, StartDate"
-    expected_second_row = "101, John, Doe, Engineering, Software Engineer, 28, 75000, 2018-06-15"
+    expected_first_row = (
+        "EmployeeID, FirstName, LastName, Department, Role, Age, Salary, StartDate"
+    )
+    expected_second_row = (
+        "101, John, Doe, Engineering, Software Engineer, 28, 75000, 2018-06-15"
+    )
 
     assert expected_first_row in documents[0].content
     assert expected_second_row in documents[0].content

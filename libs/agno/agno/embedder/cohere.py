@@ -6,9 +6,12 @@ from agno.utils.log import logger
 
 try:
     from cohere import Client as CohereClient
-    from cohere.types.embed_response import EmbeddingsByTypeEmbedResponse, EmbeddingsFloatsEmbedResponse
+    from cohere.types.embed_response import (EmbeddingsByTypeEmbedResponse,
+                                             EmbeddingsFloatsEmbedResponse)
 except ImportError:
-    raise ImportError("`cohere` not installed. Please install using `pip install cohere`.")
+    raise ImportError(
+        "`cohere` not installed. Please install using `pip install cohere`."
+    )
 
 
 @dataclass
@@ -31,7 +34,9 @@ class CohereEmbedder(Embedder):
         self.cohere_client = CohereClient(**client_params)
         return self.cohere_client
 
-    def response(self, text: str) -> Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse]:
+    def response(
+        self, text: str
+    ) -> Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse]:
         request_params: Dict[str, Any] = {}
 
         if self.id:
@@ -45,12 +50,16 @@ class CohereEmbedder(Embedder):
         return self.client.embed(texts=[text], **request_params)
 
     def get_embedding(self, text: str) -> List[float]:
-        response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
+        response: Union[
+            EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse
+        ] = self.response(text=text)
         try:
             if isinstance(response, EmbeddingsFloatsEmbedResponse):
                 return response.embeddings[0]
             elif isinstance(response, EmbeddingsByTypeEmbedResponse):
-                return response.embeddings.float_[0] if response.embeddings.float_ else []
+                return (
+                    response.embeddings.float_[0] if response.embeddings.float_ else []
+                )
             else:
                 logger.warning("No embeddings found")
                 return []
@@ -58,14 +67,20 @@ class CohereEmbedder(Embedder):
             logger.warning(e)
             return []
 
-    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
-        response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
+    def get_embedding_and_usage(
+        self, text: str
+    ) -> Tuple[List[float], Optional[Dict[str, Any]]]:
+        response: Union[
+            EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse
+        ] = self.response(text=text)
 
         embedding: List[float] = []
         if isinstance(response, EmbeddingsFloatsEmbedResponse):
             embedding = response.embeddings[0]
         elif isinstance(response, EmbeddingsByTypeEmbedResponse):
-            embedding = response.embeddings.float_[0] if response.embeddings.float_ else []
+            embedding = (
+                response.embeddings.float_[0] if response.embeddings.float_ else []
+            )
 
         usage = response.meta.billed_units if response.meta else None
         if usage:

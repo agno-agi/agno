@@ -32,7 +32,11 @@ class PubmedTools(Toolkit):
         }
         response = httpx.get(url, params=params)  # type: ignore
         root = ElementTree.fromstring(response.content)
-        return [id_elem.text for id_elem in root.findall(".//Id") if id_elem.text is not None]
+        return [
+            id_elem.text
+            for id_elem in root.findall(".//Id")
+            if id_elem.text is not None
+        ]
 
     def fetch_details(self, pubmed_ids: List[str]) -> ElementTree.Element:
         url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
@@ -48,9 +52,15 @@ class PubmedTools(Toolkit):
             abstract = article.find(".//AbstractText")
             articles.append(
                 {
-                    "Published": (pub_date.text if pub_date is not None else "No date available"),
+                    "Published": (
+                        pub_date.text if pub_date is not None else "No date available"
+                    ),
                     "Title": title.text if title is not None else "No title available",
-                    "Summary": (abstract.text if abstract is not None else "No abstract available"),
+                    "Summary": (
+                        abstract.text
+                        if abstract is not None
+                        else "No abstract available"
+                    ),
                 }
             )
         return articles
@@ -67,7 +77,9 @@ class PubmedTools(Toolkit):
         """
         try:
             log_debug(f"Searching PubMed for: {query}")
-            ids = self.fetch_pubmed_ids(query, self.max_results or max_results, self.email)
+            ids = self.fetch_pubmed_ids(
+                query, self.max_results or max_results, self.email
+            )
             details_root = self.fetch_details(ids)
             articles = self.parse_details(details_root)
             results = [

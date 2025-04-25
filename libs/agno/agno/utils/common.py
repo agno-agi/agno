@@ -39,7 +39,9 @@ def get_image_str(repo: str, tag: str) -> str:
     return f"{repo}:{tag}"
 
 
-def dataclass_to_dict(dataclass_object, exclude: Optional[set[str]] = None, exclude_none: bool = False) -> dict:
+def dataclass_to_dict(
+    dataclass_object, exclude: Optional[set[str]] = None, exclude_none: bool = False
+) -> dict:
     final_dict = asdict(dataclass_object)
     if exclude:
         for key in exclude:

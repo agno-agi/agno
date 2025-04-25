@@ -7,6 +7,9 @@ import os
 from os import getenv
 from typing import List
 
+from pydantic import BaseModel
+from sqlalchemy.engine import create_engine
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.singlestore import SingleStoreStorage
@@ -14,8 +17,6 @@ from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.utils.certs import download_cert
-from pydantic import BaseModel
-from sqlalchemy.engine import create_engine
 
 # Configure SingleStore DB connection
 USERNAME = getenv("SINGLESTORE_USERNAME")

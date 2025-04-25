@@ -12,7 +12,11 @@ from agno.utils.log import logger
 
 
 def create_deployment_info(
-    app: str, root: Path, elapsed_time: str = "[waiting...]", status: Optional[str] = None, error: Optional[str] = None
+    app: str,
+    root: Path,
+    elapsed_time: str = "[waiting...]",
+    status: Optional[str] = None,
+    error: Optional[str] = None,
 ) -> Text:
     """Create a formatted text display showing deployment information.
 
@@ -194,7 +198,9 @@ def deploy_playground_app(
         root = root or Path.cwd()
         root = cast(Path, root)
         try:
-            deployment_info = create_deployment_info(app=app, root=root, status="Initializing...")
+            deployment_info = create_deployment_info(
+                app=app, root=root, status="Initializing..."
+            )
             panels: List[Panel] = [create_info_panel(deployment_info=deployment_info)]
 
             status = Status(
@@ -210,7 +216,10 @@ def deploy_playground_app(
             tar_path = create_tar_archive(root=root)
             panels[0] = create_info_panel(
                 create_deployment_info(
-                    app=app, root=root, elapsed_time=f"{response_timer.elapsed:.1f}s", status="Creating archive..."
+                    app=app,
+                    root=root,
+                    elapsed_time=f"{response_timer.elapsed:.1f}s",
+                    status="Creating archive...",
                 )
             )
             live_display.update(Group(*panels))
@@ -220,7 +229,10 @@ def deploy_playground_app(
             deploy_archive(name=name, tar_path=tar_path)
             panels[0] = create_info_panel(
                 create_deployment_info(
-                    app=app, root=root, elapsed_time=f"{response_timer.elapsed:.1f}s", status="Uploading archive..."
+                    app=app,
+                    root=root,
+                    elapsed_time=f"{response_timer.elapsed:.1f}s",
+                    status="Uploading archive...",
                 )
             )
             live_display.update(Group(*panels))
@@ -230,7 +242,10 @@ def deploy_playground_app(
             cleanup_archive(tar_path)
             panels[0] = create_info_panel(
                 create_deployment_info(
-                    app=app, root=root, elapsed_time=f"{response_timer.elapsed:.1f}s", status="Deleting archive..."
+                    app=app,
+                    root=root,
+                    elapsed_time=f"{response_timer.elapsed:.1f}s",
+                    status="Deleting archive...",
                 )
             )
             live_display.update(Group(*panels))
@@ -242,7 +257,12 @@ def deploy_playground_app(
         except Exception as e:
             status.update(f"[bold red]Deployment failed: {str(e)}[/bold red]")
             panels[0] = create_error_panel(
-                create_deployment_info(app=app, root=root, elapsed_time=f"{response_timer.elapsed:.1f}s", error=str(e))
+                create_deployment_info(
+                    app=app,
+                    root=root,
+                    elapsed_time=f"{response_timer.elapsed:.1f}s",
+                    error=str(e),
+                )
             )
             status.stop()
             panels.pop()

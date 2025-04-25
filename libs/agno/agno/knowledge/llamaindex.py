@@ -18,7 +18,10 @@ class LlamaIndexKnowledgeBase(AgentKnowledge):
     loader: Optional[Callable] = None
 
     def search(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        num_documents: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         """
         Returns relevant documents matching the query.
@@ -34,7 +37,9 @@ class LlamaIndexKnowledgeBase(AgentKnowledge):
             ValueError: If the retriever is not of type BaseRetriever.
         """
         if not isinstance(self.retriever, BaseRetriever):
-            raise ValueError(f"Retriever is not of type BaseRetriever: {self.retriever}")
+            raise ValueError(
+                f"Retriever is not of type BaseRetriever: {self.retriever}"
+            )
 
         lc_documents: List[NodeWithScore] = self.retriever.retrieve(query)
         if num_documents is not None:
@@ -62,5 +67,7 @@ class LlamaIndexKnowledgeBase(AgentKnowledge):
         self.loader()
 
     def exists(self) -> bool:
-        logger.warning("LlamaIndexKnowledgeBase.exists() not supported - please check the vectorstore manually.")
+        logger.warning(
+            "LlamaIndexKnowledgeBase.exists() not supported - please check the vectorstore manually."
+        )
         return True

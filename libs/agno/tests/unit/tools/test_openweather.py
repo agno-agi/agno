@@ -42,7 +42,9 @@ def test_init_with_selective_tools():
         assert "get_current_weather" in [func.name for func in tools.functions.values()]
         assert "get_forecast" not in [func.name for func in tools.functions.values()]
         assert "get_air_pollution" in [func.name for func in tools.functions.values()]
-        assert "geocode_location" not in [func.name for func in tools.functions.values()]
+        assert "geocode_location" not in [
+            func.name for func in tools.functions.values()
+        ]
 
 
 def test_get_current_weather_success(openweather_tools, mock_openweather_api):
@@ -50,7 +52,9 @@ def test_get_current_weather_success(openweather_tools, mock_openweather_api):
     # First mock the geocode response
     geocode_response = Mock()
     geocode_response.status_code = 200
-    geocode_response.json.return_value = [{"name": "New York", "lat": 40.7128, "lon": -74.0060, "country": "US"}]
+    geocode_response.json.return_value = [
+        {"name": "New York", "lat": 40.7128, "lon": -74.0060, "country": "US"}
+    ]
 
     # Then mock the weather response
     weather_response = Mock()
@@ -65,7 +69,9 @@ def test_get_current_weather_success(openweather_tools, mock_openweather_api):
             "pressure": 1015,
             "humidity": 65,
         },
-        "weather": [{"id": 800, "main": "Clear", "description": "clear sky", "icon": "01d"}],
+        "weather": [
+            {"id": 800, "main": "Clear", "description": "clear sky", "icon": "01d"}
+        ],
         "wind": {"speed": 3.6, "deg": 160},
         "sys": {"country": "US"},
         "coord": {"lat": 40.7128, "lon": -74.0060},
@@ -88,7 +94,9 @@ def test_get_forecast_success(openweather_tools, mock_openweather_api):
     # First mock the geocode response
     geocode_response = Mock()
     geocode_response.status_code = 200
-    geocode_response.json.return_value = [{"name": "New York", "lat": 40.7128, "lon": -74.0060, "country": "US"}]
+    geocode_response.json.return_value = [
+        {"name": "New York", "lat": 40.7128, "lon": -74.0060, "country": "US"}
+    ]
 
     # Then mock the forecast response
     forecast_response = Mock()
@@ -106,7 +114,9 @@ def test_get_forecast_success(openweather_tools, mock_openweather_api):
                     "pressure": 1015,
                     "humidity": 60,
                 },
-                "weather": [{"main": "Clouds", "description": "scattered clouds", "icon": "03d"}],
+                "weather": [
+                    {"main": "Clouds", "description": "scattered clouds", "icon": "03d"}
+                ],
                 "wind": {"speed": 4.1, "deg": 180},
                 "dt_txt": "2023-07-01 12:00:00",
             },
@@ -120,7 +130,9 @@ def test_get_forecast_success(openweather_tools, mock_openweather_api):
                     "pressure": 1014,
                     "humidity": 55,
                 },
-                "weather": [{"main": "Clear", "description": "clear sky", "icon": "01d"}],
+                "weather": [
+                    {"main": "Clear", "description": "clear sky", "icon": "01d"}
+                ],
                 "wind": {"speed": 3.6, "deg": 190},
                 "dt_txt": "2023-07-01 15:00:00",
             },
@@ -145,7 +157,9 @@ def test_get_air_pollution_success(openweather_tools, mock_openweather_api):
     # First mock the geocode response
     geocode_response = Mock()
     geocode_response.status_code = 200
-    geocode_response.json.return_value = [{"name": "New York", "lat": 40.7128, "lon": -74.0060, "country": "US"}]
+    geocode_response.json.return_value = [
+        {"name": "New York", "lat": 40.7128, "lon": -74.0060, "country": "US"}
+    ]
 
     # Then mock the air pollution response
     pollution_response = Mock()
@@ -218,7 +232,9 @@ def test_geocode_location_empty_result(openweather_tools, mock_openweather_api):
     assert "No location found" in result_data["error"]
 
 
-def test_get_current_weather_with_geocode_error(openweather_tools, mock_openweather_api):
+def test_get_current_weather_with_geocode_error(
+    openweather_tools, mock_openweather_api
+):
     """Test current weather with geocode error."""
     # Mock geocode error
     mock_response = Mock()
@@ -236,12 +252,18 @@ def test_units_parameter(openweather_tools, mock_openweather_api):
     # First mock the geocode response
     geocode_response = Mock()
     geocode_response.status_code = 200
-    geocode_response.json.return_value = [{"name": "London", "lat": 51.5074, "lon": -0.1278, "country": "GB"}]
+    geocode_response.json.return_value = [
+        {"name": "London", "lat": 51.5074, "lon": -0.1278, "country": "GB"}
+    ]
 
     # Then mock the weather response
     weather_response = Mock()
     weather_response.status_code = 200
-    weather_response.json.return_value = {"name": "London", "main": {"temp": 15.5}, "weather": [{"main": "Rain"}]}
+    weather_response.json.return_value = {
+        "name": "London",
+        "main": {"temp": 15.5},
+        "weather": [{"main": "Rain"}],
+    }
 
     # Set up the mock to return different responses for different calls
     mock_openweather_api.side_effect = [geocode_response, weather_response]

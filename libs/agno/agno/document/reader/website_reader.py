@@ -14,7 +14,9 @@ from agno.utils.log import log_debug, logger
 try:
     from bs4 import BeautifulSoup, Tag  # noqa: F401
 except ImportError:
-    raise ImportError("The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`.")
+    raise ImportError(
+        "The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`."
+    )
 
 
 @dataclass
@@ -28,7 +30,12 @@ class WebsiteReader(Reader):
     _urls_to_crawl: List[Tuple[str, int]] = field(default_factory=list)
 
     def __init__(
-        self, max_depth: int = 3, max_links: int = 10, timeout: int = 10, proxy: Optional[str] = None, **kwargs
+        self,
+        max_depth: int = 3,
+        max_links: int = 10,
+        timeout: int = 10,
+        proxy: Optional[str] = None,
+        **kwargs,
     ):
         super().__init__(**kwargs)
         self.max_depth = max_depth
@@ -163,14 +170,18 @@ class WebsiteReader(Reader):
 
                     parsed_url = urlparse(full_url)
                     if parsed_url.netloc.endswith(primary_domain) and not any(
-                        parsed_url.path.endswith(ext) for ext in [".pdf", ".jpg", ".png"]
+                        parsed_url.path.endswith(ext)
+                        for ext in [".pdf", ".jpg", ".png"]
                     ):
                         full_url_str = str(full_url)
                         if (
                             full_url_str not in self._visited
-                            and (full_url_str, current_depth + 1) not in self._urls_to_crawl
+                            and (full_url_str, current_depth + 1)
+                            not in self._urls_to_crawl
                         ):
-                            self._urls_to_crawl.append((full_url_str, current_depth + 1))
+                            self._urls_to_crawl.append(
+                                (full_url_str, current_depth + 1)
+                            )
 
             except Exception as e:
                 logger.warning(f"Failed to crawl: {current_url}: {e}")
@@ -216,7 +227,9 @@ class WebsiteReader(Reader):
 
                 try:
                     log_debug(f"Crawling asynchronously: {current_url}")
-                    response = await client.get(current_url, timeout=self.timeout, follow_redirects=True)
+                    response = await client.get(
+                        current_url, timeout=self.timeout, follow_redirects=True
+                    )
                     response.raise_for_status()
 
                     soup = BeautifulSoup(response.content, "html.parser")
@@ -240,17 +253,23 @@ class WebsiteReader(Reader):
 
                         parsed_url = urlparse(full_url)
                         if parsed_url.netloc.endswith(primary_domain) and not any(
-                            parsed_url.path.endswith(ext) for ext in [".pdf", ".jpg", ".png"]
+                            parsed_url.path.endswith(ext)
+                            for ext in [".pdf", ".jpg", ".png"]
                         ):
                             full_url_str = str(full_url)
                             if (
                                 full_url_str not in self._visited
-                                and (full_url_str, current_depth + 1) not in self._urls_to_crawl
+                                and (full_url_str, current_depth + 1)
+                                not in self._urls_to_crawl
                             ):
-                                self._urls_to_crawl.append((full_url_str, current_depth + 1))
+                                self._urls_to_crawl.append(
+                                    (full_url_str, current_depth + 1)
+                                )
 
                 except Exception as e:
-                    logger.warning(f"Failed to crawl asynchronously: {current_url}: {e}")
+                    logger.warning(
+                        f"Failed to crawl asynchronously: {current_url}: {e}"
+                    )
 
         return crawler_result
 
@@ -273,7 +292,10 @@ class WebsiteReader(Reader):
                 documents.extend(
                     self.chunk_document(
                         Document(
-                            name=url, id=str(crawled_url), meta_data={"url": str(crawled_url)}, content=crawled_content
+                            name=url,
+                            id=str(crawled_url),
+                            meta_data={"url": str(crawled_url)},
+                            content=crawled_content,
                         )
                     )
                 )
@@ -306,7 +328,10 @@ class WebsiteReader(Reader):
         async def process_document(crawled_url, crawled_content):
             if self.chunk:
                 doc = Document(
-                    name=url, id=str(crawled_url), meta_data={"url": str(crawled_url)}, content=crawled_content
+                    name=url,
+                    id=str(crawled_url),
+                    meta_data={"url": str(crawled_url)},
+                    content=crawled_content,
                 )
                 return self.chunk_document(doc)
             else:
@@ -321,7 +346,8 @@ class WebsiteReader(Reader):
 
         # Use asyncio.gather to process all documents in parallel
         tasks = [
-            process_document(crawled_url, crawled_content) for crawled_url, crawled_content in crawler_result.items()
+            process_document(crawled_url, crawled_content)
+            for crawled_url, crawled_content in crawler_result.items()
         ]
         results = await asyncio.gather(*tasks)
 

@@ -2,10 +2,11 @@ import asyncio
 from pathlib import Path
 from textwrap import dedent
 
+from mcp import StdioServerParameters
+
 from agno.agent import Agent
 from agno.models.groq import Groq
 from agno.tools.mcp import MCPTools
-from mcp import StdioServerParameters
 
 
 async def run_agent(message: str) -> None:

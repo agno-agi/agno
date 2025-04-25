@@ -9,7 +9,9 @@ from agno.utils.log import log_debug, logger
 try:
     import requests
 except ImportError:
-    raise ImportError("`requests` not installed. Please install using `pip install requests`.")
+    raise ImportError(
+        "`requests` not installed. Please install using `pip install requests`."
+    )
 
 
 class ZendeskTools(Toolkit):
@@ -69,7 +71,10 @@ class ZendeskTools(Toolkit):
             response = requests.get(url, auth=auth)
             response.raise_for_status()
             clean = re.compile("<.*?>")
-            articles = [re.sub(clean, "", article["body"]) for article in response.json()["results"]]
+            articles = [
+                re.sub(clean, "", article["body"])
+                for article in response.json()["results"]
+            ]
             return json.dumps(articles)
         except requests.RequestException as e:
             raise ConnectionError(f"API request failed: {e}")

@@ -35,26 +35,36 @@ class VectorDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         raise NotImplementedError
 
     def upsert_available(self) -> bool:
         return False
 
     @abstractmethod
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         raise NotImplementedError
 
     @abstractmethod

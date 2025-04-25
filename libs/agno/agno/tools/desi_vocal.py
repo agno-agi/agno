@@ -22,7 +22,9 @@ class DesiVocalTools(Toolkit):
 
         self.api_key = api_key or getenv("DESI_VOCAL_API_KEY")
         if not self.api_key:
-            logger.error("DESI_VOCAL_API_KEY not set. Please set the DESI_VOCAL_API_KEY environment variable.")
+            logger.error(
+                "DESI_VOCAL_API_KEY not set. Please set the DESI_VOCAL_API_KEY environment variable."
+            )
 
         self.voice_id = voice_id
 
@@ -51,9 +53,11 @@ class DesiVocalTools(Toolkit):
                         "gender": voice_info["audio_gender"],
                         "type": voice_info["voice_type"],
                         "language": ", ".join(voice_info["languages"]),
-                        "preview_url": next(iter(voice_info["preview_path"].values()))
-                        if voice_info["preview_path"]
-                        else None,
+                        "preview_url": (
+                            next(iter(voice_info["preview_path"].values()))
+                            if voice_info["preview_path"]
+                            else None
+                        ),
                     }
                 )
 
@@ -62,7 +66,9 @@ class DesiVocalTools(Toolkit):
             logger.error(f"Failed to get voices: {e}")
             return f"Error: {e}"
 
-    def text_to_speech(self, agent: Union[Agent, Team], prompt: str, voice_id: Optional[str] = None) -> str:
+    def text_to_speech(
+        self, agent: Union[Agent, Team], prompt: str, voice_id: Optional[str] = None
+    ) -> str:
         """
         Use this function to generate audio from text.
         Args:

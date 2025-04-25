@@ -101,4 +101,6 @@ def save_audio(base64_data: str, output_path: str) -> bool:
         print(f"Data successfully saved to '{path}'.")
         return True
     except Exception as e:
-        raise Exception(f"An unexpected error occurred while saving data to '{output_path}': {e}")
+        raise Exception(
+            f"An unexpected error occurred while saving data to '{output_path}': {e}"
+        )

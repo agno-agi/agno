@@ -26,7 +26,9 @@ def _assert_metrics(response: RunResponse):
 
     # The total should be at least the sum of input and output
     # (Note: sometimes there might be small discrepancies in how these are calculated)
-    assert total_tokens >= input_tokens + output_tokens - 5  # Allow small margin of error
+    assert (
+        total_tokens >= input_tokens + output_tokens - 5
+    )  # Allow small margin of error
 
 
 def test_tool_use():
@@ -118,7 +120,9 @@ async def test_async_tool_use_streaming():
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True
+    )
 
     responses = []
     tool_call_seen = False

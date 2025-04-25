@@ -43,7 +43,9 @@ def test_text_knowledge_base_directory(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "search_knowledge_base" for call in function_calls
+    )
 
 
 def test_text_knowledge_base_single_file(setup_vector_db):
@@ -66,7 +68,9 @@ def test_text_knowledge_base_single_file(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "search_knowledge_base" for call in function_calls
+    )
 
 
 @pytest.mark.asyncio
@@ -82,7 +86,9 @@ async def test_text_knowledge_base_async_directory(setup_vector_db):
     assert await setup_vector_db.async_get_count() == 14
 
     agent = Agent(knowledge=kb)
-    response = await agent.arun("What does Paul Graham say about great work?", markdown=True)
+    response = await agent.arun(
+        "What does Paul Graham say about great work?", markdown=True
+    )
 
     tool_calls = []
     for msg in response.messages:
@@ -90,7 +96,10 @@ async def test_text_knowledge_base_async_directory(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "async_search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "async_search_knowledge_base"
+        for call in function_calls
+    )
 
 
 @pytest.mark.asyncio
@@ -106,7 +115,9 @@ async def test_text_knowledge_base_async_single_file(setup_vector_db):
     assert await setup_vector_db.async_get_count() == 14
 
     agent = Agent(knowledge=kb)
-    response = await agent.arun("What are the advantages of youth in doing great work?", markdown=True)
+    response = await agent.arun(
+        "What are the advantages of youth in doing great work?", markdown=True
+    )
 
     tool_calls = []
     for msg in response.messages:
@@ -114,4 +125,7 @@ async def test_text_knowledge_base_async_single_file(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "async_search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "async_search_knowledge_base"
+        for call in function_calls
+    )

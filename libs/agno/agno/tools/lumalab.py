@@ -11,7 +11,9 @@ from agno.utils.log import log_info, logger
 try:
     from lumaai import LumaAI  # type: ignore
 except ImportError:
-    raise ImportError("`lumaai` not installed. Please install using `pip install lumaai`")
+    raise ImportError(
+        "`lumaai` not installed. Please install using `pip install lumaai`"
+    )
 
 
 # Define types for keyframe structure
@@ -40,7 +42,9 @@ class LumaLabTools(Toolkit):
         self.api_key = api_key or getenv("LUMAAI_API_KEY")
 
         if not self.api_key:
-            logger.error("LUMAAI_API_KEY not set. Please set the LUMAAI_API_KEY environment variable.")
+            logger.error(
+                "LUMAAI_API_KEY not set. Please set the LUMAAI_API_KEY environment variable."
+            )
 
         self.client = LumaAI(auth_token=self.api_key)
         self.register(self.generate_video)
@@ -53,7 +57,9 @@ class LumaLabTools(Toolkit):
         start_image_url: str,
         end_image_url: Optional[str] = None,
         loop: bool = False,
-        aspect_ratio: Literal["1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "9:21"] = "16:9",
+        aspect_ratio: Literal[
+            "1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "9:21"
+        ] = "16:9",
     ) -> str:
         """Generate a video from one or two images with a prompt.
 
@@ -71,7 +77,9 @@ class LumaLabTools(Toolkit):
 
         try:
             # Construct keyframes
-            keyframes: Dict[str, Dict[str, str]] = {"frame0": {"type": "image", "url": start_image_url}}
+            keyframes: Dict[str, Dict[str, str]] = {
+                "frame0": {"type": "image", "url": start_image_url}
+            }
 
             # Add end image if provided
             if end_image_url:
@@ -101,7 +109,9 @@ class LumaLabTools(Toolkit):
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video
                     if video_url:
-                        agent.add_video(VideoArtifact(id=video_id, url=video_url, eta="completed"))
+                        agent.add_video(
+                            VideoArtifact(id=video_id, url=video_url, eta="completed")
+                        )
                         return f"Video generated successfully: {video_url}"
                 elif generation.state == "failed":
                     return f"Generation failed: {generation.failure_reason}"
@@ -121,7 +131,9 @@ class LumaLabTools(Toolkit):
         agent: Agent,
         prompt: str,
         loop: bool = False,
-        aspect_ratio: Literal["1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "9:21"] = "16:9",
+        aspect_ratio: Literal[
+            "1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "9:21"
+        ] = "16:9",
         keyframes: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> str:
         """Use this function to generate a video given a prompt."""
@@ -153,7 +165,9 @@ class LumaLabTools(Toolkit):
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video
                     if video_url:
-                        agent.add_video(VideoArtifact(id=video_id, url=video_url, state="completed"))
+                        agent.add_video(
+                            VideoArtifact(id=video_id, url=video_url, state="completed")
+                        )
                         return f"Video generated successfully: {video_url}"
                 elif generation.state == "failed":
                     return f"Generation failed: {generation.failure_reason}"

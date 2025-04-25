@@ -84,7 +84,9 @@ async def test_async_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -101,7 +103,9 @@ async def test_async_tool_use_stream():
     assert any("TSLA" in r.content for r in responses if r.content)
 
 
-@pytest.mark.skip(reason="This test fails as HuggingFace calls the tools more than once for each tool")
+@pytest.mark.skip(
+    reason="This test fails as HuggingFace calls the tools more than once for each tool"
+)
 def test_parallel_tool_calls():
     agent = Agent(
         model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
@@ -122,7 +126,9 @@ def test_parallel_tool_calls():
     assert "TSLA" in response.content and "AAPL" in response.content
 
 
-@pytest.mark.skip(reason="This test fails as HuggingFace calls the tools more than once for each tool")
+@pytest.mark.skip(
+    reason="This test fails as HuggingFace calls the tools more than once for each tool"
+)
 def test_multiple_tool_calls():
     agent = Agent(
         model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
@@ -133,7 +139,9 @@ def test_multiple_tool_calls():
         monitoring=False,
     )
 
-    response = agent.run("What is the current price of TSLA and what is the latest news about it?")
+    response = agent.run(
+        "What is the current price of TSLA and what is the latest news about it?"
+    )
 
     # Verify tool usage
     tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
@@ -164,7 +172,9 @@ def test_tool_call_custom_tool_no_parameters():
     assert "70" in response.content
 
 
-@pytest.mark.skip(reason="Right now HuggingFace implementation doesn't support tool calls with list parameters")
+@pytest.mark.skip(
+    reason="Right now HuggingFace implementation doesn't support tool calls with list parameters"
+)
 def test_tool_call_list_parameters():
     agent = Agent(
         model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),

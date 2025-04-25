@@ -1,11 +1,12 @@
+from pydantic import BaseModel
+from utils import print_chat_history
+
 from agno.agent import Agent
 from agno.memory.v2.memory import Memory
 from agno.models.anthropic.claude import Claude
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
-from pydantic import BaseModel
-from utils import print_chat_history
 
 # This memory is shared by all the agents in the team
 memory = Memory()

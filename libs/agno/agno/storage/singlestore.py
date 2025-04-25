@@ -137,7 +137,9 @@ class SingleStoreStorage(Storage):
     def table_exists(self) -> bool:
         log_debug(f"Checking if table exists: {self.table.name}")
         try:
-            return inspect(self.db_engine).has_table(self.table.name, schema=self.schema)
+            return inspect(self.db_engine).has_table(
+                self.table.name, schema=self.schema
+            )
         except Exception as e:
             logger.error(e)
             return False
@@ -148,7 +150,9 @@ class SingleStoreStorage(Storage):
             log_info(f"Creating table: {self.table_name}\n")
             self.table.create(self.db_engine)
 
-    def _read(self, session: SqlSession, session_id: str, user_id: Optional[str] = None) -> Optional[Row[Any]]:
+    def _read(
+        self, session: SqlSession, session_id: str, user_id: Optional[str] = None
+    ) -> Optional[Row[Any]]:
         stmt = select(self.table).where(self.table.c.session_id == session_id)
         if user_id is not None:
             stmt = stmt.where(self.table.c.user_id == user_id)
@@ -163,7 +167,9 @@ class SingleStoreStorage(Storage):
 
     def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Session]:
         with self.SqlSession.begin() as sess:
-            existing_row: Optional[Row[Any]] = self._read(session=sess, session_id=session_id, user_id=user_id)
+            existing_row: Optional[Row[Any]] = self._read(
+                session=sess, session_id=session_id, user_id=user_id
+            )
             if existing_row is not None:
                 if self.mode == "agent":
                     return AgentSession.from_dict(existing_row._mapping)  # type: ignore
@@ -173,7 +179,9 @@ class SingleStoreStorage(Storage):
                     return WorkflowSession.from_dict(existing_row._mapping)  # type: ignore
             return None
 
-    def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
+    def get_all_session_ids(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[str]:
         session_ids: List[str] = []
         try:
             with self.SqlSession.begin() as sess:
@@ -199,7 +207,9 @@ class SingleStoreStorage(Storage):
             logger.error(f"An unexpected error occurred: {str(e)}")
         return session_ids
 
-    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
+    def get_all_sessions(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[Session]:
         sessions: List[Session] = []
         try:
             with self.SqlSession.begin() as sess:
@@ -257,12 +267,17 @@ class SingleStoreStorage(Storage):
                         """
                     )
                     column_exists = (
-                        sess.execute(column_exists_query, {"schema": self.schema, "table": self.table_name}).scalar()
+                        sess.execute(
+                            column_exists_query,
+                            {"schema": self.schema, "table": self.table_name},
+                        ).scalar()
                         is not None
                     )
 
                     if not column_exists:
-                        log_info(f"Adding 'team_session_id' column to {self.schema}.{self.table_name}")
+                        log_info(
+                            f"Adding 'team_session_id' column to {self.schema}.{self.table_name}"
+                        )
                         alter_table_query = text(
                             f"ALTER TABLE {self.schema}.{self.table_name} ADD COLUMN team_session_id TEXT"
                         )
@@ -347,18 +362,26 @@ class SingleStoreStorage(Storage):
                             "agent_id": session.agent_id,  # type: ignore
                             "team_session_id": session.team_session_id,  # type: ignore
                             "user_id": session.user_id,
-                            "memory": json.dumps(session.memory, ensure_ascii=False)
-                            if session.memory is not None
-                            else None,
-                            "agent_data": json.dumps(session.agent_data, ensure_ascii=False)  # type: ignore
-                            if session.agent_data is not None  # type: ignore
-                            else None,
-                            "session_data": json.dumps(session.session_data, ensure_ascii=False)
-                            if session.session_data is not None
-                            else None,
-                            "extra_data": json.dumps(session.extra_data, ensure_ascii=False)
-                            if session.extra_data is not None
-                            else None,
+                            "memory": (
+                                json.dumps(session.memory, ensure_ascii=False)
+                                if session.memory is not None
+                                else None
+                            ),
+                            "agent_data": (
+                                json.dumps(session.agent_data, ensure_ascii=False)  # type: ignore
+                                if session.agent_data is not None  # type: ignore
+                                else None
+                            ),
+                            "session_data": (
+                                json.dumps(session.session_data, ensure_ascii=False)
+                                if session.session_data is not None
+                                else None
+                            ),
+                            "extra_data": (
+                                json.dumps(session.extra_data, ensure_ascii=False)
+                                if session.extra_data is not None
+                                else None
+                            ),
                         },
                     )
                 elif self.mode == "team":
@@ -369,18 +392,26 @@ class SingleStoreStorage(Storage):
                             "team_id": session.team_id,  # type: ignore
                             "user_id": session.user_id,
                             "team_session_id": session.team_session_id,  # type: ignore
-                            "memory": json.dumps(session.memory, ensure_ascii=False)
-                            if session.memory is not None
-                            else None,
-                            "team_data": json.dumps(session.team_data, ensure_ascii=False)  # type: ignore
-                            if session.team_data is not None  # type: ignore
-                            else None,
-                            "session_data": json.dumps(session.session_data, ensure_ascii=False)
-                            if session.session_data is not None
-                            else None,
-                            "extra_data": json.dumps(session.extra_data, ensure_ascii=False)
-                            if session.extra_data is not None
-                            else None,
+                            "memory": (
+                                json.dumps(session.memory, ensure_ascii=False)
+                                if session.memory is not None
+                                else None
+                            ),
+                            "team_data": (
+                                json.dumps(session.team_data, ensure_ascii=False)  # type: ignore
+                                if session.team_data is not None  # type: ignore
+                                else None
+                            ),
+                            "session_data": (
+                                json.dumps(session.session_data, ensure_ascii=False)
+                                if session.session_data is not None
+                                else None
+                            ),
+                            "extra_data": (
+                                json.dumps(session.extra_data, ensure_ascii=False)
+                                if session.extra_data is not None
+                                else None
+                            ),
                         },
                     )
                 elif self.mode == "workflow":
@@ -390,18 +421,26 @@ class SingleStoreStorage(Storage):
                             "session_id": session.session_id,
                             "workflow_id": session.workflow_id,  # type: ignore
                             "user_id": session.user_id,
-                            "memory": json.dumps(session.memory, ensure_ascii=False)
-                            if session.memory is not None
-                            else None,
-                            "workflow_data": json.dumps(session.workflow_data, ensure_ascii=False)  # type: ignore
-                            if session.workflow_data is not None  # type: ignore
-                            else None,
-                            "session_data": json.dumps(session.session_data, ensure_ascii=False)
-                            if session.session_data is not None
-                            else None,
-                            "extra_data": json.dumps(session.extra_data, ensure_ascii=False)
-                            if session.extra_data is not None
-                            else None,
+                            "memory": (
+                                json.dumps(session.memory, ensure_ascii=False)
+                                if session.memory is not None
+                                else None
+                            ),
+                            "workflow_data": (
+                                json.dumps(session.workflow_data, ensure_ascii=False)  # type: ignore
+                                if session.workflow_data is not None  # type: ignore
+                                else None
+                            ),
+                            "session_data": (
+                                json.dumps(session.session_data, ensure_ascii=False)
+                                if session.session_data is not None
+                                else None
+                            ),
+                            "extra_data": (
+                                json.dumps(session.extra_data, ensure_ascii=False)
+                                if session.extra_data is not None
+                                else None
+                            ),
                         },
                     )
             except Exception as e:
@@ -427,13 +466,17 @@ class SingleStoreStorage(Storage):
         with self.SqlSession() as sess, sess.begin():
             try:
                 # Delete the session with the given session_id
-                delete_stmt = self.table.delete().where(self.table.c.session_id == session_id)
+                delete_stmt = self.table.delete().where(
+                    self.table.c.session_id == session_id
+                )
                 result = sess.execute(delete_stmt)
 
                 if result.rowcount == 0:
                     logger.warning(f"No session found with session_id: {session_id}")
                 else:
-                    log_info(f"Successfully deleted session with session_id: {session_id}")
+                    log_info(
+                        f"Successfully deleted session with session_id: {session_id}"
+                    )
             except Exception as e:
                 logger.error(f"Error deleting session: {e}")
                 raise

@@ -11,13 +11,13 @@ from agno.utils.log import log_warning
 
 try:
     from openai.types.chat.chat_completion import ChatCompletion
-    from openai.types.chat.chat_completion_chunk import (
-        ChatCompletionChunk,
-        ChoiceDelta,
-    )
+    from openai.types.chat.chat_completion_chunk import (ChatCompletionChunk,
+                                                         ChoiceDelta)
     from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
 except ModuleNotFoundError:
-    raise ImportError("`openai` not installed. Please install using `pip install openai`")
+    raise ImportError(
+        "`openai` not installed. Please install using `pip install openai`"
+    )
 
 from agno.models.openai.like import OpenAILike
 
@@ -82,7 +82,9 @@ class Perplexity(OpenAILike):
             request_params.update(self.request_params)
         return request_params
 
-    def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion]) -> ModelResponse:
+    def parse_provider_response(
+        self, response: Union[ChatCompletion, ParsedChatCompletion]
+    ) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
 
@@ -126,9 +128,14 @@ class Perplexity(OpenAILike):
             model_response.content = response_message.content
 
         # Add tool calls
-        if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
+        if (
+            response_message.tool_calls is not None
+            and len(response_message.tool_calls) > 0
+        ):
             try:
-                model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
+                model_response.tool_calls = [
+                    t.model_dump() for t in response_message.tool_calls
+                ]
             except Exception as e:
                 log_warning(f"Error processing tool calls: {e}")
 
@@ -143,7 +150,9 @@ class Perplexity(OpenAILike):
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
+    def parse_provider_response_delta(
+        self, response_delta: ChatCompletionChunk
+    ) -> ModelResponse:
         """
         Parse the OpenAI streaming response into a ModelResponse.
 
@@ -166,7 +175,10 @@ class Perplexity(OpenAILike):
                 model_response.tool_calls = delta.tool_calls  # type: ignore
 
         # Add citations if present
-        if hasattr(response_delta, "citations") and response_delta.citations is not None:
+        if (
+            hasattr(response_delta, "citations")
+            and response_delta.citations is not None
+        ):
             model_response.citations = Citations(
                 urls=[UrlCitation(url=c) for c in response_delta.citations],
             )

@@ -38,8 +38,15 @@ def vector_db(mock_session, mock_embedder, mock_table):
     """Create a VectorDB instance with mocked session and table."""
     table_name = f"test_vectors_{uuid.uuid4().hex[:8]}"
 
-    with patch.object(AgnoMetadataVectorCassandraTable, "__new__", return_value=mock_table):
-        db = Cassandra(table_name=table_name, keyspace="test_vectordb", embedder=mock_embedder, session=mock_session)
+    with patch.object(
+        AgnoMetadataVectorCassandraTable, "__new__", return_value=mock_table
+    ):
+        db = Cassandra(
+            table_name=table_name,
+            keyspace="test_vectordb",
+            embedder=mock_embedder,
+            session=mock_session,
+        )
         db.create()
 
         # Verify the mock table was properly set
@@ -65,7 +72,9 @@ def create_test_documents(num_docs: int = 3) -> list[Document]:
 def test_initialization(mock_session):
     """Test VectorDB initialization."""
     # Test successful initialization
-    db = Cassandra(table_name="test_vectors", keyspace="test_vectordb", session=mock_session)
+    db = Cassandra(
+        table_name="test_vectors", keyspace="test_vectordb", session=mock_session
+    )
     assert db.table_name == "test_vectors"
     assert db.keyspace == "test_vectordb"
 
@@ -157,7 +166,10 @@ def test_upsert(vector_db, mock_table):
 
     # Modify document and upsert
     modified_doc = Document(
-        id=docs[0].id, content="Modified content", meta_data={"type": "modified"}, name=docs[0].name
+        id=docs[0].id,
+        content="Modified content",
+        meta_data={"type": "modified"},
+        name=docs[0].name,
     )
     vector_db.upsert([modified_doc])
 
@@ -177,7 +189,8 @@ def test_delete_and_drop(vector_db, mock_table, mock_session):
     # Test drop
     vector_db.drop()
     mock_session.execute.assert_called_with(
-        "DROP TABLE IF EXISTS test_vectordb.test_vectors_" + vector_db.table_name.split("_")[-1]
+        "DROP TABLE IF EXISTS test_vectordb.test_vectors_"
+        + vector_db.table_name.split("_")[-1]
     )
 
 
@@ -288,7 +301,8 @@ async def test_async_drop(vector_db, mock_session):
     """Test async drop functionality."""
     await vector_db.async_drop()
     mock_session.execute.assert_called_with(
-        "DROP TABLE IF EXISTS test_vectordb.test_vectors_" + vector_db.table_name.split("_")[-1]
+        "DROP TABLE IF EXISTS test_vectordb.test_vectors_"
+        + vector_db.table_name.split("_")[-1]
     )
 
 

@@ -8,7 +8,9 @@ try:
     import requests
     from requests.auth import HTTPBasicAuth
 except ImportError:
-    raise ImportError("`requests` not installed. Please install using `pip install requests`")
+    raise ImportError(
+        "`requests` not installed. Please install using `pip install requests`"
+    )
 
 
 class CustomApiTools(Toolkit):
@@ -43,7 +45,9 @@ class CustomApiTools(Toolkit):
             return HTTPBasicAuth(self.username, self.password)
         return None
 
-    def _get_headers(self, additional_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    def _get_headers(
+        self, additional_headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, str]:
         """Combine default headers with additional headers."""
         headers = self.default_headers.copy()
         if self.api_key:
@@ -75,7 +79,11 @@ class CustomApiTools(Toolkit):
             str: JSON string containing response data or error message
         """
         try:
-            url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}" if self.base_url else endpoint
+            url = (
+                f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+                if self.base_url
+                else endpoint
+            )
             log_debug(f"Making {method} request to {url}")
 
             response = requests.request(
@@ -102,7 +110,9 @@ class CustomApiTools(Toolkit):
             }
 
             if not response.ok:
-                logger.error(f"Request failed with status {response.status_code}: {response.text}")
+                logger.error(
+                    f"Request failed with status {response.status_code}: {response.text}"
+                )
                 result["error"] = "Request failed"
 
             return json.dumps(result, indent=2)

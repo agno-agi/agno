@@ -8,12 +8,16 @@ from agno.utils.log import log_info
 try:
     from agno.aws.resource.s3.object import S3Object  # type: ignore
 except (ModuleNotFoundError, ImportError):
-    raise ImportError("`agno-aws` not installed. Please install using `pip install agno-aws`")
+    raise ImportError(
+        "`agno-aws` not installed. Please install using `pip install agno-aws`"
+    )
 
 try:
     from pypdf import PdfReader as DocumentReader  # noqa: F401
 except ImportError:
-    raise ImportError("`pypdf` not installed. Please install it via `pip install pypdf`.")
+    raise ImportError(
+        "`pypdf` not installed. Please install it via `pip install pypdf`."
+    )
 
 
 class S3PDFReader(Reader):
@@ -25,7 +29,12 @@ class S3PDFReader(Reader):
 
             object_resource = s3_object.get_resource()
             object_body = object_resource.get()["Body"]
-            doc_name = s3_object.name.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
+            doc_name = (
+                s3_object.name.split("/")[-1]
+                .split(".")[0]
+                .replace("/", "_")
+                .replace(" ", "_")
+            )
             doc_reader = DocumentReader(BytesIO(object_body.read()))
             documents = [
                 Document(

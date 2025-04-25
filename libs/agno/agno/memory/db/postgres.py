@@ -9,7 +9,9 @@ try:
     from sqlalchemy.sql.expression import delete, select, text
     from sqlalchemy.types import DateTime, String
 except ImportError:
-    raise ImportError("`sqlalchemy` not installed.  Please install using `pip install sqlalchemy 'psycopg[binary]'`")
+    raise ImportError(
+        "`sqlalchemy` not installed.  Please install using `pip install sqlalchemy 'psycopg[binary]'`"
+    )
 
 from agno.memory.db.base import MemoryDb
 from agno.memory.row import MemoryRow
@@ -71,7 +73,9 @@ class PgMemoryDb(MemoryDb):
                 with self.Session() as sess, sess.begin():
                     if self.schema is not None:
                         log_debug(f"Creating schema: {self.schema}")
-                        sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
+                        sess.execute(
+                            text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};")
+                        )
                 log_debug(f"Creating table: {self.table_name}")
                 self.table.create(self.db_engine, checkfirst=True)
             except Exception as e:
@@ -86,7 +90,10 @@ class PgMemoryDb(MemoryDb):
             return result is not None
 
     def read_memories(
-        self, user_id: Optional[str] = None, limit: Optional[int] = None, sort: Optional[str] = None
+        self,
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        sort: Optional[str] = None,
     ) -> List[MemoryRow]:
         memories: List[MemoryRow] = []
         try:
@@ -158,7 +165,9 @@ class PgMemoryDb(MemoryDb):
     def table_exists(self) -> bool:
         log_debug(f"Checking if table exists: {self.table.name}")
         try:
-            return inspect(self.db_engine).has_table(self.table.name, schema=self.schema)
+            return inspect(self.db_engine).has_table(
+                self.table.name, schema=self.schema
+            )
         except Exception as e:
             logger.error(e)
             return False

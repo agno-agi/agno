@@ -47,12 +47,16 @@ class Toolkit:
         if include_tools:
             for included_tool in include_tools:
                 if included_tool not in _tools:
-                    raise ValueError(f"Included tool '{included_tool}' is not present in the toolkit.")
+                    raise ValueError(
+                        f"Included tool '{included_tool}' is not present in the toolkit."
+                    )
 
         if exclude_tools:
             for excluded_tool in exclude_tools:
                 if excluded_tool not in _tools:
-                    raise ValueError(f"Excluded tool '{excluded_tool}' is not present in the toolkit.")
+                    raise ValueError(
+                        f"Excluded tool '{excluded_tool}' is not present in the toolkit."
+                    )
 
         self.cache_results: bool = cache_results
         self.cache_ttl: int = cache_ttl
@@ -67,7 +71,12 @@ class Toolkit:
         for tool in self.tools:
             self.register(tool)
 
-    def register(self, function: Callable[..., Any], sanitize_arguments: bool = True, name: Optional[str] = None):
+    def register(
+        self,
+        function: Callable[..., Any],
+        sanitize_arguments: bool = True,
+        name: Optional[str] = None,
+    ):
         """Register a function with the toolkit.
 
         Args:

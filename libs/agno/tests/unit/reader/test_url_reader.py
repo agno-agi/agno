@@ -56,7 +56,9 @@ def test_read_url_with_retry(mock_response):
     """Test URL reading with retry mechanism"""
     url = "https://example.com"
 
-    with patch("httpx.get", side_effect=[httpx.RequestError("Connection error"), mock_response]):
+    with patch(
+        "httpx.get", side_effect=[httpx.RequestError("Connection error"), mock_response]
+    ):
         reader = URLReader()
         reader.chunk = False
         documents = reader.read(url)
@@ -138,7 +140,10 @@ async def test_async_read_url_with_retry():
     mock_response.text = "Hello, World!"
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
-    mock_client.__aenter__.return_value.get.side_effect = [httpx.RequestError("Connection error"), mock_response]
+    mock_client.__aenter__.return_value.get.side_effect = [
+        httpx.RequestError("Connection error"),
+        mock_response,
+    ]
 
     with patch("httpx.AsyncClient", return_value=mock_client):
         reader = URLReader()
@@ -155,7 +160,9 @@ async def test_async_read_url_max_retries():
     url = "https://example.com"
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
-    mock_client.__aenter__.return_value.get.side_effect = httpx.RequestError("Connection error")
+    mock_client.__aenter__.return_value.get.side_effect = httpx.RequestError(
+        "Connection error"
+    )
 
     with patch("httpx.AsyncClient", return_value=mock_client):
         reader = URLReader()

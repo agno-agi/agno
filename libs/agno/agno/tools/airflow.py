@@ -7,7 +7,11 @@ from agno.utils.log import log_debug, log_info, logger
 
 class AirflowTools(Toolkit):
     def __init__(
-        self, dags_dir: Optional[Union[Path, str]] = None, save_dag: bool = True, read_dag: bool = True, **kwargs
+        self,
+        dags_dir: Optional[Union[Path, str]] = None,
+        save_dag: bool = True,
+        read_dag: bool = True,
+        **kwargs,
     ):
         """
         quick start to work with airflow : https://airflow.apache.org/docs/apache-airflow/stable/start.html

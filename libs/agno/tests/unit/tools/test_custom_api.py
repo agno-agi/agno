@@ -44,12 +44,14 @@ def mock_dog_breeds_response():
     mock = Mock(spec=requests.Response)
     mock.status_code = 200
     mock.ok = True
-    mock.text = (
-        '{"status": "success", "message": {"affenpinscher": [], "african": [], "terrier": ["american", "australian"]}}'
-    )
+    mock.text = '{"status": "success", "message": {"affenpinscher": [], "african": [], "terrier": ["american", "australian"]}}'
     mock.json.return_value = {
         "status": "success",
-        "message": {"affenpinscher": [], "african": [], "terrier": ["american", "australian"]},
+        "message": {
+            "affenpinscher": [],
+            "african": [],
+            "terrier": ["american", "australian"],
+        },
     }
     mock.headers = {"Content-Type": "application/json"}
     return mock
@@ -129,7 +131,9 @@ def test_get_headers_no_api_key():
 
 def test_make_request_dog_image(api_tools, mock_dog_image_response):
     """Test successful GET request to dog image API."""
-    with patch("requests.request", return_value=mock_dog_image_response) as mock_request:
+    with patch(
+        "requests.request", return_value=mock_dog_image_response
+    ) as mock_request:
         result = api_tools.make_request(
             endpoint="/breeds/image/random",
             method="GET",
@@ -154,7 +158,9 @@ def test_make_request_dog_image(api_tools, mock_dog_image_response):
 
 def test_make_request_dog_breeds(api_tools, mock_dog_breeds_response):
     """Test successful GET request to dog breeds API."""
-    with patch("requests.request", return_value=mock_dog_breeds_response) as mock_request:
+    with patch(
+        "requests.request", return_value=mock_dog_breeds_response
+    ) as mock_request:
         result = api_tools.make_request(
             endpoint="/breeds/list/all",
             method="GET",
@@ -180,7 +186,9 @@ def test_make_request_dog_breeds(api_tools, mock_dog_breeds_response):
 
 def test_make_request_with_params(api_tools, mock_dog_image_response):
     """Test request with query parameters."""
-    with patch("requests.request", return_value=mock_dog_image_response) as mock_request:
+    with patch(
+        "requests.request", return_value=mock_dog_image_response
+    ) as mock_request:
         result = api_tools.make_request(
             endpoint="/breeds/image/random",
             method="GET",
@@ -206,7 +214,9 @@ def test_make_request_with_params(api_tools, mock_dog_image_response):
 def test_make_request_without_base_url(mock_dog_image_response):
     """Test request without base URL."""
     tools = CustomApiTools()
-    with patch("requests.request", return_value=mock_dog_image_response) as mock_request:
+    with patch(
+        "requests.request", return_value=mock_dog_image_response
+    ) as mock_request:
         result = tools.make_request(
             endpoint="https://dog.ceo/api/breeds/image/random",
             method="GET",
@@ -234,7 +244,10 @@ def test_make_request_error_response(api_tools):
     mock_error_response.status_code = 404
     mock_error_response.ok = False
     mock_error_response.text = '{"status": "error", "message": "Breed not found"}'
-    mock_error_response.json.return_value = {"status": "error", "message": "Breed not found"}
+    mock_error_response.json.return_value = {
+        "status": "error",
+        "message": "Breed not found",
+    }
     mock_error_response.headers = {"Content-Type": "application/json"}
 
     with patch("requests.request", return_value=mock_error_response):
@@ -255,7 +268,9 @@ def test_make_request_json_decode_error(api_tools):
     mock_invalid_json.status_code = 200
     mock_invalid_json.ok = True
     mock_invalid_json.text = "Not a JSON response"
-    mock_invalid_json.json.side_effect = json.JSONDecodeError("Invalid JSON", "Not a JSON response", 0)
+    mock_invalid_json.json.side_effect = json.JSONDecodeError(
+        "Invalid JSON", "Not a JSON response", 0
+    )
     mock_invalid_json.headers = {"Content-Type": "text/plain"}
 
     with patch("requests.request", return_value=mock_invalid_json):
@@ -271,7 +286,10 @@ def test_make_request_json_decode_error(api_tools):
 
 def test_make_request_network_error(api_tools):
     """Test request with network error."""
-    with patch("requests.request", side_effect=requests.exceptions.RequestException("Connection error")):
+    with patch(
+        "requests.request",
+        side_effect=requests.exceptions.RequestException("Connection error"),
+    ):
         result = api_tools.make_request(
             endpoint="/breeds/image/random",
             method="GET",
@@ -299,7 +317,9 @@ def test_make_request_all_http_methods(api_tools, mock_dog_image_response):
     """Test all HTTP methods."""
     http_methods = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
-    with patch("requests.request", return_value=mock_dog_image_response) as mock_request:
+    with patch(
+        "requests.request", return_value=mock_dog_image_response
+    ) as mock_request:
         for method in http_methods:
             result = api_tools.make_request(
                 endpoint="/breeds/image/random",

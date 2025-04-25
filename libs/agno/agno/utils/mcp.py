@@ -6,7 +6,8 @@ from agno.utils.log import log_debug, log_exception
 
 try:
     from mcp import ClientSession
-    from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
+    from mcp.types import (CallToolResult, EmbeddedResource, ImageContent,
+                           TextContent)
     from mcp.types import Tool as MCPTool
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
@@ -50,7 +51,9 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
                         mime_type=getattr(content_item, "mimeType", "image/png"),
                     )
                     agent.add_image(img_artifact)
-                    response_str += "Image has been generated and added to the response.\n"
+                    response_str += (
+                        "Image has been generated and added to the response.\n"
+                    )
                 elif isinstance(content_item, EmbeddedResource):
                     # Handle embedded resources
                     response_str += f"[Embedded resource: {content_item.resource.model_dump_json()}]\n"

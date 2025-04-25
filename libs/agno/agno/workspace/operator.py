@@ -4,21 +4,12 @@ from typing import Dict, List, Optional, cast
 from rich.prompt import Prompt
 
 from agno.api.schemas.user import TeamIdentifier, TeamSchema
-from agno.api.schemas.workspace import (
-    WorkspaceCreate,
-    WorkspaceEvent,
-    WorkspaceSchema,
-    WorkspaceUpdate,
-)
+from agno.api.schemas.workspace import (WorkspaceCreate, WorkspaceEvent,
+                                        WorkspaceSchema, WorkspaceUpdate)
 from agno.api.workspace import log_workspace_event
 from agno.cli.config import AgnoCliConfig
-from agno.cli.console import (
-    console,
-    log_config_not_available_msg,
-    print_heading,
-    print_info,
-    print_subheading,
-)
+from agno.cli.console import (console, log_config_not_available_msg,
+                              print_heading, print_info, print_subheading)
 from agno.infra.resources import InfraResources
 from agno.utils.common import str_to_int
 from agno.utils.log import logger
@@ -36,7 +27,9 @@ TEMPLATE_TO_REPO_MAP: Dict[WorkspaceStarterTemplate, str] = {
 
 
 def create_workspace(
-    name: Optional[str] = None, template: Optional[str] = None, url: Optional[str] = None
+    name: Optional[str] = None,
+    template: Optional[str] = None,
+    url: Optional[str] = None,
 ) -> Optional[WorkspaceConfig]:
     """Creates a new workspace and returns the WorkspaceConfig.
 
@@ -75,11 +68,20 @@ def create_workspace(
             # Display available starter templates and ask user to select one
             print_info("Select starter template or press Enter for default (agent-app)")
             for template_id, template_name in enumerate(templates, start=1):
-                print_info("  [b][{}][/b] {}".format(template_id, WorkspaceStarterTemplate(template_name).value))
+                print_info(
+                    "  [b][{}][/b] {}".format(
+                        template_id, WorkspaceStarterTemplate(template_name).value
+                    )
+                )
 
             # Get starter template from the user
             template_choices = [str(idx) for idx, _ in enumerate(templates, start=1)]
-            template_inp_raw = Prompt.ask("Template Number", choices=template_choices, default="1", show_choices=False)
+            template_inp_raw = Prompt.ask(
+                "Template Number",
+                choices=template_choices,
+                default="1",
+                show_choices=False,
+            )
             # Convert input to int
             template_inp = str_to_int(template_inp_raw)
 
@@ -89,7 +91,9 @@ def create_workspace(
         elif template.lower() in WorkspaceStarterTemplate.__members__.values():
             ws_template = WorkspaceStarterTemplate(template)
         else:
-            raise Exception(f"{template} is not a supported template, please choose from: {templates}")
+            raise Exception(
+                f"{template} is not a supported template, please choose from: {templates}"
+            )
 
         logger.debug(f"Selected Template: {ws_template.value}")
         repo_to_clone = TEMPLATE_TO_REPO_MAP.get(ws_template)
@@ -104,7 +108,9 @@ def create_workspace(
             default_ws_name = TEMPLATE_TO_NAME_MAP.get(ws_template, "agent-app")
         logger.debug(f"Asking for ws name with default: {default_ws_name}")
         # Ask user for workspace name if not provided
-        ws_dir_name = Prompt.ask("Workspace Name", default=default_ws_name, console=console)
+        ws_dir_name = Prompt.ask(
+            "Workspace Name", default=default_ws_name, console=console
+        )
 
     if ws_dir_name is None:
         logger.error("Workspace name is required")
@@ -116,7 +122,9 @@ def create_workspace(
     # Check if we can create the workspace in the current dir
     ws_root_path: Path = current_dir.joinpath(ws_dir_name)
     if ws_root_path.exists():
-        logger.error(f"Directory {ws_root_path} exists, please delete directory or choose another name for workspace")
+        logger.error(
+            f"Directory {ws_root_path} exists, please delete directory or choose another name for workspace"
+        )
         return None
 
     print_info(f"Creating {str(ws_root_path)}")
@@ -149,7 +157,9 @@ def create_workspace(
         # workspace_dir_path is the path to the ws_root/workspace dir
         workspace_dir_path: Path = get_workspace_dir_path(ws_root_path)
         workspace_secrets_dir = workspace_dir_path.joinpath("secrets").resolve()
-        workspace_example_secrets_dir = workspace_dir_path.joinpath("example_secrets").resolve()
+        workspace_example_secrets_dir = workspace_dir_path.joinpath(
+            "example_secrets"
+        ).resolve()
 
         print_info(f"Creating {str(workspace_secrets_dir)}")
         copytree(
@@ -158,7 +168,9 @@ def create_workspace(
         )
     except Exception as e:
         logger.warning(f"Could not create workspace/secrets: {e}")
-        logger.warning("Please manually copy workspace/example_secrets to workspace/secrets")
+        logger.warning(
+            "Please manually copy workspace/example_secrets to workspace/secrets"
+        )
 
     print_info(f"Your new workspace is available at {str(ws_root_path)}\n")
     return setup_workspace(ws_root_path=ws_root_path)
@@ -193,7 +205,9 @@ def setup_workspace(ws_root_path: Path) -> Optional[WorkspaceConfig]:
     ## 1. Pre-requisites
     ######################################################
     # 1.1 Check ws_root_path exists and is a directory
-    ws_is_valid: bool = ws_root_path is not None and ws_root_path.exists() and ws_root_path.is_dir()
+    ws_is_valid: bool = (
+        ws_root_path is not None and ws_root_path.exists() and ws_root_path.is_dir()
+    )
     if not ws_is_valid:
         logger.error("Invalid directory: {}".format(ws_root_path))
         return None
@@ -208,7 +222,9 @@ def setup_workspace(ws_root_path: Path) -> Optional[WorkspaceConfig]:
 
     # 1.3 Create a WorkspaceConfig if needed
     logger.debug(f"Checking for a workspace at {ws_root_path}")
-    ws_config: Optional[WorkspaceConfig] = agno_config.get_ws_config_by_path(ws_root_path)
+    ws_config: Optional[WorkspaceConfig] = agno_config.get_ws_config_by_path(
+        ws_root_path
+    )
     if ws_config is None:
         # There's no record of this workspace, reasons:
         # - The user is setting up a new workspace
@@ -218,7 +234,9 @@ def setup_workspace(ws_root_path: Path) -> Optional[WorkspaceConfig]:
         # Check if the workspace contains a `workspace` dir
         workspace_ws_dir_path = get_workspace_dir_path(ws_root_path)
         logger.debug(f"Found the `workspace` configuration at: {workspace_ws_dir_path}")
-        ws_config = agno_config.create_or_update_ws_config(ws_root_path=ws_root_path, set_as_active=True)
+        ws_config = agno_config.create_or_update_ws_config(
+            ws_root_path=ws_root_path, set_as_active=True
+        )
         if ws_config is None:
             logger.error(f"Failed to create WorkspaceConfig for {ws_root_path}")
             return None
@@ -239,7 +257,12 @@ def setup_workspace(ws_root_path: Path) -> Optional[WorkspaceConfig]:
 
         logger.debug("Creating anon user")
         with Live(transient=True) as live_log:
-            status = Status("Creating user...", spinner="aesthetic", speed=2.0, refresh_per_second=10)
+            status = Status(
+                "Creating user...",
+                spinner="aesthetic",
+                speed=2.0,
+                refresh_per_second=10,
+            )
             live_log.update(status)
             anon_user = create_anon_user()
             status.stop()
@@ -250,11 +273,14 @@ def setup_workspace(ws_root_path: Path) -> Optional[WorkspaceConfig]:
     ## 2. Create or update WorkspaceSchema
     ######################################################
     # 2.1 Check if a ws_schema exists for this workspace, meaning this workspace has a record in agno-api
-    ws_schema: Optional[WorkspaceSchema] = ws_config.ws_schema if ws_config is not None else None
+    ws_schema: Optional[WorkspaceSchema] = (
+        ws_config.ws_schema if ws_config is not None else None
+    )
     if agno_config.user is not None:
         # 2.2 Create WorkspaceSchema if it doesn't exist
         if ws_schema is None or ws_schema.id_workspace is None:
-            from agno.api.workspace import create_workspace_for_user, get_teams_for_user
+            from agno.api.workspace import (create_workspace_for_user,
+                                            get_teams_for_user)
 
             # If ws_schema is None, this is a NEW WORKSPACE.
             # We make a call to the api to create a new ws_schema
@@ -265,20 +291,32 @@ def setup_workspace(ws_root_path: Path) -> Optional[WorkspaceConfig]:
             team_identifier: Optional[TeamIdentifier] = None
             with Live(transient=True) as live_log:
                 status = Status(
-                    "Checking for available teams...", spinner="aesthetic", speed=2.0, refresh_per_second=10
+                    "Checking for available teams...",
+                    spinner="aesthetic",
+                    speed=2.0,
+                    refresh_per_second=10,
                 )
                 live_log.update(status)
                 teams = get_teams_for_user(agno_config.user)
                 status.stop()
             if teams is not None and len(teams) > 0:
-                logger.debug(f"The user has {len(teams)} available teams. Checking if they want to use one of them")
+                logger.debug(
+                    f"The user has {len(teams)} available teams. Checking if they want to use one of them"
+                )
                 print_info("Which account would you like to create this workspace in?")
                 print_info("  [b][1][/b] Personal (default)")
                 for team_idx, team_schema in enumerate(teams, start=2):
                     print_info("  [b][{}][/b] {}".format(team_idx, team_schema.name))
 
-                account_choices = ["1"] + [str(idx) for idx, _ in enumerate(teams, start=2)]
-                account_inp_raw = Prompt.ask("Account Number", choices=account_choices, default="1", show_choices=False)
+                account_choices = ["1"] + [
+                    str(idx) for idx, _ in enumerate(teams, start=2)
+                ]
+                account_inp_raw = Prompt.ask(
+                    "Account Number",
+                    choices=account_choices,
+                    default="1",
+                    show_choices=False,
+                )
                 account_inp = str_to_int(account_inp_raw)
 
                 if account_inp is not None:
@@ -287,10 +325,17 @@ def setup_workspace(ws_root_path: Path) -> Optional[WorkspaceConfig]:
                     else:
                         selected_team = teams[account_inp - 2]
                         print_info(f"Creating workspace in {selected_team.name}")
-                        team_identifier = TeamIdentifier(id_team=selected_team.id_team, team_url=selected_team.url)
+                        team_identifier = TeamIdentifier(
+                            id_team=selected_team.id_team, team_url=selected_team.url
+                        )
 
             with Live(transient=True) as live_log:
-                status = Status("Creating workspace...", spinner="aesthetic", speed=2.0, refresh_per_second=10)
+                status = Status(
+                    "Creating workspace...",
+                    spinner="aesthetic",
+                    speed=2.0,
+                    refresh_per_second=10,
+                )
                 live_log.update(status)
                 ws_schema = create_workspace_for_user(
                     user=agno_config.user,
@@ -306,12 +351,20 @@ def setup_workspace(ws_root_path: Path) -> Optional[WorkspaceConfig]:
             if selected_team is not None:
                 logger.debug(f"Selected team: {selected_team.name}")
             ws_config = agno_config.create_or_update_ws_config(
-                ws_root_path=ws_root_path, ws_schema=ws_schema, ws_team=selected_team, set_as_active=True
+                ws_root_path=ws_root_path,
+                ws_schema=ws_schema,
+                ws_team=selected_team,
+                set_as_active=True,
             )
 
         # 2.3 Update WorkspaceSchema if git_url is updated
-        if git_remote_origin_url is not None and ws_schema is not None and ws_schema.git_url != git_remote_origin_url:
-            from agno.api.workspace import update_workspace_for_team, update_workspace_for_user
+        if (
+            git_remote_origin_url is not None
+            and ws_schema is not None
+            and ws_schema.git_url != git_remote_origin_url
+        ):
+            from agno.api.workspace import (update_workspace_for_team,
+                                            update_workspace_for_user)
 
             logger.debug("Updating workspace")
             logger.debug(f"Existing git_url: {ws_schema.git_url}")
@@ -324,7 +377,10 @@ def setup_workspace(ws_root_path: Path) -> Optional[WorkspaceConfig]:
                         id_workspace=ws_schema.id_workspace,
                         git_url=git_remote_origin_url,
                     ),
-                    team=TeamIdentifier(id_team=ws_config.ws_team.id_team, team_url=ws_config.ws_team.url),
+                    team=TeamIdentifier(
+                        id_team=ws_config.ws_team.id_team,
+                        team_url=ws_config.ws_team.url,
+                    ),
                 )
             else:
                 updated_workspace_schema = update_workspace_for_user(
@@ -337,7 +393,9 @@ def setup_workspace(ws_root_path: Path) -> Optional[WorkspaceConfig]:
             if updated_workspace_schema is not None:
                 # Update the ws_schema for this workspace.
                 ws_config = agno_config.create_or_update_ws_config(
-                    ws_root_path=ws_root_path, ws_schema=updated_workspace_schema, set_as_active=True
+                    ws_root_path=ws_root_path,
+                    ws_schema=updated_workspace_schema,
+                    set_as_active=True,
                 )
             else:
                 logger.debug("Failed to update workspace. Please setup again")
@@ -434,7 +492,9 @@ def start_workspace(
             num_rgs_created += 1
         num_resources_created += _num_resources_created
         num_resources_to_create += _num_resources_to_create
-        logger.debug(f"Deployed {num_resources_created} resources in {num_rgs_created} resource groups")
+        logger.debug(
+            f"Deployed {num_resources_created} resources in {num_rgs_created} resource groups"
+        )
 
     if dry_run:
         return
@@ -442,7 +502,9 @@ def start_workspace(
     if num_resources_created == 0:
         return
 
-    print_heading(f"\n--**-- ResourceGroups deployed: {num_rgs_created}/{num_rgs_to_create}\n")
+    print_heading(
+        f"\n--**-- ResourceGroups deployed: {num_rgs_created}/{num_rgs_to_create}\n"
+    )
 
     workspace_event_status = "in_progress"
     if num_resources_created == num_resources_to_create:
@@ -539,7 +601,9 @@ def stop_workspace(
             num_rgs_deleted += 1
         num_resources_deleted += _num_resources_deleted
         num_resources_to_delete += _num_resources_to_delete
-        logger.debug(f"Deleted {num_resources_deleted} resources in {num_rgs_deleted} resource groups")
+        logger.debug(
+            f"Deleted {num_resources_deleted} resources in {num_rgs_deleted} resource groups"
+        )
 
     if dry_run:
         return
@@ -547,7 +611,9 @@ def stop_workspace(
     if num_resources_deleted == 0:
         return
 
-    print_heading(f"\n--**-- ResourceGroups deleted: {num_rgs_deleted}/{num_rgs_to_delete}\n")
+    print_heading(
+        f"\n--**-- ResourceGroups deleted: {num_rgs_deleted}/{num_rgs_to_delete}\n"
+    )
 
     workspace_event_status = "in_progress"
     if num_resources_to_delete == num_resources_deleted:
@@ -646,7 +712,9 @@ def update_workspace(
             num_rgs_updated += 1
         num_resources_updated += _num_resources_updated
         num_resources_to_update += _num_resources_to_update
-        logger.debug(f"Updated {num_resources_updated} resources in {num_rgs_updated} resource groups")
+        logger.debug(
+            f"Updated {num_resources_updated} resources in {num_rgs_updated} resource groups"
+        )
 
     if dry_run:
         return
@@ -654,7 +722,9 @@ def update_workspace(
     if num_resources_updated == 0:
         return
 
-    print_heading(f"\n--**-- ResourceGroups updated: {num_rgs_updated}/{num_rgs_to_update}\n")
+    print_heading(
+        f"\n--**-- ResourceGroups updated: {num_rgs_updated}/{num_rgs_to_update}\n"
+    )
 
     workspace_event_status = "in_progress"
     if num_resources_updated == num_resources_to_update:
@@ -689,7 +759,9 @@ def update_workspace(
         )
 
 
-def delete_workspace(agno_config: AgnoCliConfig, ws_to_delete: Optional[List[Path]]) -> None:
+def delete_workspace(
+    agno_config: AgnoCliConfig, ws_to_delete: Optional[List[Path]]
+) -> None:
     if ws_to_delete is None or len(ws_to_delete) == 0:
         print_heading("No workspaces to delete")
         return
@@ -725,13 +797,17 @@ def set_workspace_as_active(ws_dir_name: Optional[str]) -> None:
         ws_root_path = Path(".").resolve()
     else:
         # If the user provides a workspace name manually, we find the dir for that ws
-        ws_config: Optional[WorkspaceConfig] = agno_config.get_ws_config_by_dir_name(ws_dir_name)
+        ws_config: Optional[WorkspaceConfig] = agno_config.get_ws_config_by_dir_name(
+            ws_dir_name
+        )
         if ws_config is None:
             logger.error(f"Could not find workspace {ws_dir_name}")
             return
         ws_root_path = ws_config.ws_root_path
 
-    ws_dir_is_valid: bool = ws_root_path is not None and ws_root_path.exists() and ws_root_path.is_dir()
+    ws_dir_is_valid: bool = (
+        ws_root_path is not None and ws_root_path.exists() and ws_root_path.is_dir()
+    )
     if not ws_dir_is_valid:
         logger.error("Invalid workspace directory: {}".format(ws_root_path))
         return
@@ -740,12 +816,16 @@ def set_workspace_as_active(ws_dir_name: Optional[str]) -> None:
     # 1.3 Validate WorkspaceConfig is available i.e. a workspace is available at this directory
     ######################################################
     logger.debug(f"Checking for a workspace at path: {ws_root_path}")
-    active_ws_config: Optional[WorkspaceConfig] = agno_config.get_ws_config_by_path(ws_root_path)
+    active_ws_config: Optional[WorkspaceConfig] = agno_config.get_ws_config_by_path(
+        ws_root_path
+    )
     if active_ws_config is None:
         # This happens when the workspace is not yet setup
         print_info(f"Could not find a workspace at path: {ws_root_path}")
         # TODO: setup automatically for the user
-        print_info("If this workspace has not been setup, please run `ag ws setup` from the workspace directory")
+        print_info(
+            "If this workspace has not been setup, please run `ag ws setup` from the workspace directory"
+        )
         return
 
     ######################################################

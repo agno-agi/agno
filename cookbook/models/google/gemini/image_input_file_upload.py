@@ -1,11 +1,12 @@
 from pathlib import Path
 
+from google.generativeai import upload_file
+from google.generativeai.types import file_types
+
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.google import Gemini
 from agno.tools.duckduckgo import DuckDuckGoTools
-from google.generativeai import upload_file
-from google.generativeai.types import file_types
 
 agent = Agent(
     model=Gemini(id="gemini-2.0-flash-exp"),

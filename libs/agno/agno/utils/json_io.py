@@ -24,7 +24,11 @@ def read_json_file(file_path: Optional[Path]) -> Optional[Union[Dict, List]]:
     return None
 
 
-def write_json_file(file_path: Optional[Path], data: Optional[Union[Dict, List]], **kwargs) -> None:
+def write_json_file(
+    file_path: Optional[Path], data: Optional[Union[Dict, List]], **kwargs
+) -> None:
     if file_path is not None and data is not None:
         log_debug(f"Writing {file_path}")
-        file_path.write_text(json.dumps(data, cls=CustomJSONEncoder, indent=4, **kwargs))
+        file_path.write_text(
+            json.dumps(data, cls=CustomJSONEncoder, indent=4, **kwargs)
+        )

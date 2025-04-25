@@ -36,7 +36,9 @@ def test_arxiv_knowledge_base_integration(setup_vector_db):
     assert setup_vector_db.get_count() >= 2
 
     agent = Agent(knowledge=kb)
-    response = agent.run("Explain the key concepts of transformer architecture", markdown=True)
+    response = agent.run(
+        "Explain the key concepts of transformer architecture", markdown=True
+    )
 
     tool_calls = []
     for msg in response.messages:
@@ -44,7 +46,9 @@ def test_arxiv_knowledge_base_integration(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "search_knowledge_base" for call in function_calls
+    )
 
 
 def test_arxiv_knowledge_base_search_integration(setup_vector_db):
@@ -63,7 +67,9 @@ def test_arxiv_knowledge_base_search_integration(setup_vector_db):
     assert setup_vector_db.get_count() > 0
 
     agent = Agent(knowledge=kb)
-    response = agent.run("What are the recent developments in transformer models?", markdown=True)
+    response = agent.run(
+        "What are the recent developments in transformer models?", markdown=True
+    )
 
     tool_calls = []
     for msg in response.messages:
@@ -71,7 +77,9 @@ def test_arxiv_knowledge_base_search_integration(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "search_knowledge_base" for call in function_calls
+    )
 
 
 @pytest.mark.asyncio
@@ -100,7 +108,9 @@ async def test_arxiv_knowledge_base_async_integration(setup_vector_db):
             "You can use the async_search_knowledge_base tool to search the knowledge base of journal articles for information.",
         ],
     )
-    response = await agent.arun("What are the key capabilities of GPT-3?", markdown=True)
+    response = await agent.arun(
+        "What are the key capabilities of GPT-3?", markdown=True
+    )
 
     tool_calls = []
     for msg in response.messages:
@@ -108,7 +118,10 @@ async def test_arxiv_knowledge_base_async_integration(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "async_search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "async_search_knowledge_base"
+        for call in function_calls
+    )
 
 
 def test_arxiv_knowledge_base_empty_query_integration(setup_vector_db):

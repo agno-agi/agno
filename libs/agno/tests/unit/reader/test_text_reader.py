@@ -49,7 +49,12 @@ def test_chunking():
     reader.chunk = True
     # Mock the chunk_document method
     reader.chunk_document = lambda doc: [
-        Document(name=f"{doc.name}_chunk_{i}", id=f"{doc.id}_chunk_{i}", content=f"chunk_{i}", meta_data={"chunk": i})
+        Document(
+            name=f"{doc.name}_chunk_{i}",
+            id=f"{doc.id}_chunk_{i}",
+            content=f"chunk_{i}",
+            meta_data={"chunk": i},
+        )
         for i in range(2)
     ]
 
@@ -185,7 +190,12 @@ async def test_async_chunking():
     reader = TextReader()
     reader.chunk = True
     reader.chunk_document = lambda doc: [
-        Document(name=f"{doc.name}_chunk_{i}", id=f"{doc.id}_chunk_{i}", content=f"chunk_{i}", meta_data={"chunk": i})
+        Document(
+            name=f"{doc.name}_chunk_{i}",
+            id=f"{doc.id}_chunk_{i}",
+            content=f"chunk_{i}",
+            meta_data={"chunk": i},
+        )
         for i in range(2)
     ]
 
@@ -274,7 +284,9 @@ async def test_async_without_aiofiles(tmp_path):
     text_path = tmp_path / "test.txt"
     text_path.write_text(test_data)
 
-    with patch("agno.document.reader.text_reader.aiofiles", create=True) as mock_aiofiles:
+    with patch(
+        "agno.document.reader.text_reader.aiofiles", create=True
+    ) as mock_aiofiles:
         mock_aiofiles.open.side_effect = ImportError
 
         reader = TextReader()
@@ -310,7 +322,12 @@ async def test_async_parallel_chunking():
 
     # Mock chunking to return multiple documents
     reader.chunk_document = lambda doc: [
-        Document(name=f"{doc.name}_chunk_{i}", id=f"{doc.id}_chunk_{i}", content=f"chunk_{i}", meta_data={"chunk": i})
+        Document(
+            name=f"{doc.name}_chunk_{i}",
+            id=f"{doc.id}_chunk_{i}",
+            content=f"chunk_{i}",
+            meta_data={"chunk": i},
+        )
         for i in range(2)
     ]
 

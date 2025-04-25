@@ -17,7 +17,9 @@ try:
     from sqlalchemy.sql.expression import select, text
     from sqlalchemy.types import BigInteger, String
 except ImportError:
-    raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
+    raise ImportError(
+        "`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`"
+    )
 
 
 class PostgresStorage(Storage):
@@ -104,8 +106,16 @@ class PostgresStorage(Storage):
             Column("memory", postgresql.JSONB),
             Column("session_data", postgresql.JSONB),
             Column("extra_data", postgresql.JSONB),
-            Column("created_at", BigInteger, server_default=text("(extract(epoch from now()))::bigint")),
-            Column("updated_at", BigInteger, server_onupdate=text("(extract(epoch from now()))::bigint")),
+            Column(
+                "created_at",
+                BigInteger,
+                server_default=text("(extract(epoch from now()))::bigint"),
+            ),
+            Column(
+                "updated_at",
+                BigInteger,
+                server_onupdate=text("(extract(epoch from now()))::bigint"),
+            ),
         ]
 
         # Mode-specific columns
@@ -170,14 +180,24 @@ class PostgresStorage(Storage):
                         "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
                     )
                     exists = (
-                        sess.execute(exists_query, {"schema": self.schema, "table": self.table_name}).scalar()
+                        sess.execute(
+                            exists_query,
+                            {"schema": self.schema, "table": self.table_name},
+                        ).scalar()
                         is not None
                     )
                 else:
-                    exists_query = text("SELECT 1 FROM information_schema.tables WHERE table_name = :table")
-                    exists = sess.execute(exists_query, {"table": self.table_name}).scalar() is not None
+                    exists_query = text(
+                        "SELECT 1 FROM information_schema.tables WHERE table_name = :table"
+                    )
+                    exists = (
+                        sess.execute(exists_query, {"table": self.table_name}).scalar()
+                        is not None
+                    )
 
-            log_debug(f"Table '{self.table.fullname}' does{' not ' if not exists else ' '}exist")
+            log_debug(
+                f"Table '{self.table.fullname}' does{' not ' if not exists else ' '}exist"
+            )
             return exists
 
         except Exception as e:
@@ -194,7 +214,9 @@ class PostgresStorage(Storage):
                 with self.Session() as sess, sess.begin():
                     if self.schema is not None:
                         log_debug(f"Creating schema: {self.schema}")
-                        sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
+                        sess.execute(
+                            text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};")
+                        )
 
                 log_debug(f"Creating table: {self.table_name}")
 
@@ -220,17 +242,29 @@ class PostgresStorage(Storage):
                                     "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND indexname = :index_name"
                                 )
                                 exists = (
-                                    sess.execute(exists_query, {"schema": self.schema, "index_name": idx_name}).scalar()
+                                    sess.execute(
+                                        exists_query,
+                                        {"schema": self.schema, "index_name": idx_name},
+                                    ).scalar()
                                     is not None
                                 )
                             else:
-                                exists_query = text("SELECT 1 FROM pg_indexes WHERE indexname = :index_name")
-                                exists = sess.execute(exists_query, {"index_name": idx_name}).scalar() is not None
+                                exists_query = text(
+                                    "SELECT 1 FROM pg_indexes WHERE indexname = :index_name"
+                                )
+                                exists = (
+                                    sess.execute(
+                                        exists_query, {"index_name": idx_name}
+                                    ).scalar()
+                                    is not None
+                                )
 
                         if not exists:
                             idx.create(self.db_engine)
                         else:
-                            log_debug(f"Index {idx_name} already exists, skipping creation")
+                            log_debug(
+                                f"Index {idx_name} already exists, skipping creation"
+                            )
 
                     except Exception as e:
                         # Log the error but continue with other indexes
@@ -258,11 +292,23 @@ class PostgresStorage(Storage):
                     stmt = stmt.where(self.table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchone()
                 if self.mode == "agent":
-                    return AgentSession.from_dict(result._mapping) if result is not None else None
+                    return (
+                        AgentSession.from_dict(result._mapping)
+                        if result is not None
+                        else None
+                    )
                 elif self.mode == "team":
-                    return TeamSession.from_dict(result._mapping) if result is not None else None
+                    return (
+                        TeamSession.from_dict(result._mapping)
+                        if result is not None
+                        else None
+                    )
                 elif self.mode == "workflow":
-                    return WorkflowSession.from_dict(result._mapping) if result is not None else None
+                    return (
+                        WorkflowSession.from_dict(result._mapping)
+                        if result is not None
+                        else None
+                    )
         except Exception as e:
             if "does not exist" in str(e):
                 log_debug(f"Table does not exist: {self.table.name}")
@@ -272,7 +318,9 @@ class PostgresStorage(Storage):
                 log_debug(f"Exception reading from table: {e}")
         return None
 
-    def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
+    def get_all_session_ids(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[str]:
         """
         Get all session IDs, optionally filtered by user_id and/or entity_id.
 
@@ -309,7 +357,9 @@ class PostgresStorage(Storage):
             self.create()
         return []
 
-    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
+    def get_all_sessions(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[Session]:
         """
         Get all sessions, optionally filtered by user_id and/or entity_id.
 
@@ -374,12 +424,17 @@ class PostgresStorage(Storage):
                         """
                     )
                     column_exists = (
-                        sess.execute(column_exists_query, {"schema": self.schema, "table": self.table_name}).scalar()
+                        sess.execute(
+                            column_exists_query,
+                            {"schema": self.schema, "table": self.table_name},
+                        ).scalar()
                         is not None
                     )
 
                     if not column_exists:
-                        log_info(f"Adding 'team_session_id' column to {self.schema}.{self.table_name}")
+                        log_info(
+                            f"Adding 'team_session_id' column to {self.schema}.{self.table_name}"
+                        )
                         alter_table_query = text(
                             f"ALTER TABLE {self.schema}.{self.table_name} ADD COLUMN team_session_id TEXT"
                         )
@@ -391,7 +446,9 @@ class PostgresStorage(Storage):
             logger.error(f"Error during schema upgrade: {e}")
             raise
 
-    def upsert(self, session: Session, create_and_retry: bool = True) -> Optional[Session]:
+    def upsert(
+        self, session: Session, create_and_retry: bool = True
+    ) -> Optional[Session]:
         """
         Insert or update an Session in the database.
 
@@ -518,12 +575,16 @@ class PostgresStorage(Storage):
         try:
             with self.Session() as sess, sess.begin():
                 # Delete the session with the given session_id
-                delete_stmt = self.table.delete().where(self.table.c.session_id == session_id)
+                delete_stmt = self.table.delete().where(
+                    self.table.c.session_id == session_id
+                )
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
                     log_debug(f"No session found with session_id: {session_id}")
                 else:
-                    log_debug(f"Successfully deleted session with session_id: {session_id}")
+                    log_debug(
+                        f"Successfully deleted session with session_id: {session_id}"
+                    )
         except Exception as e:
             logger.error(f"Error deleting session: {e}")
 

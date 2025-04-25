@@ -58,17 +58,29 @@ def test_knowledge_tools_non_streaming(knowledge_base):
     # Create an agent with KnowledgeTools
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
-        tools=[KnowledgeTools(knowledge=knowledge_base, think=True, search=True, analyze=True, add_instructions=True)],
-        instructions=dedent("""\
+        tools=[
+            KnowledgeTools(
+                knowledge=knowledge_base,
+                think=True,
+                search=True,
+                analyze=True,
+                add_instructions=True,
+            )
+        ],
+        instructions=dedent(
+            """\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
             Use step-by-step reasoning to solve the problem.
             Make sure to use the knowledge tools to search for information.
             \
-        """),
+        """
+        ),
     )
 
     # Run the agent in non-streaming mode
-    response = agent.run("What does Paul Graham explain about reading in his essay?", stream=False)
+    response = agent.run(
+        "What does Paul Graham explain about reading in his essay?", stream=False
+    )
 
     # Print the reasoning_content when received
     if hasattr(response, "reasoning_content") and response.reasoning_content:
@@ -77,8 +89,12 @@ def test_knowledge_tools_non_streaming(knowledge_base):
         print("=========================================================\n")
 
     # Assert that reasoning_content exists and is populated
-    assert hasattr(response, "reasoning_content"), "Response should have reasoning_content attribute"
-    assert response.reasoning_content is not None, "reasoning_content should not be None"
+    assert hasattr(
+        response, "reasoning_content"
+    ), "Response should have reasoning_content attribute"
+    assert (
+        response.reasoning_content is not None
+    ), "reasoning_content should not be None"
     assert len(response.reasoning_content) > 0, "reasoning_content should not be empty"
 
 
@@ -88,18 +104,32 @@ def test_knowledge_tools_streaming(knowledge_base):
     # Create an agent with KnowledgeTools
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
-        tools=[KnowledgeTools(knowledge=knowledge_base, think=True, search=True, analyze=True, add_instructions=True)],
-        instructions=dedent("""\
+        tools=[
+            KnowledgeTools(
+                knowledge=knowledge_base,
+                think=True,
+                search=True,
+                analyze=True,
+                add_instructions=True,
+            )
+        ],
+        instructions=dedent(
+            """\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
             Use step-by-step reasoning to solve the problem.
             Make sure to use the knowledge tools to search for information.
             \
-        """),
+        """
+        ),
     )
 
     # Consume all streaming responses
     _ = list(
-        agent.run("What are Paul Graham's suggestions on what to read?", stream=True, stream_intermediate_steps=True)
+        agent.run(
+            "What are Paul Graham's suggestions on what to read?",
+            stream=True,
+            stream_intermediate_steps=True,
+        )
     )
 
     # Print the reasoning_content when received
@@ -114,8 +144,16 @@ def test_knowledge_tools_streaming(knowledge_base):
         print("====================================================\n")
 
     # Check the agent's run_response directly after streaming is complete
-    assert hasattr(agent, "run_response"), "Agent should have run_response after streaming"
+    assert hasattr(
+        agent, "run_response"
+    ), "Agent should have run_response after streaming"
     assert agent.run_response is not None, "Agent's run_response should not be None"
-    assert hasattr(agent.run_response, "reasoning_content"), "Response should have reasoning_content attribute"
-    assert agent.run_response.reasoning_content is not None, "reasoning_content should not be None"
-    assert len(agent.run_response.reasoning_content) > 0, "reasoning_content should not be empty"
+    assert hasattr(
+        agent.run_response, "reasoning_content"
+    ), "Response should have reasoning_content attribute"
+    assert (
+        agent.run_response.reasoning_content is not None
+    ), "reasoning_content should not be None"
+    assert (
+        len(agent.run_response.reasoning_content) > 0
+    ), "reasoning_content should not be empty"

@@ -74,7 +74,13 @@ def test_initialization():
     client = MagicMock()
     embedder = MagicMock()
 
-    db = Clickhouse(table_name=TEST_TABLE, host="localhost", database_name=TEST_DB, embedder=embedder, client=client)
+    db = Clickhouse(
+        table_name=TEST_TABLE,
+        host="localhost",
+        database_name=TEST_DB,
+        embedder=embedder,
+        client=client,
+    )
 
     assert db.table_name == TEST_TABLE
     assert db.database_name == TEST_DB
@@ -308,7 +314,9 @@ async def test_ensure_async_client(mock_clickhouse):
 
     # Test when async_client is not set
     mock_clickhouse.async_client = None
-    with patch("clickhouse_connect.get_async_client", return_value=AsyncMock()) as mock_get_async_client:
+    with patch(
+        "clickhouse_connect.get_async_client", return_value=AsyncMock()
+    ) as mock_get_async_client:
         result = await mock_clickhouse._ensure_async_client()
         mock_get_async_client.assert_called_once()
         assert result == mock_clickhouse.async_client

@@ -12,10 +12,11 @@
 
 from os import getenv
 
+from sqlalchemy.engine import create_engine
+
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.singlestore import SingleStore
-from sqlalchemy.engine import create_engine
 
 USERNAME = getenv("SINGLESTORE_USERNAME")
 PASSWORD = getenv("SINGLESTORE_PASSWORD")

@@ -139,7 +139,9 @@ class GmailTools(Toolkit):
         self.scopes = scopes or self.DEFAULT_SCOPES
 
         # Validate that required scopes are present for requested operations
-        if (create_draft_email or send_email) and "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
+        if (
+            create_draft_email or send_email
+        ) and "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
             raise ValueError(
                 "The scope https://www.googleapis.com/auth/gmail.compose is required for email composition operations"
             )
@@ -159,7 +161,9 @@ class GmailTools(Toolkit):
             read_scope = "https://www.googleapis.com/auth/gmail.readonly"
             write_scope = "https://www.googleapis.com/auth/gmail.modify"
             if read_scope not in self.scopes and write_scope not in self.scopes:
-                raise ValueError(f"The scope {read_scope} is required for email reading operations")
+                raise ValueError(
+                    f"The scope {read_scope} is required for email reading operations"
+                )
 
         if get_latest_emails:
             self.register(self.get_latest_emails)
@@ -190,7 +194,9 @@ class GmailTools(Toolkit):
         creds_file = Path(self.credentials_path or "credentials.json")
 
         if token_file.exists():
-            self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
+            self.creds = Credentials.from_authorized_user_file(
+                str(token_file), self.scopes
+            )
 
         if not self.creds or not self.creds.valid:
             if self.creds and self.creds.expired and self.creds.refresh_token:
@@ -204,13 +210,19 @@ class GmailTools(Toolkit):
                         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                         "token_uri": "https://oauth2.googleapis.com/token",
                         "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                        "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
+                        "redirect_uris": [
+                            getenv("GOOGLE_REDIRECT_URI", "http://localhost")
+                        ],
                     }
                 }
                 if creds_file.exists():
-                    flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        str(creds_file), self.scopes
+                    )
                 else:
-                    flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
+                    flow = InstalledAppFlow.from_client_config(
+                        client_config, self.scopes
+                    )
                 self.creds = flow.run_local_server(port=0)
 
             # Save the credentials for future use
@@ -365,7 +377,10 @@ class GmailTools(Toolkit):
 
     @authenticate
     def get_emails_by_date(
-        self, start_date: int, range_in_days: Optional[int] = None, num_emails: Optional[int] = 10
+        self,
+        start_date: int,
+        range_in_days: Optional[int] = None,
+        num_emails: Optional[int] = 10,
     ) -> str:
         """
         Get emails based on date range. start_date is an integer representing a unix timestamp
@@ -395,7 +410,9 @@ class GmailTools(Toolkit):
             return f"Unexpected error retrieving emails by date: {type(error).__name__}: {error}"
 
     @authenticate
-    def create_draft_email(self, to: str, subject: str, body: str, cc: Optional[str] = None) -> str:
+    def create_draft_email(
+        self, to: str, subject: str, body: str, cc: Optional[str] = None
+    ) -> str:
         """
         Create and save a draft email. to and cc are comma separated string of email ids
         Args:
@@ -408,13 +425,17 @@ class GmailTools(Toolkit):
             str: Stringified dictionary containing draft email details including id
         """
         self._validate_email_params(to, subject, body)
-        message = self._create_message(to.split(","), subject, body, cc.split(",") if cc else None)
+        message = self._create_message(
+            to.split(","), subject, body, cc.split(",") if cc else None
+        )
         draft = {"message": message}
         draft = self.service.users().drafts().create(userId="me", body=draft).execute()  # type: ignore
         return str(draft)
 
     @authenticate
-    def send_email(self, to: str, subject: str, body: str, cc: Optional[str] = None) -> str:
+    def send_email(
+        self, to: str, subject: str, body: str, cc: Optional[str] = None
+    ) -> str:
         """
         Send an email immediately. to and cc are comma separated string of email ids
         Args:
@@ -428,13 +449,21 @@ class GmailTools(Toolkit):
         """
         self._validate_email_params(to, subject, body)
         body = body.replace("\n", "<br>")
-        message = self._create_message(to.split(","), subject, body, cc.split(",") if cc else None)
+        message = self._create_message(
+            to.split(","), subject, body, cc.split(",") if cc else None
+        )
         message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
         return str(message)
 
     @authenticate
     def send_email_reply(
-        self, thread_id: str, message_id: str, to: str, subject: str, body: str, cc: Optional[str] = None
+        self,
+        thread_id: str,
+        message_id: str,
+        to: str,
+        subject: str,
+        body: str,
+        cc: Optional[str] = None,
     ) -> str:
         """
         Respond to an existing email thread.
@@ -458,7 +487,12 @@ class GmailTools(Toolkit):
 
         body = body.replace("\n", "<br>")
         message = self._create_message(
-            to.split(","), subject, body, cc.split(",") if cc else None, thread_id, message_id
+            to.split(","),
+            subject,
+            body,
+            cc.split(",") if cc else None,
+            thread_id,
+            message_id,
         )
         message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
         return str(message)
@@ -542,14 +576,28 @@ class GmailTools(Toolkit):
                     "id": msg_data["id"],
                     "thread_id": msg_data.get("threadId"),
                     "subject": next(
-                        (header["value"] for header in msg_data["payload"]["headers"] if header["name"] == "Subject"),
+                        (
+                            header["value"]
+                            for header in msg_data["payload"]["headers"]
+                            if header["name"] == "Subject"
+                        ),
                         None,
                     ),
                     "from": next(
-                        (header["value"] for header in msg_data["payload"]["headers"] if header["name"] == "From"), None
+                        (
+                            header["value"]
+                            for header in msg_data["payload"]["headers"]
+                            if header["name"] == "From"
+                        ),
+                        None,
                     ),
                     "date": next(
-                        (header["value"] for header in msg_data["payload"]["headers"] if header["name"] == "Date"), None
+                        (
+                            header["value"]
+                            for header in msg_data["payload"]["headers"]
+                            if header["name"] == "Date"
+                        ),
+                        None,
                     ),
                     "in-reply-to": next(
                         (
@@ -581,11 +629,17 @@ class GmailTools(Toolkit):
                 for part in msg_data["payload"]["parts"]:
                     if part["mimeType"] == "text/plain":
                         if "data" in part["body"]:
-                            body = base64.urlsafe_b64decode(part["body"]["data"]).decode()
+                            body = base64.urlsafe_b64decode(
+                                part["body"]["data"]
+                            ).decode()
                     elif "filename" in part:
                         attachments.append(part["filename"])
-            elif "body" in msg_data["payload"] and "data" in msg_data["payload"]["body"]:
-                body = base64.urlsafe_b64decode(msg_data["payload"]["body"]["data"]).decode()
+            elif (
+                "body" in msg_data["payload"] and "data" in msg_data["payload"]["body"]
+            ):
+                body = base64.urlsafe_b64decode(
+                    msg_data["payload"]["body"]["data"]
+                ).decode()
         except Exception:
             return "Unable to decode message body"
 

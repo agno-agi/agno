@@ -26,6 +26,10 @@ from typing import List, Optional
 
 import inquirer
 import typer
+from rich import print
+from rich.console import Console
+from rich.table import Table
+
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.url import UrlKnowledge
@@ -33,9 +37,6 @@ from agno.models.openai import OpenAIChat
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.tools.python import PythonTools
 from agno.vectordb.lancedb import LanceDb, SearchType
-from rich import print
-from rich.console import Console
-from rich.table import Table
 
 # ************* Setup Paths *************
 # Define the current working directory and output directory for saving files

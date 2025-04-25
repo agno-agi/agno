@@ -8,13 +8,14 @@ Steps:
 import asyncio
 import json
 
+from rich.console import Console
+from rich.json import JSON
+from rich.panel import Panel
+
 from agno.agent import Agent, AgentMemory
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.models.openai import OpenAIChat
 from agno.storage.agent.sqlite import SqliteAgentStorage
-from rich.console import Console
-from rich.json import JSON
-from rich.panel import Panel
 
 agent_memory_file: str = "tmp/agent_memory.db"
 agent_storage_file: str = "tmp/agent_storage.db"

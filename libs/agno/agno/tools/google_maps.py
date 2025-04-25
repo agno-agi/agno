@@ -22,7 +22,9 @@ try:
     import googlemaps
     from google.maps import places_v1
 except ImportError:
-    print("Error importing googlemaps. Please install the package using `pip install googlemaps google-maps-places`.")
+    print(
+        "Error importing googlemaps. Please install the package using `pip install googlemaps google-maps-places`."
+    )
 
 
 class GoogleMapTools(Toolkit):
@@ -43,7 +45,9 @@ class GoogleMapTools(Toolkit):
 
         self.api_key = key or getenv("GOOGLE_MAPS_API_KEY")
         if not self.api_key:
-            raise ValueError("GOOGLE_MAPS_API_KEY is not set in the environment variables.")
+            raise ValueError(
+                "GOOGLE_MAPS_API_KEY is not set in the environment variables."
+            )
         self.client = googlemaps.Client(key=self.api_key)
 
         self.places_client = places_v1.PlacesClient()
@@ -81,7 +85,9 @@ class GoogleMapTools(Toolkit):
             request = places_v1.SearchTextRequest(
                 text_query=query,
             )
-            response = self.places_client.search_text(request=request, metadata=[("x-goog-fieldmask", "*")])
+            response = self.places_client.search_text(
+                request=request, metadata=[("x-goog-fieldmask", "*")]
+            )
 
             places = []
             for place in response.places:
@@ -89,11 +95,17 @@ class GoogleMapTools(Toolkit):
                     "name": place.display_name.text,
                     "address": place.formatted_address,
                     "rating": place.rating,
-                    "reviews": [{"text": review.text.text, "rating": review.rating} for review in place.reviews],
+                    "reviews": [
+                        {"text": review.text.text, "rating": review.rating}
+                        for review in place.reviews
+                    ],
                     "place_id": place.id,
                     "phone": place.international_phone_number,
                     "website": place.website_uri,
-                    "hours": [description for description in place.regular_opening_hours.weekday_descriptions],
+                    "hours": [
+                        description
+                        for description in place.regular_opening_hours.weekday_descriptions
+                    ],
                 }
 
                 places.append(place_info)
@@ -126,14 +138,24 @@ class GoogleMapTools(Toolkit):
             str: Stringified dictionary containing route information including steps, distance, duration, etc.
         """
         try:
-            result = self.client.directions(origin, destination, mode=mode, departure_time=departure_time, avoid=avoid)
+            result = self.client.directions(
+                origin,
+                destination,
+                mode=mode,
+                departure_time=departure_time,
+                avoid=avoid,
+            )
             return str(result)
         except Exception as e:
             print(f"Error getting directions: {str(e)}")
             return str([])
 
     def validate_address(
-        self, address: str, region_code: str = "US", locality: Optional[str] = None, enable_usps_cass: bool = False
+        self,
+        address: str,
+        region_code: str = "US",
+        locality: Optional[str] = None,
+        enable_usps_cass: bool = False,
     ) -> str:
         """
         Validate an address using Google Maps Address Validation API.
@@ -149,7 +171,10 @@ class GoogleMapTools(Toolkit):
         """
         try:
             result = self.client.addressvalidation(
-                [address], regionCode=region_code, locality=locality, enableUspsCass=enable_usps_cass
+                [address],
+                regionCode=region_code,
+                locality=locality,
+                enableUspsCass=enable_usps_cass,
             )
             return str(result)
         except Exception as e:
@@ -175,7 +200,11 @@ class GoogleMapTools(Toolkit):
             return str([])
 
     def reverse_geocode(
-        self, lat: float, lng: float, result_type: Optional[List[str]] = None, location_type: Optional[List[str]] = None
+        self,
+        lat: float,
+        lng: float,
+        result_type: Optional[List[str]] = None,
+        location_type: Optional[List[str]] = None,
     ) -> str:
         """
         Convert geographic coordinates into an address using Google Maps Reverse Geocoding API.
@@ -190,7 +219,9 @@ class GoogleMapTools(Toolkit):
             str: Stringified list of dictionaries containing address information
         """
         try:
-            result = self.client.reverse_geocode((lat, lng), result_type=result_type, location_type=location_type)
+            result = self.client.reverse_geocode(
+                (lat, lng), result_type=result_type, location_type=location_type
+            )
             return str(result)
         except Exception as e:
             print(f"Error reverse geocoding: {str(e)}")
@@ -219,7 +250,11 @@ class GoogleMapTools(Toolkit):
         """
         try:
             result = self.client.distance_matrix(
-                origins, destinations, mode=mode, departure_time=departure_time, avoid=avoid
+                origins,
+                destinations,
+                mode=mode,
+                departure_time=departure_time,
+                avoid=avoid,
             )
             return str(result)
         except Exception as e:
@@ -244,7 +279,9 @@ class GoogleMapTools(Toolkit):
             print(f"Error getting elevation: {str(e)}")
             return str([])
 
-    def get_timezone(self, lat: float, lng: float, timestamp: Optional[datetime] = None) -> str:
+    def get_timezone(
+        self, lat: float, lng: float, timestamp: Optional[datetime] = None
+    ) -> str:
         """
         Get timezone information for a location using Google Maps Time Zone API.
 

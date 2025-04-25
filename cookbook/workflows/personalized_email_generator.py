@@ -54,6 +54,8 @@ from datetime import datetime
 from textwrap import dedent
 from typing import Dict, Iterator, List, Optional
 
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
@@ -61,7 +63,6 @@ from agno.tools.exa import ExaTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.workflow import RunResponse, Workflow
-from pydantic import BaseModel, Field
 
 # Demo mode
 # - set to True to print email to console

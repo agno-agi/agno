@@ -1,11 +1,12 @@
 import asyncio
 from typing import List
 
+from pydantic import BaseModel, Field
+from rich.pretty import pprint  # noqa
+
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.cohere import Cohere
 from agno.tools.duckduckgo import DuckDuckGoTools
-from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
 
 
 class MovieScript(BaseModel):

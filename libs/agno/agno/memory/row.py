@@ -31,6 +31,8 @@ class MemoryRow(BaseModel):
     def generate_id(self) -> "MemoryRow":
         if self.id is None:
             memory_str = json.dumps(self.memory, sort_keys=True)
-            cleaned_memory = memory_str.replace(" ", "").replace("\n", "").replace("\t", "")
+            cleaned_memory = (
+                memory_str.replace(" ", "").replace("\n", "").replace("\t", "")
+            )
             self.id = md5(cleaned_memory.encode()).hexdigest()
         return self

@@ -1,4 +1,5 @@
 from agents import get_sql_agent
+
 from agno.playground import Playground, serve_playground_app
 
 sql_agent = get_sql_agent(name="SQL Agent", model_id="openai:o4-mini")

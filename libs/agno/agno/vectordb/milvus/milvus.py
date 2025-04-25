@@ -6,7 +6,9 @@ try:
 
     from pymilvus import AsyncMilvusClient, MilvusClient  # type: ignore
 except ImportError:
-    raise ImportError("The `pymilvus` package is not installed. Please install it via `pip install pymilvus`.")
+    raise ImportError(
+        "The `pymilvus` package is not installed. Please install it via `pip install pymilvus`."
+    )
 
 from agno.document import Document
 from agno.embedder import Embedder
@@ -184,7 +186,9 @@ class Milvus(VectorDb):
             return len(collection_points) > 0
         return False
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Insert documents into the database.
 
@@ -212,7 +216,9 @@ class Milvus(VectorDb):
             )
             log_debug(f"Inserted document: {document.name} ({document.meta_data})")
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents asynchronously with controlled concurrency."""
         log_debug(f"Inserting {len(documents)} documents asynchronously")
 
@@ -233,7 +239,9 @@ class Milvus(VectorDb):
                 collection_name=self.collection,
                 data=data,
             )
-            log_debug(f"Inserted document asynchronously: {document.name} ({document.meta_data})")
+            log_debug(
+                f"Inserted document asynchronously: {document.name} ({document.meta_data})"
+            )
             return data
 
         await asyncio.gather(*[process_document(doc) for doc in documents])
@@ -249,7 +257,9 @@ class Milvus(VectorDb):
         """
         return True
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Upsert documents into the database.
 
@@ -276,7 +286,9 @@ class Milvus(VectorDb):
             )
             log_debug(f"Upserted document: {document.name} ({document.meta_data})")
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         log_debug(f"Upserting {len(documents)} documents asynchronously")
 
         async def process_document(document):
@@ -295,7 +307,9 @@ class Milvus(VectorDb):
                 collection_name=self.collection,
                 data=data,
             )
-            log_debug(f"Upserted document asynchronously: {document.name} ({document.meta_data})")
+            log_debug(
+                f"Upserted document asynchronously: {document.name} ({document.meta_data})"
+            )
             return data
 
         # Process all documents in parallel
@@ -303,7 +317,9 @@ class Milvus(VectorDb):
 
         log_debug(f"Upserted {len(documents)} documents asynchronously in parallel")
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
         Search for documents in the database.
 
@@ -406,7 +422,9 @@ class Milvus(VectorDb):
         return self.client.has_collection(self.collection)
 
     def get_count(self) -> int:
-        return self.client.get_collection_stats(collection_name="test_collection")["row_count"]
+        return self.client.get_collection_stats(collection_name="test_collection")[
+            "row_count"
+        ]
 
     def delete(self) -> bool:
         if self.client:

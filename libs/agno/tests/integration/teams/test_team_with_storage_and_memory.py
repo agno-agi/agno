@@ -44,7 +44,9 @@ def team_storage(temp_storage_db_file):
     """Create a SQLite storage for team sessions."""
     # Use a unique table name for each test run
     table_name = f"team_sessions_{uuid.uuid4().hex[:8]}"
-    storage = SqliteStorage(table_name=table_name, db_file=temp_storage_db_file, mode="team")
+    storage = SqliteStorage(
+        table_name=table_name, db_file=temp_storage_db_file, mode="team"
+    )
     storage.create()
     return storage
 
@@ -92,7 +94,11 @@ def finance_agent():
 @pytest.fixture
 def analysis_agent():
     """Create an analysis agent for testing."""
-    return Agent(name="Analysis Agent", model=OpenAIChat(id="gpt-4o-mini"), role="Analyze data and provide insights")
+    return Agent(
+        name="Analysis Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        role="Analyze data and provide insights",
+    )
 
 
 @pytest.fixture
@@ -126,8 +132,16 @@ async def test_multi_user_multi_session_route_team(route_team, team_storage, mem
     memory.clear()
 
     # Team interaction with user 1 - Session 1
-    await route_team.arun("What is the current stock price of AAPL?", user_id=user_1_id, session_id=user_1_session_1_id)
-    await route_team.arun("What are the latest news about Apple?", user_id=user_1_id, session_id=user_1_session_1_id)
+    await route_team.arun(
+        "What is the current stock price of AAPL?",
+        user_id=user_1_id,
+        session_id=user_1_session_1_id,
+    )
+    await route_team.arun(
+        "What are the latest news about Apple?",
+        user_id=user_1_id,
+        session_id=user_1_session_1_id,
+    )
 
     # Team interaction with user 1 - Session 2
     await route_team.arun(
@@ -137,16 +151,28 @@ async def test_multi_user_multi_session_route_team(route_team, team_storage, mem
     )
 
     # Team interaction with user 2
-    await route_team.arun("What is the current stock price of MSFT?", user_id=user_2_id, session_id=user_2_session_1_id)
     await route_team.arun(
-        "What are the latest news about Microsoft?", user_id=user_2_id, session_id=user_2_session_1_id
+        "What is the current stock price of MSFT?",
+        user_id=user_2_id,
+        session_id=user_2_session_1_id,
+    )
+    await route_team.arun(
+        "What are the latest news about Microsoft?",
+        user_id=user_2_id,
+        session_id=user_2_session_1_id,
     )
 
     # Team interaction with user 3
     await route_team.arun(
-        "What is the current stock price of GOOGL?", user_id=user_3_id, session_id=user_3_session_1_id
+        "What is the current stock price of GOOGL?",
+        user_id=user_3_id,
+        session_id=user_3_session_1_id,
     )
-    await route_team.arun("What are the latest news about Google?", user_id=user_3_id, session_id=user_3_session_1_id)
+    await route_team.arun(
+        "What are the latest news about Google?",
+        user_id=user_3_id,
+        session_id=user_3_session_1_id,
+    )
 
     # Continue the conversation with user 1
     await route_team.arun(

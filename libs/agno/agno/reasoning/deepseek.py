@@ -8,7 +8,10 @@ from agno.utils.log import logger
 
 
 def is_deepseek_reasoning_model(reasoning_model: Model) -> bool:
-    return reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id.lower() == "deepseek-reasoner"
+    return (
+        reasoning_model.__class__.__name__ == "DeepSeek"
+        and reasoning_model.id.lower() == "deepseek-reasoner"
+    )
 
 
 def get_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
@@ -33,7 +36,9 @@ def get_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Message]) ->
                 break
 
     return Message(
-        role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
+        role="assistant",
+        content=f"<thinking>\n{reasoning_content}\n</thinking>",
+        reasoning_content=reasoning_content,
     )
 
 
@@ -46,7 +51,9 @@ async def aget_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Messa
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunResponse = await reasoning_agent.arun(messages=messages)
+        reasoning_agent_response: RunResponse = await reasoning_agent.arun(
+            messages=messages
+        )
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
@@ -59,5 +66,7 @@ async def aget_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Messa
                 break
 
     return Message(
-        role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
+        role="assistant",
+        content=f"<thinking>\n{reasoning_content}\n</thinking>",
+        reasoning_content=reasoning_content,
     )

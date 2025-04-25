@@ -42,7 +42,10 @@ def test_csv_url_knowledge_base():
     response = agent.run("Give me top rated movies", markdown=True)
 
     # Check that we got relevant content
-    assert any(term in response.content.lower() for term in ["movie", "rating", "imdb", "title"])
+    assert any(
+        term in response.content.lower()
+        for term in ["movie", "rating", "imdb", "title"]
+    )
 
     # Clean up
     vector_db.drop()
@@ -84,7 +87,9 @@ async def test_csv_url_knowledge_base_async():
             "You can use the async_search_knowledge_base tool to search the knowledge base of CSVs for information.",
         ],
     )
-    response = await agent.arun("Which employees have salaries above 50000?", markdown=True)
+    response = await agent.arun(
+        "Which employees have salaries above 50000?", markdown=True
+    )
 
     assert "employees" in response.content.lower()
 

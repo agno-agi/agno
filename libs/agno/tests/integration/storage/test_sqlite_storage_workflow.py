@@ -22,7 +22,9 @@ def temp_db_path(tmp_path):
 @pytest.fixture
 def workflow_storage(temp_db_path):
     """Create a SqliteStorage instance for workflow sessions."""
-    storage = SqliteStorage(table_name="workflow_sessions", db_file=temp_db_path, mode="workflow")
+    storage = SqliteStorage(
+        table_name="workflow_sessions", db_file=temp_db_path, mode="workflow"
+    )
     storage.create()
     return storage
 
@@ -39,7 +41,9 @@ class SimpleWorkflow(Workflow):
     def run(self, query: str) -> RunResponse:
         """Run the workflow with a simple query."""
         response = self.test_agent.run(query)
-        return RunResponse(run_id=self.run_id, content=f"Workflow processed: {response.content}")
+        return RunResponse(
+            run_id=self.run_id, content=f"Workflow processed: {response.content}"
+        )
 
 
 @pytest.fixture
@@ -50,7 +54,9 @@ def workflow_with_storage(workflow_storage):
 
 def test_storage_creation(temp_db_path):
     """Test that storage is created correctly."""
-    storage = SqliteStorage(table_name="workflow_sessions", db_file=temp_db_path, mode="workflow")
+    storage = SqliteStorage(
+        table_name="workflow_sessions", db_file=temp_db_path, mode="workflow"
+    )
     storage.create()
     assert os.path.exists(temp_db_path)
     assert storage.table_exists()
@@ -104,7 +110,9 @@ def test_multiple_interactions(workflow_with_storage, workflow_storage):
 def test_session_retrieval_by_user(workflow_storage):
     """Test retrieving sessions filtered by user ID."""
     # Create a session with a specific user ID
-    workflow = SimpleWorkflow(storage=workflow_storage, user_id="test_user", name="UserTestWorkflow")
+    workflow = SimpleWorkflow(
+        storage=workflow_storage, user_id="test_user", name="UserTestWorkflow"
+    )
     workflow.run(query="What is the capital of France?")
 
     assert workflow.storage.mode == "workflow"
@@ -138,9 +146,24 @@ def test_session_deletion(workflow_with_storage, workflow_storage):
 def test_get_all_session_ids(workflow_storage):
     """Test retrieving all session IDs."""
     # Create multiple sessions with different user IDs and workflow IDs
-    workflow_1 = SimpleWorkflow(storage=workflow_storage, user_id="user1", workflow_id="workflow1", name="Workflow1")
-    workflow_2 = SimpleWorkflow(storage=workflow_storage, user_id="user1", workflow_id="workflow2", name="Workflow2")
-    workflow_3 = SimpleWorkflow(storage=workflow_storage, user_id="user2", workflow_id="workflow3", name="Workflow3")
+    workflow_1 = SimpleWorkflow(
+        storage=workflow_storage,
+        user_id="user1",
+        workflow_id="workflow1",
+        name="Workflow1",
+    )
+    workflow_2 = SimpleWorkflow(
+        storage=workflow_storage,
+        user_id="user1",
+        workflow_id="workflow2",
+        name="Workflow2",
+    )
+    workflow_3 = SimpleWorkflow(
+        storage=workflow_storage,
+        user_id="user2",
+        workflow_id="workflow3",
+        name="Workflow3",
+    )
 
     workflow_1.run(query="Question 1")
     workflow_2.run(query="Question 2")
@@ -159,7 +182,9 @@ def test_get_all_session_ids(workflow_storage):
     assert len(workflow1_sessions) == 1
 
     # Filter by both
-    filtered_sessions = workflow_storage.get_all_session_ids(user_id="user1", entity_id="workflow2")
+    filtered_sessions = workflow_storage.get_all_session_ids(
+        user_id="user1", entity_id="workflow2"
+    )
     assert len(filtered_sessions) == 1
 
 

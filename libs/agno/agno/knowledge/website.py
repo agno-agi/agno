@@ -21,7 +21,9 @@ class WebsiteKnowledgeBase(AgentKnowledge):
     def set_reader(self) -> "WebsiteKnowledgeBase":
         if self.reader is None:
             self.reader = WebsiteReader(
-                max_depth=self.max_depth, max_links=self.max_links, chunking_strategy=self.chunking_strategy
+                max_depth=self.max_depth,
+                max_links=self.max_links,
+                chunking_strategy=self.chunking_strategy,
             )
         return self
 
@@ -90,7 +92,11 @@ class WebsiteKnowledgeBase(AgentKnowledge):
             if document_list := self.reader.read(url=url):
                 # Filter out documents which already exist in the vector db
                 if not recreate:
-                    document_list = [document for document in document_list if not self.vector_db.doc_exists(document)]
+                    document_list = [
+                        document
+                        for document in document_list
+                        if not self.vector_db.doc_exists(document)
+                    ]
                 if upsert and self.vector_db.upsert_available():
                     self.vector_db.upsert(documents=document_list, filters=filters)
                 else:
@@ -163,11 +169,17 @@ class WebsiteKnowledgeBase(AgentKnowledge):
         for document_list in all_document_lists:
             if document_list:
                 if upsert and vector_db.upsert_available():
-                    await vector_db.async_upsert(documents=document_list, filters=filters)
+                    await vector_db.async_upsert(
+                        documents=document_list, filters=filters
+                    )
                 else:
-                    await vector_db.async_insert(documents=document_list, filters=filters)
+                    await vector_db.async_insert(
+                        documents=document_list, filters=filters
+                    )
                 num_documents += len(document_list)
-                log_info(f"Loaded {num_documents} documents to knowledge base asynchronously")
+                log_info(
+                    f"Loaded {num_documents} documents to knowledge base asynchronously"
+                )
 
         if self.optimize_on is not None and num_documents > self.optimize_on:
             log_debug("Optimizing Vector DB")

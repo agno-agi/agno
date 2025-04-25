@@ -8,11 +8,15 @@ from agno.utils.log import log_debug, log_info
 
 
 class WikipediaTools(Toolkit):
-    def __init__(self, knowledge_base: Optional[WikipediaKnowledgeBase] = None, **kwargs):
+    def __init__(
+        self, knowledge_base: Optional[WikipediaKnowledgeBase] = None, **kwargs
+    ):
         super().__init__(name="wikipedia_tools", **kwargs)
         self.knowledge_base: Optional[WikipediaKnowledgeBase] = knowledge_base
 
-        if self.knowledge_base is not None and isinstance(self.knowledge_base, WikipediaKnowledgeBase):
+        if self.knowledge_base is not None and isinstance(
+            self.knowledge_base, WikipediaKnowledgeBase
+        ):
             self.register(self.search_wikipedia_and_update_knowledge_base)
         else:
             self.register(self.search_wikipedia)
@@ -51,4 +55,6 @@ class WikipediaTools(Toolkit):
             )
 
         log_info(f"Searching wikipedia for: {query}")
-        return json.dumps(Document(name=query, content=wikipedia.summary(query)).to_dict())
+        return json.dumps(
+            Document(name=query, content=wikipedia.summary(query)).to_dict()
+        )

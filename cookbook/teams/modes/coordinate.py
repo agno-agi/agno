@@ -19,6 +19,8 @@ The team leader coordinates the agents by:
 import asyncio
 from typing import List
 
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run.team import TeamRunResponse  # type: ignore
@@ -26,7 +28,6 @@ from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.newspaper4k import Newspaper4kTools
-from pydantic import BaseModel, Field
 
 
 class Article(BaseModel):

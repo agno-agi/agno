@@ -4,14 +4,15 @@ from pathlib import Path
 
 import streamlit as st
 from agents import chat_followup_agent, image_processing_agent
+from dotenv import load_dotenv
+from prompt import extraction_prompt
+from utils import about_widget, add_message, clear_chat
+
 from agno.media import Image
 from agno.models.google import Gemini
 from agno.models.mistral.mistral import MistralChat
 from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
-from dotenv import load_dotenv
-from prompt import extraction_prompt
-from utils import about_widget, add_message, clear_chat
 
 load_dotenv()
 

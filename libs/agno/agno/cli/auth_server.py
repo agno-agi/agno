@@ -36,7 +36,9 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
         # self.wfile.write("OPTIONS request for {}".format(self.path).encode('utf-8'))
 
     def do_POST(self):
-        content_length = int(self.headers["Content-Length"])  # <--- Gets the size of data
+        content_length = int(
+            self.headers["Content-Length"]
+        )  # <--- Gets the size of data
         post_data = self.rfile.read(content_length)  # <--- Gets the data itself
         decoded_post_data = post_data.decode("utf-8")
         # logger.debug(
@@ -110,7 +112,10 @@ def get_auth_token_from_web_flow(port: int) -> Optional[str]:
     server = CliAuthServer(port)
     server.run()
 
-    if agno_cli_settings.tmp_token_path.exists() and agno_cli_settings.tmp_token_path.is_file():
+    if (
+        agno_cli_settings.tmp_token_path.exists()
+        and agno_cli_settings.tmp_token_path.is_file()
+    ):
         auth_token_str = agno_cli_settings.tmp_token_path.read_text()
         auth_token_json = json.loads(auth_token_str)
         agno_cli_settings.tmp_token_path.unlink()

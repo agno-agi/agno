@@ -8,14 +8,19 @@ from agno.embedder.openai import OpenAIEmbedder
 try:
     from chonkie import SemanticChunker
 except ImportError:
-    raise ImportError("`chonkie` is required for semantic chunking, please install using `pip install chonkie`")
+    raise ImportError(
+        "`chonkie` is required for semantic chunking, please install using `pip install chonkie`"
+    )
 
 
 class SemanticChunking(ChunkingStrategy):
     """Chunking strategy that splits text into semantic chunks using chonkie"""
 
     def __init__(
-        self, embedder: Optional[Embedder] = None, chunk_size: int = 5000, similarity_threshold: Optional[float] = 0.5
+        self,
+        embedder: Optional[Embedder] = None,
+        chunk_size: int = 5000,
+        similarity_threshold: Optional[float] = 0.5,
     ):
         self.embedder = embedder or OpenAIEmbedder(id="text-embedding-3-small")  # type: ignore
         self.chunk_size = chunk_size
@@ -42,6 +47,13 @@ class SemanticChunking(ChunkingStrategy):
             chunk_id = f"{document.id}_{i}" if document.id else None
             meta_data["chunk_size"] = len(chunk.text)
 
-            chunked_documents.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk.text))
+            chunked_documents.append(
+                Document(
+                    id=chunk_id,
+                    name=document.name,
+                    meta_data=meta_data,
+                    content=chunk.text,
+                )
+            )
 
         return chunked_documents

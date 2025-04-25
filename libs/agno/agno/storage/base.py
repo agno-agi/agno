@@ -6,7 +6,9 @@ from agno.storage.session import Session
 
 class Storage(ABC):
     def __init__(self, mode: Optional[Literal["agent", "team", "workflow"]] = "agent"):
-        self._mode: Literal["agent", "team", "workflow"] = "agent" if mode is None else mode
+        self._mode: Literal["agent", "team", "workflow"] = (
+            "agent" if mode is None else mode
+        )
 
     @property
     def mode(self) -> Literal["agent", "team", "workflow"]:
@@ -27,11 +29,15 @@ class Storage(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_all_session_ids(self, user_id: Optional[str] = None, agent_id: Optional[str] = None) -> List[str]:
+    def get_all_session_ids(
+        self, user_id: Optional[str] = None, agent_id: Optional[str] = None
+    ) -> List[str]:
         raise NotImplementedError
 
     @abstractmethod
-    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
+    def get_all_sessions(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[Session]:
         raise NotImplementedError
 
     @abstractmethod

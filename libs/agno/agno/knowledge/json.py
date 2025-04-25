@@ -24,7 +24,11 @@ class JSONKnowledgeBase(AgentKnowledge):
         if _json_path.exists() and _json_path.is_dir():
             for _json in _json_path.glob("*.json"):
                 yield self.reader.read(path=_json)
-        elif _json_path.exists() and _json_path.is_file() and _json_path.suffix == ".json":
+        elif (
+            _json_path.exists()
+            and _json_path.is_file()
+            and _json_path.suffix == ".json"
+        ):
             yield self.reader.read(path=_json_path)
 
     @property
@@ -46,6 +50,10 @@ class JSONKnowledgeBase(AgentKnowledge):
                 for result in results:
                     yield result
 
-        elif _json_path.exists() and _json_path.is_file() and _json_path.suffix == ".json":
+        elif (
+            _json_path.exists()
+            and _json_path.is_file()
+            and _json_path.suffix == ".json"
+        ):
             result = await self.reader.async_read(path=_json_path)
             yield result

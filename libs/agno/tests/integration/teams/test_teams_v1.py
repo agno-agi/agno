@@ -12,7 +12,11 @@ def test_team_basic():
         tools=[DuckDuckGoTools(cache_results=True)],
     )
 
-    writer = Agent(name="Writer", model=OpenAIChat("gpt-4o"), role="Write content based on research")
+    writer = Agent(
+        name="Writer",
+        model=OpenAIChat("gpt-4o"),
+        role="Write content based on research",
+    )
 
     team = Agent(
         name="Content Team",

@@ -218,7 +218,9 @@ def test_get_count(qdrant_db, mock_qdrant_client):
     mock_qdrant_client.count.return_value = count_result
 
     assert qdrant_db.get_count() == 42
-    mock_qdrant_client.count.assert_called_once_with(collection_name="test_collection", exact=True)
+    mock_qdrant_client.count.assert_called_once_with(
+        collection_name="test_collection", exact=True
+    )
 
 
 @pytest.mark.asyncio
@@ -246,7 +248,9 @@ async def test_async_search(mock_embedder):
     """Test async search"""
     db = Qdrant(embedder=mock_embedder, collection="test_collection")
 
-    mock_results = [Document(name="test_doc", content="Test content", meta_data={"key": "value"})]
+    mock_results = [
+        Document(name="test_doc", content="Test content", meta_data={"key": "value"})
+    ]
 
     with patch.object(db, "async_search", return_value=mock_results):
         results = await db.async_search("test query", limit=1)

@@ -233,7 +233,9 @@ def test_get_count(milvus_db, mock_milvus_client):
     mock_milvus_client.get_collection_stats.return_value = {"row_count": 42}
 
     assert milvus_db.get_count() == 42
-    mock_milvus_client.get_collection_stats.assert_called_once_with(collection_name="test_collection")
+    mock_milvus_client.get_collection_stats.assert_called_once_with(
+        collection_name="test_collection"
+    )
 
 
 def test_distance_setting(mock_embedder, mock_milvus_client):
@@ -250,7 +252,9 @@ def test_distance_setting(mock_embedder, mock_milvus_client):
 
     # Test with L2 distance
     with patch("pymilvus.MilvusClient", return_value=mock_milvus_client):
-        db2 = Milvus(embedder=mock_embedder, collection="test_collection", distance=Distance.l2)
+        db2 = Milvus(
+            embedder=mock_embedder, collection="test_collection", distance=Distance.l2
+        )
         # Direct assignment to avoid real client creation
         db2._client = mock_milvus_client
         with patch.object(db2, "exists", return_value=False):
@@ -260,7 +264,11 @@ def test_distance_setting(mock_embedder, mock_milvus_client):
 
     # Test with inner product distance
     with patch("pymilvus.MilvusClient", return_value=mock_milvus_client):
-        db3 = Milvus(embedder=mock_embedder, collection="test_collection", distance=Distance.max_inner_product)
+        db3 = Milvus(
+            embedder=mock_embedder,
+            collection="test_collection",
+            distance=Distance.max_inner_product,
+        )
         # Direct assignment to avoid real client creation
         db3._client = mock_milvus_client
         with patch.object(db3, "exists", return_value=False):
@@ -314,7 +322,9 @@ async def test_async_search(mock_embedder):
     """Test async search"""
     db = Milvus(embedder=mock_embedder, collection="test_collection")
 
-    mock_results = [Document(name="test_doc", content="Test content", meta_data={"key": "value"})]
+    mock_results = [
+        Document(name="test_doc", content="Test content", meta_data={"key": "value"})
+    ]
 
     with patch.object(db, "async_search", return_value=mock_results):
         results = await db.async_search("test query", limit=1)
@@ -336,11 +346,17 @@ async def test_async_doc_exists(mock_embedder, mock_milvus_async_client):
 
     db._async_client = mock_milvus_async_client
 
-    with patch.object(mock_milvus_async_client, "get", side_effect=lambda **kwargs: async_return([Mock()])):
+    with patch.object(
+        mock_milvus_async_client,
+        "get",
+        side_effect=lambda **kwargs: async_return([Mock()]),
+    ):
         result = await db.async_doc_exists(test_doc)
         assert result is True
 
-    with patch.object(mock_milvus_async_client, "get", side_effect=lambda **kwargs: async_return([])):
+    with patch.object(
+        mock_milvus_async_client, "get", side_effect=lambda **kwargs: async_return([])
+    ):
         result = await db.async_doc_exists(test_doc)
         assert result is False
 

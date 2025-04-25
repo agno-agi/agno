@@ -39,7 +39,9 @@ class JiraTools(Toolkit):
             auth = None
 
         if auth:
-            self.jira = JIRA(server=self.server_url, basic_auth=cast(tuple[str, str], auth))
+            self.jira = JIRA(
+                server=self.server_url, basic_auth=cast(tuple[str, str], auth)
+            )
         else:
             self.jira = JIRA(server=self.server_url)
 
@@ -64,7 +66,11 @@ class JiraTools(Toolkit):
                 "key": issue.key,
                 "project": issue.fields.project.key,
                 "issuetype": issue.fields.issuetype.name,
-                "reporter": issue.fields.reporter.displayName if issue.fields.reporter else "N/A",
+                "reporter": (
+                    issue.fields.reporter.displayName
+                    if issue.fields.reporter
+                    else "N/A"
+                ),
                 "summary": issue.fields.summary,
                 "description": issue.fields.description or "",
             }
@@ -74,7 +80,9 @@ class JiraTools(Toolkit):
             logger.error(f"Error retrieving issue {issue_key}: {e}")
             return json.dumps({"error": str(e)})
 
-    def create_issue(self, project_key: str, summary: str, description: str, issuetype: str = "Task") -> str:
+    def create_issue(
+        self, project_key: str, summary: str, description: str, issuetype: str = "Task"
+    ) -> str:
         """
         Creates a new issue in Jira.
 
@@ -116,7 +124,11 @@ class JiraTools(Toolkit):
                     "key": issue.key,
                     "summary": issue.fields.summary,
                     "status": issue.fields.status.name,
-                    "assignee": issue.fields.assignee.displayName if issue.fields.assignee else "Unassigned",
+                    "assignee": (
+                        issue.fields.assignee.displayName
+                        if issue.fields.assignee
+                        else "Unassigned"
+                    ),
                 }
                 results.append(issue_details)
             log_debug(f"Found {len(results)} issues for JQL '{jql_str}'")

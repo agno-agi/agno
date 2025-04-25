@@ -48,7 +48,9 @@ class InfraResource(InfraBase):
         if self.resource_type_list is None:
             return [self.get_resource_type().lower()]
 
-        type_list: List[str] = [resource_type.lower() for resource_type in self.resource_type_list]
+        type_list: List[str] = [
+            resource_type.lower() for resource_type in self.resource_type_list
+        ]
         if self.get_resource_type() not in type_list:
             type_list.append(self.get_resource_type().lower())
         return type_list
@@ -73,7 +75,9 @@ class InfraResource(InfraBase):
                     if self.group is not None:
                         input_dir_path = input_dir_path.joinpath(self.group)
                     if self.get_resource_type() is not None:
-                        input_dir_path = input_dir_path.joinpath(self.get_resource_type().lower())
+                        input_dir_path = input_dir_path.joinpath(
+                            self.get_resource_type().lower()
+                        )
                 return input_dir_path.joinpath(input_file_name)
         return None
 
@@ -94,7 +98,9 @@ class InfraResource(InfraBase):
                 if self.output_dir is not None:
                     output_dir_path = output_dir_path.joinpath(self.output_dir)
                 elif self.get_resource_type() is not None:
-                    output_dir_path = output_dir_path.joinpath(self.get_resource_type().lower())
+                    output_dir_path = output_dir_path.joinpath(
+                        self.get_resource_type().lower()
+                    )
                 return output_dir_path.joinpath(output_file_name)
         return None
 
@@ -125,9 +131,13 @@ class InfraResource(InfraBase):
                     if data_from_file is not None and isinstance(data_from_file, dict):
                         return data_from_file
                     else:
-                        logger.warning(f"Could not read {self.get_resource_name()} from {output_file_path}")
+                        logger.warning(
+                            f"Could not read {self.get_resource_name()} from {output_file_path}"
+                        )
             except Exception as e:
-                logger.error(f"Could not read {self.get_resource_name()} from file: {e}")
+                logger.error(
+                    f"Could not read {self.get_resource_name()} from file: {e}"
+                )
         return None
 
     def delete_output_file(self) -> bool:
@@ -150,18 +160,27 @@ class InfraResource(InfraBase):
     ) -> bool:
         if group_filter is not None:
             group_name = self.get_group_name()
-            logger.debug(f"{self.get_resource_name()}: Checking {group_filter} in {group_name}")
+            logger.debug(
+                f"{self.get_resource_name()}: Checking {group_filter} in {group_name}"
+            )
             if group_name is None or group_filter not in group_name:
                 return False
         if name_filter is not None:
             resource_name = self.get_resource_name()
-            logger.debug(f"{self.get_resource_name()}: Checking {name_filter} in {resource_name}")
+            logger.debug(
+                f"{self.get_resource_name()}: Checking {name_filter} in {resource_name}"
+            )
             if resource_name is None or name_filter not in resource_name:
                 return False
         if type_filter is not None:
             resource_type_list = self.get_resource_type_list()
-            logger.debug(f"{self.get_resource_name()}: Checking {type_filter.lower()} in {resource_type_list}")
-            if resource_type_list is None or type_filter.lower() not in resource_type_list:
+            logger.debug(
+                f"{self.get_resource_name()}: Checking {type_filter.lower()} in {resource_type_list}"
+            )
+            if (
+                resource_type_list is None
+                or type_filter.lower() not in resource_type_list
+            ):
                 return False
         return True
 

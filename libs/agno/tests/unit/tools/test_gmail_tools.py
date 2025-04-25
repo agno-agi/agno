@@ -37,7 +37,9 @@ def gmail_tools(mock_credentials, mock_gmail_service):
         return tools
 
 
-def create_mock_message(msg_id: str, subject: str, sender: str, date: str, body: str) -> Dict[str, Any]:
+def create_mock_message(
+    msg_id: str, subject: str, sender: str, date: str, body: str
+) -> Dict[str, Any]:
     """Helper function to create mock message data."""
     return {
         "id": msg_id,
@@ -63,7 +65,12 @@ def test_init_with_default_scopes():
 def test_init_with_custom_scopes():
     """Test initialization with custom scopes."""
     custom_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
-    tools = GmailTools(scopes=custom_scopes, get_latest_emails=True, create_draft_email=False, send_email=False)
+    tools = GmailTools(
+        scopes=custom_scopes,
+        get_latest_emails=True,
+        create_draft_email=False,
+        send_email=False,
+    )
     assert tools.scopes == custom_scopes
 
 
@@ -130,8 +137,12 @@ def test_auth_with_custom_paths():
 
     with patch("pathlib.Path.exists") as mock_exists:
         mock_exists.return_value = True
-        with patch("agno.tools.gmail.Credentials.from_authorized_user_file") as mock_from_file:
-            tools = GmailTools(credentials_path=custom_creds_path, token_path=custom_token_path)
+        with patch(
+            "agno.tools.gmail.Credentials.from_authorized_user_file"
+        ) as mock_from_file:
+            tools = GmailTools(
+                credentials_path=custom_creds_path, token_path=custom_token_path
+            )
             tools._auth()
             mock_from_file.assert_called_once_with(custom_token_path, tools.scopes)
 
@@ -140,7 +151,9 @@ def test_get_latest_emails(gmail_tools, mock_gmail_service):
     """Test getting latest emails."""
     # Mock response data
     mock_messages = {"messages": [{"id": "123"}, {"id": "456"}]}
-    mock_message_data = create_mock_message("123", "Test Subject", "sender@test.com", "2024-01-01", "Test body")
+    mock_message_data = create_mock_message(
+        "123", "Test Subject", "sender@test.com", "2024-01-01", "Test body"
+    )
 
     # Set up mock returns
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages
@@ -156,7 +169,9 @@ def test_get_latest_emails(gmail_tools, mock_gmail_service):
 def test_get_emails_from_user(gmail_tools, mock_gmail_service):
     """Test getting emails from specific user."""
     mock_messages = {"messages": [{"id": "123"}]}
-    mock_message_data = create_mock_message("123", "From User", "specific@test.com", "2024-01-01", "Specific message")
+    mock_message_data = create_mock_message(
+        "123", "From User", "specific@test.com", "2024-01-01", "Specific message"
+    )
 
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages
     mock_gmail_service.users().messages().get().execute.return_value = mock_message_data
@@ -170,7 +185,9 @@ def test_get_emails_from_user(gmail_tools, mock_gmail_service):
 def test_get_unread_emails(gmail_tools, mock_gmail_service):
     """Test getting unread emails."""
     mock_messages = {"messages": [{"id": "123"}]}
-    mock_message_data = create_mock_message("123", "Unread Email", "sender@test.com", "2024-01-01", "Unread content")
+    mock_message_data = create_mock_message(
+        "123", "Unread Email", "sender@test.com", "2024-01-01", "Unread content"
+    )
 
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages
     mock_gmail_service.users().messages().get().execute.return_value = mock_message_data
@@ -184,7 +201,9 @@ def test_get_unread_emails(gmail_tools, mock_gmail_service):
 def test_get_starred_emails(gmail_tools, mock_gmail_service):
     """Test getting starred emails."""
     mock_messages = {"messages": [{"id": "123"}]}
-    mock_message_data = create_mock_message("123", "Starred Email", "sender@test.com", "2024-01-01", "Starred content")
+    mock_message_data = create_mock_message(
+        "123", "Starred Email", "sender@test.com", "2024-01-01", "Starred content"
+    )
 
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages
     mock_gmail_service.users().messages().get().execute.return_value = mock_message_data
@@ -232,10 +251,15 @@ def test_create_draft_email(gmail_tools, mock_gmail_service):
     """Test creating draft email."""
     mock_draft_response = {"id": "draft123", "message": {"id": "msg123"}}
 
-    mock_gmail_service.users().drafts().create().execute.return_value = mock_draft_response
+    mock_gmail_service.users().drafts().create().execute.return_value = (
+        mock_draft_response
+    )
 
     result = gmail_tools.create_draft_email(
-        to="recipient@test.com", subject="Test Draft", body="Draft content", cc="cc@test.com"
+        to="recipient@test.com",
+        subject="Test Draft",
+        body="Draft content",
+        cc="cc@test.com",
     )
 
     assert "draft123" in result
@@ -246,10 +270,15 @@ def test_send_email(gmail_tools, mock_gmail_service):
     """Test sending email."""
     mock_send_response = {"id": "msg123", "labelIds": ["SENT"]}
 
-    mock_gmail_service.users().messages().send().execute.return_value = mock_send_response
+    mock_gmail_service.users().messages().send().execute.return_value = (
+        mock_send_response
+    )
 
     result = gmail_tools.send_email(
-        to="recipient@test.com", subject="Test Send", body="Email content", cc="cc@test.com"
+        to="recipient@test.com",
+        subject="Test Send",
+        body="Email content",
+        cc="cc@test.com",
     )
 
     assert "msg123" in result
@@ -298,7 +327,11 @@ def test_message_with_attachments(gmail_tools, mock_gmail_service):
             "parts": [
                 {
                     "mimeType": "text/plain",
-                    "body": {"data": base64.urlsafe_b64encode("Message with attachment".encode()).decode()},
+                    "body": {
+                        "data": base64.urlsafe_b64encode(
+                            "Message with attachment".encode()
+                        ).decode()
+                    },
                 },
                 {"filename": "test.pdf", "mimeType": "application/pdf"},
             ],
@@ -329,9 +362,7 @@ def test_malformed_message(gmail_tools, mock_gmail_service):
     mock_messages = {"messages": [{"id": "123"}]}
     mock_message_data = {
         "id": "123",
-        "payload": {
-            "headers": []  # Missing required headers
-        },
+        "payload": {"headers": []},  # Missing required headers
     }
 
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages
@@ -343,7 +374,9 @@ def test_malformed_message(gmail_tools, mock_gmail_service):
 
 def test_network_error(gmail_tools, mock_gmail_service):
     """Test handling of network errors."""
-    mock_gmail_service.users().messages().list.side_effect = ConnectionError("Network unavailable")
+    mock_gmail_service.users().messages().list.side_effect = ConnectionError(
+        "Network unavailable"
+    )
 
     result = gmail_tools.get_latest_emails(count=1)
     assert "Error" in result
@@ -378,7 +411,10 @@ def test_html_message_content(gmail_tools, mock_gmail_service):
     # Verify HTML content is included in the result
     assert (
         html_content in result
-        or base64.urlsafe_b64decode(mock_message_data["payload"]["body"]["data"]).decode() in result
+        or base64.urlsafe_b64decode(
+            mock_message_data["payload"]["body"]["data"]
+        ).decode()
+        in result
     )
 
 
@@ -386,10 +422,14 @@ def test_multiple_recipients(gmail_tools, mock_gmail_service):
     """Test sending email to multiple recipients."""
     mock_send_response = {"id": "msg123", "labelIds": ["SENT"]}
 
-    mock_gmail_service.users().messages().send().execute.return_value = mock_send_response
+    mock_gmail_service.users().messages().send().execute.return_value = (
+        mock_send_response
+    )
 
     result = gmail_tools.send_email(
-        to="recipient1@test.com,recipient2@test.com", subject="Multiple Recipients", body="Test content"
+        to="recipient1@test.com,recipient2@test.com",
+        subject="Multiple Recipients",
+        body="Test content",
     )
 
     assert "msg123" in result
@@ -421,11 +461,19 @@ def test_multipart_complex_message(gmail_tools, mock_gmail_service):
             "parts": [
                 {
                     "mimeType": "text/plain",
-                    "body": {"data": base64.urlsafe_b64encode("Plain text version".encode()).decode()},
+                    "body": {
+                        "data": base64.urlsafe_b64encode(
+                            "Plain text version".encode()
+                        ).decode()
+                    },
                 },
                 {
                     "mimeType": "text/html",
-                    "body": {"data": base64.urlsafe_b64encode("<p>HTML version</p>".encode()).decode()},
+                    "body": {
+                        "data": base64.urlsafe_b64encode(
+                            "<p>HTML version</p>".encode()
+                        ).decode()
+                    },
                 },
                 {"filename": "test.pdf", "mimeType": "application/pdf"},
             ],

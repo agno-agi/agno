@@ -18,7 +18,12 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(model=Sambanova(id="Meta-Llama-3.1-8B-Instruct"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Sambanova(id="Meta-Llama-3.1-8B-Instruct"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response: RunResponse = agent.run("Share a 2 sentence horror story")
 
@@ -30,7 +35,12 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=Sambanova(id="Meta-Llama-3.1-8B-Instruct"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Sambanova(id="Meta-Llama-3.1-8B-Instruct"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -48,7 +58,12 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=Sambanova(id="Meta-Llama-3.1-8B-Instruct"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Sambanova(id="Meta-Llama-3.1-8B-Instruct"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -60,7 +75,12 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=Sambanova(id="Meta-Llama-3.1-8B-Instruct"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Sambanova(id="Meta-Llama-3.1-8B-Instruct"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -92,7 +112,13 @@ def test_with_memory():
     # Verify memories were created
     messages = agent.get_messages_for_session()
     assert len(messages) == 5
-    assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
+    assert [m.role for m in messages] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
 
     # Test metrics structure and types
     _assert_metrics(response2)
@@ -170,7 +196,9 @@ def test_structured_outputs_deprecated():
 def test_history():
     agent = Agent(
         model=Sambanova(id="Meta-Llama-3.1-8B-Instruct"),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(
+            table_name="agent_sessions", db_file="tmp/agent_storage.db"
+        ),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,

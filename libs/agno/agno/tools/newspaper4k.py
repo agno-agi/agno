@@ -7,7 +7,9 @@ from agno.utils.log import log_debug, logger
 try:
     import newspaper
 except ImportError:
-    raise ImportError("`newspaper4k` not installed. Please run `pip install newspaper4k lxml_html_clean`.")
+    raise ImportError(
+        "`newspaper4k` not installed. Please run `pip install newspaper4k lxml_html_clean`."
+    )
 
 
 class Newspaper4kTools(Toolkit):
@@ -20,7 +22,11 @@ class Newspaper4kTools(Toolkit):
     """
 
     def __init__(
-        self, read_article: bool = True, include_summary: bool = False, article_length: Optional[int] = None, **kwargs
+        self,
+        read_article: bool = True,
+        include_summary: bool = False,
+        article_length: Optional[int] = None,
+        **kwargs,
     ):
         super().__init__(name="newspaper4k_tools", **kwargs)
 
@@ -53,7 +59,11 @@ class Newspaper4kTools(Toolkit):
 
             try:
                 if article.publish_date:
-                    article_data["publish_date"] = article.publish_date.isoformat() if article.publish_date else None
+                    article_data["publish_date"] = (
+                        article.publish_date.isoformat()
+                        if article.publish_date
+                        else None
+                    )
             except Exception:
                 pass
 

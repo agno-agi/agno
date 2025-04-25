@@ -3,8 +3,9 @@ from io import StringIO
 import pandas as pd
 import requests
 from agents import db_url
-from agno.utils.log import logger
 from sqlalchemy import create_engine
+
+from agno.utils.log import logger
 
 s3_uri = "https://agno-public.s3.amazonaws.com/f1"
 

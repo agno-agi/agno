@@ -26,6 +26,8 @@ from textwrap import dedent
 from typing import List, Optional
 
 import typer
+from rich import print
+
 from agno.agent import Agent, AgentMemory
 from agno.memory.classifier import MemoryClassifier
 from agno.memory.db.sqlite import SqliteMemoryDb
@@ -35,7 +37,6 @@ from agno.models.groq import Groq
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.youtube import YouTubeTools
-from rich import print
 
 # Initialize storage components
 agent_storage = SqliteAgentStorage(table_name="study_sessions", db_file="tmp/agents.db")

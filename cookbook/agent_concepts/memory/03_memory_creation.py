@@ -2,11 +2,12 @@
 Create user memories with an Agent by providing a either text or a list of messages.
 """
 
+from rich.pretty import pprint
+
 from agno.memory.v2 import Memory
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.models.google import Gemini
 from agno.models.message import Message
-from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 # Reset for this example

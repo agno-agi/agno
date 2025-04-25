@@ -96,7 +96,9 @@ debug_on: bool = False
 
 
 def set_log_level_to_debug(source_type: Optional[str] = None):
-    _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
+    _logger = logging.getLogger(
+        LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}"
+    )
     _logger.setLevel(logging.DEBUG)
 
     global debug_on
@@ -104,7 +106,9 @@ def set_log_level_to_debug(source_type: Optional[str] = None):
 
 
 def set_log_level_to_info(source_type: Optional[str] = None):
-    _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
+    _logger = logging.getLogger(
+        LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}"
+    )
     _logger.setLevel(logging.INFO)
 
     global debug_on

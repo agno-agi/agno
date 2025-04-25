@@ -14,18 +14,17 @@ from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
 
 try:
-    from huggingface_hub import (
-        AsyncInferenceClient,
-        ChatCompletionOutput,
-        ChatCompletionOutputMessage,
-        ChatCompletionStreamOutput,
-        ChatCompletionStreamOutputDelta,
-        ChatCompletionStreamOutputDeltaToolCall,
-        InferenceClient,
-    )
+    from huggingface_hub import (AsyncInferenceClient, ChatCompletionOutput,
+                                 ChatCompletionOutputMessage,
+                                 ChatCompletionStreamOutput,
+                                 ChatCompletionStreamOutputDelta,
+                                 ChatCompletionStreamOutputDeltaToolCall,
+                                 InferenceClient)
     from huggingface_hub.errors import InferenceTimeoutError
 except (ModuleNotFoundError, ImportError):
-    raise ImportError("`huggingface_hub` not installed. Please install using `pip install huggingface_hub`")
+    raise ImportError(
+        "`huggingface_hub` not installed. Please install using `pip install huggingface_hub`"
+    )
 
 
 @dataclass
@@ -208,9 +207,11 @@ class HuggingFace(Model):
                 "top_logprobs": self.top_logprobs,
                 "top_p": self.top_p,
                 "tools": self._tools,
-                "tool_choice": self.tool_choice
-                if (self._tools is not None and self.tool_choice is not None)
-                else "auto",
+                "tool_choice": (
+                    self.tool_choice
+                    if (self._tools is not None and self.tool_choice is not None)
+                    else "auto"
+                ),
             }
         )
         cleaned_dict = {k: v for k, v in _dict.items() if v is not None}
@@ -271,10 +272,14 @@ class HuggingFace(Model):
             )
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error invoking HuggingFace model: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletionOutput]:
         """
@@ -295,12 +300,18 @@ class HuggingFace(Model):
                 )
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error invoking HuggingFace model: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionStreamOutput]:
+    def invoke_stream(
+        self, messages: List[Message]
+    ) -> Iterator[ChatCompletionStreamOutput]:
         """
         Send a streaming chat completion request to the HuggingFace API.
 
@@ -320,10 +331,14 @@ class HuggingFace(Model):
             )  # type: ignore
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error invoking HuggingFace model: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """
@@ -348,14 +363,20 @@ class HuggingFace(Model):
                     yield chunk
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error invoking HuggingFace model: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     # Override base method
     @staticmethod
-    def parse_tool_calls(tool_calls_data: List[ChatCompletionStreamOutputDeltaToolCall]) -> List[Dict[str, Any]]:
+    def parse_tool_calls(
+        tool_calls_data: List[ChatCompletionStreamOutputDeltaToolCall],
+    ) -> List[Dict[str, Any]]:
         """
         Build tool calls from streamed tool call data.
 
@@ -371,7 +392,9 @@ class HuggingFace(Model):
             _tool_call_id = _tool_call.id
             _tool_call_type = _tool_call.type
             _function_name = _tool_call.function.name if _tool_call.function else None
-            _function_arguments = _tool_call.function.arguments if _tool_call.function else None
+            _function_arguments = (
+                _tool_call.function.arguments if _tool_call.function else None
+            )
 
             if len(tool_calls) <= _index:
                 tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
@@ -406,11 +429,16 @@ class HuggingFace(Model):
         if response_message.content is not None:
             model_response.content = response_message.content
 
-        if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
+        if (
+            response_message.tool_calls is not None
+            and len(response_message.tool_calls) > 0
+        ):
             model_response.tool_calls = [asdict(t) for t in response_message.tool_calls]
             for tool_call in model_response.tool_calls:
                 if isinstance(tool_call["function"]["arguments"], dict):
-                    tool_call["function"]["arguments"] = json.dumps(tool_call["function"]["arguments"])
+                    tool_call["function"]["arguments"] = json.dumps(
+                        tool_call["function"]["arguments"]
+                    )
 
         try:
             if (
@@ -429,19 +457,26 @@ class HuggingFace(Model):
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: ChatCompletionStreamOutput) -> ModelResponse:
+    def parse_provider_response_delta(
+        self, response_delta: ChatCompletionStreamOutput
+    ) -> ModelResponse:
         """
         Parse the provider response delta into a ModelResponse.
         """
         model_response = ModelResponse()
         if response_delta.choices and len(response_delta.choices) > 0:
-            response_delta_message: ChatCompletionStreamOutputDelta = response_delta.choices[0].delta
+            response_delta_message: ChatCompletionStreamOutputDelta = (
+                response_delta.choices[0].delta
+            )
 
             model_response.role = response_delta_message.role
 
             if response_delta_message.content is not None:
                 model_response.content = response_delta_message.content
-            if response_delta_message.tool_calls is not None and len(response_delta_message.tool_calls) > 0:
+            if (
+                response_delta_message.tool_calls is not None
+                and len(response_delta_message.tool_calls) > 0
+            ):
                 model_response.tool_calls = [response_delta_message.tool_calls]  # type: ignore
         if response_delta.usage is not None:
             model_response.response_usage = response_delta.usage

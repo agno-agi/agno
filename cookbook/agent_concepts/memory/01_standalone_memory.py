@@ -2,8 +2,9 @@
 How to add, get, delete, and replace user memories manually
 """
 
-from agno.memory.v2 import Memory, UserMemory
 from rich.pretty import pprint
+
+from agno.memory.v2 import Memory, UserMemory
 
 memory = Memory()
 

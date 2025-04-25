@@ -1,19 +1,42 @@
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.engine import Engine, create_engine
+from sqlalchemy.inspection import inspect
+from sqlalchemy.orm import scoped_session, sessionmaker
+from sqlalchemy.schema import Column, MetaData, Table
+from sqlalchemy.sql.expression import delete, select, text
+from sqlalchemy.types import DateTime, String
+
 try:
-    from sqlalchemy.dialects import postgresql
-    from sqlalchemy.engine import Engine, create_engine
-    from sqlalchemy.inspection import inspect
-    from sqlalchemy.orm import scoped_session, sessionmaker
-    from sqlalchemy.schema import Column, MetaData, Table
-    from sqlalchemy.sql.expression import delete, select, text
-    from sqlalchemy.types import DateTime, String
+    import pgvector.sqlalchemy
 except ImportError:
-    raise ImportError("`sqlalchemy` not installed.  Please install using `pip install sqlalchemy 'psycopg[binary]'`")
+    raise ImportError(
+        "`pgvector` not installed.  Please install using `pip install pgvector`"
+    )
 
 from agno.memory.v2.db.base import MemoryDb
 from agno.memory.v2.db.schema import MemoryRow
 from agno.utils.log import log_debug, log_info, log_warning, logger
+
+
+# Helper function for calculating cosine similarity
+def cosine_similarity(v1: List[float], v2: List[float]) -> float:
+    """Calculate cosine similarity between two vectors."""
+    v1_array = np.array(v1)
+    v2_array = np.array(v2)
+
+    dot_product = np.dot(v1_array, v2_array)
+    norm_v1 = np.linalg.norm(v1_array)
+    norm_v2 = np.linalg.norm(v2_array)
+
+    # Avoid division by zero
+    if norm_v1 == 0 or norm_v2 == 0:
+        return 0.0
+
+    similarity = dot_product / (norm_v1 * norm_v2)
+    return float(similarity)
 
 
 class PostgresMemoryDb(MemoryDb):
@@ -61,6 +84,10 @@ class PostgresMemoryDb(MemoryDb):
         }
 
     def get_table(self) -> Table:
+        # Create schema extension for pgvector if it doesn't exist
+        with self.Session() as sess, sess.begin():
+            sess.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+
         return Table(
             self.table_name,
             self.metadata,
@@ -69,6 +96,8 @@ class PostgresMemoryDb(MemoryDb):
             Column("memory", postgresql.JSONB, server_default=text("'{}'::jsonb")),
             Column("created_at", DateTime(timezone=True), server_default=text("now()")),
             Column("updated_at", DateTime(timezone=True), onupdate=text("now()")),
+            # Add embedding column using pgvector's vector type
+            Column("embedding", pgvector.sqlalchemy.Vector(1536), nullable=True),
             extend_existing=True,
         )
 
@@ -78,7 +107,9 @@ class PostgresMemoryDb(MemoryDb):
                 with self.Session() as sess, sess.begin():
                     if self.schema is not None:
                         log_debug(f"Creating schema: {self.schema}")
-                        sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
+                        sess.execute(
+                            text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};")
+                        )
                 log_debug(f"Creating table: {self.table_name}")
                 self.table.create(self.db_engine, checkfirst=True)
             except Exception as e:
@@ -93,7 +124,10 @@ class PostgresMemoryDb(MemoryDb):
             return result is not None
 
     def read_memories(
-        self, user_id: Optional[str] = None, limit: Optional[int] = None, sort: Optional[str] = None
+        self,
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        sort: Optional[str] = None,
     ) -> List[MemoryRow]:
         memories: List[MemoryRow] = []
         try:
@@ -130,6 +164,7 @@ class PostgresMemoryDb(MemoryDb):
                     id=memory.id,
                     user_id=memory.user_id,
                     memory=memory.memory,
+                    embedding=memory.embedding if memory.embedding else None,
                 )
 
                 # Define the upsert if the memory already exists
@@ -139,6 +174,7 @@ class PostgresMemoryDb(MemoryDb):
                     set_=dict(
                         user_id=stmt.excluded.user_id,
                         memory=stmt.excluded.memory,
+                        embedding=stmt.excluded.embedding,
                     ),
                 )
 
@@ -165,7 +201,9 @@ class PostgresMemoryDb(MemoryDb):
     def table_exists(self) -> bool:
         log_debug(f"Checking if table exists: {self.table.name}")
         try:
-            return inspect(self.db_engine).has_table(self.table.name, schema=self.schema)
+            return inspect(self.db_engine).has_table(
+                self.table.name, schema=self.schema
+            )
         except Exception as e:
             logger.error(e)
             return False
@@ -178,6 +216,62 @@ class PostgresMemoryDb(MemoryDb):
                 sess.execute(stmt)
                 return True
         return False
+
+    def search_memories_semantic(
+        self,
+        query_embedding: List[float],
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[MemoryRow]:
+        """
+        Search for memories using vector similarity to find semantically similar content.
+
+        Args:
+            query_embedding (List[float]): The embedding vector to compare against.
+            user_id (Optional[str]): If provided, limit search to this user's memories.
+            limit (Optional[int]): Maximum number of results to return.
+
+        Returns:
+            List[MemoryRow]: List of memories sorted by semantic similarity.
+        """
+        memories: List[MemoryRow] = []
+        # Default limit if none provided
+        limit = limit or 10
+
+        try:
+            with self.Session() as sess, sess.begin():
+                # Create a query that calculates cosine similarity between embedding vectors
+                # This uses pgvector's <=> operator for cosine distance
+                stmt = select(self.table).order_by(
+                    self.table.c.embedding.cosine_distance(query_embedding)
+                )
+
+                # Filter by user_id if provided
+                if user_id is not None:
+                    stmt = stmt.where(self.table.c.user_id == user_id)
+
+                # Filter out rows without embeddings
+                stmt = stmt.where(self.table.c.embedding.is_not(None))
+
+                # Apply limit
+                stmt = stmt.limit(limit)
+
+                # Execute query and fetch results
+                rows = sess.execute(stmt).fetchall()
+
+                # Convert rows to MemoryRow objects
+                for row in rows:
+                    if row is not None:
+                        memories.append(MemoryRow.model_validate(row))
+
+        except Exception as e:
+            log_warning(f"Error during semantic memory search: {e}")
+            # Check if table exists, create if needed
+            if not self.table_exists():
+                log_debug("Table does not exist. Creating it now.")
+                self.create()
+
+        return memories
 
     def __deepcopy__(self, memo):
         """

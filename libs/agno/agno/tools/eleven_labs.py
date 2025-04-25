@@ -14,7 +14,9 @@ from agno.utils.log import logger
 try:
     from elevenlabs import ElevenLabs  # type: ignore
 except ImportError:
-    raise ImportError("`elevenlabs` not installed. Please install using `pip install elevenlabs`")
+    raise ImportError(
+        "`elevenlabs` not installed. Please install using `pip install elevenlabs`"
+    )
 
 ElevenLabsAudioOutputFormat = Literal[
     "mp3_22050_32",  # mp3 with 22.05kHz sample rate at 32kbps
@@ -45,7 +47,9 @@ class ElevenLabsTools(Toolkit):
 
         self.api_key = api_key or getenv("ELEVEN_LABS_API_KEY")
         if not self.api_key:
-            logger.error("ELEVEN_LABS_API_KEY not set. Please set the ELEVEN_LABS_API_KEY environment variable.")
+            logger.error(
+                "ELEVEN_LABS_API_KEY not set. Please set the ELEVEN_LABS_API_KEY environment variable."
+            )
 
         self.target_directory = target_directory
         self.voice_id = voice_id
@@ -120,7 +124,10 @@ class ElevenLabsTools(Toolkit):
         return base64_audio
 
     def generate_sound_effect(
-        self, agent: Union[Agent, Team], prompt: str, duration_seconds: Optional[float] = None
+        self,
+        agent: Union[Agent, Team],
+        prompt: str,
+        duration_seconds: Optional[float] = None,
     ) -> str:
         """
         Use this function to generate sound effect audio from a text prompt.

@@ -26,15 +26,16 @@ from textwrap import dedent
 from typing import Optional
 
 import typer
+from rich.console import Console
+from rich.json import JSON
+from rich.panel import Panel
+from rich.prompt import Prompt
+
 from agno.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
-from rich.console import Console
-from rich.json import JSON
-from rich.panel import Panel
-from rich.prompt import Prompt
 
 
 def create_agent(user: str = "user"):

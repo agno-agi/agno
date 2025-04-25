@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import (Any, AsyncIterator, Dict, Iterator, List, Optional,
+                    Sequence, Tuple)
 
 from agno.exceptions import ModelProviderError
 from agno.media import Image
@@ -16,16 +17,22 @@ try:
     from cohere.types.chat_response import ChatResponse
     from cohere.types.streamed_chat_response_v2 import StreamedChatResponseV2
 except (ModuleNotFoundError, ImportError):
-    raise ImportError("`cohere` not installed. Please install using `pip install cohere`")
+    raise ImportError(
+        "`cohere` not installed. Please install using `pip install cohere`"
+    )
 
 
-def _format_images_for_message(message: Message, images: Sequence[Image]) -> List[Dict[str, Any]]:
+def _format_images_for_message(
+    message: Message, images: Sequence[Image]
+) -> List[Dict[str, Any]]:
     """
     Format an image into the format expected by WatsonX.
     """
 
     # Create a default message content with text
-    message_content_with_image: List[Dict[str, Any]] = [{"type": "text", "text": message.content}]
+    message_content_with_image: List[Dict[str, Any]] = [
+        {"type": "text", "text": message.content}
+    ]
 
     # Add images to the message content
     for image in images:
@@ -82,7 +89,9 @@ def _format_messages(messages: List[Message]) -> List[Dict[str, Any]]:
         if message.images is not None and len(message.images) > 0:
             # Ignore non-string message content
             if isinstance(message.content, str):
-                message_content_with_image = _format_images_for_message(message=message, images=message.images)
+                message_content_with_image = _format_images_for_message(
+                    message=message, images=message.images
+                )
                 if len(message_content_with_image) > 1:
                     message_dict["content"] = message_content_with_image
 
@@ -134,7 +143,9 @@ class Cohere(Model):
 
         self.api_key = self.api_key or getenv("CO_API_KEY")
         if not self.api_key:
-            log_error("CO_API_KEY not set. Please set the CO_API_KEY environment variable.")
+            log_error(
+                "CO_API_KEY not set. Please set the CO_API_KEY environment variable."
+            )
 
         _client_params["api_key"] = self.api_key
 
@@ -150,7 +161,9 @@ class Cohere(Model):
         self.api_key = self.api_key or getenv("CO_API_KEY")
 
         if not self.api_key:
-            log_error("CO_API_KEY not set. Please set the CO_API_KEY environment variable.")
+            log_error(
+                "CO_API_KEY not set. Please set the CO_API_KEY environment variable."
+            )
 
         _client_params["api_key"] = self.api_key
 
@@ -217,9 +230,13 @@ class Cohere(Model):
             return self.get_client().chat(model=self.id, messages=_format_messages(messages), **request_kwargs)  # type: ignore
         except Exception as e:
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[StreamedChatResponseV2]:
+    def invoke_stream(
+        self, messages: List[Message]
+    ) -> Iterator[StreamedChatResponseV2]:
         """
         Invoke a streamed chat response from the Cohere API.
 
@@ -239,7 +256,9 @@ class Cohere(Model):
             )
         except Exception as e:
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke(self, messages: List[Message]) -> ChatResponse:
         """
@@ -261,9 +280,13 @@ class Cohere(Model):
             )
         except Exception as e:
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[StreamedChatResponseV2]:
+    async def ainvoke_stream(
+        self, messages: List[Message]
+    ) -> AsyncIterator[StreamedChatResponseV2]:
         """
         Asynchronously invoke a streamed chat response from the Cohere API.
 
@@ -284,7 +307,9 @@ class Cohere(Model):
                 yield response
         except Exception as e:
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     def parse_provider_response(self, response: ChatResponse) -> ModelResponse:
         """
@@ -305,7 +330,9 @@ class Cohere(Model):
             model_response.content = full_content
 
         if response_message.tool_calls is not None:
-            model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
+            model_response.tool_calls = [
+                t.model_dump() for t in response_message.tool_calls
+            ]
 
         if response.usage is not None and response.usage.tokens is not None:
             model_response.response_usage = {
@@ -353,7 +380,10 @@ class Cohere(Model):
             model_response = ModelResponse(content=response.delta.message.content.text)
 
         elif response.type == "tool-call-start" and response.delta is not None:
-            if response.delta.message is not None and response.delta.message.tool_calls is not None:
+            if (
+                response.delta.message is not None
+                and response.delta.message.tool_calls is not None
+            ):
                 tool_use = response.delta.message.tool_calls.model_dump()
 
         elif response.type == "tool-call-delta" and response.delta is not None:
@@ -362,7 +392,9 @@ class Cohere(Model):
                 and response.delta.message.tool_calls is not None
                 and response.delta.message.tool_calls.function is not None
             ):
-                tool_use["function"]["arguments"] += response.delta.message.tool_calls.function.arguments
+                tool_use["function"][
+                    "arguments"
+                ] += response.delta.message.tool_calls.function.arguments
 
         elif response.type == "tool-call-end":
             if assistant_message.tool_calls is None:
@@ -391,27 +423,39 @@ class Cohere(Model):
         return model_response, tool_use
 
     def process_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data: MessageData,
     ) -> Iterator[ModelResponse]:
         """Process the synchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
         for response in self.invoke_stream(messages=messages):
             model_response, tool_use = self._process_stream_response(
-                response=response, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
+                response=response,
+                assistant_message=assistant_message,
+                stream_data=stream_data,
+                tool_use=tool_use,
             )
             if model_response is not None:
                 yield model_response
 
     async def aprocess_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data: MessageData,
     ) -> AsyncIterator[ModelResponse]:
         """Process the asynchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
         async for response in self.ainvoke_stream(messages=messages):
             model_response, tool_use = self._process_stream_response(
-                response=response, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
+                response=response,
+                assistant_message=assistant_message,
+                stream_data=stream_data,
+                tool_use=tool_use,
             )
             if model_response is not None:
                 yield model_response

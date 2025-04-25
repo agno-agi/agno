@@ -15,14 +15,15 @@ import json
 from typing import Optional
 
 import typer
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 from rich import print
 from rich.console import Console
 from rich.json import JSON
 from rich.panel import Panel
 from rich.prompt import Prompt
+
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
 
 console = Console()
 

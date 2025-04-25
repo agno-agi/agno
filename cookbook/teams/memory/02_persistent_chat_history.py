@@ -6,6 +6,8 @@ Steps:
 2. Run: `python cookbook/teams/memory/02_persistent_chat_history.py` to run the agent
 """
 
+from utils import print_chat_history
+
 from agno.agent import Agent
 from agno.memory.v2.memory import Memory
 from agno.models.anthropic.claude import Claude
@@ -13,7 +15,6 @@ from agno.models.perplexity.perplexity import Perplexity
 from agno.storage.sqlite import SqliteStorage
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
-from utils import print_chat_history
 
 memory = Memory()
 

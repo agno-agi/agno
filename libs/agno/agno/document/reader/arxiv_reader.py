@@ -7,7 +7,9 @@ from agno.document.reader.base import Reader
 try:
     import arxiv  # noqa: F401
 except ImportError:
-    raise ImportError("The `arxiv` package is not installed. Please install it via `pip install arxiv`.")
+    raise ImportError(
+        "The `arxiv` package is not installed. Please install it via `pip install arxiv`."
+    )
 
 
 class ArxivReader(Reader):
@@ -25,7 +27,9 @@ class ArxivReader(Reader):
         """
 
         documents = []
-        search = arxiv.Search(query=query, max_results=self.max_results, sort_by=self.sort_by)
+        search = arxiv.Search(
+            query=query, max_results=self.max_results, sort_by=self.sort_by
+        )
 
         for result in search.results():
             links = ", ".join([x.href for x in result.links])

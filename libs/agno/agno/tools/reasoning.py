@@ -44,7 +44,12 @@ class ReasoningTools(Toolkit):
             self.register(self.analyze)
 
     def think(
-        self, agent: Union[Agent, Team], title: str, thought: str, action: Optional[str] = None, confidence: float = 0.8
+        self,
+        agent: Union[Agent, Team],
+        title: str,
+        thought: str,
+        action: Optional[str] = None,
+        confidence: float = 0.8,
     ) -> str:
         """Use this tool as a scratchpad to reason about the question and work through it step-by-step.
         This tool will help you break down complex problems into logical steps and track the reasoning process.
@@ -78,20 +83,29 @@ class ReasoningTools(Toolkit):
                 agent.session_state["reasoning_steps"] = {}
             if agent.run_id not in agent.session_state["reasoning_steps"]:
                 agent.session_state["reasoning_steps"][agent.run_id] = []
-            agent.session_state["reasoning_steps"][agent.run_id].append(reasoning_step.model_dump_json())
+            agent.session_state["reasoning_steps"][agent.run_id].append(
+                reasoning_step.model_dump_json()
+            )
 
             # Return all previous reasoning_steps and the new reasoning_step
-            if "reasoning_steps" in agent.session_state and agent.run_id in agent.session_state["reasoning_steps"]:
+            if (
+                "reasoning_steps" in agent.session_state
+                and agent.run_id in agent.session_state["reasoning_steps"]
+            ):
                 formatted_reasoning_steps = ""
-                for i, step in enumerate(agent.session_state["reasoning_steps"][agent.run_id], 1):
+                for i, step in enumerate(
+                    agent.session_state["reasoning_steps"][agent.run_id], 1
+                ):
                     step_parsed = ReasoningStep.model_validate_json(step)
-                    step_str = dedent(f"""\
+                    step_str = dedent(
+                        f"""\
 Step {i}:
 Title: {step_parsed.title}
 Reasoning: {step_parsed.reasoning}
 Action: {step_parsed.action}
 Confidence: {step_parsed.confidence}
-""")
+"""
+                    )
                     formatted_reasoning_steps += step_str + "\n"
                 return formatted_reasoning_steps.strip()
             return reasoning_step.model_dump_json()
@@ -146,20 +160,29 @@ Confidence: {step_parsed.confidence}
                 agent.session_state["reasoning_steps"] = {}
             if agent.run_id not in agent.session_state["reasoning_steps"]:
                 agent.session_state["reasoning_steps"][agent.run_id] = []
-            agent.session_state["reasoning_steps"][agent.run_id].append(reasoning_step.model_dump_json())
+            agent.session_state["reasoning_steps"][agent.run_id].append(
+                reasoning_step.model_dump_json()
+            )
 
             # Return all previous reasoning_steps and the new reasoning_step
-            if "reasoning_steps" in agent.session_state and agent.run_id in agent.session_state["reasoning_steps"]:
+            if (
+                "reasoning_steps" in agent.session_state
+                and agent.run_id in agent.session_state["reasoning_steps"]
+            ):
                 formatted_reasoning_steps = ""
-                for i, step in enumerate(agent.session_state["reasoning_steps"][agent.run_id], 1):
+                for i, step in enumerate(
+                    agent.session_state["reasoning_steps"][agent.run_id], 1
+                ):
                     step_parsed = ReasoningStep.model_validate_json(step)
-                    step_str = dedent(f"""\
+                    step_str = dedent(
+                        f"""\
 Step {i}:
 Title: {step_parsed.title}
 Reasoning: {step_parsed.reasoning}
 Action: {step_parsed.action}
 Confidence: {step_parsed.confidence}
-""")
+"""
+                    )
                     formatted_reasoning_steps += step_str + "\n"
                 return formatted_reasoning_steps.strip()
             return reasoning_step.model_dump_json()

@@ -1,6 +1,7 @@
+from rich.pretty import pprint
+
 from agno.agent import Agent
 from agno.models.litellm import LiteLLM
-from rich.pretty import pprint
 
 agent = Agent(
     model=LiteLLM(id="gpt-4o"),

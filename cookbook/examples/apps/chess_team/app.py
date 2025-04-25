@@ -5,7 +5,6 @@ import chess
 import nest_asyncio
 import streamlit as st
 from agents import get_chess_team
-from agno.utils.log import logger
 from utils import (
     CUSTOM_CSS,
     WHITE,
@@ -15,6 +14,8 @@ from utils import (
     parse_move,
     show_agent_status,
 )
+
+from agno.utils.log import logger
 
 # Configure logging
 logging.basicConfig(

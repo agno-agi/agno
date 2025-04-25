@@ -8,14 +8,15 @@ Steps:
 
 import json
 
+from rich.console import Console
+from rich.json import JSON
+from rich.panel import Panel
+
 from agno.agent import Agent
 from agno.memory.agent import AgentMemory
 from agno.memory.db.mongodb import MongoMemoryDb
 from agno.models.openai import OpenAIChat
 from agno.storage.agent.mongodb import MongoDbAgentStorage
-from rich.console import Console
-from rich.json import JSON
-from rich.panel import Panel
 
 # MongoDB connection settings
 db_url = "mongodb://localhost:27017"

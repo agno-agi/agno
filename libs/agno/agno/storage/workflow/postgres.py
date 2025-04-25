@@ -1,1 +1,2 @@
-from agno.storage.postgres import PostgresStorage as PostgresWorkflowStorage  # noqa: F401
+from agno.storage.postgres import \
+    PostgresStorage as PostgresWorkflowStorage  # noqa: F401

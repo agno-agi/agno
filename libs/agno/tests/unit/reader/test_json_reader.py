@@ -60,7 +60,12 @@ def test_chunking():
     reader = JSONReader()
     reader.chunk = True
     reader.chunk_document = lambda doc: [
-        Document(name=f"{doc.name}_chunk_{i}", id=f"{doc.id}_chunk_{i}", content=f"chunk_{i}", meta_data={"chunk": i})
+        Document(
+            name=f"{doc.name}_chunk_{i}",
+            id=f"{doc.id}_chunk_{i}",
+            content=f"chunk_{i}",
+            meta_data={"chunk": i},
+        )
         for i in range(2)
     ]
 
@@ -206,7 +211,12 @@ async def test_async_chunking():
     reader = JSONReader()
     reader.chunk = True
     reader.chunk_document = lambda doc: [
-        Document(name=f"{doc.name}_chunk_{i}", id=f"{doc.id}_chunk_{i}", content=f"chunk_{i}", meta_data={"chunk": i})
+        Document(
+            name=f"{doc.name}_chunk_{i}",
+            id=f"{doc.id}_chunk_{i}",
+            content=f"chunk_{i}",
+            meta_data={"chunk": i},
+        )
         for i in range(2)
     ]
 

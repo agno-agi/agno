@@ -19,13 +19,14 @@ import json
 from typing import Iterator
 
 import httpx
+from rich.console import Console
+from rich.pretty import pprint
+from rich.prompt import Prompt
+
 from agno.agent import Agent
 from agno.exceptions import StopAgentRun
 from agno.models.openai import OpenAIChat
 from agno.tools import FunctionCall, tool
-from rich.console import Console
-from rich.pretty import pprint
-from rich.prompt import Prompt
 
 # This is the console instance used by the print_response method
 # We can use this to stop and restart the live display and ask for user confirmation

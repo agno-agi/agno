@@ -2,8 +2,9 @@ from typing import Optional
 
 from fastapi import HTTPException, UploadFile
 
-from agno.media import Audio, Image, Video
+from agno.media import Audio
 from agno.media import File as FileMedia
+from agno.media import Image, Video
 from agno.utils.log import logger
 
 

@@ -5,7 +5,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
+from agno.media import (AudioArtifact, AudioResponse, ImageArtifact,
+                        VideoArtifact)
 from agno.models.message import Citations, Message, MessageReferences
 from agno.reasoning.step import ReasoningStep
 
@@ -50,21 +51,39 @@ class RunResponseExtraData:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponseExtraData":
         add_messages = data.pop("add_messages", None)
-        add_messages = [Message.model_validate(message) for message in add_messages] if add_messages else None
+        add_messages = (
+            [Message.model_validate(message) for message in add_messages]
+            if add_messages
+            else None
+        )
 
         history = data.pop("history", None)
-        history = [Message.model_validate(message) for message in history] if history else None
+        history = (
+            [Message.model_validate(message) for message in history]
+            if history
+            else None
+        )
 
         reasoning_steps = data.pop("reasoning_steps", None)
-        reasoning_steps = [ReasoningStep.model_validate(step) for step in reasoning_steps] if reasoning_steps else None
+        reasoning_steps = (
+            [ReasoningStep.model_validate(step) for step in reasoning_steps]
+            if reasoning_steps
+            else None
+        )
 
         reasoning_messages = data.pop("reasoning_messages", None)
         reasoning_messages = (
-            [Message.model_validate(message) for message in reasoning_messages] if reasoning_messages else None
+            [Message.model_validate(message) for message in reasoning_messages]
+            if reasoning_messages
+            else None
         )
 
         references = data.pop("references", None)
-        references = [MessageReferences.model_validate(reference) for reference in references] if references else None
+        references = (
+            [MessageReferences.model_validate(reference) for reference in references]
+            if references
+            else None
+        )
 
         return cls(
             add_messages=add_messages,
@@ -104,14 +123,25 @@ class RunResponse:
         _dict = {
             k: v
             for k, v in asdict(self).items()
-            if v is not None and k not in ["messages", "extra_data", "images", "videos", "audio", "response_audio"]
+            if v is not None
+            and k
+            not in [
+                "messages",
+                "extra_data",
+                "images",
+                "videos",
+                "audio",
+                "response_audio",
+            ]
         }
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
 
         if self.extra_data is not None:
             _dict["extra_data"] = (
-                self.extra_data.to_dict() if isinstance(self.extra_data, RunResponseExtraData) else self.extra_data
+                self.extra_data.to_dict()
+                if isinstance(self.extra_data, RunResponseExtraData)
+                else self.extra_data
             )
 
         if self.images is not None:
@@ -140,7 +170,9 @@ class RunResponse:
 
         if self.response_audio is not None:
             _dict["response_audio"] = (
-                self.response_audio.to_dict() if isinstance(self.response_audio, AudioResponse) else self.response_audio
+                self.response_audio.to_dict()
+                if isinstance(self.response_audio, AudioResponse)
+                else self.response_audio
             )
 
         if isinstance(self.content, BaseModel):
@@ -158,7 +190,11 @@ class RunResponse:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
         messages = data.pop("messages", None)
-        messages = [Message.model_validate(message) for message in messages] if messages else None
+        messages = (
+            [Message.model_validate(message) for message in messages]
+            if messages
+            else None
+        )
 
         return cls(messages=messages, **data)
 

@@ -8,7 +8,9 @@ from agno.utils.log import log_debug, logger
 try:
     from openbb import obb as openbb_app
 except ImportError:
-    raise ImportError("`openbb` not installed. Please install using `pip install 'openbb'`.")
+    raise ImportError(
+        "`openbb` not installed. Please install using `pip install 'openbb'`."
+    )
 
 
 class OpenBBTools(Toolkit):
@@ -16,7 +18,9 @@ class OpenBBTools(Toolkit):
         self,
         obb: Optional[Any] = None,
         openbb_pat: Optional[str] = None,
-        provider: Literal["benzinga", "fmp", "intrinio", "polygon", "tiingo", "tmx", "yfinance"] = "yfinance",
+        provider: Literal[
+            "benzinga", "fmp", "intrinio", "polygon", "tiingo", "tmx", "yfinance"
+        ] = "yfinance",
         stock_price: bool = True,
         search_symbols: bool = False,
         company_news: bool = False,
@@ -33,7 +37,9 @@ class OpenBBTools(Toolkit):
         except Exception as e:
             logger.error(f"Error logging into OpenBB: {e}")
 
-        self.provider: Literal["benzinga", "fmp", "intrinio", "polygon", "tiingo", "tmx", "yfinance"] = provider
+        self.provider: Literal[
+            "benzinga", "fmp", "intrinio", "polygon", "tiingo", "tmx", "yfinance"
+        ] = provider
 
         if stock_price:
             self.register(self.get_stock_price)
@@ -96,7 +102,9 @@ class OpenBBTools(Toolkit):
         clean_results = []
         if len(result) > 0:
             for row in result.to_dicts():
-                clean_results.append({"symbol": row.get("symbol"), "name": row.get("name")})
+                clean_results.append(
+                    {"symbol": row.get("symbol"), "name": row.get("name")}
+                )
 
         return json.dumps(clean_results, indent=2, default=str)
 

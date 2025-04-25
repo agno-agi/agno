@@ -1,1 +1,2 @@
-from agno.storage.sqlite import SqliteStorage as SqliteAgentStorage  # noqa: F401
+from agno.storage.sqlite import \
+    SqliteStorage as SqliteAgentStorage  # noqa: F401

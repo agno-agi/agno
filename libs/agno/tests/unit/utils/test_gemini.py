@@ -49,7 +49,11 @@ def test_convert_schema_object_with_properties():
 
 def test_convert_schema_array():
     """Test converting an array schema"""
-    schema_dict = {"type": "array", "description": "An array of strings", "items": {"type": "string"}}
+    schema_dict = {
+        "type": "array",
+        "description": "An array of strings",
+        "items": {"type": "string"},
+    }
 
     result = convert_schema(schema_dict)
 
@@ -64,7 +68,10 @@ def test_convert_schema_nullable_property():
     """Test converting a schema with nullable property"""
     schema_dict = {
         "type": "object",
-        "properties": {"name": {"type": "string"}, "optional_field": {"type": ["string", "null"]}},
+        "properties": {
+            "name": {"type": "string"},
+            "optional_field": {"type": ["string", "null"]},
+        },
     }
 
     result = convert_schema(schema_dict)
@@ -75,7 +82,10 @@ def test_convert_schema_nullable_property():
 
 def test_convert_schema_anyof():
     """Test converting a schema with anyOf"""
-    schema_dict = {"anyOf": [{"type": "string"}, {"type": "integer"}], "description": "String or integer"}
+    schema_dict = {
+        "anyOf": [{"type": "string"}, {"type": "integer"}],
+        "description": "String or integer",
+    }
 
     result = convert_schema(schema_dict)
 
@@ -89,7 +99,10 @@ def test_convert_schema_anyof():
 
 def test_convert_schema_anyof_with_null():
     """Test converting a schema with anyOf including null (nullable)"""
-    schema_dict = {"anyOf": [{"type": "string"}, {"type": "null"}], "description": "Nullable string"}
+    schema_dict = {
+        "anyOf": [{"type": "string"}, {"type": "null"}],
+        "description": "Nullable string",
+    }
 
     result = convert_schema(schema_dict)
 
@@ -126,7 +139,12 @@ def test_format_function_definitions_single_function():
                 "description": "Get weather for a location",
                 "parameters": {
                     "type": "object",
-                    "properties": {"location": {"type": "string", "description": "The city and state"}},
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city and state",
+                        }
+                    },
                     "required": ["location"],
                 },
             },
@@ -211,7 +229,10 @@ def test_format_function_definitions_complex_parameters():
                     "type": "object",
                     "properties": {
                         "simple_param": {"type": "string"},
-                        "object_param": {"type": "object", "properties": {"nested_field": {"type": "integer"}}},
+                        "object_param": {
+                            "type": "object",
+                            "properties": {"nested_field": {"type": "integer"}},
+                        },
                         "array_param": {"type": "array", "items": {"type": "string"}},
                     },
                     "required": ["simple_param"],

@@ -7,7 +7,9 @@ from agno.utils.log import log_debug
 try:
     from duckduckgo_search import DDGS
 except ImportError:
-    raise ImportError("`duckduckgo-search` not installed. Please install using `pip install duckduckgo-search`")
+    raise ImportError(
+        "`duckduckgo-search` not installed. Please install using `pip install duckduckgo-search`"
+    )
 
 
 class DuckDuckGoTools(Toolkit):
@@ -69,10 +71,16 @@ class DuckDuckGoTools(Toolkit):
 
         log_debug(f"Searching DDG for: {search_query}")
         ddgs = DDGS(
-            headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl
+            headers=self.headers,
+            proxy=self.proxy,
+            proxies=self.proxies,
+            timeout=self.timeout,
+            verify=self.verify_ssl,
         )
 
-        return json.dumps(ddgs.text(keywords=search_query, max_results=actual_max_results), indent=2)
+        return json.dumps(
+            ddgs.text(keywords=search_query, max_results=actual_max_results), indent=2
+        )
 
     def duckduckgo_news(self, query: str, max_results: int = 5) -> str:
         """Use this function to get the latest news from DuckDuckGo.
@@ -88,7 +96,13 @@ class DuckDuckGoTools(Toolkit):
 
         log_debug(f"Searching DDG news for: {query}")
         ddgs = DDGS(
-            headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl
+            headers=self.headers,
+            proxy=self.proxy,
+            proxies=self.proxies,
+            timeout=self.timeout,
+            verify=self.verify_ssl,
         )
 
-        return json.dumps(ddgs.news(keywords=query, max_results=actual_max_results), indent=2)
+        return json.dumps(
+            ddgs.news(keywords=query, max_results=actual_max_results), indent=2
+        )

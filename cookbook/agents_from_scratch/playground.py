@@ -6,9 +6,10 @@ Install dependencies: `pip install openai duckduckgo-search lancedb tantivy elev
 from agent_with_knowledge import agent_with_knowledge
 from agent_with_storage import agent_with_storage
 from agent_with_tools import agent_with_tools
-from agno.playground import Playground, serve_playground_app
 from agno_assist import agno_assist
 from simple_agent import simple_agent
+
+from agno.playground import Playground, serve_playground_app
 
 # Create and configure the playground app
 app = Playground(

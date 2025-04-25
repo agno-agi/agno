@@ -12,7 +12,9 @@ try:
     import litellm
     from litellm import validate_environment
 except ImportError:
-    raise ImportError("`litellm` not installed. Please install it via `pip install litellm`")
+    raise ImportError(
+        "`litellm` not installed. Please install it via `pip install litellm`"
+    )
 
 
 @dataclass
@@ -46,7 +48,9 @@ class LiteLLM(Model):
             self.api_key = getenv("LITELLM_API_KEY")
             if not self.api_key:
                 # Check for other present valid keys, e.g. OPENAI_API_KEY if self.id is an OpenAI model
-                env_validation = validate_environment(model=self.id, api_base=self.api_base)
+                env_validation = validate_environment(
+                    model=self.id, api_base=self.api_base
+                )
                 if not env_validation.get("keys_in_environment"):
                     log_warning(
                         "Missing required key. Please set the LITELLM_API_KEY or other valid environment variables."
@@ -69,7 +73,10 @@ class LiteLLM(Model):
         """Format messages for LiteLLM API."""
         formatted_messages = []
         for m in messages:
-            msg = {"role": m.role, "content": m.content if m.content is not None else ""}
+            msg = {
+                "role": m.role,
+                "content": m.content if m.content is not None else "",
+            }
 
             # Handle tool calls in assistant messages
             if m.role == "assistant" and m.tool_calls:
@@ -77,7 +84,10 @@ class LiteLLM(Model):
                     {
                         "id": tc.get("id", f"call_{i}"),
                         "type": "function",
-                        "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]},
+                        "function": {
+                            "name": tc["function"]["name"],
+                            "arguments": tc["function"]["arguments"],
+                        },
                     }
                     for i, tc in enumerate(m.tool_calls)
                 ]
@@ -128,7 +138,9 @@ class LiteLLM(Model):
             base_params["tool_choice"] = "auto"
 
         # Add additional request params if provided
-        request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
+        request_params: Dict[str, Any] = {
+            k: v for k, v in base_params.items() if v is not None
+        }
         if self.request_params:
             request_params.update(self.request_params)
 
@@ -185,7 +197,10 @@ class LiteLLM(Model):
                     {
                         "id": tool_call.id,
                         "type": "function",
-                        "function": {"name": tool_call.function.name, "arguments": tool_call.function.arguments},
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments,
+                        },
                     }
                 )
 
@@ -221,9 +236,15 @@ class LiteLLM(Model):
                     # Extract function data
                     function_data = {}
                     if hasattr(tool_call, "function"):
-                        if hasattr(tool_call.function, "name") and tool_call.function.name is not None:
+                        if (
+                            hasattr(tool_call.function, "name")
+                            and tool_call.function.name is not None
+                        ):
                             function_data["name"] = tool_call.function.name
-                        if hasattr(tool_call.function, "arguments") and tool_call.function.arguments is not None:
+                        if (
+                            hasattr(tool_call.function, "arguments")
+                            and tool_call.function.arguments is not None
+                        ):
                             function_data["arguments"] = tool_call.function.arguments
 
                     tool_call_dict["function"] = function_data
@@ -259,7 +280,11 @@ class LiteLLM(Model):
 
             # Initialize if first time seeing this index
             if index not in tool_calls_by_index:
-                tool_calls_by_index[index] = {"id": None, "type": "function", "function": {"name": "", "arguments": ""}}
+                tool_calls_by_index[index] = {
+                    "id": None,
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                }
 
             # Update with new information
             if tc.get("id") is not None:
@@ -287,7 +312,9 @@ class LiteLLM(Model):
                     current_args = tool_calls_by_index[index]["function"].get("arguments", "")  # type: ignore
                     if isinstance(current_args, str) and isinstance(args, str):
                         # type: ignore
-                        tool_calls_by_index[index]["function"]["arguments"] = current_args + args
+                        tool_calls_by_index[index]["function"]["arguments"] = (
+                            current_args + args
+                        )
 
         # Process arguments - Ensure they're valid JSON for the Message.log() method
         result = []
@@ -312,7 +339,9 @@ class LiteLLM(Model):
                         parsed = json.loads(args)
                         # If it's not a dict, convert to a JSON string of a dict
                         if not isinstance(parsed, dict):
-                            tc_copy["function"]["arguments"] = json.dumps({"value": parsed})
+                            tc_copy["function"]["arguments"] = json.dumps(
+                                {"value": parsed}
+                            )
                         else:
                             tc_copy["function"]["arguments"] = args
                     except json.JSONDecodeError:

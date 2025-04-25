@@ -73,9 +73,13 @@ class MistralEmbedder(Embedder):
         try:
             response: EmbeddingResponse = self._response(text=text)
             embedding: List[float] = (
-                response.data[0].embedding if (response.data and response.data[0].embedding) else []
+                response.data[0].embedding
+                if (response.data and response.data[0].embedding)
+                else []
             )
-            usage: Dict[str, Any] = response.usage.model_dump() if response.usage else {}
+            usage: Dict[str, Any] = (
+                response.usage.model_dump() if response.usage else {}
+            )
             return embedding, usage
         except Exception as e:
             logger.warning(f"Error getting embedding and usage: {e}")

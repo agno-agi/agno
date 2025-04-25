@@ -15,15 +15,14 @@ from agno.utils.openai import images_to_message
 
 try:
     from azure.ai.inference import ChatCompletionsClient
-    from azure.ai.inference.aio import ChatCompletionsClient as AsyncChatCompletionsClient
-    from azure.ai.inference.models import (
-        ChatCompletions,
-        ChatCompletionsToolDefinition,
-        FunctionDefinition,
-        JsonSchemaFormat,
-        StreamingChatCompletionsUpdate,
-        StreamingChatResponseToolCallUpdate,
-    )
+    from azure.ai.inference.aio import \
+        ChatCompletionsClient as AsyncChatCompletionsClient
+    from azure.ai.inference.models import (ChatCompletions,
+                                           ChatCompletionsToolDefinition,
+                                           FunctionDefinition,
+                                           JsonSchemaFormat,
+                                           StreamingChatCompletionsUpdate,
+                                           StreamingChatResponseToolCallUpdate)
     from azure.core.credentials import AzureKeyCredential
     from azure.core.exceptions import HttpResponseError
 except ImportError:
@@ -141,7 +140,9 @@ class AzureAIFoundry(Model):
                 base_params["tool_choice"] = self.tool_choice
 
         if self.response_format is not None and self.structured_outputs:
-            if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+            if isinstance(self.response_format, type) and issubclass(
+                self.response_format, BaseModel
+            ):
                 base_params["response_format"] = (  # type: ignore
                     JsonSchemaFormat(
                         name=self.response_format.__name__,
@@ -151,7 +152,9 @@ class AzureAIFoundry(Model):
                     ),
                 )
             else:
-                raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
+                raise ValueError(
+                    "response_format must be a subclass of BaseModel if structured_outputs=True"
+                )
 
         request_params = {k: v for k, v in base_params.items() if v is not None}
         if self.request_params:
@@ -161,7 +164,9 @@ class AzureAIFoundry(Model):
     def _get_client_params(self) -> Dict[str, Any]:
         """Get the parameters for creating an Azure AI client."""
         self.api_key = self.api_key or getenv("AZURE_API_KEY")
-        self.api_version = self.api_version or getenv("AZURE_API_VERSION", "2024-05-01-preview")
+        self.api_version = self.api_version or getenv(
+            "AZURE_API_VERSION", "2024-05-01-preview"
+        )
         self.azure_endpoint = self.azure_endpoint or getenv("AZURE_ENDPOINT")
 
         if not self.api_key:
@@ -221,7 +226,8 @@ class AzureAIFoundry(Model):
         """
         try:
             return self.get_client().complete(
-                messages=[_format_message(m) for m in messages], **self._get_request_kwargs()
+                messages=[_format_message(m) for m in messages],
+                **self._get_request_kwargs(),
             )
         except HttpResponseError as e:
             log_error(f"Azure AI API error: {e}")
@@ -233,7 +239,9 @@ class AzureAIFoundry(Model):
             ) from e
         except Exception as e:
             log_error(f"Error from Azure AI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke(self, messages: List[Message]) -> Any:
         """
@@ -262,7 +270,9 @@ class AzureAIFoundry(Model):
             ) from e
         except Exception as e:
             log_error(f"Error from Azure AI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
         """
@@ -276,7 +286,9 @@ class AzureAIFoundry(Model):
         """
         try:
             yield from self.get_client().complete(
-                messages=[_format_message(m) for m in messages], stream=True, **self._get_request_kwargs()
+                messages=[_format_message(m) for m in messages],
+                stream=True,
+                **self._get_request_kwargs(),
             )
         except HttpResponseError as e:
             log_error(f"Azure AI API error: {e}")
@@ -288,7 +300,9 @@ class AzureAIFoundry(Model):
             ) from e
         except Exception as e:
             log_error(f"Error from Azure AI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """
@@ -320,7 +334,9 @@ class AzureAIFoundry(Model):
             ) from e
         except Exception as e:
             log_error(f"Error from Azure AI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     def parse_provider_response(self, response: ChatCompletions) -> ModelResponse:
         """
@@ -370,13 +386,17 @@ class AzureAIFoundry(Model):
 
         except Exception as e:
             log_error(f"Error parsing Azure AI response: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
         return model_response
 
     # Override base method
     @staticmethod
-    def parse_tool_calls(tool_calls_data: List[StreamingChatResponseToolCallUpdate]) -> List[Dict[str, Any]]:
+    def parse_tool_calls(
+        tool_calls_data: List[StreamingChatResponseToolCallUpdate],
+    ) -> List[Dict[str, Any]]:
         """
         Build tool calls from streamed tool call data.
 
@@ -396,18 +416,29 @@ class AzureAIFoundry(Model):
                 current_tool_call = {
                     "id": tool_call.id,
                     "type": "function",
-                    "function": {"name": tool_call.function.name, "arguments": tool_call.function.arguments or ""},
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments or "",
+                    },
                 }
-            elif current_tool_call and tool_call.function and tool_call.function.arguments:
+            elif (
+                current_tool_call
+                and tool_call.function
+                and tool_call.function.arguments
+            ):
                 # Append arguments to current tool call
-                current_tool_call["function"]["arguments"] += tool_call.function.arguments
+                current_tool_call["function"][
+                    "arguments"
+                ] += tool_call.function.arguments
 
         if current_tool_call:  # Append final tool call
             tool_calls.append(current_tool_call)
 
         return tool_calls
 
-    def parse_provider_response_delta(self, response_delta: StreamingChatCompletionsUpdate) -> ModelResponse:
+    def parse_provider_response_delta(
+        self, response_delta: StreamingChatCompletionsUpdate
+    ) -> ModelResponse:
         """
         Parse the Azure AI streaming response into ModelResponse objects.
 
@@ -440,6 +471,8 @@ class AzureAIFoundry(Model):
 
         except Exception as e:
             log_error(f"Error parsing Azure AI response delta: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
         return model_response

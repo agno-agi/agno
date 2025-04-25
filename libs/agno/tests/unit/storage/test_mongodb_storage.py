@@ -12,7 +12,9 @@ def mock_mongo_client():
     """Create a mock MongoDB client."""
     with patch("agno.storage.mongodb.MongoClient") as mock_client:
         mock_collection = MagicMock()
-        mock_client.return_value.__getitem__.return_value.__getitem__.return_value = mock_collection
+        mock_client.return_value.__getitem__.return_value.__getitem__.return_value = (
+            mock_collection
+        )
         yield mock_client, mock_collection
 
 
@@ -21,7 +23,9 @@ def agent_storage(mock_mongo_client):
     """Create a MongoDbStorage instance for agent mode with mocked components."""
     mock_client, mock_collection = mock_mongo_client
 
-    storage = MongoDbStorage(collection_name="agent_sessions", db_name="test_db", mode="agent")
+    storage = MongoDbStorage(
+        collection_name="agent_sessions", db_name="test_db", mode="agent"
+    )
 
     return storage, mock_collection
 
@@ -31,7 +35,9 @@ def workflow_storage(mock_mongo_client):
     """Create a MongoDbStorage instance for workflow mode with mocked components."""
     mock_client, mock_collection = mock_mongo_client
 
-    storage = MongoDbStorage(collection_name="workflow_sessions", db_name="test_db", mode="workflow")
+    storage = MongoDbStorage(
+        collection_name="workflow_sessions", db_name="test_db", mode="workflow"
+    )
 
     return storage, mock_collection
 
@@ -41,10 +47,14 @@ def test_initialization():
     # Test with db_url
     with patch("agno.storage.mongodb.MongoClient") as mock_client:
         mock_collection = MagicMock()
-        mock_client.return_value.__getitem__.return_value.__getitem__.return_value = mock_collection
+        mock_client.return_value.__getitem__.return_value.__getitem__.return_value = (
+            mock_collection
+        )
 
         storage = MongoDbStorage(
-            collection_name="test_collection", db_url="mongodb://localhost:27017", db_name="test_db"
+            collection_name="test_collection",
+            db_url="mongodb://localhost:27017",
+            db_name="test_db",
         )
 
         mock_client.assert_called_once_with("mongodb://localhost:27017")
@@ -56,9 +66,15 @@ def test_initialization():
     with patch("agno.storage.mongodb.MongoClient") as mock_client:
         mock_existing_client = MagicMock()
         mock_collection = MagicMock()
-        mock_existing_client.__getitem__.return_value.__getitem__.return_value = mock_collection
+        mock_existing_client.__getitem__.return_value.__getitem__.return_value = (
+            mock_collection
+        )
 
-        storage = MongoDbStorage(collection_name="test_collection", db_name="test_db", client=mock_existing_client)
+        storage = MongoDbStorage(
+            collection_name="test_collection",
+            db_name="test_db",
+            client=mock_existing_client,
+        )
 
         mock_client.assert_not_called()  # Should not create a new client
         assert storage.collection_name == "test_collection"
@@ -67,7 +83,9 @@ def test_initialization():
     # Test with no parameters
     with patch("agno.storage.mongodb.MongoClient") as mock_client:
         mock_collection = MagicMock()
-        mock_client.return_value.__getitem__.return_value.__getitem__.return_value = mock_collection
+        mock_client.return_value.__getitem__.return_value.__getitem__.return_value = (
+            mock_collection
+        )
 
         storage = MongoDbStorage(collection_name="test_collection")
 
@@ -252,12 +270,17 @@ def test_get_all_session_ids(agent_storage):
 
     # Test with user_id filter
     mock_collection.find.reset_mock()
-    mock_cursor.sort.return_value = [{"session_id": "session-1"}, {"session_id": "session-2"}]
+    mock_cursor.sort.return_value = [
+        {"session_id": "session-1"},
+        {"session_id": "session-2"},
+    ]
     mock_collection.find.return_value = mock_cursor
 
     result = storage.get_all_session_ids(user_id="test-user")
     assert result == ["session-1", "session-2"]
-    mock_collection.find.assert_called_once_with({"user_id": "test-user"}, {"session_id": 1})
+    mock_collection.find.assert_called_once_with(
+        {"user_id": "test-user"}, {"session_id": 1}
+    )
 
     # Test with entity_id filter (agent_id in agent mode)
     mock_collection.find.reset_mock()
@@ -266,7 +289,9 @@ def test_get_all_session_ids(agent_storage):
 
     result = storage.get_all_session_ids(entity_id="test-agent")
     assert result == ["session-3"]
-    mock_collection.find.assert_called_once_with({"agent_id": "test-agent"}, {"session_id": 1})
+    mock_collection.find.assert_called_once_with(
+        {"agent_id": "test-agent"}, {"session_id": 1}
+    )
 
 
 def test_drop_collection(agent_storage):
@@ -287,7 +312,9 @@ def test_mode_switching():
     """Test switching between agent and workflow modes."""
     with patch("agno.storage.mongodb.MongoClient") as mock_client:
         mock_collection = MagicMock()
-        mock_client.return_value.__getitem__.return_value.__getitem__.return_value = mock_collection
+        mock_client.return_value.__getitem__.return_value.__getitem__.return_value = (
+            mock_collection
+        )
 
         # Create storage in agent mode
         storage = MongoDbStorage(collection_name="test_collection")

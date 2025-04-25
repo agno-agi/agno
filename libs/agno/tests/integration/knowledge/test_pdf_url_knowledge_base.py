@@ -24,7 +24,9 @@ def test_pdf_url_knowledge_base():
 
     assert vector_db.exists()
 
-    assert vector_db.get_count() == 13  # 3 from the first pdf and 10 from the second pdf
+    assert (
+        vector_db.get_count() == 13
+    )  # 3 from the first pdf and 10 from the second pdf
 
     # Create and use the agent
     agent = Agent(knowledge=knowledge_base)
@@ -61,11 +63,15 @@ async def test_pdf_url_knowledge_base_async():
     await knowledge_base.aload(recreate=True)
 
     assert await vector_db.async_exists()
-    assert await vector_db.async_get_count() == 13  # 3 from first pdf and 10 from second pdf
+    assert (
+        await vector_db.async_get_count() == 13
+    )  # 3 from first pdf and 10 from second pdf
 
     # Create and use the agent
     agent = Agent(knowledge=knowledge_base)
-    response = await agent.arun("What ingredients do I need for Tom Kha Gai?", markdown=True)
+    response = await agent.arun(
+        "What ingredients do I need for Tom Kha Gai?", markdown=True
+    )
 
     tool_calls = []
     for msg in response.messages:
@@ -75,7 +81,10 @@ async def test_pdf_url_knowledge_base_async():
         if call.get("type", "") == "function":
             assert call["function"]["name"] == "async_search_knowledge_base"
 
-    assert any(ingredient in response.content.lower() for ingredient in ["coconut", "chicken", "galangal"])
+    assert any(
+        ingredient in response.content.lower()
+        for ingredient in ["coconut", "chicken", "galangal"]
+    )
 
     # Clean up
     await vector_db.async_drop()

@@ -80,11 +80,19 @@ class InfraBase(BaseModel):
 
     @property
     def workspace_root(self) -> Optional[Path]:
-        return self.workspace_settings.ws_root if self.workspace_settings is not None else None
+        return (
+            self.workspace_settings.ws_root
+            if self.workspace_settings is not None
+            else None
+        )
 
     @property
     def workspace_name(self) -> Optional[str]:
-        return self.workspace_settings.ws_name if self.workspace_settings is not None else None
+        return (
+            self.workspace_settings.ws_name
+            if self.workspace_settings is not None
+            else None
+        )
 
     @property
     def workspace_dir(self) -> Optional[Path]:
@@ -100,7 +108,9 @@ class InfraBase(BaseModel):
                 return workspace_dir
         return None
 
-    def set_workspace_settings(self, workspace_settings: Optional[WorkspaceSettings] = None) -> None:
+    def set_workspace_settings(
+        self, workspace_settings: Optional[WorkspaceSettings] = None
+    ) -> None:
         if workspace_settings is not None:
             self.workspace_settings = workspace_settings
 
@@ -128,17 +138,20 @@ class InfraBase(BaseModel):
         """This method returns an InfraResources object for this resource"""
         raise NotImplementedError("get_infra_resources method not implemented")
 
-    def set_aws_env_vars(self, env_dict: Dict[str, str], aws_region: Optional[str] = None) -> None:
-        from agno.constants import (
-            AWS_DEFAULT_REGION_ENV_VAR,
-            AWS_REGION_ENV_VAR,
-        )
+    def set_aws_env_vars(
+        self, env_dict: Dict[str, str], aws_region: Optional[str] = None
+    ) -> None:
+        from agno.constants import (AWS_DEFAULT_REGION_ENV_VAR,
+                                    AWS_REGION_ENV_VAR)
 
         if aws_region is not None:
             # logger.debug(f"Setting AWS Region to {aws_region}")
             env_dict[AWS_REGION_ENV_VAR] = aws_region
             env_dict[AWS_DEFAULT_REGION_ENV_VAR] = aws_region
-        elif self.workspace_settings is not None and self.workspace_settings.aws_region is not None:
+        elif (
+            self.workspace_settings is not None
+            and self.workspace_settings.aws_region is not None
+        ):
             # logger.debug(f"Setting AWS Region to {aws_region} using workspace_settings")
             env_dict[AWS_REGION_ENV_VAR] = self.workspace_settings.aws_region
             env_dict[AWS_DEFAULT_REGION_ENV_VAR] = self.workspace_settings.aws_region

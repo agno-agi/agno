@@ -9,7 +9,9 @@ try:
     from twilio.base.exceptions import TwilioRestException
     from twilio.rest import Client
 except ImportError:
-    raise ImportError("`twilio` not installed. Please install it using `pip install twilio`.")
+    raise ImportError(
+        "`twilio` not installed. Please install it using `pip install twilio`."
+    )
 
 
 class TwilioTools(Toolkit):
@@ -53,7 +55,9 @@ class TwilioTools(Toolkit):
 
         # Validate required credentials
         if not self.account_sid:
-            logger.error("TWILIO_ACCOUNT_SID not set. Please set the TWILIO_ACCOUNT_SID environment variable.")
+            logger.error(
+                "TWILIO_ACCOUNT_SID not set. Please set the TWILIO_ACCOUNT_SID environment variable."
+            )
 
         # Initialize client based on provided authentication method
         if self.api_key and self.api_secret:
@@ -110,7 +114,9 @@ class TwilioTools(Toolkit):
             if not self.validate_phone_number(to):
                 return "Error: 'to' number must be in E.164 format (e.g., +1234567890)"
             if not self.validate_phone_number(from_):
-                return "Error: 'from_' number must be in E.164 format (e.g., +1234567890)"
+                return (
+                    "Error: 'from_' number must be in E.164 format (e.g., +1234567890)"
+                )
             if not body or len(body.strip()) == 0:
                 return "Error: Message body cannot be empty"
 

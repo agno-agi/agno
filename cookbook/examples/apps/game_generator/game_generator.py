@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Iterator
 
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent, RunResponse
 from agno.models.openai import OpenAIChat
 from agno.run.response import RunEvent
@@ -16,7 +18,6 @@ from agno.utils.pprint import pprint_run_response
 from agno.utils.string import hash_string_sha256
 from agno.utils.web import open_html_file
 from agno.workflow import Workflow
-from pydantic import BaseModel, Field
 
 games_dir = Path(__file__).parent.joinpath("games")
 games_dir.mkdir(parents=True, exist_ok=True)

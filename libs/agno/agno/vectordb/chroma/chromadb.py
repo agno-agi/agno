@@ -10,7 +10,9 @@ try:
     from chromadb.api.types import GetResult, QueryResult
 
 except ImportError:
-    raise ImportError("The `chromadb` package is not installed. Please install it via `pip install chromadb`.")
+    raise ImportError(
+        "The `chromadb` package is not installed. Please install it via `pip install chromadb`."
+    )
 
 from agno.document import Document
 from agno.embedder import Embedder
@@ -103,7 +105,9 @@ class ChromaDb(VectorDb):
             return False
 
         try:
-            collection: Collection = self.client.get_collection(name=self.collection_name)
+            collection: Collection = self.client.get_collection(
+                name=self.collection_name
+            )
             collection_data: GetResult = collection.get(include=["documents"])  # type: ignore
             existing_documents = collection_data.get("documents", [])
             cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -125,7 +129,9 @@ class ChromaDb(VectorDb):
             bool: True if document exists, False otherwise."""
         if self.client:
             try:
-                collections: Collection = self.client.get_collection(name=self.collection_name)
+                collections: Collection = self.client.get_collection(
+                    name=self.collection_name
+                )
                 for collection in collections:  # type: ignore
                     if name in collection:
                         return True
@@ -137,7 +143,9 @@ class ChromaDb(VectorDb):
         """Check if a document with given name exists asynchronously."""
         return await asyncio.to_thread(self.name_exists, name)
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents into the collection.
 
         Args:
@@ -161,16 +169,25 @@ class ChromaDb(VectorDb):
             docs.append(cleaned_content)
             ids.append(doc_id)
             docs_metadata.append(document.meta_data)
-            log_debug(f"Inserted document: {document.id} | {document.name} | {document.meta_data}")
+            log_debug(
+                f"Inserted document: {document.id} | {document.name} | {document.meta_data}"
+            )
 
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                self._collection.add(
+                    ids=ids,
+                    embeddings=docs_embeddings,
+                    documents=docs,
+                    metadatas=docs_metadata,
+                )
                 log_debug(f"Committed {len(docs)} documents")
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents asynchronously by running in a thread."""
         await asyncio.to_thread(self.insert, documents, filters)
 
@@ -178,7 +195,9 @@ class ChromaDb(VectorDb):
         """Check if upsert is available in ChromaDB."""
         return True
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Upsert documents into the collection.
 
         Args:
@@ -202,20 +221,31 @@ class ChromaDb(VectorDb):
             docs.append(cleaned_content)
             ids.append(doc_id)
             docs_metadata.append(document.meta_data)
-            log_debug(f"Upserted document: {document.id} | {document.name} | {document.meta_data}")
+            log_debug(
+                f"Upserted document: {document.id} | {document.name} | {document.meta_data}"
+            )
 
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
             if len(docs) > 0:
-                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                self._collection.upsert(
+                    ids=ids,
+                    embeddings=docs_embeddings,
+                    documents=docs,
+                    metadatas=docs_metadata,
+                )
                 log_debug(f"Committed {len(docs)} documents")
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Upsert documents asynchronously by running in a thread."""
         await asyncio.to_thread(self.upsert, documents, filters)
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """Search the collection for a query.
 
         Args:
@@ -254,7 +284,9 @@ class ChromaDb(VectorDb):
 
         try:
             # Use zip to iterate over multiple lists simultaneously
-            for idx, (id_, metadata, document) in enumerate(zip(ids, metadata, documents)):
+            for idx, (id_, metadata, document) in enumerate(
+                zip(ids, metadata, documents)
+            ):
                 search_results.append(
                     Document(
                         id=id_,
@@ -304,7 +336,9 @@ class ChromaDb(VectorDb):
         """Get the count of documents in the collection."""
         if self.exists():
             try:
-                collection: Collection = self.client.get_collection(name=self.collection_name)
+                collection: Collection = self.client.get_collection(
+                    name=self.collection_name
+                )
                 return collection.count()
             except Exception as e:
                 logger.error(f"Error getting count: {e}")

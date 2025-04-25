@@ -9,13 +9,16 @@ try:
 
     import weaviate
     from weaviate import WeaviateAsyncClient
-    from weaviate.classes.config import Configure, DataType, Property, Tokenization, VectorDistances
+    from weaviate.classes.config import (Configure, DataType, Property,
+                                         Tokenization, VectorDistances)
     from weaviate.classes.init import Auth
     from weaviate.classes.query import Filter
 
     filterwarnings("ignore", category=ResourceWarning)
 except ImportError:
-    raise ImportError("Weaviate is not installed. Install using 'pip install weaviate-client'.")
+    raise ImportError(
+        "Weaviate is not installed. Install using 'pip install weaviate-client'."
+    )
 
 from agno.document import Document
 from agno.embedder import Embedder
@@ -89,7 +92,8 @@ class Weaviate(VectorDb):
         if self.wcd_url and self.wcd_api_key and not self.local:
             log_info("Initializing Weaviate Cloud client")
             self.client = weaviate.connect_to_weaviate_cloud(
-                cluster_url=self.wcd_url, auth_credentials=Auth.api_key(self.wcd_api_key)
+                cluster_url=self.wcd_url,
+                auth_credentials=Auth.api_key(self.wcd_api_key),
             )
         else:
             log_info("Initializing local Weaviate client")
@@ -128,11 +132,17 @@ class Weaviate(VectorDb):
                 name=self.collection,
                 properties=[
                     Property(name="name", data_type=DataType.TEXT),
-                    Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
+                    Property(
+                        name="content",
+                        data_type=DataType.TEXT,
+                        tokenization=Tokenization.LOWERCASE,
+                    ),
                     Property(name="meta_data", data_type=DataType.TEXT),
                 ],
                 vectorizer_config=Configure.Vectorizer.none(),
-                vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
+                vector_index_config=self.get_vector_index_config(
+                    self.vector_index, self.distance
+                ),
             )
             log_debug(f"Collection '{self.collection}' created in Weaviate.")
 
@@ -143,13 +153,21 @@ class Weaviate(VectorDb):
                 name=self.collection,
                 properties=[
                     Property(name="name", data_type=DataType.TEXT),
-                    Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
+                    Property(
+                        name="content",
+                        data_type=DataType.TEXT,
+                        tokenization=Tokenization.LOWERCASE,
+                    ),
                     Property(name="meta_data", data_type=DataType.TEXT),
                 ],
                 vectorizer_config=Configure.Vectorizer.none(),
-                vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
+                vector_index_config=self.get_vector_index_config(
+                    self.vector_index, self.distance
+                ),
             )
-            log_debug(f"Collection '{self.collection}' created in Weaviate asynchronously.")
+            log_debug(
+                f"Collection '{self.collection}' created in Weaviate asynchronously."
+            )
         finally:
             await client.close()
 
@@ -237,7 +255,9 @@ class Weaviate(VectorDb):
         finally:
             await client.close()
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Insert documents into Weaviate.
 
@@ -259,7 +279,9 @@ class Weaviate(VectorDb):
             doc_uuid = uuid.UUID(hex=content_hash[:32])
 
             # Serialize meta_data to JSON string
-            meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
+            meta_data_str = (
+                json.dumps(document.meta_data) if document.meta_data else None
+            )
 
             collection.data.insert(
                 properties={
@@ -272,7 +294,9 @@ class Weaviate(VectorDb):
             )
             log_debug(f"Inserted document: {document.name} ({document.meta_data})")
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Insert documents into Weaviate asynchronously.
 
@@ -303,7 +327,9 @@ class Weaviate(VectorDb):
                     doc_uuid = uuid.UUID(hex=content_hash[:32])
 
                     # Serialize meta_data to JSON string
-                    meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
+                    meta_data_str = (
+                        json.dumps(document.meta_data) if document.meta_data else None
+                    )
 
                     # Insert properties and vector separately
                     properties = {
@@ -313,7 +339,9 @@ class Weaviate(VectorDb):
                     }
 
                     # Use the API correctly - properties, vector and uuid are separate parameters
-                    await collection.data.insert(properties=properties, vector=document.embedding, uuid=doc_uuid)
+                    await collection.data.insert(
+                        properties=properties, vector=document.embedding, uuid=doc_uuid
+                    )
 
                     log_debug(f"Inserted document asynchronously: {document.name}")
 
@@ -322,7 +350,9 @@ class Weaviate(VectorDb):
         finally:
             await client.close()
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Upsert documents into Weaviate.
 
@@ -333,7 +363,9 @@ class Weaviate(VectorDb):
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
         self.insert(documents)
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Upsert documents into Weaviate asynchronously.
         When documents with the same ID already exist, they will be replaced.
@@ -363,7 +395,9 @@ class Weaviate(VectorDb):
                 doc_uuid = uuid.UUID(hex=content_hash[:32])
 
                 # Serialize meta_data to JSON string
-                meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
+                meta_data_str = (
+                    json.dumps(document.meta_data) if document.meta_data else None
+                )
 
                 properties = {
                     "name": document.name,
@@ -371,13 +405,17 @@ class Weaviate(VectorDb):
                     "meta_data": meta_data_str,
                 }
 
-                await collection.data.replace(uuid=doc_uuid, properties=properties, vector=document.embedding)
+                await collection.data.replace(
+                    uuid=doc_uuid, properties=properties, vector=document.embedding
+                )
 
                 log_debug(f"Upserted document asynchronously: {document.name}")
         finally:
             await client.close()
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
         Perform a search based on the configured search type.
 
@@ -485,7 +523,9 @@ class Weaviate(VectorDb):
             search_results = self.get_search_results(response)
 
             if self.reranker:
-                search_results = self.reranker.rerank(query=query, documents=search_results)
+                search_results = self.reranker.rerank(
+                    query=query, documents=search_results
+                )
 
         finally:
             await client.close()
@@ -546,7 +586,9 @@ class Weaviate(VectorDb):
             search_results = self.get_search_results(response)
 
             if self.reranker:
-                search_results = self.reranker.rerank(query=query, documents=search_results)
+                search_results = self.reranker.rerank(
+                    query=query, documents=search_results
+                )
         finally:
             await client.close()
 
@@ -620,7 +662,9 @@ class Weaviate(VectorDb):
             search_results = self.get_search_results(response)
 
             if self.reranker:
-                search_results = self.reranker.rerank(query=query, documents=search_results)
+                search_results = self.reranker.rerank(
+                    query=query, documents=search_results
+                )
         finally:
             await client.close()
 
@@ -647,7 +691,9 @@ class Weaviate(VectorDb):
     async def async_drop(self) -> None:
         """Delete the Weaviate collection asynchronously."""
         if await self.async_exists():
-            log_debug(f"Deleting collection '{self.collection}' from Weaviate asynchronously.")
+            log_debug(
+                f"Deleting collection '{self.collection}' from Weaviate asynchronously."
+            )
             client = await self.get_async_client()
             try:
                 await client.collections.delete(self.collection)
@@ -663,7 +709,9 @@ class Weaviate(VectorDb):
         self.drop()
         return True
 
-    def get_vector_index_config(self, index_type: VectorIndex, distance_metric: Distance):
+    def get_vector_index_config(
+        self, index_type: VectorIndex, distance_metric: Distance
+    ):
         """
         Returns the appropriate vector index configuration with the specified distance metric.
 
@@ -681,7 +729,9 @@ class Weaviate(VectorDb):
         configs = {
             VectorIndex.HNSW: Configure.VectorIndex.hnsw(distance_metric=distance),
             VectorIndex.FLAT: Configure.VectorIndex.flat(distance_metric=distance),
-            VectorIndex.DYNAMIC: Configure.VectorIndex.dynamic(distance_metric=distance),
+            VectorIndex.DYNAMIC: Configure.VectorIndex.dynamic(
+                distance_metric=distance
+            ),
         }
 
         return configs[index_type]
@@ -699,8 +749,14 @@ class Weaviate(VectorDb):
         search_results: List[Document] = []
         for obj in response.objects:
             properties = obj.properties
-            meta_data = json.loads(properties["meta_data"]) if properties.get("meta_data") else None
-            embedding = obj.vector["default"] if isinstance(obj.vector, dict) else obj.vector
+            meta_data = (
+                json.loads(properties["meta_data"])
+                if properties.get("meta_data")
+                else None
+            )
+            embedding = (
+                obj.vector["default"] if isinstance(obj.vector, dict) else obj.vector
+            )
 
             search_results.append(
                 Document(

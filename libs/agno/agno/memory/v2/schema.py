@@ -18,7 +18,9 @@ class UserMemory:
             "memory_id": self.memory_id,
             "memory": self.memory,
             "topics": self.topics,
-            "last_updated": self.last_updated.isoformat() if self.last_updated else None,
+            "last_updated": (
+                self.last_updated.isoformat() if self.last_updated else None
+            ),
             "input": self.input,
         }
         return {k: v for k, v in _dict.items() if v is not None}
@@ -43,7 +45,9 @@ class SessionSummary:
         _dict = {
             "summary": self.summary,
             "topics": self.topics,
-            "last_updated": self.last_updated.isoformat() if self.last_updated else None,
+            "last_updated": (
+                self.last_updated.isoformat() if self.last_updated else None
+            ),
         }
         return {k: v for k, v in _dict.items() if v is not None}
 

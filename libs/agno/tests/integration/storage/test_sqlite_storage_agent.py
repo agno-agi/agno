@@ -72,7 +72,9 @@ def test_multiple_interactions(agent_with_storage, agent_storage):
     # Verify both interactions are in the same session
     stored_session = agent_storage.read(session_id)
     assert stored_session is not None
-    assert len(stored_session.memory["messages"]) >= 4  # Should have at least 4 messages (2 questions + 2 responses)
+    assert (
+        len(stored_session.memory["messages"]) >= 4
+    )  # Should have at least 4 messages (2 questions + 2 responses)
 
 
 def test_session_retrieval_by_user(agent_with_storage, agent_storage):
@@ -110,9 +112,24 @@ def test_session_deletion(agent_with_storage, agent_storage):
 def test_get_all_session_ids(agent_storage):
     """Test retrieving all session IDs."""
     # Create multiple sessions with different user IDs and agent IDs
-    agent_1 = Agent(storage=agent_storage, user_id="user1", agent_id="agent1", add_history_to_messages=True)
-    agent_2 = Agent(storage=agent_storage, user_id="user1", agent_id="agent2", add_history_to_messages=True)
-    agent_3 = Agent(storage=agent_storage, user_id="user2", agent_id="agent3", add_history_to_messages=True)
+    agent_1 = Agent(
+        storage=agent_storage,
+        user_id="user1",
+        agent_id="agent1",
+        add_history_to_messages=True,
+    )
+    agent_2 = Agent(
+        storage=agent_storage,
+        user_id="user1",
+        agent_id="agent2",
+        add_history_to_messages=True,
+    )
+    agent_3 = Agent(
+        storage=agent_storage,
+        user_id="user2",
+        agent_id="agent3",
+        add_history_to_messages=True,
+    )
 
     agent_1.run("Question 1")
     agent_2.run("Question 2")
@@ -131,7 +148,9 @@ def test_get_all_session_ids(agent_storage):
     assert len(agent1_sessions) == 1
 
     # Filter by both
-    filtered_sessions = agent_storage.get_all_session_ids(user_id="user1", entity_id="agent2")
+    filtered_sessions = agent_storage.get_all_session_ids(
+        user_id="user1", entity_id="agent2"
+    )
     assert len(filtered_sessions) == 1
 
 

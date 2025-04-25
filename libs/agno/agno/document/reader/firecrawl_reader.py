@@ -9,7 +9,9 @@ from agno.utils.log import log_debug, logger
 try:
     from firecrawl import FirecrawlApp
 except ImportError:
-    raise ImportError("The `firecrawl` package is not installed. Please install it via `pip install firecrawl-py`.")
+    raise ImportError(
+        "The `firecrawl` package is not installed. Please install it via `pip install firecrawl-py`."
+    )
 
 
 @dataclass
@@ -47,7 +49,9 @@ class FirecrawlReader(Reader):
 
         documents = []
         if self.chunk and content:  # Only chunk if there's content
-            documents.extend(self.chunk_document(Document(name=url, id=url, content=content)))
+            documents.extend(
+                self.chunk_document(Document(name=url, id=url, content=content))
+            )
         else:
             documents.append(Document(name=url, id=url, content=content))
         return documents
@@ -91,7 +95,9 @@ class FirecrawlReader(Reader):
 
             if content:  # Only create document if content exists
                 if self.chunk:
-                    documents.extend(self.chunk_document(Document(name=url, id=url, content=content)))
+                    documents.extend(
+                        self.chunk_document(Document(name=url, id=url, content=content))
+                    )
                 else:
                     documents.append(Document(name=url, id=url, content=content))
 

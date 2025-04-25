@@ -20,7 +20,9 @@ try:
     from sqlalchemy.sql.expression import select
     from sqlalchemy.types import String
 except ImportError:
-    raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
+    raise ImportError(
+        "`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`"
+    )
 
 
 class SqliteStorage(Storage):
@@ -170,7 +172,9 @@ class SqliteStorage(Storage):
             # For SQLite, we need to check the sqlite_master table
             with self.SqlSession() as sess:
                 result = sess.execute(
-                    text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"),
+                    text(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"
+                    ),
                     {"table_name": self.table_name},
                 ).scalar()
                 return result is not None
@@ -202,13 +206,22 @@ class SqliteStorage(Storage):
 
                         # Check if index already exists using SQLite's schema table
                         with self.SqlSession() as sess:
-                            exists_query = text("SELECT 1 FROM sqlite_master WHERE type='index' AND name=:index_name")
-                            exists = sess.execute(exists_query, {"index_name": idx_name}).scalar() is not None
+                            exists_query = text(
+                                "SELECT 1 FROM sqlite_master WHERE type='index' AND name=:index_name"
+                            )
+                            exists = (
+                                sess.execute(
+                                    exists_query, {"index_name": idx_name}
+                                ).scalar()
+                                is not None
+                            )
 
                         if not exists:
                             idx.create(self.db_engine)
                         else:
-                            log_debug(f"Index {idx_name} already exists, skipping creation")
+                            log_debug(
+                                f"Index {idx_name} already exists, skipping creation"
+                            )
 
                     except Exception as e:
                         # Log the error but continue with other indexes
@@ -249,7 +262,9 @@ class SqliteStorage(Storage):
                 log_debug(f"Exception reading from table: {e}")
         return None
 
-    def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
+    def get_all_session_ids(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[str]:
         """
         Get all session IDs, optionally filtered by user_id and/or entity_id.
 
@@ -286,7 +301,9 @@ class SqliteStorage(Storage):
                 log_debug(f"Exception reading from table: {e}")
         return []
 
-    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
+    def get_all_sessions(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[Session]:
         """
         Get all sessions, optionally filtered by user_id and/or entity_id.
 
@@ -349,8 +366,12 @@ class SqliteStorage(Storage):
                     column_exists = any(col[1] == "team_session_id" for col in columns)
 
                     if not column_exists:
-                        log_info(f"Adding 'team_session_id' column to {self.table_name}")
-                        alter_table_query = text(f"ALTER TABLE {self.table_name} ADD COLUMN team_session_id TEXT")
+                        log_info(
+                            f"Adding 'team_session_id' column to {self.table_name}"
+                        )
+                        alter_table_query = text(
+                            f"ALTER TABLE {self.table_name} ADD COLUMN team_session_id TEXT"
+                        )
                         sess.execute(alter_table_query)
                         sess.commit()
                         self._schema_up_to_date = True
@@ -359,7 +380,9 @@ class SqliteStorage(Storage):
             logger.error(f"Error during schema upgrade: {e}")
             raise
 
-    def upsert(self, session: Session, create_and_retry: bool = True) -> Optional[Session]:
+    def upsert(
+        self, session: Session, create_and_retry: bool = True
+    ) -> Optional[Session]:
         """
         Insert or update a Session in the database.
 
@@ -491,12 +514,16 @@ class SqliteStorage(Storage):
         try:
             with self.SqlSession() as sess, sess.begin():
                 # Delete the session with the given session_id
-                delete_stmt = self.table.delete().where(self.table.c.session_id == session_id)
+                delete_stmt = self.table.delete().where(
+                    self.table.c.session_id == session_id
+                )
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
                     log_debug(f"No session found with session_id: {session_id}")
                 else:
-                    log_debug(f"Successfully deleted session with session_id: {session_id}")
+                    log_debug(
+                        f"Successfully deleted session with session_id: {session_id}"
+                    )
         except Exception as e:
             logger.error(f"Error deleting session: {e}")
 

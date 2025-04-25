@@ -17,11 +17,12 @@ View the README for instructions on how to run the application.
 from textwrap import dedent
 from typing import List
 
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent
 from agno.models.anthropic.claude import Claude
 from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
-from pydantic import BaseModel, Field
 
 
 class World(BaseModel):

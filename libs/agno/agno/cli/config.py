@@ -47,7 +47,9 @@ class AgnoCliConfig:
             clear_user_cache = (
                 self._user is not None  # previous user is not None
                 and self._user.email != "anon"  # previous user is not anon
-                and (user.email != self._user.email or user.id_user != self._user.id_user)  # new user is different
+                and (
+                    user.email != self._user.email or user.id_user != self._user.id_user
+                )  # new user is different
             )
             self._user = user
             if clear_user_cache:
@@ -119,9 +121,13 @@ class AgnoCliConfig:
         ######################################################
         logger.debug(f"Updating workspace at: {ws_root_str}")
         # By this point there should be a WorkspaceConfig object for this ws_name
-        existing_ws_config: Optional[WorkspaceConfig] = self.ws_config_map.get(ws_root_str, None)
+        existing_ws_config: Optional[WorkspaceConfig] = self.ws_config_map.get(
+            ws_root_str, None
+        )
         if existing_ws_config is None:
-            logger.error(f"Could not find workspace at: {ws_root_str}, please run `ag ws setup`")
+            logger.error(
+                f"Could not find workspace at: {ws_root_str}, please run `ag ws setup`"
+            )
             return None
 
         # Update the ws_schema if it's not None and different from the existing one
@@ -147,7 +153,9 @@ class AgnoCliConfig:
     ) -> Optional[WorkspaceConfig]:
         """Adds a newly created workspace to the AgnoCliConfig"""
 
-        ws_config = self._add_or_update_ws_config(ws_root_path=ws_root_path, ws_team=ws_team)
+        ws_config = self._add_or_update_ws_config(
+            ws_root_path=ws_root_path, ws_team=ws_team
+        )
         self.save_config()
         return ws_config
 
@@ -187,7 +195,9 @@ class AgnoCliConfig:
             self._active_ws_dir = None
         self.save_config()
         print_info("Workspace record deleted")
-        print_info("Note: this does not delete any data locally or from agno.com, please delete them manually\n")
+        print_info(
+            "Note: this does not delete any data locally or from agno.com, please delete them manually\n"
+        )
 
     def get_ws_config_by_dir_name(self, ws_dir_name: str) -> Optional[WorkspaceConfig]:
         ws_root_str: Optional[str] = None
@@ -202,7 +212,11 @@ class AgnoCliConfig:
         return self.ws_config_map[ws_root_str]
 
     def get_ws_config_by_path(self, ws_root_path: Path) -> Optional[WorkspaceConfig]:
-        return self.ws_config_map[str(ws_root_path)] if str(ws_root_path) in self.ws_config_map else None
+        return (
+            self.ws_config_map[str(ws_root_path)]
+            if str(ws_root_path) in self.ws_config_map
+            else None
+        )
 
     def get_active_ws_config(self) -> Optional[WorkspaceConfig]:
         if self.active_ws_dir is not None and self.active_ws_dir in self.ws_config_map:

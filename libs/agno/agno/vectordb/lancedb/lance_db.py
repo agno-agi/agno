@@ -6,7 +6,9 @@ try:
     import lancedb
     import pyarrow as pa
 except ImportError:
-    raise ImportError("`lancedb` not installed. Please install using `pip install lancedb`")
+    raise ImportError(
+        "`lancedb` not installed. Please install using `pip install lancedb`"
+    )
 
 from agno.document import Document
 from agno.embedder import Embedder
@@ -76,7 +78,9 @@ class LanceDb(VectorDb):
 
         # LanceDB connection details
         self.uri: lancedb.URI = uri
-        self.connection: lancedb.LanceDBConnection = connection or lancedb.connect(uri=self.uri, api_key=api_key)
+        self.connection: lancedb.LanceDBConnection = connection or lancedb.connect(
+            uri=self.uri, api_key=api_key
+        )
         self.table: Optional[lancedb.db.LanceTable] = table
 
         self.async_connection: Optional[lancedb.AsyncConnection] = async_connection
@@ -117,7 +121,9 @@ class LanceDb(VectorDb):
         self.fts_index_exists = False
         self.use_tantivy = use_tantivy
 
-        if self.use_tantivy and (self.search_type in [SearchType.keyword, SearchType.hybrid]):
+        if self.use_tantivy and (
+            self.search_type in [SearchType.keyword, SearchType.hybrid]
+        ):
             try:
                 import tantivy  # noqa: F401
             except ImportError:
@@ -147,7 +153,9 @@ class LanceDb(VectorDb):
             schema = self._base_schema()
 
             log_debug(f"Creating table asynchronously: {self.table_name}")
-            self.async_table = await conn.create_table(self.table_name, schema=schema, mode="overwrite", exist_ok=True)
+            self.async_table = await conn.create_table(
+                self.table_name, schema=schema, mode="overwrite", exist_ok=True
+            )
 
     def _base_schema(self) -> pa.Schema:
         return pa.schema(
@@ -204,7 +212,9 @@ class LanceDb(VectorDb):
             self.table = self.connection.open_table(name=self.table_name)
         return self.doc_exists(document)
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Insert documents into the database.
 
@@ -249,13 +259,17 @@ class LanceDb(VectorDb):
             return
 
         if self.on_bad_vectors is not None:
-            self.table.add(data, on_bad_vectors=self.on_bad_vectors, fill_value=self.fill_value)
+            self.table.add(
+                data, on_bad_vectors=self.on_bad_vectors, fill_value=self.fill_value
+            )
         else:
             self.table.add(data)
 
         log_debug(f"Inserted {len(data)} documents")
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Asynchronously insert documents into the database.
 
@@ -309,7 +323,9 @@ class LanceDb(VectorDb):
             logger.error(f"Error during async document insertion: {e}")
             raise
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Upsert documents into the database.
 
@@ -319,10 +335,14 @@ class LanceDb(VectorDb):
         """
         self.insert(documents)
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         await self.async_insert(documents, filters)
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         if self.connection:
             self.table = self.connection.open_table(name=self.table_name)
         if self.search_type == SearchType.vector:
@@ -398,7 +418,9 @@ class LanceDb(VectorDb):
             logger.error("Table not initialized. Please create the table first")
             return []
         if not self.fts_index_exists:
-            self.table.create_fts_index("payload", use_tantivy=self.use_tantivy, replace=True)
+            self.table.create_fts_index(
+                "payload", use_tantivy=self.use_tantivy, replace=True
+            )
             self.fts_index_exists = True
 
         results = (
@@ -428,7 +450,9 @@ class LanceDb(VectorDb):
             logger.error("Table not initialized. Please create the table first")
             return []
         if not self.fts_index_exists:
-            self.table.create_fts_index("payload", use_tantivy=self.use_tantivy, replace=True)
+            self.table.create_fts_index(
+                "payload", use_tantivy=self.use_tantivy, replace=True
+            )
             self.fts_index_exists = True
 
         results = (
@@ -445,7 +469,9 @@ class LanceDb(VectorDb):
             search_results = self.reranker.rerank(query=query, documents=search_results)
         return search_results
 
-    def _build_search_results(self, results) -> List[Document]:  # TODO: typehint pandas?
+    def _build_search_results(
+        self, results
+    ) -> List[Document]:  # TODO: typehint pandas?
         search_results: List[Document] = []
         try:
             for _, item in results.iterrows():

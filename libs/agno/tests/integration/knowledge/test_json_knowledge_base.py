@@ -89,7 +89,9 @@ async def test_json_knowledge_base_async():
 
     # Create and use the agent
     agent = Agent(knowledge=knowledge_base)
-    response = await agent.arun("What ingredients do I need for Tom Kha Gai?", markdown=True)
+    response = await agent.arun(
+        "What ingredients do I need for Tom Kha Gai?", markdown=True
+    )
 
     tool_calls = []
     for msg in response.messages:
@@ -99,7 +101,10 @@ async def test_json_knowledge_base_async():
         if call.get("type", "") == "function":
             assert call["function"]["name"] == "async_search_knowledge_base"
 
-    assert any(ingredient in response.content.lower() for ingredient in ["coconut", "chicken", "galangal"])
+    assert any(
+        ingredient in response.content.lower()
+        for ingredient in ["coconut", "chicken", "galangal"]
+    )
 
     # Clean up
     await vector_db.async_drop()

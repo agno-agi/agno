@@ -1,10 +1,11 @@
+from rich.pretty import pprint
+
 from agno.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.manager import MemoryManager
 from agno.memory.v2.memory import Memory
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
-from rich.pretty import pprint
 
 user_id = "peter_rabbit"
 memory = Memory(

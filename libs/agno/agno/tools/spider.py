@@ -3,7 +3,9 @@ import json
 try:
     from spider import Spider as ExternalSpider
 except ImportError:
-    raise ImportError("`spider-client` not installed. Please install using `pip install spider-client`")
+    raise ImportError(
+        "`spider-client` not installed. Please install using `pip install spider-client`"
+    )
 
 from typing import Optional
 
@@ -59,9 +61,15 @@ class SpiderTools(Toolkit):
 
     def _search(self, query: str, max_results: int = 1) -> str:
         app = ExternalSpider()
-        log_info(f"Fetching results from spider for query: {query} with max_results: {max_results}")
+        log_info(
+            f"Fetching results from spider for query: {query} with max_results: {max_results}"
+        )
         try:
-            options = {"fetch_page_content": False, "num": max_results, **self.optional_params}
+            options = {
+                "fetch_page_content": False,
+                "num": max_results,
+                **self.optional_params,
+            }
             results = app.search(query, options)
             return json.dumps(results)
         except Exception as e:
@@ -85,7 +93,11 @@ class SpiderTools(Toolkit):
         try:
             if limit is None:
                 limit = 10
-            options = {"return_format": "markdown", "limit": limit, **self.optional_params}
+            options = {
+                "return_format": "markdown",
+                "limit": limit,
+                **self.optional_params,
+            }
             results = app.crawl_url(url, options)
             return json.dumps(results)
         except Exception as e:

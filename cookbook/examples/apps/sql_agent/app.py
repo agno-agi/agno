@@ -1,8 +1,6 @@
 import nest_asyncio
 import streamlit as st
 from agents import get_sql_agent
-from agno.agent import Agent
-from agno.utils.log import logger
 from utils import (
     CUSTOM_CSS,
     about_widget,
@@ -12,6 +10,9 @@ from utils import (
     session_selector_widget,
     sidebar_widget,
 )
+
+from agno.agent import Agent
+from agno.utils.log import logger
 
 nest_asyncio.apply()
 st.set_page_config(

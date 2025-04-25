@@ -14,7 +14,9 @@ try:
     import replicate
     from replicate.helpers import FileOutput
 except ImportError:
-    raise ImportError("`replicate` not installed. Please install using `pip install replicate`.")
+    raise ImportError(
+        "`replicate` not installed. Please install using `pip install replicate`."
+    )
 
 
 class ReplicateTools(Toolkit):
@@ -27,7 +29,9 @@ class ReplicateTools(Toolkit):
         super().__init__(name="replicate_toolkit", **kwargs)
         self.api_key = api_key or getenv("REPLICATE_API_TOKEN")
         if not self.api_key:
-            logger.error("REPLICATE_API_TOKEN not set. Please set the REPLICATE_API_TOKEN environment variable.")
+            logger.error(
+                "REPLICATE_API_TOKEN not set. Please set the REPLICATE_API_TOKEN environment variable."
+            )
         self.model = model
         self.register(self.generate_media)
 
@@ -70,7 +74,9 @@ class ReplicateTools(Toolkit):
             )
             media_type = "video"
         else:
-            logger.error(f"Unsupported media type with extension '{ext}' for URL: {output.url}")
+            logger.error(
+                f"Unsupported media type with extension '{ext}' for URL: {output.url}"
+            )
             return f"Unsupported media type with extension '{ext}'."
 
         return f"{media_type.capitalize()} generated successfully at {output.url}"

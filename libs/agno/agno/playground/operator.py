@@ -30,7 +30,9 @@ def format_tools(agent_tools):
     return formatted_tools
 
 
-def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Optional[Agent]:
+def get_agent_by_id(
+    agent_id: str, agents: Optional[List[Agent]] = None
+) -> Optional[Agent]:
     if agent_id is None or agents is None:
         return None
 
@@ -43,7 +45,11 @@ def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Opti
 def get_session_title(session: Union[AgentSession, TeamSession]) -> str:
     if session is None:
         return "Unnamed session"
-    session_name = session.session_data.get("session_name") if session.session_data is not None else None
+    session_name = (
+        session.session_data.get("session_name")
+        if session.session_data is not None
+        else None
+    )
     if session_name is not None:
         return session_name
     memory = session.memory
@@ -56,7 +62,10 @@ def get_session_title(session: Union[AgentSession, TeamSession]) -> str:
             try:
                 if "response" in _run:
                     run_parsed = AgentRun.model_validate(_run)
-                    if run_parsed.message is not None and run_parsed.message.role == "user":
+                    if (
+                        run_parsed.message is not None
+                        and run_parsed.message.role == "user"
+                    ):
                         content = run_parsed.message.get_content_string()
                         if content:
                             return content
@@ -67,7 +76,10 @@ def get_session_title(session: Union[AgentSession, TeamSession]) -> str:
                         run_response_parsed = RunResponse.from_dict(_run)
                     else:
                         run_response_parsed = TeamRunResponse.from_dict(_run)  # type: ignore
-                    if run_response_parsed.messages is not None and len(run_response_parsed.messages) > 0:
+                    if (
+                        run_response_parsed.messages is not None
+                        and len(run_response_parsed.messages) > 0
+                    ):
                         for msg in run_response_parsed.messages:
                             if msg.role == "user":
                                 content = msg.get_content_string()
@@ -84,7 +96,9 @@ def get_session_title_from_workflow_session(workflow_session: WorkflowSession) -
     if workflow_session is None:
         return "Unnamed session"
     session_name = (
-        workflow_session.session_data.get("session_name") if workflow_session.session_data is not None else None
+        workflow_session.session_data.get("session_name")
+        if workflow_session.session_data is not None
+        else None
     )
     if session_name is not None:
         return session_name
@@ -102,7 +116,9 @@ def get_session_title_from_workflow_session(workflow_session: WorkflowSession) -
     return "Unnamed session"
 
 
-def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = None) -> Optional[Workflow]:
+def get_workflow_by_id(
+    workflow_id: str, workflows: Optional[List[Workflow]] = None
+) -> Optional[Workflow]:
     if workflows is None or workflow_id is None:
         return None
 
@@ -125,7 +141,11 @@ def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional
 def get_session_title_from_team_session(team_session: TeamSession) -> str:
     if team_session is None:
         return "Unnamed session"
-    session_name = team_session.session_data.get("session_name") if team_session.session_data is not None else None
+    session_name = (
+        team_session.session_data.get("session_name")
+        if team_session.session_data is not None
+        else None
+    )
     if session_name is not None:
         return session_name
     memory = team_session.memory
@@ -137,7 +157,10 @@ def get_session_title_from_team_session(team_session: TeamSession) -> str:
             try:
                 if "response" in _run:
                     run_parsed = AgentRun.model_validate(_run)
-                    if run_parsed.message is not None and run_parsed.message.role == "user":
+                    if (
+                        run_parsed.message is not None
+                        and run_parsed.message.role == "user"
+                    ):
                         content = run_parsed.message.get_content_string()
                         if content:
                             return content
@@ -148,7 +171,10 @@ def get_session_title_from_team_session(team_session: TeamSession) -> str:
                         run_response_parsed = RunResponse.from_dict(_run)
                     else:
                         run_response_parsed = TeamRunResponse.from_dict(_run)  # type: ignore
-                    if run_response_parsed.messages is not None and len(run_response_parsed.messages) > 0:
+                    if (
+                        run_response_parsed.messages is not None
+                        and len(run_response_parsed.messages) > 0
+                    ):
                         for msg in run_response_parsed.messages:
                             if msg.role == "user":
                                 content = msg.get_content_string()

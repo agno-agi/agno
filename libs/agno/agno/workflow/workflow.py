@@ -18,7 +18,8 @@ from agno.run.response import RunEvent, RunResponse  # noqa: F401
 from agno.storage.base import Storage
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.common import nested_model_dump
-from agno.utils.log import log_debug, logger, set_log_level_to_debug, set_log_level_to_info
+from agno.utils.log import (log_debug, logger, set_log_level_to_debug,
+                            set_log_level_to_info)
 from agno.utils.merge_dict import merge_dictionaries
 
 
@@ -56,10 +57,14 @@ class Workflow:
     # Enable debug logs
     debug_mode: bool = False
     # monitoring=True logs Workflow information to agno.com for monitoring
-    monitoring: bool = field(default_factory=lambda: getenv("AGNO_MONITOR", "false").lower() == "true")
+    monitoring: bool = field(
+        default_factory=lambda: getenv("AGNO_MONITOR", "false").lower() == "true"
+    )
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Workflow and provide better support
-    telemetry: bool = field(default_factory=lambda: getenv("AGNO_TELEMETRY", "true").lower() == "true")
+    telemetry: bool = field(
+        default_factory=lambda: getenv("AGNO_TELEMETRY", "true").lower() == "true"
+    )
 
     # --- Run Info: DO NOT SET ---
     run_id: Optional[str] = None
@@ -152,7 +157,9 @@ class Workflow:
 
         # Set run_input, run_response
         self.run_input = kwargs
-        self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, workflow_id=self.workflow_id)
+        self.run_response = RunResponse(
+            run_id=self.run_id, session_id=self.session_id, workflow_id=self.workflow_id
+        )
 
         # Read existing session from storage
         self.read_from_storage()
@@ -192,12 +199,16 @@ class Workflow:
                         if item.content is not None and isinstance(item.content, str):
                             self.run_response.content += item.content
                     else:
-                        logger.warning(f"Workflow.run() should only yield RunResponse objects, got: {type(item)}")
+                        logger.warning(
+                            f"Workflow.run() should only yield RunResponse objects, got: {type(item)}"
+                        )
                     yield item
 
                 # Add the run to the memory
                 if isinstance(self.memory, WorkflowMemory):
-                    self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
+                    self.memory.add_run(
+                        WorkflowRun(input=self.run_input, response=self.run_response)
+                    )
                 elif isinstance(self.memory, Memory):
                     self.memory.add_run(session_id=self.session_id, run=self.run_response)  # type: ignore
                 # Write this run to the database
@@ -218,7 +229,9 @@ class Workflow:
 
             # Add the run to the memory
             if isinstance(self.memory, WorkflowMemory):
-                self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
+                self.memory.add_run(
+                    WorkflowRun(input=self.run_input, response=self.run_response)
+                )
             elif isinstance(self.memory, Memory):
                 self.memory.add_run(session_id=self.session_id, run=self.run_response)  # type: ignore
             # Write this run to the database
@@ -226,7 +239,9 @@ class Workflow:
             log_debug(f"Workflow Run End: {self.run_id}", center=True)
             return result
         else:
-            logger.warning(f"Workflow.run() should only return RunResponse objects, got: {type(result)}")
+            logger.warning(
+                f"Workflow.run() should only return RunResponse objects, got: {type(result)}"
+            )
             return None
 
     def set_storage_mode(self):
@@ -282,20 +297,31 @@ class Workflow:
             self._run_parameters = {
                 param_name: {
                     "name": param_name,
-                    "default": param.default.default
-                    if hasattr(param.default, "__class__") and param.default.__class__.__name__ == "FieldInfo"
-                    else (param.default if param.default is not inspect.Parameter.empty else None),
-                    "annotation": (
-                        param.annotation.__name__
-                        if hasattr(param.annotation, "__name__")
+                    "default": (
+                        param.default.default
+                        if hasattr(param.default, "__class__")
+                        and param.default.__class__.__name__ == "FieldInfo"
                         else (
-                            str(param.annotation).replace("typing.Optional[", "").replace("]", "")
-                            if "typing.Optional" in str(param.annotation)
-                            else str(param.annotation)
+                            param.default
+                            if param.default is not inspect.Parameter.empty
+                            else None
                         )
-                    )
-                    if param.annotation is not inspect.Parameter.empty
-                    else None,
+                    ),
+                    "annotation": (
+                        (
+                            param.annotation.__name__
+                            if hasattr(param.annotation, "__name__")
+                            else (
+                                str(param.annotation)
+                                .replace("typing.Optional[", "")
+                                .replace("]", "")
+                                if "typing.Optional" in str(param.annotation)
+                                else str(param.annotation)
+                            )
+                        )
+                        if param.annotation is not inspect.Parameter.empty
+                        else None
+                    ),
                     "required": param.default is inspect.Parameter.empty,
                 }
                 for param_name, param in sig.parameters.items()
@@ -305,10 +331,13 @@ class Workflow:
             return_annotation = sig.return_annotation
             self._run_return_type = (
                 return_annotation.__name__
-                if return_annotation is not inspect.Signature.empty and hasattr(return_annotation, "__name__")
-                else str(return_annotation)
                 if return_annotation is not inspect.Signature.empty
-                else None
+                and hasattr(return_annotation, "__name__")
+                else (
+                    str(return_annotation)
+                    if return_annotation is not inspect.Signature.empty
+                    else None
+                )
             )
             # Important: Replace the instance's run method with run_workflow
             # This is so we call run_workflow() instead of the subclass's run()
@@ -412,19 +441,25 @@ class Workflow:
                 if images_from_db is not None and isinstance(images_from_db, list):
                     if self.images is None:
                         self.images = []
-                    self.images.extend([ImageArtifact.model_validate(img) for img in images_from_db])
+                    self.images.extend(
+                        [ImageArtifact.model_validate(img) for img in images_from_db]
+                    )
             if "videos" in session.session_data:
                 videos_from_db = session.session_data.get("videos")
                 if videos_from_db is not None and isinstance(videos_from_db, list):
                     if self.videos is None:
                         self.videos = []
-                    self.videos.extend([VideoArtifact.model_validate(vid) for vid in videos_from_db])
+                    self.videos.extend(
+                        [VideoArtifact.model_validate(vid) for vid in videos_from_db]
+                    )
             if "audio" in session.session_data:
                 audio_from_db = session.session_data.get("audio")
                 if audio_from_db is not None and isinstance(audio_from_db, list):
                     if self.audio is None:
                         self.audio = []
-                    self.audio.extend([AudioArtifact.model_validate(aud) for aud in audio_from_db])
+                    self.audio.extend(
+                        [AudioArtifact.model_validate(aud) for aud in audio_from_db]
+                    )
 
         # Read extra_data from the database
         if session.extra_data is not None:
@@ -442,7 +477,9 @@ class Workflow:
             try:
                 if "runs" in session.memory:
                     try:
-                        self.memory.runs = [WorkflowRun(**m) for m in session.memory["runs"]]
+                        self.memory.runs = [
+                            WorkflowRun(**m) for m in session.memory["runs"]
+                        ]
                     except Exception as e:
                         logger.warning(f"Failed to load runs from memory: {e}")
             except Exception as e:
@@ -456,7 +493,9 @@ class Workflow:
             Optional[WorkflowSession]: The loaded WorkflowSession or None if not found.
         """
         if self.storage is not None and self.session_id is not None:
-            self.workflow_session = cast(WorkflowSession, self.storage.read(session_id=self.session_id))
+            self.workflow_session = cast(
+                WorkflowSession, self.storage.read(session_id=self.session_id)
+            )
             if self.workflow_session is not None:
                 self.load_workflow_session(session=self.workflow_session)
         return self.workflow_session
@@ -468,7 +507,10 @@ class Workflow:
             Optional[WorkflowSession]: The saved WorkflowSession or None if not saved.
         """
         if self.storage is not None:
-            self.workflow_session = cast(WorkflowSession, self.storage.upsert(session=self.get_workflow_session()))
+            self.workflow_session = cast(
+                WorkflowSession,
+                self.storage.upsert(session=self.get_workflow_session()),
+            )
         return self.workflow_session
 
     def load_session(self, force: bool = False) -> Optional[str]:
@@ -481,7 +523,10 @@ class Workflow:
         # If a workflow_session is already loaded, return the session_id from the workflow_session
         #   if the session_id matches the session_id from the workflow_session
         if self.workflow_session is not None and not force:
-            if self.session_id is not None and self.workflow_session.session_id == self.session_id:
+            if (
+                self.session_id is not None
+                and self.workflow_session.session_id == self.session_id
+            ):
                 return self.workflow_session.session_id
 
         # Load an existing session or create a new session
@@ -498,7 +543,9 @@ class Workflow:
                 self.write_to_storage()
                 if self.workflow_session is None:
                     raise Exception("Failed to create new WorkflowSession in storage")
-                log_debug(f"-*- Created WorkflowSession: {self.workflow_session.session_id}")
+                log_debug(
+                    f"-*- Created WorkflowSession: {self.workflow_session.session_id}"
+                )
                 self.log_workflow_session()
         return self.session_id
 
@@ -565,7 +612,9 @@ class Workflow:
                 if isinstance(field_value, Agent):
                     fields_for_new_workflow[f.name] = field_value.deep_copy()
                 else:
-                    fields_for_new_workflow[f.name] = self._deep_copy_field(f.name, field_value)
+                    fields_for_new_workflow[f.name] = self._deep_copy_field(
+                        f.name, field_value
+                    )
 
         # Update fields if provided
         if update:

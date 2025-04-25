@@ -53,7 +53,9 @@ class MCPTools(Toolkit):
         super().__init__(name="MCPToolkit", **kwargs)
 
         if session is None and server_params is None and command is None:
-            raise ValueError("Either session or server_params or command must be provided")
+            raise ValueError(
+                "Either session or server_params or command must be provided"
+            )
 
         self.session: Optional[ClientSession] = session
         self.server_params: Optional[StdioServerParameters] = server_params
@@ -75,7 +77,9 @@ class MCPTools(Toolkit):
                 raise ValueError("Empty command string")
             cmd = parts[0]
             arguments = parts[1:] if len(parts) > 1 else []
-            self.server_params = StdioServerParameters(command=cmd, args=arguments, env=env)
+            self.server_params = StdioServerParameters(
+                command=cmd, args=arguments, env=env
+            )
 
         self._client = client
         self._stdio_context = None
@@ -93,7 +97,9 @@ class MCPTools(Toolkit):
 
         # Create a new session using stdio_client
         if self.server_params is None:
-            raise ValueError("server_params must be provided when using as context manager")
+            raise ValueError(
+                "server_params must be provided when using as context manager"
+            )
 
         self._stdio_context = stdio_client(self.server_params)  # type: ignore
         read, write = await self._stdio_context.__aenter__()  # type: ignore
@@ -125,7 +131,9 @@ class MCPTools(Toolkit):
 
         try:
             if self.session is None:
-                raise ValueError("Session is not available. Use as context manager or provide a session.")
+                raise ValueError(
+                    "Session is not available. Use as context manager or provide a session."
+                )
 
             # Initialize the session if not already initialized
             await self.session.initialize()
@@ -228,7 +236,9 @@ class MultiMCPTools(Toolkit):
                     raise ValueError("Empty command string")
                 cmd = parts[0]
                 arguments = parts[1:] if len(parts) > 1 else []
-                self.server_params_list.append(StdioServerParameters(command=cmd, args=arguments, env=env))
+                self.server_params_list.append(
+                    StdioServerParameters(command=cmd, args=arguments, env=env)
+                )
 
         self._async_exit_stack = AsyncExitStack()
 
@@ -238,9 +248,13 @@ class MultiMCPTools(Toolkit):
         """Enter the async context manager."""
 
         for server_params in self.server_params_list:
-            stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
+            stdio_transport = await self._async_exit_stack.enter_async_context(
+                stdio_client(server_params)
+            )
             read, write = stdio_transport
-            session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+            session = await self._async_exit_stack.enter_async_context(
+                ClientSession(read, write)
+            )
 
             await self.initialize(session)
 

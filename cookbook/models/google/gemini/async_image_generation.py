@@ -1,9 +1,10 @@
 import asyncio
 from io import BytesIO
 
+from PIL import Image
+
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.google import Gemini
-from PIL import Image
 
 # No system message should be provided
 agent = Agent(

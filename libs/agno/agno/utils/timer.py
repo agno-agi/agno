@@ -12,7 +12,11 @@ class Timer:
 
     @property
     def elapsed(self) -> float:
-        return self.elapsed_time or (perf_counter() - self.start_time) if self.start_time else 0.0
+        return (
+            self.elapsed_time or (perf_counter() - self.start_time)
+            if self.start_time
+            else 0.0
+        )
 
     def start(self) -> float:
         self.start_time = perf_counter()

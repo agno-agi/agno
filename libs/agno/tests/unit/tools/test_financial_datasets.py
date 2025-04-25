@@ -64,7 +64,8 @@ def test_get_income_statements(mock_make_request, financial_tools):
     result = financial_tools.get_income_statements("AAPL", period="quarterly", limit=5)
 
     mock_make_request.assert_called_once_with(
-        "financials/income-statements", {"ticker": "AAPL", "period": "quarterly", "limit": 5}
+        "financials/income-statements",
+        {"ticker": "AAPL", "period": "quarterly", "limit": 5},
     )
     assert result == {"income_statements": []}
 
@@ -90,7 +91,8 @@ def test_get_cash_flow_statements(mock_make_request, financial_tools):
     result = financial_tools.get_cash_flow_statements("GOOG", period="ttm", limit=1)
 
     mock_make_request.assert_called_once_with(
-        "financials/cash-flow-statements", {"ticker": "GOOG", "period": "ttm", "limit": 1}
+        "financials/cash-flow-statements",
+        {"ticker": "GOOG", "period": "ttm", "limit": 1},
     )
     assert result == {"cash_flow_statements": []}
 
@@ -116,7 +118,9 @@ def test_get_crypto_prices(mock_make_request, financial_tools):
 
     result = financial_tools.get_crypto_prices("BTC", interval="1h", limit=24)
 
-    mock_make_request.assert_called_once_with("crypto/prices", {"symbol": "BTC", "interval": "1h", "limit": 24})
+    mock_make_request.assert_called_once_with(
+        "crypto/prices", {"symbol": "BTC", "interval": "1h", "limit": 24}
+    )
     assert result == {"prices": []}
 
 
@@ -127,7 +131,9 @@ def test_get_earnings(mock_make_request, financial_tools):
 
     result = financial_tools.get_earnings("TSLA", limit=8)
 
-    mock_make_request.assert_called_once_with("earnings", {"ticker": "TSLA", "limit": 8})
+    mock_make_request.assert_called_once_with(
+        "earnings", {"ticker": "TSLA", "limit": 8}
+    )
     assert result == {"earnings": []}
 
 
@@ -149,7 +155,9 @@ def test_get_insider_trades(mock_make_request, financial_tools):
 
     result = financial_tools.get_insider_trades("NFLX", limit=25)
 
-    mock_make_request.assert_called_once_with("insider-trades", {"ticker": "NFLX", "limit": 25})
+    mock_make_request.assert_called_once_with(
+        "insider-trades", {"ticker": "NFLX", "limit": 25}
+    )
     assert result == {"insider_trades": []}
 
 
@@ -160,7 +168,9 @@ def test_get_institutional_ownership(mock_make_request, financial_tools):
 
     result = financial_tools.get_institutional_ownership("INTC")
 
-    mock_make_request.assert_called_once_with("institutional-ownership", {"ticker": "INTC"})
+    mock_make_request.assert_called_once_with(
+        "institutional-ownership", {"ticker": "INTC"}
+    )
     assert result == {"ownership": []}
 
 
@@ -193,7 +203,9 @@ def test_get_stock_prices(mock_make_request, financial_tools):
 
     result = financial_tools.get_stock_prices("AAPL", interval="1h", limit=48)
 
-    mock_make_request.assert_called_once_with("prices", {"ticker": "AAPL", "interval": "1h", "limit": 48})
+    mock_make_request.assert_called_once_with(
+        "prices", {"ticker": "AAPL", "interval": "1h", "limit": 48}
+    )
     assert result == {"prices": []}
 
 
@@ -215,7 +227,9 @@ def test_get_sec_filings_with_form_type(mock_make_request, financial_tools):
 
     result = financial_tools.get_sec_filings("AAPL", form_type="10-K", limit=10)
 
-    mock_make_request.assert_called_once_with("sec-filings", {"ticker": "AAPL", "form_type": "10-K", "limit": 10})
+    mock_make_request.assert_called_once_with(
+        "sec-filings", {"ticker": "AAPL", "form_type": "10-K", "limit": 10}
+    )
     assert result == {"filings": []}
 
 
@@ -226,7 +240,9 @@ def test_get_sec_filings_without_form_type(mock_make_request, financial_tools):
 
     result = financial_tools.get_sec_filings("MSFT", limit=20)
 
-    mock_make_request.assert_called_once_with("sec-filings", {"ticker": "MSFT", "limit": 20})
+    mock_make_request.assert_called_once_with(
+        "sec-filings", {"ticker": "MSFT", "limit": 20}
+    )
     assert result == {"filings": []}
 
 
@@ -235,7 +251,9 @@ def test_get_segmented_financials(mock_make_request, financial_tools):
     """Test get_segmented_financials method."""
     mock_make_request.return_value = {"segmented_financials": []}
 
-    result = financial_tools.get_segmented_financials("GOOG", period="quarterly", limit=4)
+    result = financial_tools.get_segmented_financials(
+        "GOOG", period="quarterly", limit=4
+    )
 
     mock_make_request.assert_called_once_with(
         "financials/segmented", {"ticker": "GOOG", "period": "quarterly", "limit": 4}

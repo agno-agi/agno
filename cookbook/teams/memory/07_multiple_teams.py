@@ -8,6 +8,8 @@ Steps:
 
 import asyncio
 
+from utils import print_team_memory
+
 from agno.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
@@ -18,7 +20,6 @@ from agno.models.openai import OpenAIChat
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from utils import print_team_memory
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 

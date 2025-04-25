@@ -49,7 +49,9 @@ def mock_e2b_tools():
             # Mock the methods we'll test with return values matching actual implementation
             tools.run_python_code = Mock(return_value='["Logs:\\nHello, World!"]')
             tools.upload_file = Mock(return_value="/sandbox/file.txt")
-            tools.download_png_result = Mock(return_value="Image added as artifact with ID test-image-id")
+            tools.download_png_result = Mock(
+                return_value="Image added as artifact with ID test-image-id"
+            )
             tools.download_chart_data = Mock(
                 return_value="Interactive bar chart data saved to /local/output.json\nTitle: Sample Chart\nX-axis: Categories\nY-axis: Values\n"
             )
@@ -67,9 +69,13 @@ def mock_e2b_tools():
                 return_value='{"status": "success", "message": "Sandbox shut down successfully"}'
             )
             tools.run_command = Mock(return_value='["STDOUT:\\ncommand output"]')
-            tools.stream_command = Mock(return_value='["STDOUT: command output", "STDERR: some warning"]')
+            tools.stream_command = Mock(
+                return_value='["STDOUT: command output", "STDERR: some warning"]'
+            )
             tools.run_background_command = Mock(return_value=Mock())
-            tools.kill_background_command = Mock(return_value="Background command terminated successfully.")
+            tools.kill_background_command = Mock(
+                return_value="Background command terminated successfully."
+            )
             tools.watch_directory = Mock(
                 return_value='{"status": "success", "message": "Changes detected in /dir over 1 seconds:\\nmodified - /dir/file1.txt\\ncreated - /dir/file2.txt"}'
             )
@@ -140,7 +146,9 @@ def test_run_python_code(mock_e2b_tools):
 
     # Verify the method was called with exactly what we passed in
     # (The actual keyword capitalization happens in the real implementation, not in the mock)
-    mock_e2b_tools.run_python_code.assert_called_once_with("if x == true and y == false and z == none:")
+    mock_e2b_tools.run_python_code.assert_called_once_with(
+        "if x == true and y == false and z == none:"
+    )
 
     # Reset the mock for the next test
     mock_e2b_tools.run_python_code.reset_mock()
@@ -170,7 +178,9 @@ def test_download_png_result(mock_e2b_tools, mock_agent):
     result = mock_e2b_tools.download_png_result(mock_agent, 0, "/local/output.png")
 
     # Verify
-    mock_e2b_tools.download_png_result.assert_called_once_with(mock_agent, 0, "/local/output.png")
+    mock_e2b_tools.download_png_result.assert_called_once_with(
+        mock_agent, 0, "/local/output.png"
+    )
     assert "Image added as artifact with ID" in result
 
 
@@ -188,10 +198,14 @@ def test_download_chart_data(mock_e2b_tools):
 def test_download_file_from_sandbox(mock_e2b_tools):
     """Test downloading a file from the sandbox."""
     # Call the method
-    result = mock_e2b_tools.download_file_from_sandbox("/sandbox/file.txt", "/local/output.txt")
+    result = mock_e2b_tools.download_file_from_sandbox(
+        "/sandbox/file.txt", "/local/output.txt"
+    )
 
     # Verify
-    mock_e2b_tools.download_file_from_sandbox.assert_called_once_with("/sandbox/file.txt", "/local/output.txt")
+    mock_e2b_tools.download_file_from_sandbox.assert_called_once_with(
+        "/sandbox/file.txt", "/local/output.txt"
+    )
     assert result == "/local/output.txt"
 
 

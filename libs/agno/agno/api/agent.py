@@ -13,7 +13,11 @@ def create_agent_session(session: AgentSessionCreate, monitor: bool = False) -> 
     with api.AuthenticatedClient() as api_client:
         try:
             api_client.post(
-                ApiRoutes.AGENT_SESSION_CREATE if monitor else ApiRoutes.AGENT_TELEMETRY_SESSION_CREATE,
+                (
+                    ApiRoutes.AGENT_SESSION_CREATE
+                    if monitor
+                    else ApiRoutes.AGENT_TELEMETRY_SESSION_CREATE
+                ),
                 json={"session": session.model_dump(exclude_none=True)},
             )
         except Exception as e:
@@ -29,7 +33,11 @@ def create_agent_run(run: AgentRunCreate, monitor: bool = False) -> None:
     with api.AuthenticatedClient() as api_client:
         try:
             api_client.post(
-                ApiRoutes.AGENT_RUN_CREATE if monitor else ApiRoutes.AGENT_TELEMETRY_RUN_CREATE,
+                (
+                    ApiRoutes.AGENT_RUN_CREATE
+                    if monitor
+                    else ApiRoutes.AGENT_TELEMETRY_RUN_CREATE
+                ),
                 json={"run": run.model_dump(exclude_none=True)},
             )
         except Exception as e:
@@ -45,7 +53,11 @@ async def acreate_agent_run(run: AgentRunCreate, monitor: bool = False) -> None:
     async with api.AuthenticatedAsyncClient() as api_client:
         try:
             await api_client.post(
-                ApiRoutes.AGENT_RUN_CREATE if monitor else ApiRoutes.AGENT_TELEMETRY_RUN_CREATE,
+                (
+                    ApiRoutes.AGENT_RUN_CREATE
+                    if monitor
+                    else ApiRoutes.AGENT_TELEMETRY_RUN_CREATE
+                ),
                 json={"run": run.model_dump(exclude_none=True)},
             )
         except Exception as e:

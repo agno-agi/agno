@@ -21,7 +21,10 @@ def setup_vector_db():
 def test_firecrawl_knowledge_base_directory(setup_vector_db):
     """Test loading multiple URLs into knowledge base"""
     kb = FireCrawlKnowledgeBase(
-        urls=["https://docs.agno.com/knowledge/introduction", "https://docs.agno.com/knowledge/pdf"],
+        urls=[
+            "https://docs.agno.com/knowledge/introduction",
+            "https://docs.agno.com/knowledge/pdf",
+        ],
         vector_db=setup_vector_db,
     )
     kb.load(recreate=True)
@@ -30,7 +33,9 @@ def test_firecrawl_knowledge_base_directory(setup_vector_db):
     assert setup_vector_db.get_count() > 0
 
     agent = Agent(knowledge=kb)
-    response = agent.run("What are knowledge bases in Agno and what types are available?", markdown=True)
+    response = agent.run(
+        "What are knowledge bases in Agno and what types are available?", markdown=True
+    )
 
     tool_calls = []
     for msg in response.messages:
@@ -38,13 +43,17 @@ def test_firecrawl_knowledge_base_directory(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "search_knowledge_base" for call in function_calls
+    )
 
 
 @pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")
 def test_firecrawl_knowledge_base_single_url(setup_vector_db):
     """Test loading a single URL into knowledge base"""
-    kb = FireCrawlKnowledgeBase(urls=["https://docs.agno.com/knowledge/pdf"], vector_db=setup_vector_db)
+    kb = FireCrawlKnowledgeBase(
+        urls=["https://docs.agno.com/knowledge/pdf"], vector_db=setup_vector_db
+    )
     kb.load(recreate=True)
 
     assert setup_vector_db.exists()
@@ -59,7 +68,9 @@ def test_firecrawl_knowledge_base_single_url(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "search_knowledge_base" for call in function_calls
+    )
 
 
 @pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")
@@ -67,7 +78,10 @@ def test_firecrawl_knowledge_base_single_url(setup_vector_db):
 async def test_firecrawl_knowledge_base_async_directory(setup_vector_db):
     """Test async loading of multiple URLs into knowledge base"""
     kb = FireCrawlKnowledgeBase(
-        urls=["https://docs.agno.com/knowledge/introduction", "https://docs.agno.com/knowledge/pdf"],
+        urls=[
+            "https://docs.agno.com/knowledge/introduction",
+            "https://docs.agno.com/knowledge/pdf",
+        ],
         vector_db=setup_vector_db,
     )
     await kb.aload(recreate=True)
@@ -87,14 +101,19 @@ async def test_firecrawl_knowledge_base_async_directory(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "async_search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "async_search_knowledge_base"
+        for call in function_calls
+    )
 
 
 @pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")
 @pytest.mark.asyncio
 async def test_firecrawl_knowledge_base_async_single_url(setup_vector_db):
     """Test async loading of a single URL into knowledge base"""
-    kb = FireCrawlKnowledgeBase(urls=["https://docs.agno.com/knowledge/introduction"], vector_db=setup_vector_db)
+    kb = FireCrawlKnowledgeBase(
+        urls=["https://docs.agno.com/knowledge/introduction"], vector_db=setup_vector_db
+    )
     await kb.aload(recreate=True)
 
     assert await setup_vector_db.async_exists()
@@ -109,7 +128,10 @@ async def test_firecrawl_knowledge_base_async_single_url(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "async_search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "async_search_knowledge_base"
+        for call in function_calls
+    )
 
 
 @pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")

@@ -7,7 +7,9 @@ from agno.tools import Toolkit
 try:
     from scrapegraph_py import Client
 except ImportError:
-    raise ImportError("`scrapegraph-py` not installed. Please install using `pip install scrapegraph-py`")
+    raise ImportError(
+        "`scrapegraph-py` not installed. Please install using `pip install scrapegraph-py`"
+    )
 
 
 class ScrapeGraphTools(Toolkit):

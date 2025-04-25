@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List, Optional
 from uuid import uuid4
 
-from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
+from agno.utils.log import (logger, set_log_level_to_debug,
+                            set_log_level_to_info)
 from agno.utils.timer import Timer
 
 if TYPE_CHECKING:
@@ -55,7 +56,11 @@ class PerfResult:
             std = statistics.stdev(data_sorted) if len(data_sorted) > 1 else 0
             med = statistics.median(data_sorted)
             # For 95th percentile, use statistics.quantiles
-            p95 = statistics.quantiles(data_sorted, n=100)[94] if len(data_sorted) > 1 else 0
+            p95 = (
+                statistics.quantiles(data_sorted, n=100)[94]
+                if len(data_sorted) > 1
+                else 0
+            )
             return avg, mn, mx, std, med, p95
 
         # Populate runtime stats
@@ -105,18 +110,34 @@ class PerfResult:
             console = Console()
 
         # Create performance table
-        perf_table = Table(title="Performance Summary", show_header=True, header_style="bold magenta")
+        perf_table = Table(
+            title="Performance Summary", show_header=True, header_style="bold magenta"
+        )
         perf_table.add_column("Metric", style="cyan")
         perf_table.add_column("Time (seconds)", style="green")
         perf_table.add_column("Memory (MiB)", style="yellow")
 
         # Add rows
-        perf_table.add_row("Average", f"{self.avg_run_time:.6f}", f"{self.avg_memory_usage:.6f}")
-        perf_table.add_row("Minimum", f"{self.min_run_time:.6f}", f"{self.min_memory_usage:.6f}")
-        perf_table.add_row("Maximum", f"{self.max_run_time:.6f}", f"{self.max_memory_usage:.6f}")
-        perf_table.add_row("Std Dev", f"{self.std_dev_run_time:.6f}", f"{self.std_dev_memory_usage:.6f}")
-        perf_table.add_row("Median", f"{self.median_run_time:.6f}", f"{self.median_memory_usage:.6f}")
-        perf_table.add_row("95th %ile", f"{self.p95_run_time:.6f}", f"{self.p95_memory_usage:.6f}")
+        perf_table.add_row(
+            "Average", f"{self.avg_run_time:.6f}", f"{self.avg_memory_usage:.6f}"
+        )
+        perf_table.add_row(
+            "Minimum", f"{self.min_run_time:.6f}", f"{self.min_memory_usage:.6f}"
+        )
+        perf_table.add_row(
+            "Maximum", f"{self.max_run_time:.6f}", f"{self.max_memory_usage:.6f}"
+        )
+        perf_table.add_row(
+            "Std Dev",
+            f"{self.std_dev_run_time:.6f}",
+            f"{self.std_dev_memory_usage:.6f}",
+        )
+        perf_table.add_row(
+            "Median", f"{self.median_run_time:.6f}", f"{self.median_memory_usage:.6f}"
+        )
+        perf_table.add_row(
+            "95th %ile", f"{self.p95_run_time:.6f}", f"{self.p95_memory_usage:.6f}"
+        )
 
         console.print(perf_table)
 
@@ -131,14 +152,18 @@ class PerfResult:
             console = Console()
 
         # Create runs table
-        results_table = Table(title="Individual Runs", show_header=True, header_style="bold magenta")
+        results_table = Table(
+            title="Individual Runs", show_header=True, header_style="bold magenta"
+        )
         results_table.add_column("Run #", style="cyan")
         results_table.add_column("Time (seconds)", style="green")
         results_table.add_column("Memory (MiB)", style="yellow")
 
         # Add rows
         for i in range(len(self.run_times)):
-            results_table.add_row(str(i + 1), f"{self.run_times[i]:.6f}", f"{self.memory_usages[i]:.6f}")
+            results_table.add_row(
+                str(i + 1), f"{self.run_times[i]:.6f}", f"{self.memory_usages[i]:.6f}"
+            )
 
         console.print(results_table)
 
@@ -231,7 +256,9 @@ class PerfEval:
         adjusted_usage = max(0, peak_mib - baseline)
 
         if self.debug_mode:
-            logger.debug(f"[DEBUG] Raw peak usage: {peak_mib:.6f} MiB, Adjusted: {adjusted_usage:.6f} MiB")
+            logger.debug(
+                f"[DEBUG] Raw peak usage: {peak_mib:.6f} MiB, Adjusted: {adjusted_usage:.6f} MiB"
+            )
 
         return adjusted_usage
 
@@ -255,7 +282,9 @@ class PerfEval:
 
         return sum(results) / len(results) if results else 0
 
-    def run(self, *, print_summary: bool = False, print_results: bool = False) -> PerfResult:
+    def run(
+        self, *, print_summary: bool = False, print_results: bool = False
+    ) -> PerfResult:
         """
         Main method to perform the performance evaluation.
         1. Do optional warm-up runs.
@@ -284,7 +313,11 @@ class PerfEval:
         with Live(console=console, transient=True) as live_log:
             # 1. Warm-up runs (not measured)
             for i in range(self.warmup_runs):
-                status = Status(f"Warm-up run {i + 1}/{self.warmup_runs}...", spinner="dots", speed=1.0)
+                status = Status(
+                    f"Warm-up run {i + 1}/{self.warmup_runs}...",
+                    spinner="dots",
+                    speed=1.0,
+                )
                 live_log.update(status)
                 self.func()  # Simply run the function without measuring
                 status.stop()
@@ -303,7 +336,9 @@ class PerfEval:
                     # Measure runtime
                     elapsed_time = self._measure_time()
                     run_times.append(elapsed_time)
-                    logger.debug(f"Run {i + 1} - Time taken: {elapsed_time:.6f} seconds")
+                    logger.debug(
+                        f"Run {i + 1} - Time taken: {elapsed_time:.6f} seconds"
+                    )
 
                     status.stop()
 
@@ -326,7 +361,9 @@ class PerfEval:
                     # Measure memory
                     usage = self._measure_memory(memory_baseline)
                     memory_usages.append(usage)
-                    logger.debug(f"Run {i + 1} - Memory usage: {usage:.6f} MiB (adjusted)")
+                    logger.debug(
+                        f"Run {i + 1} - Memory usage: {usage:.6f} MiB (adjusted)"
+                    )
 
                     status.stop()
 
@@ -351,7 +388,11 @@ class PerfEval:
             try:
                 import json
 
-                fn_path = Path(self.save_result_to_file.format(name=self.name, eval_id=self.eval_id))
+                fn_path = Path(
+                    self.save_result_to_file.format(
+                        name=self.name, eval_id=self.eval_id
+                    )
+                )
                 if not fn_path.parent.exists():
                     fn_path.parent.mkdir(parents=True, exist_ok=True)
                 fn_path.write_text(json.dumps(asdict(self.result), indent=4))

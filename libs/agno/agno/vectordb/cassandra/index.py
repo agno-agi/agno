@@ -6,8 +6,12 @@ try:
 
     from .extra_param_mixin import ExtraParamMixin
 except (ImportError, ModuleNotFoundError):
-    raise ImportError("Could not import cassio python package. Please install it with pip install cassio.")
+    raise ImportError(
+        "Could not import cassio python package. Please install it with pip install cassio."
+    )
 
 
-class AgnoMetadataVectorCassandraTable(ExtraParamMixin, TypeNormalizerMixin, MetadataMixin, VectorMixin, BaseTable):
+class AgnoMetadataVectorCassandraTable(
+    ExtraParamMixin, TypeNormalizerMixin, MetadataMixin, VectorMixin, BaseTable
+):
     pass

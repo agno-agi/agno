@@ -17,7 +17,10 @@ class MemoryDb(ABC):
 
     @abstractmethod
     def read_memories(
-        self, user_id: Optional[str] = None, limit: Optional[int] = None, sort: Optional[str] = None
+        self,
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        sort: Optional[str] = None,
     ) -> List[MemoryRow]:
         raise NotImplementedError
 
@@ -39,4 +42,16 @@ class MemoryDb(ABC):
 
     @abstractmethod
     def clear(self) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def search_memories_semantic(
+        self,
+        query_embedding: List[float],
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[MemoryRow]:
+        """
+        Retrieve memories semantically similar to the given embedding for a user.
+        """
         raise NotImplementedError

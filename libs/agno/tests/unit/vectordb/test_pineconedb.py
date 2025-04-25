@@ -50,7 +50,10 @@ def mock_pinecone_index():
 @pytest.fixture
 def mock_pinecone_db(mock_pinecone_client, mock_pinecone_index, mock_embedder):
     """Create a PineconeDb instance with mocked dependencies."""
-    with patch("agno.vectordb.pineconedb.pineconedb.Pinecone", return_value=mock_pinecone_client):
+    with patch(
+        "agno.vectordb.pineconedb.pineconedb.Pinecone",
+        return_value=mock_pinecone_client,
+    ):
         db = PineconeDb(
             name=TEST_INDEX_NAME,
             dimension=TEST_DIMENSION,
@@ -103,7 +106,10 @@ def test_client_property(mock_pinecone_db, mock_pinecone_client):
     mock_pinecone_db._client = None
 
     # Test client property
-    with patch("agno.vectordb.pineconedb.pineconedb.Pinecone", return_value=mock_pinecone_client):
+    with patch(
+        "agno.vectordb.pineconedb.pineconedb.Pinecone",
+        return_value=mock_pinecone_client,
+    ):
         client = mock_pinecone_db.client
 
         assert client is not None
@@ -149,7 +155,11 @@ def test_create(mock_pinecone_db):
         mock_pinecone_db.create()
 
         mock_pinecone_db.client.create_index.assert_called_once_with(
-            name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, spec=mock_pinecone_db.spec, metric="cosine", timeout=None
+            name=TEST_INDEX_NAME,
+            dimension=TEST_DIMENSION,
+            spec=mock_pinecone_db.spec,
+            metric="cosine",
+            timeout=None,
         )
 
     # Test when index exists
@@ -166,7 +176,9 @@ def test_drop(mock_pinecone_db):
     with patch.object(mock_pinecone_db, "exists", return_value=True):
         mock_pinecone_db.drop()
 
-        mock_pinecone_db.client.delete_index.assert_called_once_with(name=TEST_INDEX_NAME, timeout=None)
+        mock_pinecone_db.client.delete_index.assert_called_once_with(
+            name=TEST_INDEX_NAME, timeout=None
+        )
 
     # Test when index doesn't exist
     with patch.object(mock_pinecone_db, "exists", return_value=False):
@@ -251,7 +263,12 @@ def test_search(mock_pinecone_db, mock_embedder):
 
     # Check that index.query was called with the right arguments
     mock_pinecone_db.index.query.assert_called_with(
-        vector=[0.1] * 1024, top_k=2, namespace=None, filter=None, include_values=None, include_metadata=True
+        vector=[0.1] * 1024,
+        top_k=2,
+        namespace=None,
+        filter=None,
+        include_values=None,
+        include_metadata=True,
     )
 
     # Check the results
@@ -288,7 +305,9 @@ def test_upsert_available(mock_pinecone_db):
 async def test_async_exists(mock_pinecone_db):
     """Test async_exists method."""
     # Mock exists to return True and patch to_thread
-    with patch.object(mock_pinecone_db, "exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pinecone_db, "exists", return_value=True), patch(
+        "asyncio.to_thread"
+    ) as mock_to_thread:
         mock_to_thread.return_value = True
 
         result = await mock_pinecone_db.async_exists()
@@ -300,7 +319,9 @@ async def test_async_exists(mock_pinecone_db):
 @pytest.mark.asyncio
 async def test_async_create(mock_pinecone_db):
     """Test async_create method."""
-    with patch.object(mock_pinecone_db, "create"), patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pinecone_db, "create"), patch(
+        "asyncio.to_thread"
+    ) as mock_to_thread:
         mock_to_thread.return_value = None
 
         await mock_pinecone_db.async_create()
@@ -313,7 +334,9 @@ async def test_async_doc_exists(mock_pinecone_db):
     """Test async_doc_exists method."""
     doc = create_test_documents(1)[0]
 
-    with patch.object(mock_pinecone_db, "doc_exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pinecone_db, "doc_exists", return_value=True), patch(
+        "asyncio.to_thread"
+    ) as mock_to_thread:
         mock_to_thread.return_value = True
 
         result = await mock_pinecone_db.async_doc_exists(doc)
@@ -325,13 +348,17 @@ async def test_async_doc_exists(mock_pinecone_db):
 @pytest.mark.asyncio
 async def test_async_name_exists(mock_pinecone_db):
     """Test async_name_exists method."""
-    with patch.object(mock_pinecone_db, "name_exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pinecone_db, "name_exists", return_value=True), patch(
+        "asyncio.to_thread"
+    ) as mock_to_thread:
         mock_to_thread.return_value = True
 
         result = await mock_pinecone_db.async_name_exists(TEST_INDEX_NAME)
 
         assert result is True
-        mock_to_thread.assert_called_once_with(mock_pinecone_db.name_exists, TEST_INDEX_NAME)
+        mock_to_thread.assert_called_once_with(
+            mock_pinecone_db.name_exists, TEST_INDEX_NAME
+        )
 
 
 @pytest.mark.asyncio
@@ -344,8 +371,16 @@ async def test_async_upsert(mock_pinecone_db, mock_embedder):
 
     # Create the expected prepared vectors
     prepared_vectors_batch = [
-        {"id": docs[0].id, "values": [0.1] * 1024, "metadata": {"text": docs[0].content, "type": "test", "index": 0}},
-        {"id": docs[1].id, "values": [0.1] * 1024, "metadata": {"text": docs[1].content, "type": "test", "index": 1}},
+        {
+            "id": docs[0].id,
+            "values": [0.1] * 1024,
+            "metadata": {"text": docs[0].content, "type": "test", "index": 0},
+        },
+        {
+            "id": docs[1].id,
+            "values": [0.1] * 1024,
+            "metadata": {"text": docs[1].content, "type": "test", "index": 1},
+        },
     ]
 
     # Create an async mock for asyncio.gather
@@ -357,9 +392,13 @@ async def test_async_upsert(mock_pinecone_db, mock_embedder):
     to_thread_mock.return_value = prepared_vectors_batch
 
     # Mock async functions
-    with patch.object(mock_pinecone_db, "_prepare_vectors", return_value=prepared_vectors_batch), patch.object(
-        mock_pinecone_db, "_upsert_vectors"
-    ), patch("asyncio.to_thread", to_thread_mock), patch("asyncio.gather", gather_mock):
+    with patch.object(
+        mock_pinecone_db, "_prepare_vectors", return_value=prepared_vectors_batch
+    ), patch.object(mock_pinecone_db, "_upsert_vectors"), patch(
+        "asyncio.to_thread", to_thread_mock
+    ), patch(
+        "asyncio.gather", gather_mock
+    ):
         # Call the method
         await mock_pinecone_db.async_upsert(docs)
 
@@ -397,7 +436,9 @@ async def test_async_search(mock_pinecone_db):
         results = await mock_pinecone_db.async_search(query)
 
         assert results == expected_results
-        mock_to_thread.assert_called_once_with(mock_pinecone_db.search, query, 5, None, None, None)
+        mock_to_thread.assert_called_once_with(
+            mock_pinecone_db.search, query, 5, None, None, None
+        )
 
 
 @pytest.mark.asyncio

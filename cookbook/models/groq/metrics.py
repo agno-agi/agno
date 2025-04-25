@@ -1,10 +1,11 @@
 from typing import Iterator
 
+from rich.pretty import pprint
+
 from agno.agent import Agent, RunResponse
 from agno.models.groq import Groq
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
-from rich.pretty import pprint
 
 agent = Agent(
     model=Groq(id="llama-3.3-70b-versatile"),

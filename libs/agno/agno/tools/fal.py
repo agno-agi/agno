@@ -15,7 +15,9 @@ from agno.utils.log import log_info, logger
 try:
     import fal_client  # type: ignore
 except ImportError:
-    raise ImportError("`fal_client` not installed. Please install using `pip install fal-client`")
+    raise ImportError(
+        "`fal_client` not installed. Please install using `pip install fal-client`"
+    )
 
 
 class FalTools(Toolkit):
@@ -29,7 +31,9 @@ class FalTools(Toolkit):
 
         self.api_key = api_key or getenv("FAL_KEY")
         if not self.api_key:
-            logger.error("FAL_KEY not set. Please set the FAL_KEY environment variable.")
+            logger.error(
+                "FAL_KEY not set. Please set the FAL_KEY environment variable."
+            )
         self.model = model
         self.seen_logs: set[str] = set()
         self.register(self.generate_media)
@@ -88,7 +92,9 @@ class FalTools(Toolkit):
             logger.error(f"Failed to run model: {e}")
             return f"Error: {e}"
 
-    def image_to_image(self, agent: Union[Agent, Team], prompt: str, image_url: Optional[str] = None) -> str:
+    def image_to_image(
+        self, agent: Union[Agent, Team], prompt: str, image_url: Optional[str] = None
+    ) -> str:
         """
         Use this function to transform an input image based on a text prompt using the Fal AI image-to-image model.
         The model takes an existing image and generates a new version modified according to your prompt.

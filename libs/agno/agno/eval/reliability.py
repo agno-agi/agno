@@ -8,7 +8,8 @@ if TYPE_CHECKING:
     from rich.console import Console
 
 from agno.run.response import RunResponse
-from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
+from agno.utils.log import (logger, set_log_level_to_debug,
+                            set_log_level_to_info)
 
 
 @dataclass
@@ -24,7 +25,9 @@ class ReliabilityResult:
         if console is None:
             console = Console()
 
-        results_table = Table(title="Reliability Summary", show_header=True, header_style="bold magenta")
+        results_table = Table(
+            title="Reliability Summary", show_header=True, header_style="bold magenta"
+        )
         results_table.add_row("Evaluation Status", self.eval_status)
         results_table.add_row("Failed Tool Calls", str(self.failed_tool_calls))
         results_table.add_row("Passed Tool Calls", str(self.passed_tool_calls))
@@ -77,7 +80,9 @@ class ReliabilityEval:
         else:
             set_log_level_to_info()
 
-    def run(self, *, print_summary: bool = False, print_results: bool = False) -> Optional[ReliabilityResult]:
+    def run(
+        self, *, print_summary: bool = False, print_results: bool = False
+    ) -> Optional[ReliabilityResult]:
         from rich.console import Console
         from rich.live import Live
         from rich.status import Status
@@ -90,7 +95,12 @@ class ReliabilityEval:
         # Add a spinner while running the evaluations
         console = Console()
         with Live(console=console, transient=True) as live_log:
-            status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
+            status = Status(
+                "Running evaluation...",
+                spinner="dots",
+                speed=1.0,
+                refresh_per_second=10,
+            )
             live_log.update(status)
 
             actual_tool_calls = None
@@ -121,7 +131,11 @@ class ReliabilityEval:
             try:
                 import json
 
-                fn_path = Path(self.save_result_to_file.format(name=self.name, eval_id=self.eval_id))
+                fn_path = Path(
+                    self.save_result_to_file.format(
+                        name=self.name, eval_id=self.eval_id
+                    )
+                )
                 if not fn_path.parent.exists():
                     fn_path.parent.mkdir(parents=True, exist_ok=True)
                 fn_path.write_text(json.dumps(asdict(self.result), indent=4))

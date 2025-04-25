@@ -15,7 +15,9 @@ try:
     from pymongo.database import Database
     from pymongo.errors import PyMongoError
 except ImportError:
-    raise ImportError("`pymongo` not installed. Please install it with `pip install pymongo`")
+    raise ImportError(
+        "`pymongo` not installed. Please install it with `pip install pymongo`"
+    )
 
 
 class MongoDbStorage(Storage):
@@ -96,7 +98,9 @@ class MongoDbStorage(Storage):
             logger.error(f"Error reading session: {e}")
             return None
 
-    def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
+    def get_all_session_ids(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[str]:
         """Get all session IDs matching the criteria
         Args:
             user_id: ID of the user to read
@@ -116,14 +120,18 @@ class MongoDbStorage(Storage):
                 elif self.mode == "workflow":
                     query["workflow_id"] = entity_id
 
-            cursor = self.collection.find(query, {"session_id": 1}).sort("created_at", -1)
+            cursor = self.collection.find(query, {"session_id": 1}).sort(
+                "created_at", -1
+            )
 
             return [str(doc["session_id"]) for doc in cursor]
         except PyMongoError as e:
             logger.error(f"Error getting session IDs: {e}")
             return []
 
-    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
+    def get_all_sessions(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[Session]:
         """Get all sessions matching the criteria
         Args:
             user_id: ID of the user to read
@@ -165,7 +173,9 @@ class MongoDbStorage(Storage):
             logger.error(f"Error getting sessions: {e}")
             return []
 
-    def upsert(self, session: Session, create_and_retry: bool = True) -> Optional[Session]:
+    def upsert(
+        self, session: Session, create_and_retry: bool = True
+    ) -> Optional[Session]:
         """Upsert a session
         Args:
             session (Session): The session to upsert
@@ -198,7 +208,9 @@ class MongoDbStorage(Storage):
             if not doc:
                 update_data["created_at"] = timestamp
 
-            result = self.collection.update_one(query, {"$set": update_data}, upsert=True)
+            result = self.collection.update_one(
+                query, {"$set": update_data}, upsert=True
+            )
 
             if result.acknowledged:
                 return self.read(session_id=session_dict["session_id"])

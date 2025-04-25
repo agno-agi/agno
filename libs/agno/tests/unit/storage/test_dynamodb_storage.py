@@ -27,7 +27,10 @@ def agent_storage(mock_dynamodb_resource):
 
     # Create storage with create_table_if_not_exists=False to avoid table creation
     storage = DynamoDbStorage(
-        table_name="agent_sessions", region_name="us-east-1", create_table_if_not_exists=False, mode="agent"
+        table_name="agent_sessions",
+        region_name="us-east-1",
+        create_table_if_not_exists=False,
+        mode="agent",
     )
 
     return storage, mock_table
@@ -43,7 +46,10 @@ def workflow_storage(mock_dynamodb_resource):
 
     # Create storage with create_table_if_not_exists=False to avoid table creation
     storage = DynamoDbStorage(
-        table_name="workflow_sessions", region_name="us-east-1", create_table_if_not_exists=False, mode="workflow"
+        table_name="workflow_sessions",
+        region_name="us-east-1",
+        create_table_if_not_exists=False,
+        mode="workflow",
     )
 
     return storage, mock_table
@@ -57,10 +63,18 @@ def test_initialization():
         mock_resource.return_value.Table.return_value = mock_table
         mock_table.wait_until_exists = MagicMock()
 
-        storage = DynamoDbStorage(table_name="test_table", region_name="us-west-2", create_table_if_not_exists=False)
+        storage = DynamoDbStorage(
+            table_name="test_table",
+            region_name="us-west-2",
+            create_table_if_not_exists=False,
+        )
 
         mock_resource.assert_called_once_with(
-            "dynamodb", region_name="us-west-2", aws_access_key_id=None, aws_secret_access_key=None, endpoint_url=None
+            "dynamodb",
+            region_name="us-west-2",
+            aws_access_key_id=None,
+            aws_secret_access_key=None,
+            endpoint_url=None,
         )
         assert storage.table_name == "test_table"
         assert storage.mode == "agent"  # Default value
@@ -94,7 +108,9 @@ def test_initialization():
         mock_table.wait_until_exists = MagicMock()
 
         storage = DynamoDbStorage(
-            table_name="test_table", endpoint_url="http://localhost:8000", create_table_if_not_exists=False
+            table_name="test_table",
+            endpoint_url="http://localhost:8000",
+            create_table_if_not_exists=False,
         )
 
         mock_resource.assert_called_once_with(
@@ -122,8 +138,12 @@ def test_agent_storage_crud(agent_storage):
     )
 
     # Test upsert
-    mock_table.put_item.return_value = {}  # DynamoDB put_item returns empty dict on success
-    mock_table.get_item.return_value = {"Item": session.to_dict()}  # Mock the read after upsert
+    mock_table.put_item.return_value = (
+        {}
+    )  # DynamoDB put_item returns empty dict on success
+    mock_table.get_item.return_value = {
+        "Item": session.to_dict()
+    }  # Mock the read after upsert
 
     result = storage.upsert(session)
     assert result is not None
@@ -144,13 +164,19 @@ def test_agent_storage_crud(agent_storage):
 
     # Test read with non-existent session
     mock_table.get_item.reset_mock()
-    mock_table.get_item.return_value = {}  # DynamoDB returns empty dict when item not found
+    mock_table.get_item.return_value = (
+        {}
+    )  # DynamoDB returns empty dict when item not found
     read_result = storage.read("non-existent-session")
     assert read_result is None
-    mock_table.get_item.assert_called_once_with(Key={"session_id": "non-existent-session"})
+    mock_table.get_item.assert_called_once_with(
+        Key={"session_id": "non-existent-session"}
+    )
 
     # Test delete
-    mock_table.delete_item.return_value = {}  # DynamoDB delete_item returns empty dict on success
+    mock_table.delete_item.return_value = (
+        {}
+    )  # DynamoDB delete_item returns empty dict on success
     storage.delete_session("test-session")
     mock_table.delete_item.assert_called_once_with(Key={"session_id": "test-session"})
 
@@ -258,7 +284,13 @@ def test_get_all_session_ids(agent_storage):
     storage, mock_table = agent_storage
 
     # Mock the scan method to return session IDs
-    mock_response = {"Items": [{"session_id": "session-1"}, {"session_id": "session-2"}, {"session_id": "session-3"}]}
+    mock_response = {
+        "Items": [
+            {"session_id": "session-1"},
+            {"session_id": "session-2"},
+            {"session_id": "session-3"},
+        ]
+    }
     mock_table.scan.return_value = mock_response
 
     # Test get_all_session_ids without filters
@@ -315,7 +347,9 @@ def test_mode_switching():
         mock_table.wait_until_exists = MagicMock()
 
         # Create storage in agent mode
-        storage = DynamoDbStorage(table_name="test_table", create_table_if_not_exists=False)
+        storage = DynamoDbStorage(
+            table_name="test_table", create_table_if_not_exists=False
+        )
         assert storage.mode == "agent"
 
         # Switch to workflow mode
@@ -364,7 +398,12 @@ def test_serialization_deserialization(agent_storage):
         "bool_value": True,
         "list_value": [Decimal("1"), Decimal("2"), Decimal("3")],
         "dict_value": {"key": "value"},
-        "nested_dict": {"nested": {"float": Decimal("1.23"), "list": [Decimal("4"), Decimal("5"), Decimal("6")]}},
+        "nested_dict": {
+            "nested": {
+                "float": Decimal("1.23"),
+                "list": [Decimal("4"), Decimal("5"), Decimal("6")],
+            }
+        },
     }
 
     deserialized = storage._deserialize_item(decimal_item)

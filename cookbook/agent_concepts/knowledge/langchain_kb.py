@@ -4,12 +4,13 @@ pip install langchain langchain-community langchain-openai langchain-chroma agno
 
 import pathlib
 
-from agno.agent import Agent
-from agno.knowledge.langchain import LangChainKnowledgeBase
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import TextLoader
 from langchain_openai import OpenAIEmbeddings
+
+from agno.agent import Agent
+from agno.knowledge.langchain import LangChainKnowledgeBase
 
 # Define the directory where the Chroma database is located
 chroma_db_dir = pathlib.Path("./chroma_db")

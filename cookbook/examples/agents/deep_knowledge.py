@@ -18,13 +18,14 @@ from typing import List, Optional
 
 import inquirer
 import typer
+from rich import print
+
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.url import UrlKnowledge
 from agno.models.openai import OpenAIChat
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.vectordb.lancedb import LanceDb, SearchType
-from rich import print
 
 
 def initialize_knowledge_base():

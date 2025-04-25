@@ -127,7 +127,9 @@ def test_tool_call_list_parameters():
 
 
 def test_tool_call_custom_tool_union_parameters():
-    def get_the_weather(city: str, degrees: Union[int, float], condition: str | None = None):
+    def get_the_weather(
+        city: str, degrees: Union[int, float], condition: str | None = None
+    ):
         """
         Get the weather in a city
 

@@ -5,13 +5,14 @@
 
 from typing import List
 
+from pydantic import BaseModel
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from pydantic import BaseModel
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 

@@ -4,6 +4,8 @@ from os import getenv
 from typing import Iterator
 
 import httpx
+from sqlalchemy.engine import create_engine
+
 from agno.agent import Agent
 from agno.run.response import RunResponse
 from agno.storage.singlestore import SingleStoreStorage
@@ -12,7 +14,6 @@ from agno.utils.certs import download_cert
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.workflow import Workflow
-from sqlalchemy.engine import create_engine
 
 
 class HackerNewsReporter(Workflow):

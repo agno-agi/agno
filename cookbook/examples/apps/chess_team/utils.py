@@ -3,6 +3,7 @@ from typing import Dict, List, Tuple
 
 import chess
 import streamlit as st
+
 from agno.agent import Agent
 
 WHITE = "white"

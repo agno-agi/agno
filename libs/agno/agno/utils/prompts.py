@@ -12,7 +12,9 @@ def get_json_output_prompt(response_model: Union[str, list, BaseModel]) -> str:
     This is added to the system prompt when the response_model is set and structured_outputs is False.
     """
 
-    json_output_prompt = "Provide your output as a JSON containing the following fields:"
+    json_output_prompt = (
+        "Provide your output as a JSON containing the following fields:"
+    )
     if response_model is not None:
         if isinstance(response_model, str):
             json_output_prompt += "\n<json_fields>"
@@ -45,7 +47,9 @@ def get_json_output_prompt(response_model: Union[str, list, BaseModel]) -> str:
                                 enum_name = ref.split("/")[-1]
                                 formatted_field_properties["enum_type"] = enum_name
 
-                        response_model_properties[field_name] = formatted_field_properties
+                        response_model_properties[field_name] = (
+                            formatted_field_properties
+                        )
 
                 json_schema_defs = json_schema.get("$defs")
                 if json_schema_defs is not None:
@@ -70,19 +74,23 @@ def get_json_output_prompt(response_model: Union[str, list, BaseModel]) -> str:
                                         for prop_name, prop_value in field_properties.items()
                                         if prop_name != "title"
                                     }
-                                    formatted_def_properties[field_name] = formatted_field_properties
+                                    formatted_def_properties[field_name] = (
+                                        formatted_field_properties
+                                    )
                             if len(formatted_def_properties) > 0:
-                                response_model_properties["$defs"][def_name] = formatted_def_properties
+                                response_model_properties["$defs"][
+                                    def_name
+                                ] = formatted_def_properties
 
                 if len(response_model_properties) > 0:
                     json_output_prompt += "\n<json_fields>"
-                    json_output_prompt += (
-                        f"\n{json.dumps([key for key in response_model_properties.keys() if key != '$defs'])}"
-                    )
+                    json_output_prompt += f"\n{json.dumps([key for key in response_model_properties.keys() if key != '$defs'])}"
                     json_output_prompt += "\n</json_fields>"
                     json_output_prompt += "\n\nHere are the properties for each field:"
                     json_output_prompt += "\n<json_field_properties>"
-                    json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2)}"
+                    json_output_prompt += (
+                        f"\n{json.dumps(response_model_properties, indent=2)}"
+                    )
                     json_output_prompt += "\n</json_field_properties>"
         else:
             log_warning(f"Could not build json schema for {response_model}")
@@ -90,6 +98,8 @@ def get_json_output_prompt(response_model: Union[str, list, BaseModel]) -> str:
         json_output_prompt += "Provide the output as JSON."
 
     json_output_prompt += "\nStart your response with `{` and end it with `}`."
-    json_output_prompt += "\nYour output will be passed to json.loads() to convert it to a Python object."
+    json_output_prompt += (
+        "\nYour output will be passed to json.loads() to convert it to a Python object."
+    )
     json_output_prompt += "\nMake sure it only contains valid JSON."
     return json_output_prompt

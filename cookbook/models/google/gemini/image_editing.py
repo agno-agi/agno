@@ -1,9 +1,10 @@
 from io import BytesIO
 
+from PIL import Image as PILImage
+
 from agno.agent import Agent, RunResponse  # noqa
 from agno.media import Image
 from agno.models.google import Gemini
-from PIL import Image as PILImage
 
 # No system message should be provided (Gemini requires only the image)
 agent = Agent(

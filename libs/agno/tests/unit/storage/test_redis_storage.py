@@ -198,7 +198,9 @@ def test_storage_filtering(agent_storage, mock_redis_client):
     assert all(s.agent_id == "agent-1" for s in agent1_sessions)
 
     # Test combined filtering
-    filtered_sessions = agent_storage.get_all_sessions(user_id="user-1", entity_id="agent-1")
+    filtered_sessions = agent_storage.get_all_sessions(
+        user_id="user-1", entity_id="agent-1"
+    )
     assert len(filtered_sessions) == 1
     assert filtered_sessions[0].user_id == "user-1"
     assert filtered_sessions[0].agent_id == "agent-1"
@@ -294,7 +296,9 @@ def test_error_handling(agent_storage, mock_redis_client):
 
     # Upsert should handle error and return None
     mock_redis_client.set.side_effect = Exception("Test error")
-    session = AgentSession(session_id="test-id", agent_id="test-agent", user_id="test-user")
+    session = AgentSession(
+        session_id="test-id", agent_id="test-agent", user_id="test-user"
+    )
     result = agent_storage.upsert(session)
     assert result is None
 
@@ -343,5 +347,7 @@ def test_get_all_session_ids(agent_storage, mock_redis_client):
     assert len(agent1_session_ids) == 2
 
     # Test combined filtering
-    filtered_session_ids = agent_storage.get_all_session_ids(user_id="user-1", entity_id="agent-1")
+    filtered_session_ids = agent_storage.get_all_session_ids(
+        user_id="user-1", entity_id="agent-1"
+    )
     assert len(filtered_session_ids) == 1

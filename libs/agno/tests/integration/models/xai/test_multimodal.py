@@ -15,7 +15,11 @@ def test_image_input():
 
     response = agent.run(
         "Tell me about this image and give me the latest news about it.",
-        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+        images=[
+            Image(
+                url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+            )
+        ],
     )
 
     assert "golden" in response.content.lower()

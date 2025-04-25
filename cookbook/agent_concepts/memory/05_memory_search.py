@@ -6,10 +6,11 @@ How to search for user memories using different retrieval methods
 - semantic: Retrieves memories using semantic search
 """
 
+from rich.pretty import pprint
+
 from agno.memory.v2 import Memory, UserMemory
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.models.google.gemini import Gemini
-from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 # Reset for this example

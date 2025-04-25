@@ -21,12 +21,16 @@ def temp_db_path() -> Generator[Path, None, None]:
 
 @pytest.fixture
 def agent_storage(temp_db_path: Path) -> SqliteStorage:
-    return SqliteStorage(table_name="agent_sessions", db_file=str(temp_db_path), mode="agent")
+    return SqliteStorage(
+        table_name="agent_sessions", db_file=str(temp_db_path), mode="agent"
+    )
 
 
 @pytest.fixture
 def workflow_storage(temp_db_path: Path) -> SqliteStorage:
-    return SqliteStorage(table_name="workflow_sessions", db_file=str(temp_db_path), mode="workflow")
+    return SqliteStorage(
+        table_name="workflow_sessions", db_file=str(temp_db_path), mode="workflow"
+    )
 
 
 def test_agent_storage_crud(agent_storage: SqliteStorage):
@@ -140,7 +144,9 @@ def test_storage_filtering(agent_storage: SqliteStorage):
         assert len(agent_sessions) == 2  # Each agent has 2 sessions
 
     # Test combined filtering
-    filtered_sessions = agent_storage.get_all_sessions(user_id="user-1", entity_id="agent-1")
+    filtered_sessions = agent_storage.get_all_sessions(
+        user_id="user-1", entity_id="agent-1"
+    )
     assert len(filtered_sessions) == 1
     assert filtered_sessions[0].user_id == "user-1"
     assert filtered_sessions[0].agent_id == "agent-1"
@@ -182,7 +188,9 @@ def test_workflow_storage_filtering(workflow_storage: SqliteStorage):
         assert len(workflow_sessions) == 2  # Each workflow has 2 sessions
 
     # Test combined filtering
-    filtered_sessions = workflow_storage.get_all_sessions(user_id="user-1", entity_id="workflow-1")
+    filtered_sessions = workflow_storage.get_all_sessions(
+        user_id="user-1", entity_id="workflow-1"
+    )
     assert len(filtered_sessions) == 1
     assert filtered_sessions[0].user_id == "user-1"
     assert filtered_sessions[0].workflow_id == "workflow-1"

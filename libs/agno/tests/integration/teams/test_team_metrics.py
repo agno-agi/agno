@@ -130,4 +130,6 @@ def test_team_metrics_multiple_runs():
     assert team.session_metrics.total_tokens > metrics_run1.total_tokens
 
     # Verify member metrics are tracked in full team metrics
-    assert team.full_team_session_metrics.total_tokens >= team.session_metrics.total_tokens
+    assert (
+        team.full_team_session_metrics.total_tokens >= team.session_metrics.total_tokens
+    )

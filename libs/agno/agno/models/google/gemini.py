@@ -13,29 +13,25 @@ from agno.media import Audio, File, ImageArtifact, Video
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.gemini import format_function_definitions, format_image_for_message
+from agno.utils.gemini import (format_function_definitions,
+                               format_image_for_message)
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
     from google import genai
     from google.genai import Client as GeminiClient
     from google.genai.errors import ClientError, ServerError
-    from google.genai.types import (
-        Content,
-        DynamicRetrievalConfig,
-        GenerateContentConfig,
-        GenerateContentResponse,
-        GenerateContentResponseUsageMetadata,
-        GoogleSearch,
-        GoogleSearchRetrieval,
-        Part,
-        Tool,
-    )
-    from google.genai.types import (
-        File as GeminiFile,
-    )
+    from google.genai.types import Content, DynamicRetrievalConfig
+    from google.genai.types import File as GeminiFile
+    from google.genai.types import (GenerateContentConfig,
+                                    GenerateContentResponse,
+                                    GenerateContentResponseUsageMetadata,
+                                    GoogleSearch, GoogleSearchRetrieval, Part,
+                                    Tool)
 except ImportError:
-    raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
+    raise ImportError(
+        "`google-genai` not installed. Please install it using `pip install google-genai`"
+    )
 
 
 @dataclass
@@ -113,12 +109,17 @@ class Gemini(Model):
             return self.client
 
         client_params: Dict[str, Any] = {}
-        vertexai = self.vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
+        vertexai = (
+            self.vertexai
+            or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
+        )
 
         if not vertexai:
             self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
             if not self.api_key:
-                log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
+                log_error(
+                    "GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable."
+                )
             client_params["api_key"] = self.api_key
         else:
             log_info("Using Vertex AI API")
@@ -134,7 +135,9 @@ class Gemini(Model):
         self.client = genai.Client(**client_params)
         return self.client
 
-    def _get_request_kwargs(self, system_message: Optional[str] = None) -> Dict[str, Any]:
+    def _get_request_kwargs(
+        self, system_message: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Returns the request keyword arguments for the GenerativeModel client.
 
@@ -184,7 +187,9 @@ class Gemini(Model):
             config["response_schema"] = self.response_format
 
         if self.grounding and self.search:
-            log_info("Both grounding and search are enabled. Grounding will take precedence.")
+            log_info(
+                "Both grounding and search are enabled. Grounding will take precedence."
+            )
             self.search = False
 
         if self.grounding:
@@ -238,11 +243,16 @@ class Gemini(Model):
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
-                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+                message=e.response,
+                status_code=e.code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     def invoke_stream(self, messages: List[Message]):
         """
@@ -266,11 +276,16 @@ class Gemini(Model):
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
-                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+                message=e.response,
+                status_code=e.code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke(self, messages: List[Message]):
         """
@@ -289,11 +304,16 @@ class Gemini(Model):
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
-                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+                message=e.response,
+                status_code=e.code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke_stream(self, messages: List[Message]):
         """
@@ -314,11 +334,16 @@ class Gemini(Model):
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
-                message=e.response, status_code=e.code, model_name=self.name, model_id=self.id
+                message=e.response,
+                status_code=e.code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     def _format_messages(self, messages: List[Message]):
         """
@@ -345,7 +370,11 @@ class Gemini(Model):
             message_parts: List[Any] = []
 
             # Function calls
-            if (not content or role == "model") and message.tool_calls is not None and len(message.tool_calls) > 0:
+            if (
+                (not content or role == "model")
+                and message.tool_calls is not None
+                and len(message.tool_calls) > 0
+            ):
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_call(
@@ -358,7 +387,8 @@ class Gemini(Model):
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_response(
-                            name=tool_call["tool_name"], response={"result": tool_call["content"]}
+                            name=tool_call["tool_name"],
+                            response={"result": tool_call["content"]},
                         )
                     )
             # Regular text content
@@ -370,7 +400,9 @@ class Gemini(Model):
                 # Add images to the message for the model
                 if message.images is not None:
                     for image in message.images:
-                        if image.content is not None and isinstance(image.content, GeminiFile):
+                        if image.content is not None and isinstance(
+                            image.content, GeminiFile
+                        ):
                             # Google recommends that if using a single image, place the text prompt after the image.
                             message_parts.insert(0, image.content)
                         else:
@@ -384,10 +416,16 @@ class Gemini(Model):
                         for video in message.videos:
                             # Case 1: Video is a file_types.File object (Recommended)
                             # Add it as a File object
-                            if video.content is not None and isinstance(video.content, GeminiFile):
+                            if video.content is not None and isinstance(
+                                video.content, GeminiFile
+                            ):
                                 # Google recommends that if using a single image, place the text prompt after the image.
                                 message_parts.insert(
-                                    0, Part.from_uri(file_uri=video.content.uri, mime_type=video.content.mime_type)
+                                    0,
+                                    Part.from_uri(
+                                        file_uri=video.content.uri,
+                                        mime_type=video.content.mime_type,
+                                    ),
                                 )
                             else:
                                 video_file = self._format_video_for_message(video)
@@ -403,16 +441,21 @@ class Gemini(Model):
                 if message.audio is not None:
                     try:
                         for audio_snippet in message.audio:
-                            if audio_snippet.content is not None and isinstance(audio_snippet.content, GeminiFile):
+                            if audio_snippet.content is not None and isinstance(
+                                audio_snippet.content, GeminiFile
+                            ):
                                 # Google recommends that if using a single image, place the text prompt after the image.
                                 message_parts.insert(
                                     0,
                                     Part.from_uri(
-                                        file_uri=audio_snippet.content.uri, mime_type=audio_snippet.content.mime_type
+                                        file_uri=audio_snippet.content.uri,
+                                        mime_type=audio_snippet.content.mime_type,
                                     ),
                                 )
                             else:
-                                audio_content = self._format_audio_for_message(audio_snippet)
+                                audio_content = self._format_audio_for_message(
+                                    audio_snippet
+                                )
                                 if audio_content:
                                     message_parts.append(audio_content)
                     except Exception as e:
@@ -434,28 +477,38 @@ class Gemini(Model):
 
         return formatted_messages, system_message
 
-    def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:
+    def _format_audio_for_message(
+        self, audio: Audio
+    ) -> Optional[Union[Part, GeminiFile]]:
         # Case 1: Audio is a bytes object
         if audio.content and isinstance(audio.content, bytes):
             return Part.from_bytes(
-                mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3", data=audio.content
+                mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3",
+                data=audio.content,
             )
 
         # Case 2: Audio is an url
         elif audio.url is not None:
             return Part.from_bytes(
-                mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3", data=audio.audio_url_content
+                mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3",
+                data=audio.audio_url_content,
             )
 
         # Case 3: Audio is a local file path
         elif audio.filepath is not None:
-            audio_path = audio.filepath if isinstance(audio.filepath, Path) else Path(audio.filepath)
+            audio_path = (
+                audio.filepath
+                if isinstance(audio.filepath, Path)
+                else Path(audio.filepath)
+            )
 
             remote_file_name = f"files/{audio_path.stem.lower().replace('_', '')}"
             # Check if video is already uploaded
             existing_audio_upload = None
             try:
-                existing_audio_upload = self.get_client().files.get(name=remote_file_name)
+                existing_audio_upload = self.get_client().files.get(
+                    name=remote_file_name
+                )
             except Exception as e:
                 log_warning(f"Error getting file {remote_file_name}: {e}")
                 pass
@@ -470,7 +523,9 @@ class Gemini(Model):
                         config=dict(
                             name=remote_file_name,
                             display_name=audio_path.stem,
-                            mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3",
+                            mime_type=(
+                                f"audio/{audio.format}" if audio.format else "audio/mp3"
+                            ),
                         ),
                     )
                 else:
@@ -485,7 +540,8 @@ class Gemini(Model):
                 if audio_file.state.name == "FAILED":
                     raise ValueError(audio_file.state.name)
             return Part.from_uri(
-                file_uri=audio_file.uri, mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3"
+                file_uri=audio_file.uri,
+                mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3",
             )
         else:
             log_warning(f"Unknown audio type: {type(audio.content)}")
@@ -495,17 +551,24 @@ class Gemini(Model):
         # Case 1: Video is a bytes object
         if video.content and isinstance(video.content, bytes):
             return Part.from_bytes(
-                mime_type=f"video/{video.format}" if video.format else "video/mp4", data=video.content
+                mime_type=f"video/{video.format}" if video.format else "video/mp4",
+                data=video.content,
             )
         # Case 2: Video is stored locally
         elif video.filepath is not None:
-            video_path = video.filepath if isinstance(video.filepath, Path) else Path(video.filepath)
+            video_path = (
+                video.filepath
+                if isinstance(video.filepath, Path)
+                else Path(video.filepath)
+            )
 
             remote_file_name = f"files/{video_path.stem.lower().replace('_', '')}"
             # Check if video is already uploaded
             existing_video_upload = None
             try:
-                existing_video_upload = self.get_client().files.get(name=remote_file_name)
+                existing_video_upload = self.get_client().files.get(
+                    name=remote_file_name
+                )
             except Exception as e:
                 log_warning(f"Error getting file {remote_file_name}: {e}")
                 pass
@@ -520,7 +583,9 @@ class Gemini(Model):
                         config=dict(
                             name=remote_file_name,
                             display_name=video_path.stem,
-                            mime_type=f"video/{video.format}" if video.format else "video/mp4",
+                            mime_type=(
+                                f"video/{video.format}" if video.format else "video/mp4"
+                            ),
                         ),
                     )
                 else:
@@ -536,7 +601,8 @@ class Gemini(Model):
                     raise ValueError(video_file.state.name)
 
             return Part.from_uri(
-                file_uri=video_file.uri, mime_type=f"video/{video.format}" if video.format else "video/mp4"
+                file_uri=video_file.uri,
+                mime_type=f"video/{video.format}" if video.format else "video/mp4",
             )
         else:
             log_warning(f"Unknown video type: {type(video.content)}")
@@ -559,16 +625,23 @@ class Gemini(Model):
 
         # Case 3: File is a local file path
         elif file.filepath is not None:
-            file_path = file.filepath if isinstance(file.filepath, Path) else Path(file.filepath)
+            file_path = (
+                file.filepath
+                if isinstance(file.filepath, Path)
+                else Path(file.filepath)
+            )
             if file_path.exists() and file_path.is_file():
                 if file_path.stat().st_size < 20 * 1024 * 1024:  # 20MB in bytes
                     if file.mime_type is not None:
-                        return Part.from_bytes(mime_type=file.mime_type, data=file_path.read_bytes())
+                        return Part.from_bytes(
+                            mime_type=file.mime_type, data=file_path.read_bytes()
+                        )
                     else:
                         import mimetypes
 
                         return Part.from_bytes(
-                            mime_type=mimetypes.guess_type(file_path)[0], data=file_path.read_bytes()
+                            mime_type=mimetypes.guess_type(file_path)[0],
+                            data=file_path.read_bytes(),
                         )
                 else:
                     clean_file_name = f"files/{file_path.stem.lower().replace('_', '')}"
@@ -579,7 +652,9 @@ class Gemini(Model):
                         log_warning(f"Error getting file {clean_file_name}: {e}")
 
                     if remote_file is not None:
-                        return Part.from_uri(file_uri=remote_file.uri, mime_type=remote_file.mime_type)
+                        return Part.from_uri(
+                            file_uri=remote_file.uri, mime_type=remote_file.mime_type
+                        )
                     else:
                         file_upload = self.get_client().files.upload(
                             file=file_path,
@@ -590,10 +665,14 @@ class Gemini(Model):
                         # Check whether the file is ready to be used.
                         while file_upload.state.name == "PROCESSING":
                             time.sleep(2)
-                            file_upload = self.get_client().files.get(name=file_upload.name)
+                            file_upload = self.get_client().files.get(
+                                name=file_upload.name
+                            )
                         if file_upload.state.name == "FAILED":
                             raise ValueError(file_upload.state.name)
-                        return Part.from_uri(file_uri=file_upload.uri, mime_type=file_upload.mime_type)
+                        return Part.from_uri(
+                            file_uri=file_upload.uri, mime_type=file_upload.mime_type
+                        )
             else:
                 log_error(f"File {file_path} does not exist.")
 
@@ -614,17 +693,24 @@ class Gemini(Model):
         if len(function_call_results) > 0:
             for result in function_call_results:
                 combined_content.append(result.content)
-                combined_function_result.append({"tool_name": result.tool_name, "content": result.content})
+                combined_function_result.append(
+                    {"tool_name": result.tool_name, "content": result.content}
+                )
                 message_metrics += result.metrics
 
         if combined_content:
             messages.append(
                 Message(
-                    role="tool", content=combined_content, tool_calls=combined_function_result, metrics=message_metrics
+                    role="tool",
+                    content=combined_content,
+                    tool_calls=combined_function_result,
+                    metrics=message_metrics,
                 )
             )
 
-    def parse_provider_response(self, response: GenerateContentResponse) -> ModelResponse:
+    def parse_provider_response(
+        self, response: GenerateContentResponse
+    ) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
 
@@ -653,26 +739,38 @@ class Gemini(Model):
 
                     if hasattr(part, "inline_data") and part.inline_data is not None:
                         model_response.image = ImageArtifact(
-                            id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                            id=str(uuid4()),
+                            content=part.inline_data.data,
+                            mime_type=part.inline_data.mime_type,
                         )
 
                     # Extract function call if present
-                    if hasattr(part, "function_call") and part.function_call is not None:
+                    if (
+                        hasattr(part, "function_call")
+                        and part.function_call is not None
+                    ):
                         tool_call = {
                             "type": "function",
                             "function": {
                                 "name": part.function_call.name,
-                                "arguments": json.dumps(part.function_call.args)
-                                if part.function_call.args is not None
-                                else "",
+                                "arguments": (
+                                    json.dumps(part.function_call.args)
+                                    if part.function_call.args is not None
+                                    else ""
+                                ),
                             },
                         }
 
                         model_response.tool_calls.append(tool_call)
 
-            if response.candidates and response.candidates[0].grounding_metadata is not None:
+            if (
+                response.candidates
+                and response.candidates[0].grounding_metadata is not None
+            ):
                 citations = Citations()
-                grounding_metadata = response.candidates[0].grounding_metadata.model_dump()
+                grounding_metadata = response.candidates[
+                    0
+                ].grounding_metadata.model_dump()
                 citations.raw = grounding_metadata
 
                 # Extract url and title
@@ -684,7 +782,9 @@ class Gemini(Model):
                 ]
 
                 # Create citation objects from filtered pairs
-                citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
+                citations.urls = [
+                    UrlCitation(url=url, title=title) for url, title in citation_pairs
+                ]
 
                 model_response.citations = citations
 
@@ -700,7 +800,9 @@ class Gemini(Model):
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: GenerateContentResponse) -> ModelResponse:
+    def parse_provider_response_delta(
+        self, response_delta: GenerateContentResponse
+    ) -> ModelResponse:
         model_response = ModelResponse()
 
         response_message: Content = response_delta.candidates[0].content
@@ -717,7 +819,9 @@ class Gemini(Model):
 
                 if hasattr(part, "inline_data") and part.inline_data is not None:
                     model_response.image = ImageArtifact(
-                        id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                        id=str(uuid4()),
+                        content=part.inline_data.data,
+                        mime_type=part.inline_data.mime_type,
                     )
 
                 # Extract function call if present
@@ -726,17 +830,24 @@ class Gemini(Model):
                         "type": "function",
                         "function": {
                             "name": part.function_call.name,
-                            "arguments": json.dumps(part.function_call.args)
-                            if part.function_call.args is not None
-                            else "",
+                            "arguments": (
+                                json.dumps(part.function_call.args)
+                                if part.function_call.args is not None
+                                else ""
+                            ),
                         },
                     }
 
                     model_response.tool_calls.append(tool_call)
 
-        if response_delta.candidates and response_delta.candidates[0].grounding_metadata is not None:
+        if (
+            response_delta.candidates
+            and response_delta.candidates[0].grounding_metadata is not None
+        ):
             citations = Citations()
-            grounding_metadata = response_delta.candidates[0].grounding_metadata.model_dump()
+            grounding_metadata = response_delta.candidates[
+                0
+            ].grounding_metadata.model_dump()
             citations.raw = grounding_metadata
 
             # Extract url and title
@@ -748,12 +859,17 @@ class Gemini(Model):
             ]
 
             # Create citation objects from filtered pairs
-            citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
+            citations.urls = [
+                UrlCitation(url=url, title=title) for url, title in citation_pairs
+            ]
 
             model_response.citations = citations
 
         # Extract usage metadata if present
-        if hasattr(response_delta, "usage_metadata") and response_delta.usage_metadata is not None:
+        if (
+            hasattr(response_delta, "usage_metadata")
+            and response_delta.usage_metadata is not None
+        ):
             usage: GenerateContentResponseUsageMetadata = response_delta.usage_metadata
             model_response.response_usage = {
                 "input_tokens": usage.prompt_token_count or 0,
@@ -785,7 +901,13 @@ class Gemini(Model):
         # Deep copy all attributes except client and unpickleable attributes
         for key, value in self.__dict__.items():
             # Skip client and other unpickleable attributes
-            if key in {"client", "response_format", "_tools", "_functions", "_function_call_stack"}:
+            if key in {
+                "client",
+                "response_format",
+                "_tools",
+                "_functions",
+                "_function_call_stack",
+            }:
                 continue
 
             # Try deep copy first, fall back to shallow copy, then direct assignment

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import requests
+
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.openai import OpenAIChat
 from agno.utils.audio import write_audio_to_file

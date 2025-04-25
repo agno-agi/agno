@@ -18,7 +18,11 @@ def test_coordinator_team_basic():
         tools=[DuckDuckGoTools(cache_results=True)],
     )
 
-    writer = Agent(name="Writer", model=OpenAIChat("gpt-4o"), role="Write content based on research")
+    writer = Agent(
+        name="Writer",
+        model=OpenAIChat("gpt-4o"),
+        role="Write content based on research",
+    )
 
     team = Team(
         name="Content Team",
@@ -130,9 +134,15 @@ def test_coordinator_team_sequential_tasks():
         tools=[DuckDuckGoTools(cache_results=True)],
     )
 
-    data_analyzer = Agent(name="Data Analyzer", model=OpenAIChat("gpt-4o"), role="Analyze data")
+    data_analyzer = Agent(
+        name="Data Analyzer", model=OpenAIChat("gpt-4o"), role="Analyze data"
+    )
 
-    report_writer = Agent(name="Report Writer", model=OpenAIChat("gpt-4o"), role="Write reports based on analysis")
+    report_writer = Agent(
+        name="Report Writer",
+        model=OpenAIChat("gpt-4o"),
+        role="Write reports based on analysis",
+    )
 
     team = Team(
         name="Research Team",

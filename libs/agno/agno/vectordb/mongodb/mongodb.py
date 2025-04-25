@@ -12,14 +12,18 @@ try:
     from hashlib import md5
 
 except ImportError:
-    raise ImportError("`hashlib` not installed. Please install using `pip install hashlib`")
+    raise ImportError(
+        "`hashlib` not installed. Please install using `pip install hashlib`"
+    )
 try:
     from pymongo import AsyncMongoClient, MongoClient, errors
     from pymongo.collection import Collection
     from pymongo.operations import SearchIndexModel
 
 except ImportError:
-    raise ImportError("`pymongo` not installed. Please install using `pip install pymongo`")
+    raise ImportError(
+        "`pymongo` not installed. Please install using `pip install pymongo`"
+    )
 
 
 class MongoDb(VectorDb):
@@ -149,7 +153,9 @@ class MongoDb(VectorDb):
             # check if index exists
             log_info(f"Checking if search index '{self.collection_name}' exists.")
             if not self._search_index_exists():
-                log_info(f"Search index '{self.collection_name}' does not exist. Creating it.")
+                log_info(
+                    f"Search index '{self.collection_name}' does not exist. Creating it."
+                )
                 self._create_search_index()
                 if self.wait_until_index_ready:
                     self._wait_for_index_ready()
@@ -189,7 +195,9 @@ class MongoDb(VectorDb):
                     except errors.OperationFailure as e:
                         if "Index already requested to be deleted" in str(e):
                             log_info("Index is already being deleted, waiting...")
-                            time.sleep(retry_delay * 2)  # Wait longer for deletion to complete
+                            time.sleep(
+                                retry_delay * 2
+                            )  # Wait longer for deletion to complete
                         else:
                             raise
 
@@ -231,7 +239,9 @@ class MongoDb(VectorDb):
 
             except errors.OperationFailure as e:
                 if "Duplicate Index" in str(e) and attempt < max_retries - 1:
-                    logger.warning(f"Index already exists, retrying... (attempt {attempt + 1})")
+                    logger.warning(
+                        f"Index already exists, retrying... (attempt {attempt + 1})"
+                    )
                     time.sleep(retry_delay * (attempt + 1))
                     continue
                 logger.error(f"Failed to create search index: {e}")
@@ -365,7 +375,9 @@ class MongoDb(VectorDb):
         try:
             collection = self._get_collection()
             exists = collection.find_one({"name": name}) is not None
-            log_debug(f"Document with name '{name}' {'exists' if exists else 'does not exist'}")
+            log_debug(
+                f"Document with name '{name}' {'exists' if exists else 'does not exist'}"
+            )
             return exists
         except Exception as e:
             logger.error(f"Error checking document name existence: {e}")
@@ -376,13 +388,17 @@ class MongoDb(VectorDb):
         try:
             collection = self._get_collection()
             exists = collection.find_one({"_id": id}) is not None
-            log_debug(f"Document with ID '{id}' {'exists' if exists else 'does not exist'}")
+            log_debug(
+                f"Document with ID '{id}' {'exists' if exists else 'does not exist'}"
+            )
             return exists
         except Exception as e:
             logger.error(f"Error checking document ID existence: {e}")
             return False
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents into the MongoDB collection."""
         log_info(f"Inserting {len(documents)} documents")
         collection = self._get_collection()
@@ -402,11 +418,15 @@ class MongoDb(VectorDb):
                 if self.wait_after_insert and self.wait_after_insert > 0:
                     time.sleep(self.wait_after_insert)
             except errors.BulkWriteError as e:
-                logger.warning(f"Bulk write error while inserting documents: {e.details}")
+                logger.warning(
+                    f"Bulk write error while inserting documents: {e.details}"
+                )
             except Exception as e:
                 logger.error(f"Error inserting documents: {e}")
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Upsert documents into the MongoDB collection."""
         log_info(f"Upserting {len(documents)} documents")
         collection = self._get_collection()
@@ -428,7 +448,11 @@ class MongoDb(VectorDb):
         return True
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None, min_score: float = 0.0
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        min_score: float = 0.0,
     ) -> List[Document]:
         """Search for documents using vector similarity."""
         query_embedding = self.embedder.get_embedding(query)
@@ -466,7 +490,10 @@ class MongoDb(VectorDb):
                     id=str(doc["_id"]),
                     name=doc.get("name"),
                     content=doc["content"],
-                    meta_data={**doc.get("meta_data", {}), "score": doc.get("score", 0.0)},
+                    meta_data={
+                        **doc.get("meta_data", {}),
+                        "score": doc.get("score", 0.0),
+                    },
                 )
                 for doc in results
             ]
@@ -546,7 +573,9 @@ class MongoDb(VectorDb):
             try:
                 collection = self._get_collection()
                 result = collection.delete_many({})
-                success = result.deleted_count >= 0  # Consider any deletion (even 0) as success
+                success = (
+                    result.deleted_count >= 0
+                )  # Consider any deletion (even 0) as success
                 log_info(f"Deleted {result.deleted_count} documents from collection.")
                 return success
             except Exception as e:
@@ -558,7 +587,9 @@ class MongoDb(VectorDb):
         """Prepare a document for insertion or upsertion into MongoDB."""
         document.embed(embedder=self.embedder)
         if document.embedding is None:
-            raise ValueError(f"Failed to generate embedding for document: {document.id}")
+            raise ValueError(
+                f"Failed to generate embedding for document: {document.id}"
+            )
 
         cleaned_content = document.content.replace("\x00", "\ufffd")
         doc_id = md5(cleaned_content.encode("utf-8")).hexdigest()
@@ -596,7 +627,9 @@ class MongoDb(VectorDb):
             logger.error(f"Error checking document existence asynchronously: {e}")
             return False
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents asynchronously."""
         log_info(f"Inserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
@@ -616,11 +649,15 @@ class MongoDb(VectorDb):
                 if self.wait_after_insert and self.wait_after_insert > 0:
                     await asyncio.sleep(self.wait_after_insert)
             except errors.BulkWriteError as e:
-                logger.warning(f"Bulk write error while inserting documents: {e.details}")
+                logger.warning(
+                    f"Bulk write error while inserting documents: {e.details}"
+                )
             except Exception as e:
                 logger.error(f"Error inserting documents asynchronously: {e}")
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Upsert documents asynchronously."""
         log_info(f"Upserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
@@ -635,7 +672,9 @@ class MongoDb(VectorDb):
                 )
                 log_info(f"Upserted document: {doc_data['_id']}")
             except Exception as e:
-                logger.error(f"Error upserting document '{document.name}' asynchronously: {e}")
+                logger.error(
+                    f"Error upserting document '{document.name}' asynchronously: {e}"
+                )
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
@@ -682,7 +721,10 @@ class MongoDb(VectorDb):
                     id=str(doc["_id"]),
                     name=doc.get("name"),
                     content=doc["content"],
-                    meta_data={**doc.get("meta_data", {}), "score": doc.get("score", 0.0)},
+                    meta_data={
+                        **doc.get("meta_data", {}),
+                        "score": doc.get("score", 0.0),
+                    },
                 )
                 for doc in results
             ]
@@ -715,7 +757,9 @@ class MongoDb(VectorDb):
             client = await self._get_async_client()
             collection_names = await client[self.database].list_collection_names()
             exists = self.collection_name in collection_names
-            log_debug(f"Collection '{self.collection_name}' existence (async): {exists}")
+            log_debug(
+                f"Collection '{self.collection_name}' existence (async): {exists}"
+            )
             return exists
         except Exception as e:
             logger.error(f"Error checking collection existence asynchronously: {e}")
@@ -726,7 +770,9 @@ class MongoDb(VectorDb):
         try:
             collection = await self._get_async_collection()
             exists = await collection.find_one({"name": name}) is not None
-            log_debug(f"Document with name '{name}' {'exists' if exists else 'does not exist'} (async)")
+            log_debug(
+                f"Document with name '{name}' {'exists' if exists else 'does not exist'} (async)"
+            )
             return exists
         except Exception as e:
             logger.error(f"Error checking document name existence asynchronously: {e}")

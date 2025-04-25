@@ -29,17 +29,17 @@ def authenticate_user() -> None:
     """
     from agno.api.schemas.user import UserSchema
     from agno.api.user import authenticate_and_get_user
-    from agno.cli.auth_server import (
-        get_auth_token_from_web_flow,
-        get_port_for_auth_server,
-    )
+    from agno.cli.auth_server import (get_auth_token_from_web_flow,
+                                      get_port_for_auth_server)
     from agno.cli.credentials import save_auth_token
 
     print_heading("Authenticating with agno.com")
 
     auth_server_port = get_port_for_auth_server()
     redirect_uri = "http%3A%2F%2Flocalhost%3A{}%2F".format(auth_server_port)
-    auth_url = "{}?source=cli&action=signin&redirecturi={}".format(agno_cli_settings.signin_url, redirect_uri)
+    auth_url = "{}?source=cli&action=signin&redirecturi={}".format(
+        agno_cli_settings.signin_url, redirect_uri
+    )
     print_info("\nYour browser will be opened to visit:\n{}".format(auth_url))
     typer_launch(auth_url)
     print_info("\nWaiting for a response from the browser...\n")
@@ -50,10 +50,14 @@ def authenticate_user() -> None:
         return
 
     agno_config: Optional[AgnoCliConfig] = AgnoCliConfig.from_saved_config()
-    existing_user: Optional[UserSchema] = agno_config.user if agno_config is not None else None
+    existing_user: Optional[UserSchema] = (
+        agno_config.user if agno_config is not None else None
+    )
     # Authenticate the user and claim any workspaces from anon user
     try:
-        user: Optional[UserSchema] = authenticate_and_get_user(auth_token=auth_token, existing_user=existing_user)
+        user: Optional[UserSchema] = authenticate_and_get_user(
+            auth_token=auth_token, existing_user=existing_user
+        )
     except Exception as e:
         logger.exception(e)
         logger.error("Could not authenticate, please set AGNO_API_KEY or try again")
@@ -75,7 +79,9 @@ def authenticate_user() -> None:
     print_info("Welcome {}".format(user.email))
 
 
-def initialize_agno(reset: bool = False, login: bool = False) -> Optional[AgnoCliConfig]:
+def initialize_agno(
+    reset: bool = False, login: bool = False
+) -> Optional[AgnoCliConfig]:
     """Initialize Agno on the users machine.
 
     Steps:
@@ -100,7 +106,9 @@ def initialize_agno(reset: bool = False, login: bool = False) -> Optional[AgnoCl
                 delete_from_fs(AGNO_CLI_CONFIG_DIR)
             except Exception as e:
                 logger.exception(e)
-                raise Exception(f"Something went wrong, please delete {AGNO_CLI_CONFIG_DIR} and run again")
+                raise Exception(
+                    f"Something went wrong, please delete {AGNO_CLI_CONFIG_DIR} and run again"
+                )
             AGNO_CLI_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     else:
         AGNO_CLI_CONFIG_DIR.mkdir(parents=True)
@@ -162,11 +170,13 @@ def start_resources(
         return
 
     # Get resources to deploy
-    resource_groups_to_create: List[InfraResources] = WorkspaceConfig.get_resources_from_file(
-        resource_file=resources_file_path,
-        env=target_env,
-        infra=target_infra,
-        order="create",
+    resource_groups_to_create: List[InfraResources] = (
+        WorkspaceConfig.get_resources_from_file(
+            resource_file=resources_file_path,
+            env=target_env,
+            infra=target_infra,
+            order="create",
+        )
     )
 
     # Track number of resource groups created
@@ -195,7 +205,9 @@ def start_resources(
             num_rgs_created += 1
         num_resources_created += _num_resources_created
         num_resources_to_create += _num_resources_to_create
-        logger.debug(f"Deployed {num_resources_created} resources in {num_rgs_created} resource groups")
+        logger.debug(
+            f"Deployed {num_resources_created} resources in {num_rgs_created} resource groups"
+        )
 
     if dry_run:
         return
@@ -203,7 +215,9 @@ def start_resources(
     if num_resources_created == 0:
         return
 
-    print_heading(f"\n--**-- ResourceGroups deployed: {num_rgs_created}/{num_rgs_to_create}\n")
+    print_heading(
+        f"\n--**-- ResourceGroups deployed: {num_rgs_created}/{num_rgs_to_create}\n"
+    )
     if num_resources_created != num_resources_to_create:
         logger.error("Some resources failed to create, please check logs")
 
@@ -237,11 +251,13 @@ def stop_resources(
         return
 
     # Get resource groups to shutdown
-    resource_groups_to_shutdown: List[InfraResources] = WorkspaceConfig.get_resources_from_file(
-        resource_file=resources_file_path,
-        env=target_env,
-        infra=target_infra,
-        order="create",
+    resource_groups_to_shutdown: List[InfraResources] = (
+        WorkspaceConfig.get_resources_from_file(
+            resource_file=resources_file_path,
+            env=target_env,
+            infra=target_infra,
+            order="create",
+        )
     )
 
     # Track number of resource groups deleted
@@ -269,7 +285,9 @@ def stop_resources(
             num_rgs_shutdown += 1
         num_resources_shutdown += _num_resources_shutdown
         num_resources_to_shutdown += _num_resources_to_shutdown
-        logger.debug(f"Deleted {num_resources_shutdown} resources in {num_rgs_shutdown} resource groups")
+        logger.debug(
+            f"Deleted {num_resources_shutdown} resources in {num_rgs_shutdown} resource groups"
+        )
 
     if dry_run:
         return
@@ -277,7 +295,9 @@ def stop_resources(
     if num_resources_shutdown == 0:
         return
 
-    print_heading(f"\n--**-- ResourceGroups deleted: {num_rgs_shutdown}/{num_rgs_to_shutdown}\n")
+    print_heading(
+        f"\n--**-- ResourceGroups deleted: {num_rgs_shutdown}/{num_rgs_to_shutdown}\n"
+    )
     if num_resources_shutdown != num_resources_to_shutdown:
         logger.error("Some resources failed to delete, please check logs")
 
@@ -311,11 +331,13 @@ def patch_resources(
         return
 
     # Get resource groups to update
-    resource_groups_to_patch: List[InfraResources] = WorkspaceConfig.get_resources_from_file(
-        resource_file=resources_file_path,
-        env=target_env,
-        infra=target_infra,
-        order="create",
+    resource_groups_to_patch: List[InfraResources] = (
+        WorkspaceConfig.get_resources_from_file(
+            resource_file=resources_file_path,
+            env=target_env,
+            infra=target_infra,
+            order="create",
+        )
     )
 
     num_rgs_patched = 0
@@ -342,7 +364,9 @@ def patch_resources(
             num_rgs_patched += 1
         num_resources_patched += _num_resources_patched
         num_resources_to_patch += _num_resources_to_patch
-        logger.debug(f"Patched {num_resources_patched} resources in {num_rgs_patched} resource groups")
+        logger.debug(
+            f"Patched {num_resources_patched} resources in {num_rgs_patched} resource groups"
+        )
 
     if dry_run:
         return
@@ -350,6 +374,8 @@ def patch_resources(
     if num_resources_patched == 0:
         return
 
-    print_heading(f"\n--**-- ResourceGroups patched: {num_rgs_patched}/{num_rgs_to_patch}\n")
+    print_heading(
+        f"\n--**-- ResourceGroups patched: {num_rgs_patched}/{num_rgs_to_patch}\n"
+    )
     if num_resources_patched != num_resources_to_patch:
         logger.error("Some resources failed to patch, please check logs")

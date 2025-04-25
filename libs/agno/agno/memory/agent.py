@@ -25,7 +25,11 @@ class AgentRun(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         response = {
             "message": self.message.to_dict() if self.message else None,
-            "messages": [message.to_dict() for message in self.messages] if self.messages else None,
+            "messages": (
+                [message.to_dict() for message in self.messages]
+                if self.messages
+                else None
+            ),
             "response": self.response.to_dict() if self.response else None,
         }
         return {k: v for k, v in response.items() if v is not None}
@@ -101,7 +105,9 @@ class AgentMemory(BaseModel):
         self.runs.append(agent_run)
         log_debug("Added AgentRun to AgentMemory")
 
-    def add_system_message(self, message: Message, system_message_role: str = "system") -> None:
+    def add_system_message(
+        self, message: Message, system_message_role: str = "system"
+    ) -> None:
         """Add the system messages to the messages list"""
         # If this is the first run in the session, add the system message to the messages list
         if len(self.messages) == 0:
@@ -111,7 +117,14 @@ class AgentMemory(BaseModel):
         # If it is not, add the system message to the messages list
         # If it is, update the system message if content has changed and update_system_message_on_change is True
         else:
-            system_message_index = next((i for i, m in enumerate(self.messages) if m.role == system_message_role), None)
+            system_message_index = next(
+                (
+                    i
+                    for i, m in enumerate(self.messages)
+                    if m.role == system_message_role
+                ),
+                None,
+            )
             # Update the system message in memory if content has changed
             if system_message_index is not None:
                 if (
@@ -199,7 +212,9 @@ class AgentMemory(BaseModel):
                         break
 
                 if user_messages_from_run and assistant_messages_from_run:
-                    runs_as_message_pairs.append((user_messages_from_run, assistant_messages_from_run))
+                    runs_as_message_pairs.append(
+                        (user_messages_from_run, assistant_messages_from_run)
+                    )
         return runs_as_message_pairs
 
     def get_tool_calls(self, num_calls: Optional[int] = None) -> List[Dict[str, Any]]:

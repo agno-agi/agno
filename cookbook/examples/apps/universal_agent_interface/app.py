@@ -2,8 +2,6 @@ import asyncio
 
 import nest_asyncio
 import streamlit as st
-from agno.team import Team
-from agno.utils.log import logger
 from css import CUSTOM_CSS
 from uagi import UAgIConfig, create_uagi, uagi_memory
 from utils import (
@@ -20,6 +18,9 @@ from utils import (
     show_user_memories,
     utilities_widget,
 )
+
+from agno.team import Team
+from agno.utils.log import logger
 
 nest_asyncio.apply()
 st.set_page_config(

@@ -37,7 +37,12 @@ def agent_storage(mock_engine, mock_session):
     session_factory, session_instance = mock_session
     with patch("agno.storage.singlestore.sessionmaker", return_value=session_factory):
         with patch("agno.storage.singlestore.inspect", return_value=MagicMock()):
-            storage = SingleStoreStorage(table_name="agent_sessions", schema="ai", db_engine=mock_engine, mode="agent")
+            storage = SingleStoreStorage(
+                table_name="agent_sessions",
+                schema="ai",
+                db_engine=mock_engine,
+                mode="agent",
+            )
             # Mock table_exists to return True
             storage.table_exists = MagicMock(return_value=True)
             return storage, session_instance
@@ -50,7 +55,10 @@ def workflow_storage(mock_engine, mock_session):
     with patch("agno.storage.singlestore.sessionmaker", return_value=session_factory):
         with patch("agno.storage.singlestore.inspect", return_value=MagicMock()):
             storage = SingleStoreStorage(
-                table_name="workflow_sessions", schema="ai", db_engine=mock_engine, mode="workflow"
+                table_name="workflow_sessions",
+                schema="ai",
+                db_engine=mock_engine,
+                mode="workflow",
             )
             # Mock table_exists to return True
             storage.table_exists = MagicMock(return_value=True)
@@ -66,10 +74,13 @@ def test_initialization():
                 mock_engine = MagicMock()
                 mock_create_engine.return_value = mock_engine
 
-                storage = SingleStoreStorage(table_name="test_table", db_url="mysql://user:pass@localhost/db")
+                storage = SingleStoreStorage(
+                    table_name="test_table", db_url="mysql://user:pass@localhost/db"
+                )
 
                 mock_create_engine.assert_called_once_with(
-                    "mysql://user:pass@localhost/db", connect_args={"charset": "utf8mb4"}
+                    "mysql://user:pass@localhost/db",
+                    connect_args={"charset": "utf8mb4"},
                 )
                 assert storage.table_name == "test_table"
                 assert storage.schema == "ai"  # Default value
@@ -201,7 +212,9 @@ def test_get_all_sessions(agent_storage):
 
     # Reset mock for user_id filter test
     mock_session.reset_mock()
-    mock_rows_filtered = [row for row in mock_rows if row._mapping["user_id"] == "user-1"]
+    mock_rows_filtered = [
+        row for row in mock_rows if row._mapping["user_id"] == "user-1"
+    ]
     mock_result = MagicMock()
     mock_result.fetchall.return_value = mock_rows_filtered
     mock_session.execute.return_value = mock_result
@@ -212,7 +225,9 @@ def test_get_all_sessions(agent_storage):
 
     # Reset mock for agent_id filter test
     mock_session.reset_mock()
-    mock_rows_filtered = [row for row in mock_rows if row._mapping["agent_id"] == "agent-1"]
+    mock_rows_filtered = [
+        row for row in mock_rows if row._mapping["agent_id"] == "agent-1"
+    ]
     mock_result = MagicMock()
     mock_result.fetchall.return_value = mock_rows_filtered
     mock_session.execute.return_value = mock_result
@@ -317,7 +332,9 @@ def test_mode_switching():
         with patch("agno.storage.singlestore.inspect"):
             with patch("agno.storage.singlestore.create_engine"):
                 # Create storage in agent mode
-                storage = SingleStoreStorage(table_name="test_table", db_url="mysql://user:pass@localhost/db")
+                storage = SingleStoreStorage(
+                    table_name="test_table", db_url="mysql://user:pass@localhost/db"
+                )
                 assert storage.mode == "agent"
 
                 # Switch to workflow mode

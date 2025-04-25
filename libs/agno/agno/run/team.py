@@ -4,7 +4,8 @@ from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
-from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
+from agno.media import (AudioArtifact, AudioResponse, ImageArtifact,
+                        VideoArtifact)
 from agno.models.message import Citations, Message
 from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
 
@@ -22,7 +23,9 @@ class TeamRunResponse:
     metrics: Optional[Dict[str, Any]] = None
     model: Optional[str] = None
 
-    member_responses: List[Union["TeamRunResponse", RunResponse]] = field(default_factory=list)
+    member_responses: List[Union["TeamRunResponse", RunResponse]] = field(
+        default_factory=list
+    )
 
     run_id: Optional[str] = None
     team_id: Optional[str] = None
@@ -48,7 +51,16 @@ class TeamRunResponse:
         _dict = {
             k: v
             for k, v in asdict(self).items()
-            if v is not None and k not in ["messages", "extra_data", "images", "videos", "audio", "response_audio"]
+            if v is not None
+            and k
+            not in [
+                "messages",
+                "extra_data",
+                "images",
+                "videos",
+                "audio",
+                "response_audio",
+            ]
         }
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
@@ -69,7 +81,9 @@ class TeamRunResponse:
             _dict["response_audio"] = self.response_audio.to_dict()
 
         if self.member_responses:
-            _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
+            _dict["member_responses"] = [
+                response.to_dict() for response in self.member_responses
+            ]
 
         if isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
@@ -86,7 +100,11 @@ class TeamRunResponse:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRunResponse":
         messages = data.pop("messages", None)
-        messages = [Message.model_validate(message) for message in messages] if messages else None
+        messages = (
+            [Message.model_validate(message) for message in messages]
+            if messages
+            else None
+        )
 
         member_responses = data.pop("member_responses", None)
         parsed_member_responses: List[Union["TeamRunResponse", RunResponse]] = []
@@ -102,16 +120,28 @@ class TeamRunResponse:
             extra_data = RunResponseExtraData.from_dict(extra_data)
 
         images = data.pop("images", None)
-        images = [ImageArtifact.model_validate(image) for image in images] if images else None
+        images = (
+            [ImageArtifact.model_validate(image) for image in images]
+            if images
+            else None
+        )
 
         videos = data.pop("videos", None)
-        videos = [VideoArtifact.model_validate(video) for video in videos] if videos else None
+        videos = (
+            [VideoArtifact.model_validate(video) for video in videos]
+            if videos
+            else None
+        )
 
         audio = data.pop("audio", None)
-        audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
+        audio = (
+            [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
+        )
 
         response_audio = data.pop("response_audio", None)
-        response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
+        response_audio = (
+            AudioResponse.model_validate(response_audio) if response_audio else None
+        )
 
         return cls(
             messages=messages,
@@ -136,7 +166,9 @@ class TeamRunResponse:
         else:
             return json.dumps(self.content, **kwargs)
 
-    def add_member_run(self, run_response: Union["TeamRunResponse", RunResponse]) -> None:
+    def add_member_run(
+        self, run_response: Union["TeamRunResponse", RunResponse]
+    ) -> None:
         self.member_responses.append(run_response)
         if run_response.images is not None:
             if self.images is None:

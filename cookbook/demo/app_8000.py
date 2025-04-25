@@ -8,9 +8,10 @@ from agents.basic import (
     youtube_agent,
 )
 from agents.memory_agent import get_memory_agent
-from agno.playground import Playground, serve_playground_app
 from sql.agents import get_sql_agent
 from teams.reasoning_finance_team import get_reasoning_finance_team
+
+from agno.playground import Playground, serve_playground_app
 
 sql_agent = get_sql_agent(name="SQL Agent", model_id="openai:o4-mini")
 reasoning_sql_agent = get_sql_agent(

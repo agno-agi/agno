@@ -10,7 +10,9 @@ class SessionSummary(BaseModel):
         ...,
         description="Summary of the session. Be concise and focus on only important information. Do not make anything up.",
     )
-    topics: Optional[List[str]] = Field(None, description="Topics discussed in the session.")
+    topics: Optional[List[str]] = Field(
+        None, description="Topics discussed in the session."
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(exclude_none=True)

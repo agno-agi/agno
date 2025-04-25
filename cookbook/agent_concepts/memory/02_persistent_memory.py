@@ -6,11 +6,12 @@ Every time you run this, the `Memory` object will be re-initialized from the DB.
 
 from typing import List
 
+from rich.pretty import pprint
+
 from agno.memory.v2.db.schema import MemoryRow
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.memory.v2.schema import UserMemory
-from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 

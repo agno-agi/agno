@@ -66,7 +66,9 @@ class Cassandra(VectorDb):
 
     def doc_exists(self, document: Document) -> bool:
         """Check if a document exists by ID."""
-        query = f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} WHERE row_id = %s"
+        query = (
+            f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} WHERE row_id = %s"
+        )
         result = self.session.execute(query, (document.id,))
         return result.one()[0] > 0
 
@@ -90,8 +92,12 @@ class Cassandra(VectorDb):
         result = self.session.execute(query, (id,))
         return result.one()[0] > 0
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        log_debug(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
+    def insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
+        log_debug(
+            f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}"
+        )
         futures = []
         for doc in documents:
             doc.embed(embedder=self.embedder)
@@ -109,21 +115,31 @@ class Cassandra(VectorDb):
         for f in futures:
             f.result()
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents asynchronously by running in a thread."""
         await asyncio.to_thread(self.insert, documents, filters)
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert or update documents based on primary key."""
         self.insert(documents, filters)
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Upsert documents asynchronously by running in a thread."""
         await asyncio.to_thread(self.upsert, documents, filters)
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """Keyword-based search on document metadata."""
-        log_debug(f"Cassandra VectorDB : Performing Vector Search on {self.table_name} with query {query}")
+        log_debug(
+            f"Cassandra VectorDB : Performing Vector Search on {self.table_name} with query {query}"
+        )
         return self.vector_search(query=query, limit=limit)
 
     async def async_search(
@@ -167,7 +183,9 @@ class Cassandra(VectorDb):
         SELECT * FROM system_schema.tables
         WHERE keyspace_name = %s AND table_name = %s
         """
-        result = self.session.execute(check_table_query, (self.keyspace, self.table_name))
+        result = self.session.execute(
+            check_table_query, (self.keyspace, self.table_name)
+        )
         return bool(result.one())
 
     async def async_exists(self) -> bool:

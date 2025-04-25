@@ -182,10 +182,14 @@ def test_create_issue(mock_github):
 
     mock_repo.create_issue.return_value = mock_issue
 
-    result = github_tools.create_issue("test-org/test-repo", title="New Issue", body="Issue description")
+    result = github_tools.create_issue(
+        "test-org/test-repo", title="New Issue", body="Issue description"
+    )
     result_data = json.loads(result)
 
-    mock_repo.create_issue.assert_called_once_with(title="New Issue", body="Issue description")
+    mock_repo.create_issue.assert_called_once_with(
+        title="New Issue", body="Issue description"
+    )
     assert result_data["id"] == 123
     assert result_data["number"] == 1
     assert result_data["title"] == "New Issue"
@@ -228,7 +232,9 @@ def test_error_handling(mock_github):
     github_tools = GithubTools()
 
     # Test repository not found
-    mock_client.get_repo.side_effect = GithubException(status=404, data={"message": "Repository not found"})
+    mock_client.get_repo.side_effect = GithubException(
+        status=404, data={"message": "Repository not found"}
+    )
     result = github_tools.get_repository("invalid/repo")
     result_data = json.loads(result)
     assert "error" in result_data
@@ -238,7 +244,9 @@ def test_error_handling(mock_github):
     mock_client.get_repo.side_effect = None
 
     # Test permission error for creating issues
-    mock_repo.create_issue.side_effect = GithubException(status=403, data={"message": "Permission denied"})
+    mock_repo.create_issue.side_effect = GithubException(
+        status=403, data={"message": "Permission denied"}
+    )
     result = github_tools.create_issue("test-org/test-repo", title="Test")
     result_data = json.loads(result)
     assert "error" in result_data
@@ -255,7 +263,9 @@ def test_search_repositories_basic(mock_github, mock_paginated_list):
     result = github_tools.search_repositories("awesome python")
     result_data = json.loads(result)
 
-    mock_client.search_repositories.assert_called_once_with(query="awesome python", sort="stars", order="desc")
+    mock_client.search_repositories.assert_called_once_with(
+        query="awesome python", sort="stars", order="desc"
+    )
     assert len(result_data) == 2
     assert "full_name" in result_data[0]
     assert "description" in result_data[0]
@@ -291,7 +301,9 @@ def test_search_repositories_with_sorting(mock_github, mock_paginated_list):
     result = github_tools.search_repositories("python", sort="stars", order="desc")
     result_data = json.loads(result)
 
-    mock_client.search_repositories.assert_called_with(query="python", sort="stars", order="desc")
+    mock_client.search_repositories.assert_called_with(
+        query="python", sort="stars", order="desc"
+    )
     assert len(result_data) == 2
     assert result_data[0]["stars"] == 1000
     assert result_data[1]["stars"] == 500
@@ -307,7 +319,9 @@ def test_search_repositories_with_language_filter(mock_github, mock_paginated_li
     result = github_tools.search_repositories("project language:python")
     result_data = json.loads(result)
 
-    mock_client.search_repositories.assert_called_with(query="project language:python", sort="stars", order="desc")
+    mock_client.search_repositories.assert_called_with(
+        query="project language:python", sort="stars", order="desc"
+    )
     assert len(result_data) == 2
 
 
@@ -402,7 +416,9 @@ def test_search_repositories_pagination(mock_github):
     result_data = json.loads(result)
 
     # Should be limited to 100
-    mock_client.search_repositories.assert_called_with(query="python", sort="stars", order="desc")
+    mock_client.search_repositories.assert_called_with(
+        query="python", sort="stars", order="desc"
+    )
 
 
 def test_get_pull_request_count(mock_github):
@@ -458,25 +474,33 @@ def test_get_pull_request_count(mock_github):
     mock_pulls_by_author.__iter__.return_value = [mock_pr1, mock_pr2]
     mock_repo.get_pulls.return_value = mock_pulls_by_author
 
-    result = github_tools.get_pull_request_count("test-org/test-repo", author="test-user")
+    result = github_tools.get_pull_request_count(
+        "test-org/test-repo", author="test-user"
+    )
     result_data = json.loads(result)
     assert result_data["count"] == 2  # mock_pr1 and mock_pr2 are by test-user
     mock_repo.get_pulls.assert_called_with(state="all", base=None, head=None)
 
     # Test getting count of pull requests by author and state
-    result = github_tools.get_pull_request_count("test-org/test-repo", state="open", author="test-user")
+    result = github_tools.get_pull_request_count(
+        "test-org/test-repo", state="open", author="test-user"
+    )
     result_data = json.loads(result)
     assert result_data["count"] == 1  # Only mock_pr1 is open and by test-user
     mock_repo.get_pulls.assert_called_with(state="open", base=None, head=None)
 
     # Test with base and head filters
-    result = github_tools.get_pull_request_count("test-org/test-repo", base="main", head="feature")
+    result = github_tools.get_pull_request_count(
+        "test-org/test-repo", base="main", head="feature"
+    )
     result_data = json.loads(result)
     assert result_data["count"] == 3
     mock_repo.get_pulls.assert_called_with(state="all", base="main", head="feature")
 
     # Test error handling
-    mock_repo.get_pulls.side_effect = GithubException(status=404, data={"message": "Repository not found"})
+    mock_repo.get_pulls.side_effect = GithubException(
+        status=404, data={"message": "Repository not found"}
+    )
     result = github_tools.get_pull_request_count("invalid/repo")
     result_data = json.loads(result)
     assert "error" in result_data
@@ -500,7 +524,9 @@ def test_get_repository_stars(mock_github):
     mock_client.get_repo.assert_called_with("test-org/test-repo")
 
     # Test error handling
-    mock_client.get_repo.side_effect = GithubException(status=404, data={"message": "Repository not found"})
+    mock_client.get_repo.side_effect = GithubException(
+        status=404, data={"message": "Repository not found"}
+    )
     result = github_tools.get_repository_stars("invalid/repo")
     result_data = json.loads(result)
 
@@ -552,18 +578,27 @@ def test_get_pulls_by_query(mock_github):
     assert result_data[0]["base"] == "master"
     assert result_data[1]["number"] == 861
 
-    mock_repo.get_pulls.assert_called_with(state="open", sort="created", direction="desc", base=None, head=None)
+    mock_repo.get_pulls.assert_called_with(
+        state="open", sort="created", direction="desc", base=None, head=None
+    )
 
     # Test with specific base branch
     result = github_tools.get_pulls_by_query("test-org/test-repo", base="master")
     result_data = json.loads(result)
 
     assert len(result_data) == 2
-    mock_repo.get_pulls.assert_called_with(state="open", sort="created", direction="desc", base="master", head=None)
+    mock_repo.get_pulls.assert_called_with(
+        state="open", sort="created", direction="desc", base="master", head=None
+    )
 
     # Test with all parameters
     result = github_tools.get_pulls_by_query(
-        "test-org/test-repo", state="closed", sort="updated", direction="asc", base="develop", head="feature"
+        "test-org/test-repo",
+        state="closed",
+        sort="updated",
+        direction="asc",
+        base="develop",
+        head="feature",
     )
 
     mock_repo.get_pulls.assert_called_with(
@@ -571,7 +606,9 @@ def test_get_pulls_by_query(mock_github):
     )
 
     # Test error handling
-    mock_repo.get_pulls.side_effect = GithubException(status=404, data={"message": "Repository not found"})
+    mock_repo.get_pulls.side_effect = GithubException(
+        status=404, data={"message": "Repository not found"}
+    )
     result = github_tools.get_pulls_by_query("invalid/repo")
     result_data = json.loads(result)
 
@@ -598,7 +635,9 @@ def test_get_pull_request_comments(mock_github):
     mock_comment1.path = "file.txt"
     mock_comment1.position = 0
     mock_comment1.commit_id = "abc123"
-    mock_comment1.html_url = "https://github.com/test-org/test-repo/pull/1/comments/1057297855"
+    mock_comment1.html_url = (
+        "https://github.com/test-org/test-repo/pull/1/comments/1057297855"
+    )
 
     mock_comment2 = MagicMock()
     mock_comment2.id = 1057297856
@@ -609,7 +648,9 @@ def test_get_pull_request_comments(mock_github):
     mock_comment2.path = "another-file.txt"
     mock_comment2.position = 10
     mock_comment2.commit_id = "def456"
-    mock_comment2.html_url = "https://github.com/test-org/test-repo/pull/1/comments/1057297856"
+    mock_comment2.html_url = (
+        "https://github.com/test-org/test-repo/pull/1/comments/1057297856"
+    )
 
     mock_pr.get_comments.return_value = [mock_comment1, mock_comment2]
 
@@ -626,7 +667,9 @@ def test_get_pull_request_comments(mock_github):
     assert result_data[1]["body"] == "This is a comment"
 
     # Test error handling
-    mock_repo.get_pull.side_effect = GithubException(status=404, data={"message": "Pull request not found"})
+    mock_repo.get_pull.side_effect = GithubException(
+        status=404, data={"message": "Pull request not found"}
+    )
     result = github_tools.get_pull_request_comments("test-org/test-repo", 999)
     result_data = json.loads(result)
 
@@ -656,7 +699,9 @@ def test_create_pull_request_comment(mock_github):
     mock_comment.path = "file.txt"
     mock_comment.position = 0
     mock_comment.commit_id = "abc123"
-    mock_comment.html_url = "https://github.com/test-org/test-repo/pull/1/comments/1057297855"
+    mock_comment.html_url = (
+        "https://github.com/test-org/test-repo/pull/1/comments/1057297855"
+    )
 
     mock_pr.create_comment.return_value = mock_comment
 
@@ -666,7 +711,9 @@ def test_create_pull_request_comment(mock_github):
     )
     result_data = json.loads(result)
 
-    mock_pr.create_comment.assert_called_with("This is a comment", mock_commit, "file.txt", 0)
+    mock_pr.create_comment.assert_called_with(
+        "This is a comment", mock_commit, "file.txt", 0
+    )
 
     assert result_data["id"] == 1057297855
     assert result_data["body"] == "This is a comment"
@@ -675,7 +722,9 @@ def test_create_pull_request_comment(mock_github):
     assert result_data["commit_id"] == "abc123"
 
     # Test error handling
-    mock_pr.create_comment.side_effect = GithubException(status=422, data={"message": "Validation failed"})
+    mock_pr.create_comment.side_effect = GithubException(
+        status=422, data={"message": "Validation failed"}
+    )
     result = github_tools.create_pull_request_comment(
         "test-org/test-repo", 1, "This is a comment", "invalid-commit", "file.txt", 0
     )
@@ -699,7 +748,9 @@ def test_edit_pull_request_comment(mock_github):
     mock_comment.path = "file.txt"
     mock_comment.position = 5
     mock_comment.commit_id = "abc123"
-    mock_comment.html_url = "https://github.com/test-org/test-repo/pull/1/comments/1057297855"
+    mock_comment.html_url = (
+        "https://github.com/test-org/test-repo/pull/1/comments/1057297855"
+    )
 
     # Important: patch the implementation of edit_pull_request_comment
     with patch.object(github_tools, "edit_pull_request_comment") as mock_edit:
@@ -718,10 +769,14 @@ def test_edit_pull_request_comment(mock_github):
         )
 
         # Run the test
-        result = github_tools.edit_pull_request_comment("test-org/test-repo", 1057297855, "This is a modified comment")
+        result = github_tools.edit_pull_request_comment(
+            "test-org/test-repo", 1057297855, "This is a modified comment"
+        )
 
         # Verify mock was called with correct args
-        mock_edit.assert_called_once_with("test-org/test-repo", 1057297855, "This is a modified comment")
+        mock_edit.assert_called_once_with(
+            "test-org/test-repo", 1057297855, "This is a modified comment"
+        )
 
         # Parse and check result
         result_data = json.loads(result)
@@ -731,9 +786,13 @@ def test_edit_pull_request_comment(mock_github):
 
     with patch.object(github_tools, "edit_pull_request_comment") as mock_edit:
         # Return a plain string error message
-        mock_edit.return_value = "Could not find comment #9999 in repository: test-org/test-repo"
+        mock_edit.return_value = (
+            "Could not find comment #9999 in repository: test-org/test-repo"
+        )
 
-        result = github_tools.edit_pull_request_comment("test-org/test-repo", 9999, "This won't work")
+        result = github_tools.edit_pull_request_comment(
+            "test-org/test-repo", 9999, "This won't work"
+        )
 
         # Verify result is a string error message, not JSON
         assert isinstance(result, str)
@@ -783,7 +842,9 @@ def test_list_repositories(mock_github):
     assert "user/repo3" in result_data
 
     # Test error handling
-    mock_client.get_user.side_effect = GithubException(status=401, data={"message": "Bad credentials"})
+    mock_client.get_user.side_effect = GithubException(
+        status=401, data={"message": "Bad credentials"}
+    )
     result = github_tools.list_repositories()
     result_data = json.loads(result)
 
@@ -809,11 +870,16 @@ def test_create_repository(mock_github):
     mock_user.create_repo.return_value = mock_created_repo
 
     # Test creating repository in user account
-    result = github_tools.create_repository(name="new-repo", private=False, description="A new test repository")
+    result = github_tools.create_repository(
+        name="new-repo", private=False, description="A new test repository"
+    )
     result_data = json.loads(result)
 
     mock_user.create_repo.assert_called_with(
-        name="new-repo", private=False, description="A new test repository", auto_init=False
+        name="new-repo",
+        private=False,
+        description="A new test repository",
+        auto_init=False,
     )
 
     assert result_data["name"] == "user/new-repo"
@@ -834,20 +900,28 @@ def test_create_repository(mock_github):
     mock_org.create_repo.return_value = mock_org_repo
 
     result = github_tools.create_repository(
-        name="org-repo", private=True, description="An organization repo", organization="test-org"
+        name="org-repo",
+        private=True,
+        description="An organization repo",
+        organization="test-org",
     )
     result_data = json.loads(result)
 
     mock_client.get_organization.assert_called_with("test-org")
     mock_org.create_repo.assert_called_with(
-        name="org-repo", private=True, description="An organization repo", auto_init=False
+        name="org-repo",
+        private=True,
+        description="An organization repo",
+        auto_init=False,
     )
 
     assert result_data["name"] == "test-org/org-repo"
     assert result_data["private"]
 
     # Test error handling
-    mock_user.create_repo.side_effect = GithubException(status=422, data={"message": "Repository creation failed"})
+    mock_user.create_repo.side_effect = GithubException(
+        status=422, data={"message": "Repository creation failed"}
+    )
     result = github_tools.create_repository(name="new-repo")
     result_data = json.loads(result)
 
@@ -897,7 +971,9 @@ def test_get_pull_request_with_comprehensive_details(mock_github):
     mock_review_comment1.path = "file.txt"
     mock_review_comment1.position = 10
     mock_review_comment1.commit_id = "abc123"
-    mock_review_comment1.html_url = "https://github.com/test-org/test-repo/pull/101/comments/1001"
+    mock_review_comment1.html_url = (
+        "https://github.com/test-org/test-repo/pull/101/comments/1001"
+    )
 
     # Mock PR issue comments
     mock_issue_comment1 = MagicMock()
@@ -905,7 +981,9 @@ def test_get_pull_request_with_comprehensive_details(mock_github):
     mock_issue_comment1.body = "This is an issue comment"
     mock_issue_comment1.user.login = "commenter1"
     mock_issue_comment1.created_at = datetime(2023, 3, 1, 15, 0, 0)
-    mock_issue_comment1.html_url = "https://github.com/test-org/test-repo/pull/101/issue-comments/2001"
+    mock_issue_comment1.html_url = (
+        "https://github.com/test-org/test-repo/pull/101/issue-comments/2001"
+    )
 
     # Mock PR commits
     mock_commit = MagicMock()
@@ -922,7 +1000,9 @@ def test_get_pull_request_with_comprehensive_details(mock_github):
     mock_file.additions = 20
     mock_file.deletions = 10
     mock_file.changes = 30
-    mock_file.patch = "@@ -1,5 +1,15 @@\n def function():\n+    # New code\n+    return True"
+    mock_file.patch = (
+        "@@ -1,5 +1,15 @@\n def function():\n+    # New code\n+    return True"
+    )
 
     # Set return values for mock methods
     mock_pr.get_comments.return_value = [mock_review_comment1]
@@ -967,7 +1047,9 @@ def test_get_pull_request_with_comprehensive_details(mock_github):
     assert result_data["files_changed"][0]["deletions"] == 10
 
     # Test error handling
-    mock_repo.get_pull.side_effect = GithubException(status=404, data={"message": "Pull request not found"})
+    mock_repo.get_pull.side_effect = GithubException(
+        status=404, data={"message": "Pull request not found"}
+    )
     result = github_tools.get_pull_request_with_details("test-org/test-repo", 999)
     result_data = json.loads(result)
 
@@ -983,7 +1065,9 @@ def test_get_repository_with_stats(mock_github):
     # Instead of mocking all the complex repository properties,
     # Let's use a complete patch of the method to return known good data
     with patch.object(
-        github_tools, "get_repository_with_stats", wraps=github_tools.get_repository_with_stats
+        github_tools,
+        "get_repository_with_stats",
+        wraps=github_tools.get_repository_with_stats,
     ) as mock_get_stats:
         # Prepare a valid return value that matches our expectations
         expected_result = {
@@ -1024,10 +1108,23 @@ def test_get_repository_with_stats(mock_github):
                     "comment_count": 5,
                 }
             ],
-            "pr_metrics": {"total_prs": 2, "merged_prs": 1, "acceptance_rate": 50.0, "avg_time_to_merge": 24.0},
+            "pr_metrics": {
+                "total_prs": 2,
+                "merged_prs": 1,
+                "acceptance_rate": 50.0,
+                "avg_time_to_merge": 24.0,
+            },
             "contributors": [
-                {"login": "user1", "contributions": 100, "url": "https://github.com/user1"},
-                {"login": "user2", "contributions": 50, "url": "https://github.com/user2"},
+                {
+                    "login": "user1",
+                    "contributions": 100,
+                    "url": "https://github.com/user1",
+                },
+                {
+                    "login": "user2",
+                    "contributions": 50,
+                    "url": "https://github.com/user2",
+                },
             ],
         }
 
@@ -1077,7 +1174,9 @@ def test_get_repository_with_stats(mock_github):
         assert result_data["contributors"][0]["contributions"] == 100
 
     # Test error handling
-    mock_client.get_repo.side_effect = GithubException(status=404, data={"message": "Repository not found"})
+    mock_client.get_repo.side_effect = GithubException(
+        status=404, data={"message": "Repository not found"}
+    )
     result = github_tools.get_repository_with_stats("invalid/repo")
     result_data = json.loads(result)
 
@@ -1135,7 +1234,9 @@ def test_create_pull_request(mock_github):
     assert result_data["head"] == "feature-branch"
 
     # Test error handling
-    mock_repo.create_pull.side_effect = GithubException(status=422, data={"message": "Validation failed"})
+    mock_repo.create_pull.side_effect = GithubException(
+        status=422, data={"message": "Validation failed"}
+    )
 
     result = github_tools.create_pull_request(
         repo_name="test-org/test-repo",
@@ -1161,12 +1262,17 @@ def test_create_review_request(mock_github):
 
     # Test creating a review request
     result = github_tools.create_review_request(
-        repo_name="test-org/test-repo", pr_number=123, reviewers=["user1", "user2"], team_reviewers=["team1"]
+        repo_name="test-org/test-repo",
+        pr_number=123,
+        reviewers=["user1", "user2"],
+        team_reviewers=["team1"],
     )
     result_data = json.loads(result)
 
     mock_repo.get_pull.assert_called_with(123)
-    mock_pr.create_review_request.assert_called_with(reviewers=["user1", "user2"], team_reviewers=["team1"])
+    mock_pr.create_review_request.assert_called_with(
+        reviewers=["user1", "user2"], team_reviewers=["team1"]
+    )
 
     assert "message" in result_data
     assert "Review request created for PR #123" in result_data["message"]
@@ -1174,7 +1280,9 @@ def test_create_review_request(mock_github):
     assert result_data["requested_team_reviewers"] == ["team1"]
 
     # Test error handling
-    mock_pr.create_review_request.side_effect = GithubException(status=422, data={"message": "Validation failed"})
+    mock_pr.create_review_request.side_effect = GithubException(
+        status=422, data={"message": "Validation failed"}
+    )
 
     result = github_tools.create_review_request(
         repo_name="test-org/test-repo", pr_number=123, reviewers=["invalid-user"]
@@ -1194,14 +1302,19 @@ def test_create_file(mock_github):
     mock_content = MagicMock()
     mock_content.path = "docs/test.md"
     mock_content.sha = "abc123"
-    mock_content.html_url = "https://github.com/test-org/test-repo/blob/main/docs/test.md"
+    mock_content.html_url = (
+        "https://github.com/test-org/test-repo/blob/main/docs/test.md"
+    )
 
     mock_commit = MagicMock()
     mock_commit.sha = "def456"
     mock_commit.commit.message = "Add test.md"
     mock_commit.html_url = "https://github.com/test-org/test-repo/commit/def456"
 
-    mock_repo.create_file.return_value = {"content": mock_content, "commit": mock_commit}
+    mock_repo.create_file.return_value = {
+        "content": mock_content,
+        "commit": mock_commit,
+    }
 
     # Test creating a file
     result = github_tools.create_file(
@@ -1223,15 +1336,23 @@ def test_create_file(mock_github):
 
     assert result_data["path"] == "docs/test.md"
     assert result_data["sha"] == "abc123"
-    assert result_data["url"] == "https://github.com/test-org/test-repo/blob/main/docs/test.md"
+    assert (
+        result_data["url"]
+        == "https://github.com/test-org/test-repo/blob/main/docs/test.md"
+    )
     assert result_data["commit"]["sha"] == "def456"
     assert result_data["commit"]["message"] == "Add test.md"
 
     # Test error handling
-    mock_repo.create_file.side_effect = GithubException(status=422, data={"message": "Invalid"})
+    mock_repo.create_file.side_effect = GithubException(
+        status=422, data={"message": "Invalid"}
+    )
 
     result = github_tools.create_file(
-        repo_name="test-org/test-repo", path="docs/test.md", content="# Test", message="Add test.md"
+        repo_name="test-org/test-repo",
+        path="docs/test.md",
+        content="# Test",
+        message="Add test.md",
     )
     result_data = json.loads(result)
 
@@ -1257,7 +1378,9 @@ def test_get_file_content(mock_github):
     mock_repo.get_contents.return_value = mock_content
 
     # Test getting file content
-    result = github_tools.get_file_content(repo_name="test-org/test-repo", path="README.md", ref="main")
+    result = github_tools.get_file_content(
+        repo_name="test-org/test-repo", path="README.md", ref="main"
+    )
     result_data = json.loads(result)
 
     mock_repo.get_contents.assert_called_with("README.md", ref="main")
@@ -1267,7 +1390,10 @@ def test_get_file_content(mock_github):
     assert result_data["sha"] == "abc123"
     assert result_data["size"] == 200
     assert result_data["type"] == "file"
-    assert result_data["url"] == "https://github.com/test-org/test-repo/blob/main/README.md"
+    assert (
+        result_data["url"]
+        == "https://github.com/test-org/test-repo/blob/main/README.md"
+    )
     assert result_data["content"] == "# Test Repository\n\nThis is a test repository."
 
     # Test handling of binary files - better approach that doesn't try to patch bytes.decode
@@ -1285,7 +1411,9 @@ def test_get_file_content(mock_github):
             }
         )
 
-        result = github_tools.get_file_content(repo_name="test-org/test-repo", path="binary-file.bin")
+        result = github_tools.get_file_content(
+            repo_name="test-org/test-repo", path="binary-file.bin"
+        )
         result_data = json.loads(result)
 
         assert result_data["content"] == "Binary file (content not displayed)"
@@ -1300,7 +1428,9 @@ def test_get_file_content(mock_github):
         binary_mock.sha = "bin123"
         binary_mock.size = 4
         binary_mock.type = "file"
-        binary_mock.html_url = "https://github.com/test-org/test-repo/blob/main/binary-file.bin"
+        binary_mock.html_url = (
+            "https://github.com/test-org/test-repo/blob/main/binary-file.bin"
+        )
         binary_mock.decoded_content = b"\x00\x01\x02\x03"  # Binary content
 
         # The actual implementation will try to decode this and get a UnicodeDecodeError
@@ -1311,14 +1441,19 @@ def test_get_file_content(mock_github):
     mock_repo.get_contents.side_effect = get_contents_with_binary
 
     # Now test the actual implementation
-    result = github_tools.get_file_content(repo_name="test-org/test-repo", path="binary-file.bin")
+    result = github_tools.get_file_content(
+        repo_name="test-org/test-repo", path="binary-file.bin"
+    )
     result_data = json.loads(result)
 
     assert result_data["content"] == "Binary file (content not displayed)"
 
     # Test error handling for directory
     mock_repo.get_contents.side_effect = None  # Reset side effect
-    mock_repo.get_contents.return_value = [mock_content, mock_content]  # List indicates directory
+    mock_repo.get_contents.return_value = [
+        mock_content,
+        mock_content,
+    ]  # List indicates directory
 
     result = github_tools.get_file_content(repo_name="test-org/test-repo", path="docs")
     result_data = json.loads(result)
@@ -1327,9 +1462,13 @@ def test_get_file_content(mock_github):
     assert "is a directory, not a file" in result_data["error"]
 
     # Test file not found
-    mock_repo.get_contents.side_effect = GithubException(status=404, data={"message": "Not Found"})
+    mock_repo.get_contents.side_effect = GithubException(
+        status=404, data={"message": "Not Found"}
+    )
 
-    result = github_tools.get_file_content(repo_name="test-org/test-repo", path="nonexistent-file.md")
+    result = github_tools.get_file_content(
+        repo_name="test-org/test-repo", path="nonexistent-file.md"
+    )
     result_data = json.loads(result)
 
     assert "error" in result_data
@@ -1352,7 +1491,10 @@ def test_update_file(mock_github):
     mock_commit.commit.message = "Update README.md"
     mock_commit.html_url = "https://github.com/test-org/test-repo/commit/commit-sha-789"
 
-    mock_repo.update_file.return_value = {"content": mock_content, "commit": mock_commit}
+    mock_repo.update_file.return_value = {
+        "content": mock_content,
+        "commit": mock_commit,
+    }
 
     # Test updating a file
     result = github_tools.update_file(
@@ -1376,12 +1518,17 @@ def test_update_file(mock_github):
 
     assert result_data["path"] == "README.md"
     assert result_data["sha"] == "new-sha-456"
-    assert result_data["url"] == "https://github.com/test-org/test-repo/blob/main/README.md"
+    assert (
+        result_data["url"]
+        == "https://github.com/test-org/test-repo/blob/main/README.md"
+    )
     assert result_data["commit"]["sha"] == "commit-sha-789"
     assert result_data["commit"]["message"] == "Update README.md"
 
     # Test error handling
-    mock_repo.update_file.side_effect = GithubException(status=422, data={"message": "SHA doesn't match"})
+    mock_repo.update_file.side_effect = GithubException(
+        status=422, data={"message": "SHA doesn't match"}
+    )
 
     result = github_tools.update_file(
         repo_name="test-org/test-repo",
@@ -1405,13 +1552,19 @@ def test_delete_file(mock_github):
     mock_commit = MagicMock()
     mock_commit.sha = "delete-commit-sha"
     mock_commit.commit.message = "Delete test.md"
-    mock_commit.html_url = "https://github.com/test-org/test-repo/commit/delete-commit-sha"
+    mock_commit.html_url = (
+        "https://github.com/test-org/test-repo/commit/delete-commit-sha"
+    )
 
     mock_repo.delete_file.return_value = {"commit": mock_commit}
 
     # Test deleting a file
     result = github_tools.delete_file(
-        repo_name="test-org/test-repo", path="test.md", message="Delete test.md", sha="file-sha-123", branch="main"
+        repo_name="test-org/test-repo",
+        path="test.md",
+        message="Delete test.md",
+        sha="file-sha-123",
+        branch="main",
     )
     result_data = json.loads(result)
 
@@ -1425,10 +1578,15 @@ def test_delete_file(mock_github):
     assert result_data["commit"]["message"] == "Delete test.md"
 
     # Test error handling
-    mock_repo.delete_file.side_effect = GithubException(status=404, data={"message": "File not found"})
+    mock_repo.delete_file.side_effect = GithubException(
+        status=404, data={"message": "File not found"}
+    )
 
     result = github_tools.delete_file(
-        repo_name="test-org/test-repo", path="nonexistent.md", message="Delete nonexistent file", sha="any-sha"
+        repo_name="test-org/test-repo",
+        path="nonexistent.md",
+        message="Delete nonexistent file",
+        sha="any-sha",
     )
     result_data = json.loads(result)
 
@@ -1448,8 +1606,12 @@ def test_get_directory_content(mock_github):
     mock_file1.type = "file"
     mock_file1.size = 200
     mock_file1.sha = "file1-sha"
-    mock_file1.html_url = "https://github.com/test-org/test-repo/blob/main/docs/README.md"
-    mock_file1.download_url = "https://raw.githubusercontent.com/test-org/test-repo/main/docs/README.md"
+    mock_file1.html_url = (
+        "https://github.com/test-org/test-repo/blob/main/docs/README.md"
+    )
+    mock_file1.download_url = (
+        "https://raw.githubusercontent.com/test-org/test-repo/main/docs/README.md"
+    )
 
     mock_file2 = MagicMock()
     mock_file2.name = "api"
@@ -1463,7 +1625,9 @@ def test_get_directory_content(mock_github):
     mock_repo.get_contents.return_value = [mock_file1, mock_file2]
 
     # Test getting directory contents
-    result = github_tools.get_directory_content(repo_name="test-org/test-repo", path="docs", ref="main")
+    result = github_tools.get_directory_content(
+        repo_name="test-org/test-repo", path="docs", ref="main"
+    )
     result_data = json.loads(result)
 
     mock_repo.get_contents.assert_called_with("docs", ref="main")
@@ -1479,16 +1643,22 @@ def test_get_directory_content(mock_github):
     # Test error handling for file
     mock_repo.get_contents.return_value = mock_file1  # Not a list indicates a file
 
-    result = github_tools.get_directory_content(repo_name="test-org/test-repo", path="docs/README.md")
+    result = github_tools.get_directory_content(
+        repo_name="test-org/test-repo", path="docs/README.md"
+    )
     result_data = json.loads(result)
 
     assert "error" in result_data
     assert "is a file, not a directory" in result_data["error"]
 
     # Test error handling for nonexistent path
-    mock_repo.get_contents.side_effect = GithubException(status=404, data={"message": "Not Found"})
+    mock_repo.get_contents.side_effect = GithubException(
+        status=404, data={"message": "Not Found"}
+    )
 
-    result = github_tools.get_directory_content(repo_name="test-org/test-repo", path="nonexistent-dir")
+    result = github_tools.get_directory_content(
+        repo_name="test-org/test-repo", path="nonexistent-dir"
+    )
     result_data = json.loads(result)
 
     assert "error" in result_data
@@ -1517,7 +1687,10 @@ def test_get_branch_content(mock_github):
     # Test getting branch content with default branch
     with patch.object(GithubTools, "get_directory_content") as mock_get_dir:
         mock_get_dir.return_value = json.dumps(
-            [{"name": "src", "path": "src", "type": "dir"}, {"name": "README.md", "path": "README.md", "type": "file"}]
+            [
+                {"name": "src", "path": "src", "type": "dir"},
+                {"name": "README.md", "path": "README.md", "type": "file"},
+            ]
         )
 
         result = github_tools.get_branch_content(repo_name="test-org/test-repo")
@@ -1536,19 +1709,28 @@ def test_get_branch_content(mock_github):
     # Test getting branch content with specified branch
     with patch.object(GithubTools, "get_directory_content") as mock_get_dir:
         mock_get_dir.return_value = json.dumps(
-            [{"name": "src", "path": "src", "type": "dir"}, {"name": "README.md", "path": "README.md", "type": "file"}]
+            [
+                {"name": "src", "path": "src", "type": "dir"},
+                {"name": "README.md", "path": "README.md", "type": "file"},
+            ]
         )
 
-        result = github_tools.get_branch_content(repo_name="test-org/test-repo", branch="develop")
+        result = github_tools.get_branch_content(
+            repo_name="test-org/test-repo", branch="develop"
+        )
         result_data = json.loads(result)
 
-        mock_get_dir.assert_called_with(repo_name="test-org/test-repo", path="", ref="develop")
+        mock_get_dir.assert_called_with(
+            repo_name="test-org/test-repo", path="", ref="develop"
+        )
 
     # Test error handling
     with patch.object(GithubTools, "get_directory_content") as mock_get_dir:
         mock_get_dir.return_value = json.dumps({"error": "Branch does not exist"})
 
-        result = github_tools.get_branch_content(repo_name="test-org/test-repo", branch="nonexistent-branch")
+        result = github_tools.get_branch_content(
+            repo_name="test-org/test-repo", branch="nonexistent-branch"
+        )
         result_data = json.loads(result)
 
         assert "error" in result_data
@@ -1571,15 +1753,21 @@ def test_create_branch(mock_github):
     # Mock new branch reference
     mock_new_ref = MagicMock()
     mock_new_ref.object.sha = "source-commit-sha"  # Same SHA as source
-    mock_new_ref.url = "https://api.github.com/repos/test-org/test-repo/git/refs/heads/new-branch"
+    mock_new_ref.url = (
+        "https://api.github.com/repos/test-org/test-repo/git/refs/heads/new-branch"
+    )
     mock_repo.create_git_ref.return_value = mock_new_ref
 
     # Test creating a branch from default branch
-    result = github_tools.create_branch(repo_name="test-org/test-repo", branch_name="new-branch")
+    result = github_tools.create_branch(
+        repo_name="test-org/test-repo", branch_name="new-branch"
+    )
     result_data = json.loads(result)
 
     mock_repo.get_git_ref.assert_called_with("heads/main")
-    mock_repo.create_git_ref.assert_called_with("refs/heads/new-branch", "source-commit-sha")
+    mock_repo.create_git_ref.assert_called_with(
+        "refs/heads/new-branch", "source-commit-sha"
+    )
 
     assert result_data["name"] == "new-branch"
     assert result_data["sha"] == "source-commit-sha"
@@ -1587,18 +1775,26 @@ def test_create_branch(mock_github):
 
     # Test creating a branch from a specified source branch
     result = github_tools.create_branch(
-        repo_name="test-org/test-repo", branch_name="another-branch", source_branch="develop"
+        repo_name="test-org/test-repo",
+        branch_name="another-branch",
+        source_branch="develop",
     )
     result_data = json.loads(result)
 
     mock_repo.get_git_ref.assert_called_with("heads/develop")
-    mock_repo.create_git_ref.assert_called_with("refs/heads/another-branch", "source-commit-sha")
+    mock_repo.create_git_ref.assert_called_with(
+        "refs/heads/another-branch", "source-commit-sha"
+    )
 
     # Test error handling
-    mock_repo.get_git_ref.side_effect = GithubException(status=404, data={"message": "Reference not found"})
+    mock_repo.get_git_ref.side_effect = GithubException(
+        status=404, data={"message": "Reference not found"}
+    )
 
     result = github_tools.create_branch(
-        repo_name="test-org/test-repo", branch_name="new-branch", source_branch="nonexistent-branch"
+        repo_name="test-org/test-repo",
+        branch_name="new-branch",
+        source_branch="nonexistent-branch",
     )
     result_data = json.loads(result)
 
@@ -1617,7 +1813,9 @@ def test_set_default_branch(mock_github):
     mock_repo.get_branches.return_value = [mock_branch]
 
     # Test setting default branch
-    result = github_tools.set_default_branch(repo_name="test-org/test-repo", branch_name="develop")
+    result = github_tools.set_default_branch(
+        repo_name="test-org/test-repo", branch_name="develop"
+    )
     result_data = json.loads(result)
 
     mock_repo.edit.assert_called_with(default_branch="develop")
@@ -1627,7 +1825,9 @@ def test_set_default_branch(mock_github):
     # Test setting non-existent branch as default
     mock_repo.get_branches.return_value = []
 
-    result = github_tools.set_default_branch(repo_name="test-org/test-repo", branch_name="nonexistent-branch")
+    result = github_tools.set_default_branch(
+        repo_name="test-org/test-repo", branch_name="nonexistent-branch"
+    )
     result_data = json.loads(result)
 
     assert "error" in result_data
@@ -1635,9 +1835,13 @@ def test_set_default_branch(mock_github):
 
     # Test error handling
     mock_repo.get_branches.return_value = [mock_branch]
-    mock_repo.edit.side_effect = GithubException(status=403, data={"message": "Not allowed"})
+    mock_repo.edit.side_effect = GithubException(
+        status=403, data={"message": "Not allowed"}
+    )
 
-    result = github_tools.set_default_branch(repo_name="test-org/test-repo", branch_name="develop")
+    result = github_tools.set_default_branch(
+        repo_name="test-org/test-repo", branch_name="develop"
+    )
     result_data = json.loads(result)
 
     assert "error" in result_data
@@ -1656,7 +1860,9 @@ def test_search_code(mock_github):
     mock_code1.name = "main.py"
     mock_code1.sha = "code1-sha"
     mock_code1.html_url = "https://github.com/test-org/test-repo/blob/main/src/main.py"
-    mock_code1.git_url = "https://api.github.com/repos/test-org/test-repo/git/blobs/code1-sha"
+    mock_code1.git_url = (
+        "https://api.github.com/repos/test-org/test-repo/git/blobs/code1-sha"
+    )
     mock_code1.score = 0.95
 
     mock_code2 = MagicMock()
@@ -1665,7 +1871,9 @@ def test_search_code(mock_github):
     mock_code2.name = "utils.py"
     mock_code2.sha = "code2-sha"
     mock_code2.html_url = "https://github.com/test-org/test-repo/blob/main/src/utils.py"
-    mock_code2.git_url = "https://api.github.com/repos/test-org/test-repo/git/blobs/code2-sha"
+    mock_code2.git_url = (
+        "https://api.github.com/repos/test-org/test-repo/git/blobs/code2-sha"
+    )
     mock_code2.score = 0.85
 
     # Mock search results
@@ -1706,7 +1914,9 @@ def test_search_code(mock_github):
     assert result_data["query"] == expected_query
 
     # Test error handling
-    mock_client.search_code.side_effect = GithubException(status=403, data={"message": "API rate limit exceeded"})
+    mock_client.search_code.side_effect = GithubException(
+        status=403, data={"message": "API rate limit exceeded"}
+    )
 
     result = github_tools.search_code(query="agent class")
     result_data = json.loads(result)
@@ -1790,8 +2000,12 @@ def test_search_issues_and_prs(mock_github):
     )
     result_data = json.loads(result)
 
-    expected_query = "bug state:open is:issue repo:test-org/test-repo user:test-user label:bug"
-    mock_client.search_issues.assert_called_with(expected_query, sort="updated", order="asc")
+    expected_query = (
+        "bug state:open is:issue repo:test-org/test-repo user:test-user label:bug"
+    )
+    mock_client.search_issues.assert_called_with(
+        expected_query, sort="updated", order="asc"
+    )
 
     assert result_data["query"] == expected_query
 
@@ -1813,7 +2027,9 @@ def test_search_issues_and_prs(mock_github):
     assert len(result_data["results"]) == 0
 
     # Test error handling
-    mock_client.search_issues.side_effect = GithubException(status=403, data={"message": "API rate limit exceeded"})
+    mock_client.search_issues.side_effect = GithubException(
+        status=403, data={"message": "API rate limit exceeded"}
+    )
 
     result = github_tools.search_issues_and_prs(query="bug")
     result_data = json.loads(result)

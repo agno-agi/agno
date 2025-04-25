@@ -19,7 +19,9 @@ try:
     from pinecone.config import Config
 
 except ImportError:
-    raise ImportError("The `pinecone` package is not installed, please install using `pip install pinecone`.")
+    raise ImportError(
+        "The `pinecone` package is not installed, please install using `pip install pinecone`."
+    )
 
 
 from agno.document import Document
@@ -260,7 +262,9 @@ class PineconeDb(VectorDb):
                 "metadata": document.meta_data,
             }
             if self.use_hybrid_search:
-                data_to_upsert["sparse_values"] = self.sparse_encoder.encode_documents(document.content)
+                data_to_upsert["sparse_values"] = self.sparse_encoder.encode_documents(
+                    document.content
+                )
             vectors.append(data_to_upsert)
 
         self.index.upsert(
@@ -287,22 +291,33 @@ class PineconeDb(VectorDb):
         _batch_size = batch_size or 100
 
         # Split documents into batches
-        batches = [documents[i : i + _batch_size] for i in range(0, len(documents), _batch_size)]
-        log_debug(f"Processing {len(documents)} documents in {len(batches)} batches for upsert")
+        batches = [
+            documents[i : i + _batch_size]
+            for i in range(0, len(documents), _batch_size)
+        ]
+        log_debug(
+            f"Processing {len(documents)} documents in {len(batches)} batches for upsert"
+        )
 
         # Process each batch in parallel
         async def process_batch(batch_docs):
             return await asyncio.to_thread(self._prepare_vectors, batch_docs)
 
         # Run all batches in parallel
-        batch_vectors = await asyncio.gather(*[process_batch(batch) for batch in batches])
+        batch_vectors = await asyncio.gather(
+            *[process_batch(batch) for batch in batches]
+        )
 
         # Flatten vectors
         all_vectors = [vector for batch in batch_vectors for vector in batch]
 
         # Upsert all vectors
         await asyncio.to_thread(
-            self._upsert_vectors, all_vectors, namespace or self.namespace, batch_size, show_progress
+            self._upsert_vectors,
+            all_vectors,
+            namespace or self.namespace,
+            batch_size,
+            show_progress,
         )
 
         log_debug(f"Finished async upsert of {len(documents)} documents")
@@ -319,7 +334,9 @@ class PineconeDb(VectorDb):
                 "metadata": doc.meta_data,
             }
             if self.use_hybrid_search:
-                data_to_upsert["sparse_values"] = self.sparse_encoder.encode_documents(doc.content)
+                data_to_upsert["sparse_values"] = self.sparse_encoder.encode_documents(
+                    doc.content
+                )
             vectors.append(data_to_upsert)
         return vectors
 
@@ -332,9 +349,13 @@ class PineconeDb(VectorDb):
             show_progress=show_progress,
         )
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Pinecone doesn't support insert. Raise an error."""
-        raise NotImplementedError("Pinecone does not support insert operations. Use async_upsert instead.")
+        raise NotImplementedError(
+            "Pinecone does not support insert operations. Use async_upsert instead."
+        )
 
     def upsert_available(self) -> bool:
         """Check if upsert operation is available.
@@ -345,7 +366,9 @@ class PineconeDb(VectorDb):
         """
         return True
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents into the index.
 
         This method is not supported by Pinecone. Use `upsert` instead.
@@ -358,7 +381,9 @@ class PineconeDb(VectorDb):
             NotImplementedError: This method is not supported by Pinecone.
 
         """
-        raise NotImplementedError("Pinecone does not support insert operations. Use upsert instead.")
+        raise NotImplementedError(
+            "Pinecone does not support insert operations. Use upsert instead."
+        )
 
     def _hybrid_scale(self, dense: List[float], sparse: Dict[str, Any], alpha: float):
         """Hybrid vector scaling using a convex combination
@@ -374,7 +399,10 @@ class PineconeDb(VectorDb):
         if alpha < 0 or alpha > 1:
             raise ValueError("Alpha must be between 0 and 1")
         # scale sparse and dense vectors to create hybrid search vecs
-        hsparse = {"indices": sparse["indices"], "values": [v * (1 - alpha) for v in sparse["values"]]}
+        hsparse = {
+            "indices": sparse["indices"],
+            "values": [v * (1 - alpha) for v in sparse["values"]],
+        }
         hdense = [v * alpha for v in dense]
         return hdense, hsparse
 
@@ -410,7 +438,9 @@ class PineconeDb(VectorDb):
             return []
 
         if self.use_hybrid_search:
-            hdense, hsparse = self._hybrid_scale(dense_embedding, sparse_embedding, alpha=self.hybrid_alpha)
+            hdense, hsparse = self._hybrid_scale(
+                dense_embedding, sparse_embedding, alpha=self.hybrid_alpha
+            )
             response = self.index.query(
                 vector=hdense,
                 sparse_vector=hsparse,
@@ -432,7 +462,11 @@ class PineconeDb(VectorDb):
 
         search_results = [
             Document(
-                content=(result.metadata.get("text", "") if result.metadata is not None else ""),
+                content=(
+                    result.metadata.get("text", "")
+                    if result.metadata is not None
+                    else ""
+                ),
                 id=result.id,
                 embedding=result.values,
                 meta_data=result.metadata,
@@ -453,7 +487,9 @@ class PineconeDb(VectorDb):
         include_values: Optional[bool] = None,
     ) -> List[Document]:
         """Search for similar documents in the index asynchronously."""
-        return await asyncio.to_thread(self.search, query, limit, filters, namespace, include_values)
+        return await asyncio.to_thread(
+            self.search, query, limit, filters, namespace, include_values
+        )
 
     def optimize(self) -> None:
         """Optimize the index.

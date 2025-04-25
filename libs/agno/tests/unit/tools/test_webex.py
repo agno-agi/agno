@@ -89,7 +89,9 @@ def test_send_message_success(webex_tools, mock_webex_api):
     assert result_data["id"] == "msg123"
     assert result_data["roomId"] == "room123"
     assert result_data["text"] == "Test message"
-    mock_webex_api.messages.create.assert_called_once_with(roomId="room123", text="Test message")
+    mock_webex_api.messages.create.assert_called_once_with(
+        roomId="room123", text="Test message"
+    )
 
 
 def test_list_rooms_success(webex_tools, mock_webex_api):

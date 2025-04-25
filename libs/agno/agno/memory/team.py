@@ -25,7 +25,9 @@ class TeamRun:
 
     def to_dict(self) -> Dict[str, Any]:
         message = self.message.to_dict() if self.message else None
-        member_responses = [run.to_dict() for run in self.member_runs] if self.member_runs else None
+        member_responses = (
+            [run.to_dict() for run in self.member_runs] if self.member_runs else None
+        )
         response = self.response.to_dict() if self.response else None
         return {
             "message": message,
@@ -35,11 +37,19 @@ class TeamRun:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRun":
-        message = Message.model_validate(data.get("message")) if data.get("message") else None
-        member_runs = (
-            [AgentRun.model_validate(run) for run in data.get("member_runs", [])] if data.get("member_runs") else None
+        message = (
+            Message.model_validate(data.get("message")) if data.get("message") else None
         )
-        response = TeamRunResponse.from_dict(data.get("response", {})) if data.get("response") else None
+        member_runs = (
+            [AgentRun.model_validate(run) for run in data.get("member_runs", [])]
+            if data.get("member_runs")
+            else None
+        )
+        response = (
+            TeamRunResponse.from_dict(data.get("response", {}))
+            if data.get("response")
+            else None
+        )
         return cls(message=message, member_runs=member_runs, response=response)
 
 
@@ -112,7 +122,9 @@ class TeamMemory:
             _memory_dict["runs"] = [run.to_dict() for run in self.runs]
         return _memory_dict
 
-    def add_interaction_to_team_context(self, member_name: str, task: str, run_response: RunResponse) -> None:
+    def add_interaction_to_team_context(
+        self, member_name: str, task: str, run_response: RunResponse
+    ) -> None:
         if self.team_context is None:
             self.team_context = TeamContext()
         self.team_context.member_interactions.append(
@@ -143,7 +155,9 @@ class TeamMemory:
             for interaction in self.team_context.member_interactions:
                 team_member_interactions_str += f"Member: {interaction.member_name}\n"
                 team_member_interactions_str += f"Task: {interaction.task}\n"
-                team_member_interactions_str += f"Response: {interaction.response.to_dict().get('content', '')}\n"
+                team_member_interactions_str += (
+                    f"Response: {interaction.response.to_dict().get('content', '')}\n"
+                )
                 team_member_interactions_str += "\n"
             team_member_interactions_str += "</member_interactions>\n"
         return team_member_interactions_str
@@ -177,7 +191,9 @@ class TeamMemory:
         self.runs.append(team_run)
         log_debug("Added TeamRun to TeamMemory")
 
-    def add_system_message(self, message: Message, system_message_role: str = "system") -> None:
+    def add_system_message(
+        self, message: Message, system_message_role: str = "system"
+    ) -> None:
         """Add the system messages to the messages list"""
         # If this is the first run in the session, add the system message to the messages list
         if len(self.messages) == 0:
@@ -187,7 +203,14 @@ class TeamMemory:
         # If it is not, add the system message to the messages list
         # If it is, update the system message if content has changed and update_system_message_on_change is True
         else:
-            system_message_index = next((i for i, m in enumerate(self.messages) if m.role == system_message_role), None)
+            system_message_index = next(
+                (
+                    i
+                    for i, m in enumerate(self.messages)
+                    if m.role == system_message_role
+                ),
+                None,
+            )
             # Update the system message in memory if content has changed
             if system_message_index is not None:
                 if (
@@ -268,7 +291,9 @@ class TeamMemory:
                         break
 
                 if user_message_from_run and assistant_message_from_run:
-                    runs_as_message_pairs.append((user_message_from_run, assistant_message_from_run))
+                    runs_as_message_pairs.append(
+                        (user_message_from_run, assistant_message_from_run)
+                    )
         return runs_as_message_pairs
 
     def load_user_memories(self) -> None:

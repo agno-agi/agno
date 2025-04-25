@@ -55,8 +55,12 @@ def test_read_video_with_chunking(mock_transcript):
         documents = reader.read(video_url)
 
         assert len(documents) == 2
-        assert all(doc.name.startswith("youtube_test_video_id_chunk_") for doc in documents)
-        assert all(doc.id.startswith("youtube_test_video_id_chunk_") for doc in documents)
+        assert all(
+            doc.name.startswith("youtube_test_video_id_chunk_") for doc in documents
+        )
+        assert all(
+            doc.id.startswith("youtube_test_video_id_chunk_") for doc in documents
+        )
         assert all("chunk" in doc.meta_data for doc in documents)
         assert all("video_url" in doc.meta_data for doc in documents)
         assert all("video_id" in doc.meta_data for doc in documents)
@@ -87,7 +91,10 @@ def test_read_large_transcript():
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
     # Create a large transcript
-    mock_transcript = [{"text": f"Segment {i}", "start": float(i), "duration": 1.0} for i in range(1000)]
+    mock_transcript = [
+        {"text": f"Segment {i}", "start": float(i), "duration": 1.0}
+        for i in range(1000)
+    ]
 
     with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
         mock_api.get_transcript.return_value = mock_transcript
@@ -178,8 +185,12 @@ async def test_async_read_video_with_chunking(mock_transcript):
         documents = await reader.async_read(video_url)
 
         assert len(documents) == 2
-        assert all(doc.name.startswith("youtube_test_video_id_chunk_") for doc in documents)
-        assert all(doc.id.startswith("youtube_test_video_id_chunk_") for doc in documents)
+        assert all(
+            doc.name.startswith("youtube_test_video_id_chunk_") for doc in documents
+        )
+        assert all(
+            doc.id.startswith("youtube_test_video_id_chunk_") for doc in documents
+        )
         assert all("chunk" in doc.meta_data for doc in documents)
         assert all("video_url" in doc.meta_data for doc in documents)
         assert all("video_id" in doc.meta_data for doc in documents)
@@ -213,7 +224,10 @@ async def test_async_read_large_transcript():
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
     # Create a large transcript
-    mock_transcript = [{"text": f"Segment {i}", "start": float(i), "duration": 1.0} for i in range(1000)]
+    mock_transcript = [
+        {"text": f"Segment {i}", "start": float(i), "duration": 1.0}
+        for i in range(1000)
+    ]
 
     with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
         mock_api.get_transcript.return_value = mock_transcript

@@ -1,10 +1,11 @@
 from typing import Optional
 
+from qdrant_client import QdrantClient
+
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.qdrant import Qdrant
-from qdrant_client import QdrantClient
 
 # ---------------------------------------------------------
 # This section loads the knowledge base. Skip if your knowledge base was populated elsewhere.

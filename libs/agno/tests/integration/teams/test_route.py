@@ -23,7 +23,12 @@ def test_route_team_basic():
         tools=[YFinanceTools(stock_price=True)],
     )
 
-    team = Team(name="Router Team", mode="route", model=OpenAIChat("gpt-4o"), members=[web_agent, finance_agent])
+    team = Team(
+        name="Router Team",
+        mode="route",
+        model=OpenAIChat("gpt-4o"),
+        members=[web_agent, finance_agent],
+    )
 
     # This should route to the finance agent
     response = team.run("What is the current stock price of AAPL?")
@@ -59,7 +64,12 @@ def test_route_team_structured_output():
         tools=[YFinanceTools(stock_price=True)],
     )
 
-    team = Team(name="Router Team", mode="route", model=OpenAIChat("gpt-4o"), members=[web_agent, finance_agent])
+    team = Team(
+        name="Router Team",
+        mode="route",
+        model=OpenAIChat("gpt-4o"),
+        members=[web_agent, finance_agent],
+    )
 
     # This should route to the finance agent
     response = team.run("What is the current stock price of AAPL?")
@@ -89,7 +99,11 @@ def test_route_team_with_multiple_agents():
         tools=[YFinanceTools(stock_price=True)],
     )
 
-    analysis_agent = Agent(name="Analysis Agent", model=OpenAIChat("gpt-4o"), role="Analyze data and provide insights")
+    analysis_agent = Agent(
+        name="Analysis Agent",
+        model=OpenAIChat("gpt-4o"),
+        role="Analyze data and provide insights",
+    )
 
     team = Team(
         name="Multi-Router Team",
@@ -99,7 +113,9 @@ def test_route_team_with_multiple_agents():
     )
 
     # This should route to both finance and web agents
-    response = team.run("Compare the stock performance of AAPL with recent tech industry news")
+    response = team.run(
+        "Compare the stock performance of AAPL with recent tech industry news"
+    )
 
     assert response.content is not None
     assert isinstance(response.content, str)
@@ -110,12 +126,23 @@ def test_route_team_with_multiple_agents():
 
 def test_route_team_with_expected_output():
     """Test route team with expected output specification."""
-    qa_agent = Agent(name="QA Agent", model=OpenAIChat("gpt-4o"), role="Answer general knowledge questions")
+    qa_agent = Agent(
+        name="QA Agent",
+        model=OpenAIChat("gpt-4o"),
+        role="Answer general knowledge questions",
+    )
 
-    math_agent = Agent(name="Math Agent", model=OpenAIChat("gpt-4o"), role="Solve mathematical problems")
+    math_agent = Agent(
+        name="Math Agent",
+        model=OpenAIChat("gpt-4o"),
+        role="Solve mathematical problems",
+    )
 
     team = Team(
-        name="Specialized Router Team", mode="route", model=OpenAIChat("gpt-4o"), members=[qa_agent, math_agent]
+        name="Specialized Router Team",
+        mode="route",
+        model=OpenAIChat("gpt-4o"),
+        members=[qa_agent, math_agent],
     )
 
     # This should route to the math agent with specific expected output

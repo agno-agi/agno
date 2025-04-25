@@ -33,16 +33,20 @@ class MemorySummarizer(BaseModel):
         else:
             self.model.response_format = {"type": "json_object"}
 
-    def get_system_message(self, messages_for_summarization: List[Dict[str, str]]) -> Message:
+    def get_system_message(
+        self, messages_for_summarization: List[Dict[str, str]]
+    ) -> Message:
         # -*- Return a system message for summarization
-        system_prompt = dedent("""\
+        system_prompt = dedent(
+            """\
         Analyze the following conversation between a user and an assistant, and extract the following details:
           - Summary (str): Provide a concise summary of the session, focusing on important information that would be helpful for future interactions.
           - Topics (Optional[List[str]]): List the topics discussed in the session.
         Please ignore any frivolous information.
 
         Conversation:
-        """)
+        """
+        )
         conversation = []
         for message_pair in messages_for_summarization:
             conversation.append(f"User: {message_pair['user']}")
@@ -54,7 +58,9 @@ class MemorySummarizer(BaseModel):
         system_prompt += "\n".join(conversation)
 
         if not self.use_structured_outputs:
-            system_prompt += "\n\nProvide your output as a JSON containing the following fields:"
+            system_prompt += (
+                "\n\nProvide your output as a JSON containing the following fields:"
+            )
             json_schema = SessionSummary.model_json_schema()
             response_model_properties = {}
             json_schema_properties = json_schema.get("properties")
@@ -119,7 +125,11 @@ class MemorySummarizer(BaseModel):
         log_debug("*********** MemorySummarizer End ***********")
 
         # If the model natively supports structured outputs, the parsed value is already in the structured format
-        if self.use_structured_outputs and response.parsed is not None and isinstance(response.parsed, SessionSummary):
+        if (
+            self.use_structured_outputs
+            and response.parsed is not None
+            and isinstance(response.parsed, SessionSummary)
+        ):
             return response.parsed
 
         # Otherwise convert the response to the structured format
@@ -127,15 +137,23 @@ class MemorySummarizer(BaseModel):
             try:
                 session_summary = None
                 try:
-                    session_summary = SessionSummary.model_validate_json(response.content)
+                    session_summary = SessionSummary.model_validate_json(
+                        response.content
+                    )
                 except ValidationError:
                     # Check if response starts with ```json
                     if response.content.startswith("```json"):
-                        response.content = response.content.replace("```json\n", "").replace("\n```", "")
+                        response.content = response.content.replace(
+                            "```json\n", ""
+                        ).replace("\n```", "")
                         try:
-                            session_summary = SessionSummary.model_validate_json(response.content)
+                            session_summary = SessionSummary.model_validate_json(
+                                response.content
+                            )
                         except ValidationError as exc:
-                            logger.warning(f"Failed to validate session_summary response: {exc}")
+                            logger.warning(
+                                f"Failed to validate session_summary response: {exc}"
+                            )
                 return session_summary
             except Exception as e:
                 logger.warning(f"Failed to convert response to session_summary: {e}")
@@ -179,7 +197,11 @@ class MemorySummarizer(BaseModel):
         log_debug("*********** Async MemorySummarizer End ***********")
 
         # If the model natively supports structured outputs, the parsed value is already in the structured format
-        if self.use_structured_outputs and response.parsed is not None and isinstance(response.parsed, SessionSummary):
+        if (
+            self.use_structured_outputs
+            and response.parsed is not None
+            and isinstance(response.parsed, SessionSummary)
+        ):
             return response.parsed
 
         # Otherwise convert the response to the structured format
@@ -187,15 +209,23 @@ class MemorySummarizer(BaseModel):
             try:
                 session_summary = None
                 try:
-                    session_summary = SessionSummary.model_validate_json(response.content)
+                    session_summary = SessionSummary.model_validate_json(
+                        response.content
+                    )
                 except ValidationError:
                     # Check if response starts with ```json
                     if response.content.startswith("```json"):
-                        response.content = response.content.replace("```json\n", "").replace("\n```", "")
+                        response.content = response.content.replace(
+                            "```json\n", ""
+                        ).replace("\n```", "")
                         try:
-                            session_summary = SessionSummary.model_validate_json(response.content)
+                            session_summary = SessionSummary.model_validate_json(
+                                response.content
+                            )
                         except ValidationError as exc:
-                            logger.warning(f"Failed to validate session_summary response: {exc}")
+                            logger.warning(
+                                f"Failed to validate session_summary response: {exc}"
+                            )
                 return session_summary
             except Exception as e:
                 logger.warning(f"Failed to convert response to session_summary: {e}")

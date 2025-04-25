@@ -15,7 +15,9 @@ try:
     from boto3.dynamodb.conditions import Key
     from botocore.exceptions import ClientError
 except ImportError:
-    raise ImportError("`boto3` not installed. Please install using `pip install boto3`.")
+    raise ImportError(
+        "`boto3` not installed. Please install using `pip install boto3`."
+    )
 
 
 class DynamoDbStorage(Storage):
@@ -180,13 +182,18 @@ class DynamoDbStorage(Storage):
                     KeySchema=[{"AttributeName": "session_id", "KeyType": "HASH"}],
                     AttributeDefinitions=attribute_definitions,
                     GlobalSecondaryIndexes=secondary_indexes,
-                    ProvisionedThroughput={"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+                    ProvisionedThroughput={
+                        "ReadCapacityUnits": 5,
+                        "WriteCapacityUnits": 5,
+                    },
                 )
                 # Wait until the table exists.
                 self.table.wait_until_exists()
                 log_debug(f"Table '{self.table_name}' created successfully.")
             else:
-                logger.error(f"Unable to create table '{self.table_name}': {e.response['Error']['Message']}")
+                logger.error(
+                    f"Unable to create table '{self.table_name}': {e.response['Error']['Message']}"
+                )
         except Exception as e:
             logger.error(f"Exception during table creation: {e}")
 
@@ -218,10 +225,14 @@ class DynamoDbStorage(Storage):
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(item)
         except Exception as e:
-            logger.error(f"Error reading session_id '{session_id}' with user_id '{user_id}': {e}")
+            logger.error(
+                f"Error reading session_id '{session_id}' with user_id '{user_id}': {e}"
+            )
         return None
 
-    def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
+    def get_all_session_ids(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[str]:
         """
         Retrieve all session IDs, optionally filtered by user_id and/or entity_id.
 
@@ -242,7 +253,9 @@ class DynamoDbStorage(Storage):
                     ProjectionExpression="session_id",
                 )
                 items = response.get("Items", [])
-                session_ids.extend([item["session_id"] for item in items if "session_id" in item])
+                session_ids.extend(
+                    [item["session_id"] for item in items if "session_id" in item]
+                )
             elif entity_id is not None:
                 if self.mode == "agent":
                     # Query using agent_id index
@@ -266,17 +279,23 @@ class DynamoDbStorage(Storage):
                         ProjectionExpression="session_id",
                     )
                 items = response.get("Items", [])  # type: ignore
-                session_ids.extend([item["session_id"] for item in items if "session_id" in item])
+                session_ids.extend(
+                    [item["session_id"] for item in items if "session_id" in item]
+                )
             else:
                 # Scan the whole table
                 response = self.table.scan(ProjectionExpression="session_id")
                 items = response.get("Items", [])
-                session_ids.extend([item["session_id"] for item in items if "session_id" in item])
+                session_ids.extend(
+                    [item["session_id"] for item in items if "session_id" in item]
+                )
         except Exception as e:
             logger.error(f"Error retrieving session IDs: {e}")
         return session_ids
 
-    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
+    def get_all_sessions(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[Session]:
         """
         Retrieve all sessions, optionally filtered by user_id and/or entity_id.
 

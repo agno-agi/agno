@@ -1,8 +1,9 @@
+from pydantic import BaseModel
+from rich.pretty import pprint
+
 from agno.agent import Agent
 from agno.tools import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
-from pydantic import BaseModel
-from rich.pretty import pprint
 
 
 @tool()

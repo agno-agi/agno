@@ -13,7 +13,11 @@ def create_team_run(run: TeamRunCreate, monitor: bool = False) -> None:
     with api.AuthenticatedClient() as api_client:
         try:
             response = api_client.post(
-                ApiRoutes.TEAM_RUN_CREATE if monitor else ApiRoutes.TEAM_TELEMETRY_RUN_CREATE,
+                (
+                    ApiRoutes.TEAM_RUN_CREATE
+                    if monitor
+                    else ApiRoutes.TEAM_TELEMETRY_RUN_CREATE
+                ),
                 json={"run": run.model_dump(exclude_none=True)},
             )
             response.raise_for_status()
@@ -30,7 +34,11 @@ async def acreate_team_run(run: TeamRunCreate, monitor: bool = False) -> None:
     async with api.AuthenticatedAsyncClient() as api_client:
         try:
             response = await api_client.post(
-                ApiRoutes.TEAM_RUN_CREATE if monitor else ApiRoutes.TEAM_TELEMETRY_RUN_CREATE,
+                (
+                    ApiRoutes.TEAM_RUN_CREATE
+                    if monitor
+                    else ApiRoutes.TEAM_TELEMETRY_RUN_CREATE
+                ),
                 json={"run": run.model_dump(exclude_none=True)},
             )
             response.raise_for_status()

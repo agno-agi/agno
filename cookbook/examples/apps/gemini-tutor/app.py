@@ -7,8 +7,9 @@ import os
 import nest_asyncio
 import streamlit as st
 from agents import TutorAppAgent
-from agno.utils.log import logger
 from utils import display_grounding_metadata, display_tool_calls
+
+from agno.utils.log import logger
 
 # Initialize asyncio support
 nest_asyncio.apply()

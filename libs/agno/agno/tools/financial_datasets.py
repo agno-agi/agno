@@ -103,7 +103,9 @@ class FinancialDatasetsTools(Toolkit):
             return f"Error making request to {url}: {str(e)}"
 
     # Financial Statements
-    def get_income_statements(self, ticker: str, period: str = "annual", limit: int = 10) -> str:
+    def get_income_statements(
+        self, ticker: str, period: str = "annual", limit: int = 10
+    ) -> str:
         """
         Get income statements for a ticker.
 
@@ -118,7 +120,9 @@ class FinancialDatasetsTools(Toolkit):
         params = {"ticker": ticker, "period": period, "limit": limit}
         return self._make_request("financials/income-statements", params)
 
-    def get_balance_sheets(self, ticker: str, period: str = "annual", limit: int = 10) -> str:
+    def get_balance_sheets(
+        self, ticker: str, period: str = "annual", limit: int = 10
+    ) -> str:
         """
         Get balance sheets for a ticker.
 
@@ -133,7 +137,9 @@ class FinancialDatasetsTools(Toolkit):
         params = {"ticker": ticker, "period": period, "limit": limit}
         return self._make_request("financials/balance-sheets", params)
 
-    def get_cash_flow_statements(self, ticker: str, period: str = "annual", limit: int = 10) -> str:
+    def get_cash_flow_statements(
+        self, ticker: str, period: str = "annual", limit: int = 10
+    ) -> str:
         """
         Get cash flow statements for a ticker.
 
@@ -163,7 +169,9 @@ class FinancialDatasetsTools(Toolkit):
         params = {"ticker": ticker}
         return self._make_request("company", params)
 
-    def get_crypto_prices(self, symbol: str, interval: str = "1d", limit: int = 100) -> str:
+    def get_crypto_prices(
+        self, symbol: str, interval: str = "1d", limit: int = 100
+    ) -> str:
         """
         Get cryptocurrency prices.
 
@@ -248,7 +256,9 @@ class FinancialDatasetsTools(Toolkit):
             params["ticker"] = ticker
         return self._make_request("news", params)
 
-    def get_stock_prices(self, ticker: str, interval: str = "1d", limit: int = 100) -> str:
+    def get_stock_prices(
+        self, ticker: str, interval: str = "1d", limit: int = 100
+    ) -> str:
         """
         Get stock prices for a ticker.
 
@@ -277,7 +287,9 @@ class FinancialDatasetsTools(Toolkit):
         params = {"query": query, "limit": limit}
         return self._make_request("search", params)
 
-    def get_sec_filings(self, ticker: str, form_type: Optional[str] = None, limit: int = 50) -> str:
+    def get_sec_filings(
+        self, ticker: str, form_type: Optional[str] = None, limit: int = 50
+    ) -> str:
         """
         Get SEC filings for a ticker.
 
@@ -294,7 +306,9 @@ class FinancialDatasetsTools(Toolkit):
             params["form_type"] = form_type
         return self._make_request("sec-filings", params)
 
-    def get_segmented_financials(self, ticker: str, period: str = "annual", limit: int = 10) -> str:
+    def get_segmented_financials(
+        self, ticker: str, period: str = "annual", limit: int = 10
+    ) -> str:
         """
         Get segmented financials for a ticker.
 

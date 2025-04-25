@@ -19,6 +19,8 @@ from textwrap import dedent
 from typing import List, Optional
 
 import typer
+from rich import print
+
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
@@ -26,7 +28,6 @@ from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.lancedb import LanceDb, SearchType
-from rich import print
 
 agent_knowledge = PDFUrlKnowledgeBase(
     urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],

@@ -9,7 +9,9 @@ from agno.utils.log import log_debug, logger
 try:
     import requests
 except ImportError:
-    raise ImportError("`requests` not installed. Please install using `pip install requests`")
+    raise ImportError(
+        "`requests` not installed. Please install using `pip install requests`"
+    )
 
 
 class ClickUpTools(Toolkit):
@@ -34,9 +36,13 @@ class ClickUpTools(Toolkit):
         self.headers = {"Authorization": self.api_key}
 
         if not self.api_key:
-            raise ValueError("CLICKUP_API_KEY not set. Please set the CLICKUP_API_KEY environment variable.")
+            raise ValueError(
+                "CLICKUP_API_KEY not set. Please set the CLICKUP_API_KEY environment variable."
+            )
         if not self.master_space_id:
-            raise ValueError("MASTER_SPACE_ID not set. Please set the MASTER_SPACE_ID environment variable.")
+            raise ValueError(
+                "MASTER_SPACE_ID not set. Please set the MASTER_SPACE_ID environment variable."
+            )
 
         if list_tasks:
             self.register(self.list_tasks)
@@ -54,19 +60,27 @@ class ClickUpTools(Toolkit):
             self.register(self.list_lists)
 
     def _make_request(
-        self, method: str, endpoint: str, params: Optional[Dict] = None, data: Optional[Dict] = None
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict] = None,
+        data: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """Make a request to the ClickUp API."""
         url = f"{self.base_url}/{endpoint}"
         try:
-            response = requests.request(method=method, url=url, headers=self.headers, params=params, json=data)
+            response = requests.request(
+                method=method, url=url, headers=self.headers, params=params, json=data
+            )
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"Error making request to {url}: {e}")
             return {"error": str(e)}
 
-    def _find_by_name(self, items: List[Dict[str, Any]], name: str) -> Optional[Dict[str, Any]]:
+    def _find_by_name(
+        self, items: List[Dict[str, Any]], name: str
+    ) -> Optional[Dict[str, Any]]:
         """Find an item in a list by name using exact match or regex pattern.
 
         Args:
@@ -146,7 +160,9 @@ class ClickUpTools(Toolkit):
         lists = self._make_request("GET", f"space/{space['id']}/list")
         lists_data = lists.get("lists", [])
         if not lists_data:
-            return json.dumps({"error": f"No lists found in space '{space_name}'"}, indent=2)
+            return json.dumps(
+                {"error": f"No lists found in space '{space_name}'"}, indent=2
+            )
 
         # Get tasks from all lists
         all_tasks = []
@@ -158,7 +174,9 @@ class ClickUpTools(Toolkit):
 
         return json.dumps({"tasks": all_tasks}, indent=2)
 
-    def create_task(self, space_name: str, task_name: str, task_description: str) -> str:
+    def create_task(
+        self, space_name: str, task_name: str, task_description: str
+    ) -> str:
         """Create a new task in a space.
 
         Args:
@@ -179,7 +197,9 @@ class ClickUpTools(Toolkit):
         log_debug(f"Lists: {response}")
         lists_data = response.get("lists", [])
         if not lists_data:
-            return json.dumps({"error": f"No lists found in space '{space_name}'"}, indent=2)
+            return json.dumps(
+                {"error": f"No lists found in space '{space_name}'"}, indent=2
+            )
 
         list_info = lists_data[0]  # Use first list
 
@@ -252,5 +272,8 @@ class ClickUpTools(Toolkit):
         """
         result = self._make_request("DELETE", f"task/{task_id}")
         if "error" not in result:
-            result = {"success": True, "message": f"Task {task_id} deleted successfully"}
+            result = {
+                "success": True,
+                "message": f"Task {task_id} deleted successfully",
+            }
         return json.dumps(result, indent=2)

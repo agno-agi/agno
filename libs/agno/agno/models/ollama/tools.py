@@ -1,7 +1,8 @@
 import json
 from dataclasses import dataclass, field
 from textwrap import dedent
-from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, Union
+from typing import (Any, AsyncIterator, Dict, Iterator, List, Mapping,
+                    Optional, Union)
 
 from agno.models.message import Message, MessageMetrics
 from agno.models.ollama.chat import ChatResponse, Ollama, OllamaResponseUsage
@@ -9,10 +10,8 @@ from agno.models.response import ModelResponse
 from agno.tools.function import FunctionCall
 from agno.utils.log import log_warning
 from agno.utils.timer import Timer
-from agno.utils.tools import (
-    extract_tool_call_from_string,
-    remove_tool_calls_from_string,
-)
+from agno.utils.tools import (extract_tool_call_from_string,
+                              remove_tool_calls_from_string)
 
 
 @dataclass
@@ -51,7 +50,9 @@ class OllamaTools(Ollama):
             "keep_alive": self.keep_alive,
             "request_params": self.request_params,
         }
-        request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
+        request_params: Dict[str, Any] = {
+            k: v for k, v in base_params.items() if v is not None
+        }
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
@@ -89,22 +90,35 @@ class OllamaTools(Ollama):
                     if tool_call_response != tool_call_responses[-1]:
                         tool_call_response += "</tool_call>"
 
-                    if "<tool_call>" in tool_call_response and "</tool_call>" in tool_call_response:
+                    if (
+                        "<tool_call>" in tool_call_response
+                        and "</tool_call>" in tool_call_response
+                    ):
                         # Extract tool call string from response
-                        tool_call_content = extract_tool_call_from_string(tool_call_response)
+                        tool_call_content = extract_tool_call_from_string(
+                            tool_call_response
+                        )
                         # Convert the extracted string to a dictionary
                         try:
                             tool_call_dict = json.loads(tool_call_content)
                         except json.JSONDecodeError:
-                            raise ValueError(f"Could not parse tool call from: {tool_call_content}")
+                            raise ValueError(
+                                f"Could not parse tool call from: {tool_call_content}"
+                            )
 
                         tool_call_name = tool_call_dict.get("name")
                         tool_call_args = tool_call_dict.get("arguments")
                         function_def = {
                             "name": tool_call_name,
-                            "arguments": json.dumps(tool_call_args) if tool_call_args is not None else None,
+                            "arguments": (
+                                json.dumps(tool_call_args)
+                                if tool_call_args is not None
+                                else None
+                            ),
                         }
-                        model_response.tool_calls.append({"type": "function", "function": function_def})
+                        model_response.tool_calls.append(
+                            {"type": "function", "function": function_def}
+                        )
 
         # Get response usage
         if response.get("done"):
@@ -116,20 +130,30 @@ class OllamaTools(Ollama):
                 prompt_eval_duration=response.get("prompt_eval_duration", 0),
                 eval_duration=response.get("eval_duration", 0),
             )
-            if model_response.response_usage.input_tokens or model_response.response_usage.output_tokens:
+            if (
+                model_response.response_usage.input_tokens
+                or model_response.response_usage.output_tokens
+            ):
                 model_response.response_usage.total_tokens = (
-                    model_response.response_usage.input_tokens + model_response.response_usage.output_tokens
+                    model_response.response_usage.input_tokens
+                    + model_response.response_usage.output_tokens
                 )
 
         return model_response
 
     def _create_function_call_result(
-        self, fc: FunctionCall, success: bool, output: Optional[Union[List[Any], str]], timer: Timer
+        self,
+        fc: FunctionCall,
+        success: bool,
+        output: Optional[Union[List[Any], str]],
+        timer: Timer,
     ) -> Message:
         """Create a function call result message."""
         content = (
             "<tool_response>\n"
-            + json.dumps({"name": fc.function.name, "content": output if success else fc.error})
+            + json.dumps(
+                {"name": fc.function.name, "content": output if success else fc.error}
+            )
             + "\n</tool_response>"
         )
 
@@ -144,7 +168,9 @@ class OllamaTools(Ollama):
             metrics=MessageMetrics(time=timer.elapsed),
         )
 
-    def format_function_call_results(self, function_call_results: List[Message], messages: List[Message]) -> None:
+    def format_function_call_results(
+        self, function_call_results: List[Message], messages: List[Message]
+    ) -> None:
         """
         Format the function call results and append them to the messages.
 
@@ -156,7 +182,9 @@ class OllamaTools(Ollama):
             for _fc_message in function_call_results:
                 _fc_message.content = (
                     "<tool_response>\n"
-                    + json.dumps({"name": _fc_message.tool_name, "content": _fc_message.content})
+                    + json.dumps(
+                        {"name": _fc_message.tool_name, "content": _fc_message.content}
+                    )
                     + "\n</tool_response>"
                 )
                 messages.append(_fc_message)
@@ -182,9 +210,13 @@ class OllamaTools(Ollama):
         if model_response.tool_calls is None:
             model_response.tool_calls = []
 
-        model_response.content = str(remove_tool_calls_from_string(assistant_message.get_content_string()))
+        model_response.content = str(
+            remove_tool_calls_from_string(assistant_message.get_content_string())
+        )
         model_response.content += "\n\n"
-        function_calls_to_run = self.get_function_calls_to_run(assistant_message, messages)
+        function_calls_to_run = self.get_function_calls_to_run(
+            assistant_message, messages
+        )
 
         return function_calls_to_run
 
@@ -197,10 +229,14 @@ class OllamaTools(Ollama):
         tool_call_data = ToolCall()
 
         for response_delta in self.invoke_stream(messages=messages):
-            model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
+            model_response_delta = self.parse_provider_response_delta(
+                response_delta, tool_call_data
+            )
             if model_response_delta:
                 yield from self._populate_stream_data_and_assistant_message(
-                    stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
+                    stream_data=stream_data,
+                    assistant_message=assistant_message,
+                    model_response=model_response_delta,
                 )
 
     async def aprocess_response_stream(
@@ -212,14 +248,20 @@ class OllamaTools(Ollama):
         tool_call_data = ToolCall()
 
         async for response_delta in self.ainvoke_stream(messages=messages):
-            model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
+            model_response_delta = self.parse_provider_response_delta(
+                response_delta, tool_call_data
+            )
             if model_response_delta:
                 for model_response in self._populate_stream_data_and_assistant_message(
-                    stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
+                    stream_data=stream_data,
+                    assistant_message=assistant_message,
+                    model_response=model_response_delta,
                 ):
                     yield model_response
 
-    def parse_provider_response_delta(self, response_delta, tool_call_data: ToolCall) -> ModelResponse:
+    def parse_provider_response_delta(
+        self, response_delta, tool_call_data: ToolCall
+    ) -> ModelResponse:
         """
         Parse the provider response delta.
 
@@ -260,12 +302,17 @@ class OllamaTools(Ollama):
 
                 # If the response is a closing tool call tag and the tool call counter is 0,
                 # tool call response is complete
-                if tool_call_data.tool_calls_counter == 0 and content_delta.strip().endswith(">"):
+                if (
+                    tool_call_data.tool_calls_counter == 0
+                    and content_delta.strip().endswith(">")
+                ):
                     tool_call_data.response_is_tool_call = False
                     tool_call_data.is_closing_tool_call_tag = True
 
                     try:
-                        model_response.tool_calls = _parse_tool_calls_from_content(tool_call_data.tool_call_content)
+                        model_response.tool_calls = _parse_tool_calls_from_content(
+                            tool_call_data.tool_call_content
+                        )
                         tool_call_data = ToolCall()
                     except Exception as e:
                         log_warning(e)
@@ -273,7 +320,10 @@ class OllamaTools(Ollama):
 
             # Yield content if not a tool call and content is not None
             if not tool_call_data.response_is_tool_call and content_delta is not None:
-                if tool_call_data.is_closing_tool_call_tag and content_delta.strip().endswith(">"):
+                if (
+                    tool_call_data.is_closing_tool_call_tag
+                    and content_delta.strip().endswith(">")
+                ):
                     tool_call_data.is_closing_tool_call_tag = False
 
                 model_response.content = content_delta
@@ -282,11 +332,14 @@ class OllamaTools(Ollama):
             model_response.response_usage = {
                 "input_tokens": response_delta.get("prompt_eval_count", 0),
                 "output_tokens": response_delta.get("eval_count", 0),
-                "total_tokens": response_delta.get("prompt_eval_count", 0) + response_delta.get("eval_count", 0),
+                "total_tokens": response_delta.get("prompt_eval_count", 0)
+                + response_delta.get("eval_count", 0),
                 "additional_metrics": {
                     "total_duration": response_delta.get("total_duration", 0),
                     "load_duration": response_delta.get("load_duration", 0),
-                    "prompt_eval_duration": response_delta.get("prompt_eval_duration", 0),
+                    "prompt_eval_duration": response_delta.get(
+                        "prompt_eval_duration", 0
+                    ),
                     "eval_duration": response_delta.get("eval_duration", 0),
                 },
             }
@@ -370,14 +423,19 @@ def _parse_tool_calls_from_content(response_content: str) -> List[Dict[str, Any]
             if tool_call_response != tool_call_responses[-1]:
                 tool_call_response += "</tool_call>"
 
-            if "<tool_call>" in tool_call_response and "</tool_call>" in tool_call_response:
+            if (
+                "<tool_call>" in tool_call_response
+                and "</tool_call>" in tool_call_response
+            ):
                 # Extract tool call string from response
                 tool_call_content = extract_tool_call_from_string(tool_call_response)
                 # Convert the extracted string to a dictionary
                 try:
                     tool_call_dict = json.loads(tool_call_content)
                 except json.JSONDecodeError:
-                    raise ValueError(f"Could not parse tool call from: {tool_call_content}")
+                    raise ValueError(
+                        f"Could not parse tool call from: {tool_call_content}"
+                    )
 
                 tool_call_name = tool_call_dict.get("name")
                 tool_call_args = tool_call_dict.get("arguments")

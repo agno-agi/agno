@@ -19,7 +19,10 @@ def setup_vector_db():
 @pytest.mark.skip(reason="They block requests from CI")
 def test_youtube_knowledge_base_directory(setup_vector_db):
     """Test loading multiple YouTube videos into the knowledge base."""
-    urls = ["https://www.youtube.com/watch?v=NwZ26lxl8wU", "https://www.youtube.com/watch?v=lrg8ZWI7MCg"]
+    urls = [
+        "https://www.youtube.com/watch?v=NwZ26lxl8wU",
+        "https://www.youtube.com/watch?v=lrg8ZWI7MCg",
+    ]
 
     kb = YouTubeKnowledgeBase(urls=urls, vector_db=setup_vector_db)
     kb.load(recreate=True)
@@ -29,7 +32,8 @@ def test_youtube_knowledge_base_directory(setup_vector_db):
 
     agent = Agent(knowledge=kb, search_knowledge=True)
     response = agent.run(
-        "What is the major focus of the knowledge provided in both the videos, explain briefly.", markdown=True
+        "What is the major focus of the knowledge provided in both the videos, explain briefly.",
+        markdown=True,
     )
 
     tool_calls = []
@@ -39,7 +43,9 @@ def test_youtube_knowledge_base_directory(setup_vector_db):
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
     print(f"Function calls: {function_calls}")
-    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "search_knowledge_base" for call in function_calls
+    )
 
 
 @pytest.mark.skip(reason="They block requests from CI")
@@ -62,7 +68,9 @@ def test_youtube_knowledge_base_single_url(setup_vector_db):
             "You can use the search_knowledge_base tool to search the knowledge base of videos for information.",
         ],
     )
-    response = agent.run("What is the major focus of the knowledge provided in the video?", markdown=True)
+    response = agent.run(
+        "What is the major focus of the knowledge provided in the video?", markdown=True
+    )
 
     tool_calls = []
     for msg in response.messages:
@@ -70,14 +78,19 @@ def test_youtube_knowledge_base_single_url(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    assert any(
+        call["function"]["name"] == "search_knowledge_base" for call in function_calls
+    )
 
 
 @pytest.mark.skip(reason="They block requests from CI")
 @pytest.mark.asyncio
 async def test_youtube_knowledge_base_async_directory(setup_vector_db):
     """Test asynchronously loading multiple YouTube videos."""
-    urls = ["https://www.youtube.com/watch?v=NwZ26lxl8wU", "https://www.youtube.com/watch?v=lrg8ZWI7MCg"]
+    urls = [
+        "https://www.youtube.com/watch?v=NwZ26lxl8wU",
+        "https://www.youtube.com/watch?v=lrg8ZWI7MCg",
+    ]
 
     kb = YouTubeKnowledgeBase(urls=urls, vector_db=setup_vector_db)
     await kb.aload(recreate=True)
@@ -94,7 +107,8 @@ async def test_youtube_knowledge_base_async_directory(setup_vector_db):
         ],
     )
     response = await agent.arun(
-        "What is the major focus of the knowledge provided in both the videos, explain briefly.", markdown=True
+        "What is the major focus of the knowledge provided in both the videos, explain briefly.",
+        markdown=True,
     )
 
     tool_calls = []
@@ -103,7 +117,9 @@ async def test_youtube_knowledge_base_async_directory(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     assert "async_search_knowledge_base" in [
-        call["function"]["name"] for call in tool_calls if call.get("type") == "function"
+        call["function"]["name"]
+        for call in tool_calls
+        if call.get("type") == "function"
     ]
 
 
@@ -111,7 +127,9 @@ async def test_youtube_knowledge_base_async_directory(setup_vector_db):
 @pytest.mark.asyncio
 async def test_youtube_knowledge_base_async_single_url(setup_vector_db):
     """Test asynchronously loading a single YouTube video."""
-    kb = YouTubeKnowledgeBase(urls=["https://www.youtube.com/watch?v=lrg8ZWI7MCg"], vector_db=setup_vector_db)
+    kb = YouTubeKnowledgeBase(
+        urls=["https://www.youtube.com/watch?v=lrg8ZWI7MCg"], vector_db=setup_vector_db
+    )
     await kb.aload(recreate=True)
 
     assert await setup_vector_db.async_exists()
@@ -125,7 +143,9 @@ async def test_youtube_knowledge_base_async_single_url(setup_vector_db):
             "You can use the search_knowledge_base tool to search the knowledge base of videos for information.",
         ],
     )
-    response = await agent.arun("What is the major focus of the knowledge provided in the video?", markdown=True)
+    response = await agent.arun(
+        "What is the major focus of the knowledge provided in the video?", markdown=True
+    )
 
     tool_calls = []
     for msg in response.messages:
@@ -133,7 +153,9 @@ async def test_youtube_knowledge_base_async_single_url(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     assert "async_search_knowledge_base" in [
-        call["function"]["name"] for call in tool_calls if call.get("type") == "function"
+        call["function"]["name"]
+        for call in tool_calls
+        if call.get("type") == "function"
     ]
 
 

@@ -19,18 +19,30 @@ def test_image_input():
 
     response = agent.run(
         "Tell me about this image.",
-        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+        images=[
+            Image(
+                url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+            )
+        ],
     )
 
     assert "golden" in response.content.lower()
 
     # Just check it doesn't break on subsequent messages
     response = agent.run("Where can I find more information?")
-    assert [message.role for message in response.messages] == ["system", "user", "assistant", "user", "assistant"]
+    assert [message.role for message in response.messages] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
 
 
 def test_image_input_bytes():
-    agent = Agent(model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False, monitoring=False
+    )
 
     image_path = Path(__file__).parent.parent.joinpath("sample_image.jpg")
 
@@ -47,7 +59,9 @@ def test_image_input_bytes():
 
 
 def test_image_input_local_file():
-    agent = Agent(model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False, monitoring=False
+    )
 
     image_path = Path(__file__).parent.parent.joinpath("sample_image.jpg")
 
@@ -72,7 +86,11 @@ def test_image_input_with_tool_call():
 
     response = agent.run(
         "Tell me about this image and give me the latest news about it.",
-        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+        images=[
+            Image(
+                url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+            )
+        ],
     )
 
     assert "golden" in response.content.lower()

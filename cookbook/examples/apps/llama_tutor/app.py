@@ -1,7 +1,6 @@
 import nest_asyncio
 import streamlit as st
 from agents import tutor_agent
-from agno.utils.log import logger
 from utils import (
     CUSTOM_CSS,
     about_widget,
@@ -11,6 +10,8 @@ from utils import (
     session_selector_widget,
     sidebar_widget,
 )
+
+from agno.utils.log import logger
 
 nest_asyncio.apply()
 

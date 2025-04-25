@@ -7,7 +7,9 @@ try:
     from pymongo.database import Database
     from pymongo.errors import PyMongoError
 except ImportError:
-    raise ImportError("`pymongo` not installed. Please install it with `pip install pymongo`")
+    raise ImportError(
+        "`pymongo` not installed. Please install it with `pip install pymongo`"
+    )
 
 from agno.memory.v2.db import MemoryDb
 from agno.memory.v2.db.schema import MemoryRow
@@ -58,7 +60,9 @@ class MongoMemoryDb(MemoryDb):
             self.collection.create_index("user_id")
             self.collection.create_index("created_at")
         except PyMongoError as e:
-            logger.error(f"Error creating indexes for collection '{self.collection_name}': {e}")
+            logger.error(
+                f"Error creating indexes for collection '{self.collection_name}': {e}"
+            )
             raise
 
     def memory_exists(self, memory: MemoryRow) -> bool:
@@ -76,7 +80,10 @@ class MongoMemoryDb(MemoryDb):
             return False
 
     def read_memories(
-        self, user_id: Optional[str] = None, limit: Optional[int] = None, sort: Optional[str] = None
+        self,
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        sort: Optional[str] = None,
     ) -> List[MemoryRow]:
         """Read memories from the collection
         Args:
@@ -140,7 +147,9 @@ class MongoMemoryDb(MemoryDb):
             if not doc:
                 update_data["created_at"] = timestamp
 
-            result = self.collection.update_one(query, {"$set": update_data}, upsert=True)
+            result = self.collection.update_one(
+                query, {"$set": update_data}, upsert=True
+            )
 
             if not result.acknowledged:
                 logger.error("Memory upsert not acknowledged")

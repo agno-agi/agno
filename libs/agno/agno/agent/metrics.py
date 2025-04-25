@@ -43,7 +43,9 @@ class SessionMetrics:
         if self.timer is not None:
             self.time_to_first_token = self.timer.elapsed
 
-    def __add__(self, other: Union["SessionMetrics", "MessageMetrics"]) -> "SessionMetrics":
+    def __add__(
+        self, other: Union["SessionMetrics", "MessageMetrics"]
+    ) -> "SessionMetrics":
         # Create new instance with summed basic metrics
         result = SessionMetrics(
             input_tokens=self.input_tokens + other.input_tokens,
@@ -67,7 +69,9 @@ class SessionMetrics:
             # Add values from other
             if other.prompt_tokens_details:
                 for key, value in other.prompt_tokens_details.items():
-                    result.prompt_tokens_details[key] = result.prompt_tokens_details.get(key, 0) + value
+                    result.prompt_tokens_details[key] = (
+                        result.prompt_tokens_details.get(key, 0) + value
+                    )
 
         # Handle completion_tokens_details similarly
         if self.completion_tokens_details or other.completion_tokens_details:
@@ -76,7 +80,9 @@ class SessionMetrics:
                 result.completion_tokens_details.update(self.completion_tokens_details)
             if other.completion_tokens_details:
                 for key, value in other.completion_tokens_details.items():
-                    result.completion_tokens_details[key] = result.completion_tokens_details.get(key, 0) + value
+                    result.completion_tokens_details[key] = (
+                        result.completion_tokens_details.get(key, 0) + value
+                    )
 
         # Handle additional metrics
         if self.additional_metrics or other.additional_metrics:
@@ -95,11 +101,15 @@ class SessionMetrics:
             result.time = other.time
 
         # Handle time_to_first_token (take the first non-None value)
-        result.time_to_first_token = self.time_to_first_token or other.time_to_first_token
+        result.time_to_first_token = (
+            self.time_to_first_token or other.time_to_first_token
+        )
 
         return result
 
-    def __radd__(self, other: Union["SessionMetrics", "MessageMetrics"]) -> "SessionMetrics":
+    def __radd__(
+        self, other: Union["SessionMetrics", "MessageMetrics"]
+    ) -> "SessionMetrics":
         if other == 0:  # Handle sum() starting value
             return self
         return self + other

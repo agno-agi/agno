@@ -254,11 +254,15 @@ def test_error_logging(calculator_tools):
 
         mock_logger.reset_mock()
         calculator_tools.factorial(-1)
-        mock_logger.assert_called_once_with("Attempt to calculate factorial of a negative number")
+        mock_logger.assert_called_once_with(
+            "Attempt to calculate factorial of a negative number"
+        )
 
         mock_logger.reset_mock()
         calculator_tools.square_root(-4)
-        mock_logger.assert_called_once_with("Attempt to calculate square root of a negative number")
+        mock_logger.assert_called_once_with(
+            "Attempt to calculate square root of a negative number"
+        )
 
 
 def test_large_numbers(calculator_tools):

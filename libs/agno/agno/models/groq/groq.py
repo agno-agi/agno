@@ -16,7 +16,9 @@ try:
     from groq import AsyncGroq as AsyncGroqClient
     from groq import Groq as GroqClient
     from groq.types.chat import ChatCompletion
-    from groq.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDelta, ChoiceDeltaToolCall
+    from groq.types.chat.chat_completion_chunk import (ChatCompletionChunk,
+                                                       ChoiceDelta,
+                                                       ChoiceDeltaToolCall)
 except (ModuleNotFoundError, ImportError):
     raise ImportError("`groq` not installed. Please install using `pip install groq`")
 
@@ -69,7 +71,9 @@ class Groq(Model):
         if not self.api_key:
             self.api_key = getenv("GROQ_API_KEY")
             if not self.api_key:
-                log_error("GROQ_API_KEY not set. Please set the GROQ_API_KEY environment variable.")
+                log_error(
+                    "GROQ_API_KEY not set. Please set the GROQ_API_KEY environment variable."
+                )
 
         # Define base client params
         base_params = {
@@ -261,14 +265,21 @@ class Groq(Model):
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(
-                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+                message=e.response.text,
+                status_code=e.response.status_code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except APIError as e:
             log_error(f"Error calling Groq API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Groq API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke(self, messages: List[Message]) -> ChatCompletion:
         """
@@ -289,14 +300,21 @@ class Groq(Model):
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(
-                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+                message=e.response.text,
+                status_code=e.response.status_code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except APIError as e:
             log_error(f"Error calling Groq API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Groq API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
         """
@@ -318,14 +336,21 @@ class Groq(Model):
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(
-                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+                message=e.response.text,
+                status_code=e.response.status_code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except APIError as e:
             log_error(f"Error calling Groq API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Groq API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> Any:
         """
@@ -350,18 +375,27 @@ class Groq(Model):
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
             raise ModelProviderError(
-                message=e.response.text, status_code=e.response.status_code, model_name=self.name, model_id=self.id
+                message=e.response.text,
+                status_code=e.response.status_code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except APIError as e:
             log_error(f"Error calling Groq API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Groq API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     # Override base method
     @staticmethod
-    def parse_tool_calls(tool_calls_data: List[ChoiceDeltaToolCall]) -> List[Dict[str, Any]]:
+    def parse_tool_calls(
+        tool_calls_data: List[ChoiceDeltaToolCall],
+    ) -> List[Dict[str, Any]]:
         """
         Build tool calls from streamed tool call data.
 
@@ -377,7 +411,9 @@ class Groq(Model):
             _tool_call_id = _tool_call.id
             _tool_call_type = _tool_call.type
             _function_name = _tool_call.function.name if _tool_call.function else None
-            _function_arguments = _tool_call.function.arguments if _tool_call.function else None
+            _function_arguments = (
+                _tool_call.function.arguments if _tool_call.function else None
+            )
 
             if len(tool_calls) <= _index:
                 tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
@@ -424,9 +460,14 @@ class Groq(Model):
             model_response.content = response_message.content
 
         # Add tool calls
-        if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
+        if (
+            response_message.tool_calls is not None
+            and len(response_message.tool_calls) > 0
+        ):
             try:
-                model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
+                model_response.tool_calls = [
+                    t.model_dump() for t in response_message.tool_calls
+                ]
             except Exception as e:
                 log_warning(f"Error processing tool calls: {e}")
 
@@ -445,7 +486,9 @@ class Groq(Model):
             }
         return model_response
 
-    def parse_provider_response_delta(self, response: ChatCompletionChunk) -> ModelResponse:
+    def parse_provider_response_delta(
+        self, response: ChatCompletionChunk
+    ) -> ModelResponse:
         """
         Parse the Groq streaming response into ModelResponse objects.
 

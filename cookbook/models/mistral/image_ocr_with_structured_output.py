@@ -1,9 +1,10 @@
 from typing import List
 
+from pydantic import BaseModel
+
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.mistral.mistral import MistralChat
-from pydantic import BaseModel
 
 
 class GroceryItem(BaseModel):

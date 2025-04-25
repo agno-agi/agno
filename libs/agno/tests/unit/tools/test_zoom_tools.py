@@ -129,7 +129,12 @@ def test_get_access_token_failure(zoom_tools):
     [
         (
             "schedule_meeting",
-            {"topic": "Test Meeting", "start_time": "2024-02-01T10:00:00Z", "duration": 60, "timezone": "UTC"},
+            {
+                "topic": "Test Meeting",
+                "start_time": "2024-02-01T10:00:00Z",
+                "duration": 60,
+                "timezone": "UTC",
+            },
         ),
         ("get_upcoming_meetings", {"user_id": "me"}),
         ("list_meetings", {"user_id": "me", "type": "scheduled"}),
@@ -158,11 +163,15 @@ def test_schedule_meeting_success(zoom_tools):
         "join_url": "https://zoom.us/j/123456789",
     }
 
-    with patch.object(ZoomTools, "get_access_token", return_value="test_token"), patch("requests.post") as mock_post:
+    with patch.object(ZoomTools, "get_access_token", return_value="test_token"), patch(
+        "requests.post"
+    ) as mock_post:
         mock_post.return_value.json.return_value = mock_response
         mock_post.return_value.raise_for_status = MagicMock()
 
-        result = zoom_tools.schedule_meeting(topic="Test Meeting", start_time="2024-02-01T10:00:00Z", duration=60)
+        result = zoom_tools.schedule_meeting(
+            topic="Test Meeting", start_time="2024-02-01T10:00:00Z", duration=60
+        )
 
         result_data = json.loads(result)
         assert result_data["meeting_id"] == 123456789
@@ -184,7 +193,9 @@ def test_get_meeting_success(zoom_tools):
         "settings": {"host_video": True},
     }
 
-    with patch.object(ZoomTools, "get_access_token", return_value="test_token"), patch("requests.get") as mock_get:
+    with patch.object(ZoomTools, "get_access_token", return_value="test_token"), patch(
+        "requests.get"
+    ) as mock_get:
         mock_get.return_value.json.return_value = mock_response
         mock_get.return_value.raise_for_status = MagicMock()
 
@@ -217,7 +228,9 @@ def test_get_upcoming_meetings_success(zoom_tools):
         ],
     }
 
-    with patch.object(ZoomTools, "get_access_token", return_value="test_token"), patch("requests.get") as mock_get:
+    with patch.object(ZoomTools, "get_access_token", return_value="test_token"), patch(
+        "requests.get"
+    ) as mock_get:
         mock_get.return_value.json.return_value = mock_response
         mock_get.return_value.raise_for_status = MagicMock()
 
@@ -253,7 +266,9 @@ def test_list_meetings_success(zoom_tools):
         ],
     }
 
-    with patch.object(ZoomTools, "get_access_token", return_value="test_token"), patch("requests.get") as mock_get:
+    with patch.object(ZoomTools, "get_access_token", return_value="test_token"), patch(
+        "requests.get"
+    ) as mock_get:
         mock_get.return_value.json.return_value = mock_response
         mock_get.return_value.raise_for_status = MagicMock()
 
@@ -296,7 +311,9 @@ def test_get_meeting_recordings_success(zoom_tools):
         ],
     }
 
-    with patch.object(ZoomTools, "get_access_token", return_value="test_token"), patch("requests.get") as mock_get:
+    with patch.object(ZoomTools, "get_access_token", return_value="test_token"), patch(
+        "requests.get"
+    ) as mock_get:
         mock_get.return_value.json.return_value = mock_response
         mock_get.return_value.raise_for_status = MagicMock()
 
@@ -307,7 +324,10 @@ def test_get_meeting_recordings_success(zoom_tools):
         assert result_data["meeting_id"] == "123456789"
         assert result_data["recording_count"] == 2
         assert len(result_data["recording_files"]) == 2
-        assert result_data["recording_files"][0]["recording_type"] == "shared_screen_with_speaker_view"
+        assert (
+            result_data["recording_files"][0]["recording_type"]
+            == "shared_screen_with_speaker_view"
+        )
         assert result_data["recording_files"][1]["recording_type"] == "audio_only"
 
 
@@ -344,7 +364,9 @@ def test_delete_meeting_success(zoom_tools):
 )
 def test_api_methods_request_failure(zoom_tools, method_name, mock_func, error_message):
     """Test API methods handle request failures gracefully"""
-    with patch.object(ZoomTools, "get_access_token", return_value="test_token"), patch(mock_func) as mock_request:
+    with patch.object(ZoomTools, "get_access_token", return_value="test_token"), patch(
+        mock_func
+    ) as mock_request:
         mock_request.side_effect = requests.RequestException(error_message)
 
         method = getattr(zoom_tools, method_name)

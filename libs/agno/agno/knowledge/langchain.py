@@ -14,7 +14,10 @@ class LangChainKnowledgeBase(AgentKnowledge):
     retriever: Optional[Any] = None
 
     def search(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        num_documents: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         """Returns relevant documents matching the query"""
 
@@ -32,14 +35,18 @@ class LangChainKnowledgeBase(AgentKnowledge):
                 self.search_kwargs = {"k": self.num_documents}
             if filters is not None:
                 self.search_kwargs.update(filters)
-            self.retriever = self.vectorstore.as_retriever(search_kwargs=self.search_kwargs)
+            self.retriever = self.vectorstore.as_retriever(
+                search_kwargs=self.search_kwargs
+            )
 
         if self.retriever is None:
             logger.error("No retriever provided")
             return []
 
         if not isinstance(self.retriever, BaseRetriever):
-            raise ValueError(f"Retriever is not of type BaseRetriever: {self.retriever}")
+            raise ValueError(
+                f"Retriever is not of type BaseRetriever: {self.retriever}"
+            )
 
         _num_documents = num_documents or self.num_documents
         log_debug(f"Getting {_num_documents} relevant documents for query: {query}")
@@ -67,5 +74,7 @@ class LangChainKnowledgeBase(AgentKnowledge):
         self.loader()
 
     def exists(self) -> bool:
-        logger.warning("LangChainKnowledgeBase.exists() not supported - please check the vectorstore manually.")
+        logger.warning(
+            "LangChainKnowledgeBase.exists() not supported - please check the vectorstore manually."
+        )
         return True

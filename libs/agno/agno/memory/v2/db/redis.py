@@ -5,7 +5,9 @@ from typing import Any, Dict, List, Optional
 try:
     from redis import ConnectionError, Redis
 except ImportError:
-    raise ImportError("`redis` not installed. Please install it using `pip install redis`")
+    raise ImportError(
+        "`redis` not installed. Please install it using `pip install redis`"
+    )
 
 from agno.memory.v2.db.base import MemoryDb
 from agno.memory.v2.db.schema import MemoryRow
@@ -73,7 +75,10 @@ class RedisMemoryDb(MemoryDb):
             return False
 
     def read_memories(
-        self, user_id: Optional[str] = None, limit: Optional[int] = None, sort: Optional[str] = None
+        self,
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        sort: Optional[str] = None,
     ) -> List[MemoryRow]:
         """Read memories from Redis"""
         memories: List[MemoryRow] = []
@@ -168,7 +173,9 @@ class RedisMemoryDb(MemoryDb):
 
             if keys_to_delete:
                 self.redis_client.delete(*keys_to_delete)
-                log_info(f"Cleared {len(keys_to_delete)} memories with prefix: {self.prefix}")
+                log_info(
+                    f"Cleared {len(keys_to_delete)} memories with prefix: {self.prefix}"
+                )
 
             return True
         except Exception as e:

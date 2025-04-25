@@ -40,7 +40,11 @@ def mock_weaviate_client():
 @pytest.fixture
 def weaviate_db(mock_weaviate_client, mock_embedder):
     """Fixture to create a Weaviate instance with mocked client"""
-    db = Weaviate(client=mock_weaviate_client, embedder=mock_embedder, collection="test_collection")
+    db = Weaviate(
+        client=mock_weaviate_client,
+        embedder=mock_embedder,
+        collection="test_collection",
+    )
     yield db
 
 
@@ -236,11 +240,19 @@ def test_get_search_results(weaviate_db):
     mock_response = MagicMock()
 
     mock_obj1 = MagicMock()
-    mock_obj1.properties = {"name": "test1", "content": "Test content 1", "meta_data": json.dumps({"key": "value"})}
+    mock_obj1.properties = {
+        "name": "test1",
+        "content": "Test content 1",
+        "meta_data": json.dumps({"key": "value"}),
+    }
     mock_obj1.vector = {"default": [0.1] * 768}
 
     mock_obj2 = MagicMock()
-    mock_obj2.properties = {"name": "test2", "content": "Test content 2", "meta_data": None}
+    mock_obj2.properties = {
+        "name": "test2",
+        "content": "Test content 2",
+        "meta_data": None,
+    }
     mock_obj2.vector = [0.2] * 768
 
     mock_response.objects = [mock_obj1, mock_obj2]

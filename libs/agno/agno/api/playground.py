@@ -59,7 +59,9 @@ def deploy_playground_archive(name: str, tar_path: Path) -> bool:
     # Check file size (e.g., 100MB limit)
     max_size = 100 * 1024 * 1024  # 100MB
     if tar_path.stat().st_size > max_size:
-        raise ValueError(f"Tar file too large: {tar_path.stat().st_size} bytes (max {max_size} bytes)")
+        raise ValueError(
+            f"Tar file too large: {tar_path.stat().st_size} bytes (max {max_size} bytes)"
+        )
 
     # Build headers
     headers = {}
@@ -70,7 +72,9 @@ def deploy_playground_archive(name: str, tar_path: Path) -> bool:
 
     try:
         with (
-            HttpxClient(base_url=agno_cli_settings.api_url, headers=headers) as api_client,
+            HttpxClient(
+                base_url=agno_cli_settings.api_url, headers=headers
+            ) as api_client,
             open(tar_path, "rb") as file,
         ):
             files = {"file": (tar_path.name, file, "application/gzip")}
@@ -81,7 +85,9 @@ def deploy_playground_archive(name: str, tar_path: Path) -> bool:
             )
 
             if invalid_response(r):
-                raise RuntimeError(f"Deployment failed with status {r.status_code}: {r.text}")
+                raise RuntimeError(
+                    f"Deployment failed with status {r.status_code}: {r.text}"
+                )
 
             response_json: Dict = r.json()
             logger.debug(f"Response: {response_json}")

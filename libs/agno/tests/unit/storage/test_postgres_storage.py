@@ -28,7 +28,12 @@ def agent_storage(mock_engine, mock_session):
     """Create a PostgresStorage instance for agent mode with mocked components."""
     with patch("agno.storage.postgres.scoped_session", return_value=mock_session[0]):
         with patch("agno.storage.postgres.inspect", return_value=MagicMock()):
-            storage = PostgresStorage(table_name="agent_sessions", schema="ai", db_engine=mock_engine, mode="agent")
+            storage = PostgresStorage(
+                table_name="agent_sessions",
+                schema="ai",
+                db_engine=mock_engine,
+                mode="agent",
+            )
             # Mock table_exists to return True
             storage.table_exists = MagicMock(return_value=True)
             return storage, mock_session[1]
@@ -40,7 +45,10 @@ def workflow_storage(mock_engine, mock_session):
     with patch("agno.storage.postgres.scoped_session", return_value=mock_session[0]):
         with patch("agno.storage.postgres.inspect", return_value=MagicMock()):
             storage = PostgresStorage(
-                table_name="workflow_sessions", schema="ai", db_engine=mock_engine, mode="workflow"
+                table_name="workflow_sessions",
+                schema="ai",
+                db_engine=mock_engine,
+                mode="workflow",
             )
             # Mock table_exists to return True
             storage.table_exists = MagicMock(return_value=True)
@@ -56,9 +64,14 @@ def test_agent_storage_initialization():
                 mock_engine = MagicMock()
                 mock_create_engine.return_value = mock_engine
 
-                storage = PostgresStorage(table_name="test_table", db_url="postgresql://user:pass@localhost/db")
+                storage = PostgresStorage(
+                    table_name="test_table",
+                    db_url="postgresql://user:pass@localhost/db",
+                )
 
-                mock_create_engine.assert_called_once_with("postgresql://user:pass@localhost/db")
+                mock_create_engine.assert_called_once_with(
+                    "postgresql://user:pass@localhost/db"
+                )
                 assert storage.table_name == "test_table"
                 assert storage.schema == "ai"  # Default value
                 assert storage.mode == "agent"  # Default value
@@ -167,7 +180,9 @@ def test_get_all_sessions(agent_storage):
 
     # Mock the fetchall result
     mock_result = MagicMock()
-    mock_result.fetchall.return_value = [MagicMock(_mapping=session.to_dict()) for session in sessions]
+    mock_result.fetchall.return_value = [
+        MagicMock(_mapping=session.to_dict()) for session in sessions
+    ]
     mock_session.execute.return_value = mock_result
 
     # Test get_all_sessions
@@ -177,7 +192,9 @@ def test_get_all_sessions(agent_storage):
     # Test filtering by user_id
     mock_session.execute.reset_mock()
     mock_result.fetchall.return_value = [
-        MagicMock(_mapping=session.to_dict()) for session in sessions if session.user_id == "user-1"
+        MagicMock(_mapping=session.to_dict())
+        for session in sessions
+        if session.user_id == "user-1"
     ]
     mock_session.execute.return_value = mock_result
 
@@ -188,7 +205,9 @@ def test_get_all_sessions(agent_storage):
     # Test filtering by agent_id
     mock_session.execute.reset_mock()
     mock_result.fetchall.return_value = [
-        MagicMock(_mapping=session.to_dict()) for session in sessions if session.agent_id == "agent-1"
+        MagicMock(_mapping=session.to_dict())
+        for session in sessions
+        if session.agent_id == "agent-1"
     ]
     mock_session.execute.return_value = mock_result
 
@@ -264,7 +283,10 @@ def test_mode_switching():
         with patch("agno.storage.postgres.inspect"):
             with patch("agno.storage.postgres.create_engine"):
                 # Create storage in agent mode
-                storage = PostgresStorage(table_name="test_table", db_url="postgresql://user:pass@localhost/db")
+                storage = PostgresStorage(
+                    table_name="test_table",
+                    db_url="postgresql://user:pass@localhost/db",
+                )
                 assert storage.mode == "agent"
 
                 # Switch to workflow mode

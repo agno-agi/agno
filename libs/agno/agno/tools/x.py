@@ -8,7 +8,9 @@ from agno.utils.log import log_debug, log_info, logger
 try:
     import tweepy
 except ImportError:
-    raise ImportError("`tweepy` not installed. Please install using `pip install tweepy`.")
+    raise ImportError(
+        "`tweepy` not installed. Please install using `pip install tweepy`."
+    )
 
 
 class XTools(Toolkit):
@@ -37,7 +39,9 @@ class XTools(Toolkit):
         self.consumer_key = consumer_key or os.getenv("X_CONSUMER_KEY")
         self.consumer_secret = consumer_secret or os.getenv("X_CONSUMER_SECRET")
         self.access_token = access_token or os.getenv("X_ACCESS_TOKEN")
-        self.access_token_secret = access_token_secret or os.getenv("X_ACCESS_TOKEN_SECRET")
+        self.access_token_secret = access_token_secret or os.getenv(
+            "X_ACCESS_TOKEN_SECRET"
+        )
 
         self.client = tweepy.Client(
             bearer_token=self.bearer_token,
@@ -125,7 +129,9 @@ class XTools(Toolkit):
                 recipient_id = recipient
 
             log_debug(f"Attempting to send DM to user's id {recipient_id}")
-            response = self.client.create_direct_message(participant_id=recipient_id, text=text)
+            response = self.client.create_direct_message(
+                participant_id=recipient_id, text=text
+            )
             result = {
                 "message": "Direct message sent successfully!",
                 "dm_id": response.data["id"],
@@ -139,13 +145,13 @@ class XTools(Toolkit):
             if "User not found" in error_message:
                 error_message = f"User '{recipient}' not found. Please check the username or user ID."
             elif "You cannot send messages to this user" in error_message:
-                error_message = (
-                    f"Unable to send message to '{recipient}'. The user may have restricted who can send them messages."
-                )
+                error_message = f"Unable to send message to '{recipient}'. The user may have restricted who can send them messages."
             return json.dumps({"error": error_message}, indent=2)
         except Exception as e:
             logger.error(f"Unexpected error sending DM: {e}")
-            return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
+            return json.dumps(
+                {"error": f"An unexpected error occurred: {str(e)}"}, indent=2
+            )
 
     def get_my_info(self) -> str:
         """
@@ -188,7 +194,9 @@ class XTools(Toolkit):
         """
         log_debug(f"Fetching information about user {username}")
         try:
-            user = self.client.get_user(username=username, user_fields=["description", "public_metrics"])
+            user = self.client.get_user(
+                username=username, user_fields=["description", "public_metrics"]
+            )
             user_info = user.data.data
             result = {
                 "id": user_info["id"],

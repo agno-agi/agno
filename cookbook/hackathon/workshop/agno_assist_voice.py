@@ -1,11 +1,12 @@
 from pathlib import Path
 from textwrap import dedent
 
+from agno_assist import agent_knowledge
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.python import PythonTools
-from agno_assist import agent_knowledge
 
 cwd = Path(__file__).parent.parent
 tmp_dir = cwd.joinpath("tmp")

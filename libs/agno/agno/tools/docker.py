@@ -42,9 +42,13 @@ if sys.version_info >= (3, 12):
 
             # Add the function to the auth module
             auth.get_config_header = get_config_header
-            logger.info("Added missing get_config_header function for Docker auth compatibility")
+            logger.info(
+                "Added missing get_config_header function for Docker auth compatibility"
+            )
 
-        logger.info("Applied comprehensive compatibility patch for Docker client on Python 3.12")
+        logger.info(
+            "Applied comprehensive compatibility patch for Docker client on Python 3.12"
+        )
     except Exception as e:
         logger.warning(f"Failed to apply Docker client compatibility patch: {e}")
 
@@ -52,7 +56,9 @@ try:
     import docker
     from docker.errors import DockerException, ImageNotFound
 except ImportError:
-    raise ImportError("The `docker` package is not installed. Please install it via `pip install docker`.")
+    raise ImportError(
+        "The `docker` package is not installed. Please install it via `pip install docker`."
+    )
 
 
 class DockerTools(Toolkit):
@@ -127,7 +133,9 @@ class DockerTools(Toolkit):
             # macOS newer versions
             os.path.join(os.path.expanduser("~"), ".docker", "desktop", "docker.sock"),
             # macOS alternative
-            os.path.expanduser("~/Library/Containers/com.docker.docker/Data/docker.sock"),
+            os.path.expanduser(
+                "~/Library/Containers/com.docker.docker/Data/docker.sock"
+            ),
             # Windows
             os.path.join("\\", "\\", ".", "pipe", "docker_engine"),
         ]
@@ -165,7 +173,11 @@ class DockerTools(Toolkit):
 
             for container in containers:
                 # Handle cases where container image might not have tags
-                image_info = container.image.tags[0] if container.image.tags else container.image.id
+                image_info = (
+                    container.image.tags[0]
+                    if container.image.tags
+                    else container.image.id
+                )
 
                 container_list.append(
                     {
@@ -224,7 +236,9 @@ class DockerTools(Toolkit):
             logger.error(error_msg)
             return error_msg
 
-    def remove_container(self, container_id: str, force: bool = False, volumes: bool = False) -> str:
+    def remove_container(
+        self, container_id: str, force: bool = False, volumes: bool = False
+    ) -> str:
         """
         Remove a Docker container.
 
@@ -245,7 +259,9 @@ class DockerTools(Toolkit):
             logger.error(error_msg)
             return error_msg
 
-    def get_container_logs(self, container_id: str, tail: int = 100, stream: bool = False) -> str:
+    def get_container_logs(
+        self, container_id: str, tail: int = 100, stream: bool = False
+    ) -> str:
         """
         Get logs from a Docker container.
 
@@ -412,9 +428,13 @@ class DockerTools(Toolkit):
         """
         try:
             logger.info(f"Starting to pull image {image_name}:{tag}")
-            for line in self.client.api.pull(image_name, tag=tag, stream=True, decode=True):
+            for line in self.client.api.pull(
+                image_name, tag=tag, stream=True, decode=True
+            ):
                 if "progress" in line:
-                    logger.info(f"Pulling {image_name}:{tag} - {line.get('progress', '')}")
+                    logger.info(
+                        f"Pulling {image_name}:{tag} - {line.get('progress', '')}"
+                    )
                 elif "status" in line:
                     logger.info(f"Pull status: {line.get('status', '')}")
 
@@ -446,7 +466,9 @@ class DockerTools(Toolkit):
             logger.error(error_msg)
             return error_msg
 
-    def build_image(self, path: str, tag: str, dockerfile: str = "Dockerfile", rm: bool = True) -> str:
+    def build_image(
+        self, path: str, tag: str, dockerfile: str = "Dockerfile", rm: bool = True
+    ) -> str:
         """
         Build a Docker image from a Dockerfile.
 
@@ -460,14 +482,18 @@ class DockerTools(Toolkit):
             str: A success message or error message.
         """
         try:
-            image, logs = self.client.images.build(path=path, tag=tag, dockerfile=dockerfile, rm=rm)
+            image, logs = self.client.images.build(
+                path=path, tag=tag, dockerfile=dockerfile, rm=rm
+            )
             return f"Image built successfully with ID: {image.id}"
         except DockerException as e:
             error_msg = f"Error building image: {str(e)}"
             logger.error(error_msg)
             return error_msg
 
-    def tag_image(self, image_id: str, repository: str, tag: Optional[str] = None) -> str:
+    def tag_image(
+        self, image_id: str, repository: str, tag: Optional[str] = None
+    ) -> str:
         """
         Tag a Docker image.
 
@@ -534,7 +560,12 @@ class DockerTools(Toolkit):
             logger.error(error_msg)
             return error_msg
 
-    def create_volume(self, volume_name: str, driver: str = "local", labels: Optional[Dict[str, str]] = None) -> str:
+    def create_volume(
+        self,
+        volume_name: str,
+        driver: str = "local",
+        labels: Optional[Dict[str, str]] = None,
+    ) -> str:
         """
         Create a Docker volume.
 
@@ -623,7 +654,11 @@ class DockerTools(Toolkit):
             return error_msg
 
     def create_network(
-        self, network_name: str, driver: str = "bridge", internal: bool = False, labels: Optional[Dict[str, str]] = None
+        self,
+        network_name: str,
+        driver: str = "bridge",
+        internal: bool = False,
+        labels: Optional[Dict[str, str]] = None,
     ) -> str:
         """
         Create a Docker network.
@@ -638,7 +673,9 @@ class DockerTools(Toolkit):
             str: A success message or error message.
         """
         try:
-            network = self.client.networks.create(name=network_name, driver=driver, internal=internal, labels=labels)
+            network = self.client.networks.create(
+                name=network_name, driver=driver, internal=internal, labels=labels
+            )
             return f"Network {network_name} created successfully with ID: {network.id}"
         except DockerException as e:
             error_msg = f"Error creating network: {str(e)}"
@@ -702,7 +739,9 @@ class DockerTools(Toolkit):
             logger.error(error_msg)
             return error_msg
 
-    def disconnect_container_from_network(self, container_id: str, network_name: str) -> str:
+    def disconnect_container_from_network(
+        self, container_id: str, network_name: str
+    ) -> str:
         """
         Disconnect a container from a network.
 

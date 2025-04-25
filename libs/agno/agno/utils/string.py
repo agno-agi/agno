@@ -62,7 +62,9 @@ def hash_string_sha256(input_string):
     return hex_digest
 
 
-def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
+def parse_response_model_str(
+    content: str, response_model: Type[BaseModel]
+) -> Optional[BaseModel]:
     structured_output = None
     try:
         # First attempt: direct JSON validation
@@ -97,7 +99,11 @@ def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> O
             return f'"{key.lower()}": "{escaped_value}'
 
         # Find and escape quotes in field values
-        content = re.sub(r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))', escape_quotes_in_values, content)
+        content = re.sub(
+            r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))',
+            escape_quotes_in_values,
+            content,
+        )
 
         try:
             # Try parsing the cleaned JSON

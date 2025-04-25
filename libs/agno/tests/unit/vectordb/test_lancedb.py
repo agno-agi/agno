@@ -155,7 +155,11 @@ def test_error_handling(lance_db):
 def test_bad_vectors_handling(mock_embedder):
     """Test handling of bad vectors"""
     db = LanceDb(
-        uri=TEST_PATH, table_name="test_bad_vectors", on_bad_vectors="fill", fill_value=0.0, embedder=mock_embedder
+        uri=TEST_PATH,
+        table_name="test_bad_vectors",
+        on_bad_vectors="fill",
+        fill_value=0.0,
+        embedder=mock_embedder,
     )
     db.create()
 

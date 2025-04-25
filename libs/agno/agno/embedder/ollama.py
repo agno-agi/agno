@@ -24,9 +24,13 @@ try:
 except ImportError as e:
     # Handle different import error scenarios
     if "ollama" in str(e):
-        raise ImportError("Ollama not installed. Install with `pip install ollama`") from e
+        raise ImportError(
+            "Ollama not installed. Install with `pip install ollama`"
+        ) from e
     else:
-        raise ImportError("Missing dependencies. Install with `pip install packaging importlib-metadata`") from e
+        raise ImportError(
+            "Missing dependencies. Install with `pip install packaging importlib-metadata`"
+        ) from e
 
 except Exception as e:
     # Catch-all for unexpected errors
@@ -66,9 +70,15 @@ class OllamaEmbedder(Embedder):
         response = self.client.embed(input=text, model=self.id, **kwargs)
         if response and "embeddings" in response:
             embeddings = response["embeddings"]
-            if isinstance(embeddings, list) and len(embeddings) > 0 and isinstance(embeddings[0], list):
+            if (
+                isinstance(embeddings, list)
+                and len(embeddings) > 0
+                and isinstance(embeddings[0], list)
+            ):
                 return {"embeddings": embeddings[0]}  # Use the first element
-            elif isinstance(embeddings, list) and all(isinstance(x, (int, float)) for x in embeddings):
+            elif isinstance(embeddings, list) and all(
+                isinstance(x, (int, float)) for x in embeddings
+            ):
                 return {"embeddings": embeddings}  # Return as-is if already flat
         return {"embeddings": []}  # Return an empty list if no valid embedding is found
 
@@ -77,7 +87,9 @@ class OllamaEmbedder(Embedder):
             response = self._response(text=text)
             embedding = response.get("embeddings", [])
             if len(embedding) != self.dimensions:
-                logger.warning(f"Expected embedding dimension {self.dimensions}, but got {len(embedding)}")
+                logger.warning(
+                    f"Expected embedding dimension {self.dimensions}, but got {len(embedding)}"
+                )
                 return []
             return embedding
         except Exception as e:

@@ -9,7 +9,9 @@ from agno.utils.log import log_debug, log_info, logger
 
 @functools.lru_cache(maxsize=None)
 def warn() -> None:
-    logger.warning("PythonTools can run arbitrary code, please provide human supervision.")
+    logger.warning(
+        "PythonTools can run arbitrary code, please provide human supervision."
+    )
 
 
 class PythonTools(Toolkit):
@@ -51,7 +53,11 @@ class PythonTools(Toolkit):
             self.register(self.list_files)
 
     def save_to_file_and_run(
-        self, file_name: str, code: str, variable_to_return: Optional[str] = None, overwrite: bool = True
+        self,
+        file_name: str,
+        code: str,
+        variable_to_return: Optional[str] = None,
+        overwrite: bool = True,
     ) -> str:
         """This function saves Python code to a file called `file_name` and then runs it.
         If successful, returns the value of `variable_to_return` if provided otherwise returns a success message.
@@ -76,7 +82,9 @@ class PythonTools(Toolkit):
             file_path.write_text(code, encoding="utf-8")
             log_info(f"Saved: {file_path}")
             log_info(f"Running {file_path}")
-            globals_after_run = runpy.run_path(str(file_path), init_globals=self.safe_globals, run_name="__main__")
+            globals_after_run = runpy.run_path(
+                str(file_path), init_globals=self.safe_globals, run_name="__main__"
+            )
 
             if variable_to_return:
                 variable_value = globals_after_run.get(variable_to_return)
@@ -90,7 +98,9 @@ class PythonTools(Toolkit):
             logger.error(f"Error saving and running code: {e}")
             return f"Error saving and running code: {e}"
 
-    def run_python_file_return_variable(self, file_name: str, variable_to_return: Optional[str] = None) -> str:
+    def run_python_file_return_variable(
+        self, file_name: str, variable_to_return: Optional[str] = None
+    ) -> str:
         """This function runs code in a Python file.
         If successful, returns the value of `variable_to_return` if provided otherwise returns a success message.
         If failed, returns an error message.
@@ -104,7 +114,9 @@ class PythonTools(Toolkit):
             file_path = self.base_dir.joinpath(file_name)
 
             log_info(f"Running {file_path}")
-            globals_after_run = runpy.run_path(str(file_path), init_globals=self.safe_globals, run_name="__main__")
+            globals_after_run = runpy.run_path(
+                str(file_path), init_globals=self.safe_globals, run_name="__main__"
+            )
             if variable_to_return:
                 variable_value = globals_after_run.get(variable_to_return)
                 if variable_value is None:
@@ -145,7 +157,9 @@ class PythonTools(Toolkit):
             logger.error(f"Error reading files: {e}")
             return f"Error reading files: {e}"
 
-    def run_python_code(self, code: str, variable_to_return: Optional[str] = None) -> str:
+    def run_python_code(
+        self, code: str, variable_to_return: Optional[str] = None
+    ) -> str:
         """This function to runs Python code in the current environment.
         If successful, returns the value of `variable_to_return` if provided otherwise returns a success message.
         If failed, returns an error message.
@@ -189,7 +203,9 @@ class PythonTools(Toolkit):
             import subprocess
             import sys
 
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", package_name]
+            )
             return f"successfully installed package {package_name}"
         except Exception as e:
             logger.error(f"Error installing package {package_name}: {e}")
@@ -210,7 +226,9 @@ class PythonTools(Toolkit):
             import subprocess
             import sys
 
-            subprocess.check_call([sys.executable, "-m", "uv", "pip", "install", package_name])
+            subprocess.check_call(
+                [sys.executable, "-m", "uv", "pip", "install", package_name]
+            )
             return f"successfully installed package {package_name}"
         except Exception as e:
             logger.error(f"Error installing package {package_name}: {e}")

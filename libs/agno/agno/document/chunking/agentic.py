@@ -15,7 +15,9 @@ class AgenticChunking(ChunkingStrategy):
             try:
                 from agno.models.openai import OpenAIChat
             except Exception:
-                raise ValueError("`openai` isn't installed. Please install it with `pip install openai`")
+                raise ValueError(
+                    "`openai` isn't installed. Please install it with `pip install openai`"
+                )
             model = OpenAIChat(DEFAULT_OPENAI_MODEL_ID)
         self.max_chunk_size = max_chunk_size
         self.model = model
@@ -41,7 +43,9 @@ class AgenticChunking(ChunkingStrategy):
             try:
                 response = self.model.response([Message(role="user", content=prompt)])
                 if response and response.content:
-                    break_point = min(int(response.content.strip()), self.max_chunk_size)
+                    break_point = min(
+                        int(response.content.strip()), self.max_chunk_size
+                    )
                 else:
                     break_point = self.max_chunk_size
             except Exception:

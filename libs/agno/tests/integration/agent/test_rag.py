@@ -48,5 +48,7 @@ async def test_add_references(loaded_knowledge_base):
         show_tool_calls=True,
         markdown=True,
     )
-    response = await agent.arun("How do I make chicken and galangal in coconut milk soup")
+    response = await agent.arun(
+        "How do I make chicken and galangal in coconut milk soup"
+    )
     assert response.content is not None

@@ -140,7 +140,8 @@ class KnowledgeTools(Toolkit):
             logger.error(f"Error recording analysis: {e}")
             return f"Error recording analysis: {e}"
 
-    DEFAULT_INSTRUCTIONS = dedent("""\
+    DEFAULT_INSTRUCTIONS = dedent(
+        """\
         You have access to the Think, Search, and Analyze tools that will help you search your knowledge for relevant information. Use these tools as frequently as needed to find the most relevant information.
 
         ## How to use the Think, Search, and Analyze tools:
@@ -170,9 +171,11 @@ class KnowledgeTools(Toolkit):
         - When you do provide a final answer to the user, be clear, concise, and accurate.
         - If search results are sparse or contradictory, acknowledge limitations in your response.
         - Synthesize information from multiple sources rather than relying on a single document.\
-    """)
+    """
+    )
 
-    FEW_SHOT_EXAMPLES = dedent("""\
+    FEW_SHOT_EXAMPLES = dedent(
+        """\
         You can refer to the examples below as guidance for how to use each tool.
         ### Examples
 
@@ -212,4 +215,5 @@ class KnowledgeTools(Toolkit):
         Analyze: Now I have concrete examples of quantum speedup for certain algorithms, limitations for others, and real-world benchmarks.
 
         Final Answer: Quantum computers differ from classical computers in three key ways: [synthesized explanation with specific examples]...\
-    """)
+    """
+    )

@@ -57,7 +57,11 @@ class ZoomTools(Toolkit):
             str: The current access token or empty string if token generation fails.
         """
         # Check if we have a valid token
-        if self.__access_token and self.__token_expiry and datetime.now() < self.__token_expiry:
+        if (
+            self.__access_token
+            and self.__token_expiry
+            and datetime.now() < self.__token_expiry
+        ):
             return self.__access_token
 
         # Generate new token
@@ -67,7 +71,9 @@ class ZoomTools(Toolkit):
             }
 
             # Create base64 encoded auth string
-            auth_string = b64encode(f"{self.client_id}:{self.client_secret}".encode()).decode()
+            auth_string = b64encode(
+                f"{self.client_id}:{self.client_secret}".encode()
+            ).decode()
             headers["Authorization"] = f"Basic {auth_string}"
 
             data = {
@@ -75,7 +81,9 @@ class ZoomTools(Toolkit):
                 "account_id": self.account_id,
             }
 
-            response = requests.post("https://zoom.us/oauth/token", headers=headers, data=data)
+            response = requests.post(
+                "https://zoom.us/oauth/token", headers=headers, data=data
+            )
             response.raise_for_status()
 
             token_data = response.json()
@@ -92,7 +100,9 @@ class ZoomTools(Toolkit):
             self.__token_expiry = None
             return ""
 
-    def schedule_meeting(self, topic: str, start_time: str, duration: int, timezone: str = "UTC") -> str:
+    def schedule_meeting(
+        self, topic: str, start_time: str, duration: int, timezone: str = "UTC"
+    ) -> str:
         """
         Schedule a new Zoom meeting.
 
@@ -113,7 +123,10 @@ class ZoomTools(Toolkit):
             return json.dumps({"error": "Failed to obtain access token"})
 
         url = "https://api.zoom.us/v2/users/me/meetings"
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
         data = {
             "topic": topic,
             "type": 2,
@@ -176,7 +189,10 @@ class ZoomTools(Toolkit):
             response.raise_for_status()
             meetings = response.json()
 
-            result = {"message": "Upcoming meetings retrieved successfully", "meetings": meetings.get("meetings", [])}
+            result = {
+                "message": "Upcoming meetings retrieved successfully",
+                "meetings": meetings.get("meetings", []),
+            }
             log_info(f"Retrieved {len(result['meetings'])} upcoming meetings")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
@@ -230,7 +246,10 @@ class ZoomTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def get_meeting_recordings(
-        self, meeting_id: str, include_download_token: bool = False, token_ttl: Optional[int] = None
+        self,
+        meeting_id: str,
+        include_download_token: bool = False,
+        token_ttl: Optional[int] = None,
     ) -> str:
         """
         Get all recordings for a specific meeting.
@@ -261,7 +280,9 @@ class ZoomTools(Toolkit):
                 if 0 <= token_ttl <= 604800:
                     params["ttl"] = str(token_ttl)  # Convert to string if necessary
                 else:
-                    logger.warning("Invalid TTL value. Must be between 0 and 604800 seconds.")
+                    logger.warning(
+                        "Invalid TTL value. Must be between 0 and 604800 seconds."
+                    )
 
         try:
             response = requests.get(url, headers=headers, params=params)
@@ -287,7 +308,9 @@ class ZoomTools(Toolkit):
             logger.error(f"Error fetching meeting recordings: {e}")
             return json.dumps({"error": str(e)})
 
-    def delete_meeting(self, meeting_id: str, schedule_for_reminder: bool = True) -> str:
+    def delete_meeting(
+        self, meeting_id: str, schedule_for_reminder: bool = True
+    ) -> str:
         """
         Delete a scheduled Zoom meeting.
 
@@ -316,7 +339,10 @@ class ZoomTools(Toolkit):
 
             # Zoom returns 204 No Content for successful deletion
             if response.status_code == 204:
-                result = {"message": "Meeting deleted successfully!", "meeting_id": meeting_id}
+                result = {
+                    "message": "Meeting deleted successfully!",
+                    "meeting_id": meeting_id,
+                }
                 log_info(f"Meeting {meeting_id} deleted successfully")
             else:
                 result = response.json()

@@ -12,7 +12,10 @@ def mock_arxiv_result():
     result.title = "Test Paper"
     result.summary = "This is a test paper abstract"
     result.pdf_url = "https://arxiv.org/pdf/1234.5678"
-    result.links = [Mock(href="https://arxiv.org/abs/1234.5678"), Mock(href="https://arxiv.org/pdf/1234.5678")]
+    result.links = [
+        Mock(href="https://arxiv.org/abs/1234.5678"),
+        Mock(href="https://arxiv.org/pdf/1234.5678"),
+    ]
     return result
 
 
@@ -32,8 +35,14 @@ def test_read_basic_query(mock_search_results):
         assert len(documents) == 2
         assert all(doc.name == "Test Paper" for doc in documents)
         assert all(doc.content == "This is a test paper abstract" for doc in documents)
-        assert all(doc.meta_data["pdf_url"] == "https://arxiv.org/pdf/1234.5678" for doc in documents)
-        assert all("https://arxiv.org/abs/1234.5678" in doc.meta_data["article_links"] for doc in documents)
+        assert all(
+            doc.meta_data["pdf_url"] == "https://arxiv.org/pdf/1234.5678"
+            for doc in documents
+        )
+        assert all(
+            "https://arxiv.org/abs/1234.5678" in doc.meta_data["article_links"]
+            for doc in documents
+        )
 
 
 def test_read_empty_results():
@@ -70,7 +79,9 @@ def test_read_max_results():
 
         assert len(documents) == 3
         mock_search.assert_called_once_with(
-            query="quantum computing", max_results=3, sort_by=arxiv.SortCriterion.Relevance
+            query="quantum computing",
+            max_results=3,
+            sort_by=arxiv.SortCriterion.Relevance,
         )
 
 
@@ -101,7 +112,9 @@ def test_read_with_special_characters():
 
         assert len(documents) == 1
         mock_search.assert_called_once_with(
-            query="quantum & computing + AI", max_results=reader.max_results, sort_by=reader.sort_by
+            query="quantum & computing + AI",
+            max_results=reader.max_results,
+            sort_by=reader.sort_by,
         )
 
 
@@ -114,14 +127,18 @@ def test_read_different_sort_criterions():
         reader.sort_by = arxiv.SortCriterion.LastUpdatedDate
         reader.read("quantum computing")
         mock_search.assert_called_with(
-            query="quantum computing", max_results=reader.max_results, sort_by=arxiv.SortCriterion.LastUpdatedDate
+            query="quantum computing",
+            max_results=reader.max_results,
+            sort_by=arxiv.SortCriterion.LastUpdatedDate,
         )
 
         # Test with SubmittedDate
         reader.sort_by = arxiv.SortCriterion.SubmittedDate
         reader.read("quantum computing")
         mock_search.assert_called_with(
-            query="quantum computing", max_results=reader.max_results, sort_by=arxiv.SortCriterion.SubmittedDate
+            query="quantum computing",
+            max_results=reader.max_results,
+            sort_by=arxiv.SortCriterion.SubmittedDate,
         )
 
 
@@ -137,8 +154,14 @@ async def test_async_read_basic_query(mock_search_results):
         assert len(documents) == 2
         assert all(doc.name == "Test Paper" for doc in documents)
         assert all(doc.content == "This is a test paper abstract" for doc in documents)
-        assert all(doc.meta_data["pdf_url"] == "https://arxiv.org/pdf/1234.5678" for doc in documents)
-        assert all("https://arxiv.org/abs/1234.5678" in doc.meta_data["article_links"] for doc in documents)
+        assert all(
+            doc.meta_data["pdf_url"] == "https://arxiv.org/pdf/1234.5678"
+            for doc in documents
+        )
+        assert all(
+            "https://arxiv.org/abs/1234.5678" in doc.meta_data["article_links"]
+            for doc in documents
+        )
 
 
 @pytest.mark.asyncio
@@ -177,7 +200,9 @@ async def test_async_read_max_results():
 
         assert len(documents) == 3
         mock_search.assert_called_once_with(
-            query="quantum computing", max_results=3, sort_by=arxiv.SortCriterion.Relevance
+            query="quantum computing",
+            max_results=3,
+            sort_by=arxiv.SortCriterion.Relevance,
         )
 
 
@@ -210,5 +235,7 @@ async def test_async_read_with_special_characters():
 
         assert len(documents) == 1
         mock_search.assert_called_once_with(
-            query="quantum & computing + AI", max_results=reader.max_results, sort_by=reader.sort_by
+            query="quantum & computing + AI",
+            max_results=reader.max_results,
+            sort_by=reader.sort_by,
         )

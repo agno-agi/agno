@@ -8,16 +8,26 @@ try:
     import agentql
     from playwright.sync_api import sync_playwright
 except ImportError:
-    raise ImportError("`agentql` not installed. Please install using `pip install agentql`")
+    raise ImportError(
+        "`agentql` not installed. Please install using `pip install agentql`"
+    )
 
 
 class AgentQLTools(Toolkit):
-    def __init__(self, api_key: Optional[str] = None, scrape: bool = True, agentql_query: str = "", **kwargs):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        scrape: bool = True,
+        agentql_query: str = "",
+        **kwargs,
+    ):
         super().__init__(name="agentql_tools", **kwargs)
 
         self.api_key = api_key or getenv("AGENTQL_API_KEY")
         if not self.api_key:
-            raise ValueError("AGENTQL_API_KEY not set. Please set the AGENTQL_API_KEY environment variable.")
+            raise ValueError(
+                "AGENTQL_API_KEY not set. Please set the AGENTQL_API_KEY environment variable."
+            )
 
         self.agentql_query = agentql_query
 
@@ -25,7 +35,9 @@ class AgentQLTools(Toolkit):
             self.register(self.scrape_website)
 
         if agentql_query:
-            log_info("Custom AgentQL query provided. Registering custom scrape function.")
+            log_info(
+                "Custom AgentQL query provided. Registering custom scrape function."
+            )
             self.register(self.custom_scrape_website)
 
     def scrape_website(self, url: str) -> str:
@@ -48,7 +60,9 @@ class AgentQLTools(Toolkit):
         """
 
         try:
-            with sync_playwright() as playwright, playwright.chromium.launch(headless=False) as browser:
+            with sync_playwright() as playwright, playwright.chromium.launch(
+                headless=False
+            ) as browser:
                 page = agentql.wrap(browser.new_page())
                 page.goto(url)
 
@@ -58,7 +72,11 @@ class AgentQLTools(Toolkit):
 
                     # Extract text based on response format
                     if isinstance(response, dict) and "text_content" in response:
-                        text_items = [item for item in response["text_content"] if item and item.strip()]
+                        text_items = [
+                            item
+                            for item in response["text_content"]
+                            if item and item.strip()
+                        ]
 
                         deduplicated = list(set(text_items))
                         return " ".join(deduplicated)
@@ -87,7 +105,9 @@ class AgentQLTools(Toolkit):
             return "Custom AgentQL query not provided. Please provide a custom AgentQL query."
 
         try:
-            with sync_playwright() as playwright, playwright.chromium.launch(headless=False) as browser:
+            with sync_playwright() as playwright, playwright.chromium.launch(
+                headless=False
+            ) as browser:
                 page = agentql.wrap(browser.new_page())
                 page.goto(url)
 

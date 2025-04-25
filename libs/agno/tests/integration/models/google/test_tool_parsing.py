@@ -14,7 +14,12 @@ def test_no_parameters_tool_parsing():
         """
         return "It is currently 70 degrees and cloudy in Tokyo"
 
-    tools = [{"type": "function", "function": Function.from_callable(get_the_weather_in_tokyo).to_dict()}]
+    tools = [
+        {
+            "type": "function",
+            "function": Function.from_callable(get_the_weather_in_tokyo).to_dict(),
+        }
+    ]
     model = Gemini()
     model.set_tools(tools)
     response = model.invoke(
@@ -38,7 +43,9 @@ def test_basic_parameters_tool_parsing():
         """
         return f"It is currently 70 degrees and cloudy in {city}, {country}"
 
-    tools = [{"type": "function", "function": Function.from_callable(get_weather).to_dict()}]
+    tools = [
+        {"type": "function", "function": Function.from_callable(get_weather).to_dict()}
+    ]
     model = Gemini()
     model.set_tools(tools)
     response = model.invoke(
@@ -63,7 +70,9 @@ def test_optional_parameters_tool_parsing():
         days_count = days or 3
         return f"{days_count}-day forecast for {city}: Sunny with a chance of rain"
 
-    tools = [{"type": "function", "function": Function.from_callable(get_forecast).to_dict()}]
+    tools = [
+        {"type": "function", "function": Function.from_callable(get_forecast).to_dict()}
+    ]
     model = Gemini()
     model.set_tools(tools)
     response = model.invoke(
@@ -78,7 +87,9 @@ def test_optional_parameters_tool_parsing():
 
 def test_union_type_parameters_tool_parsing():
     def generate_weather_string(
-        degrees: Union[int, float], city: str = "New York", condition: Optional[str] = None
+        degrees: Union[int, float],
+        city: str = "New York",
+        condition: Optional[str] = None,
     ) -> str:
         """
         Generate a weather string for any city
@@ -91,13 +102,21 @@ def test_union_type_parameters_tool_parsing():
         weather_condition = condition if condition else "cloudy"
         return f"It is currently {degrees} degrees and {weather_condition} in {city}"
 
-    tools = [{"type": "function", "function": Function.from_callable(generate_weather_string).to_dict()}]
+    tools = [
+        {
+            "type": "function",
+            "function": Function.from_callable(generate_weather_string).to_dict(),
+        }
+    ]
     model = Gemini()
     model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
-            Message(role="user", content="What's the weather like in Chicago at 75.5 degrees?"),
+            Message(
+                role="user",
+                content="What's the weather like in Chicago at 75.5 degrees?",
+            ),
         ]
     )
     assert response.function_calls is not None
@@ -105,7 +124,11 @@ def test_union_type_parameters_tool_parsing():
 
 
 def test_python312_union_syntax_tool_parsing():
-    def get_weather_data(temperature: int | float, location: str = "San Francisco", unit: str | None = None) -> str:
+    def get_weather_data(
+        temperature: int | float,
+        location: str = "San Francisco",
+        unit: str | None = None,
+    ) -> str:
         """
         Get weather data for a location
 
@@ -117,13 +140,21 @@ def test_python312_union_syntax_tool_parsing():
         unit = unit or "celsius"
         return f"The temperature in {location} is {temperature}°{unit[0].upper()}"
 
-    tools = [{"type": "function", "function": Function.from_callable(get_weather_data).to_dict()}]
+    tools = [
+        {
+            "type": "function",
+            "function": Function.from_callable(get_weather_data).to_dict(),
+        }
+    ]
     model = Gemini()
     model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
-            Message(role="user", content="What's the weather like in Chicago at 75.5 degrees?"),
+            Message(
+                role="user",
+                content="What's the weather like in Chicago at 75.5 degrees?",
+            ),
         ]
     )
     assert response.function_calls is not None
@@ -146,7 +177,12 @@ def test_pydantic_model_parameters_tool_parsing():
         population_info = f" (pop: {city.population})" if city.population else ""
         return f"It is currently 70 degrees and cloudy in {city.name}, {city.country}{population_info}"
 
-    tools = [{"type": "function", "function": Function.from_callable(get_weather_for_city).to_dict()}]
+    tools = [
+        {
+            "type": "function",
+            "function": Function.from_callable(get_weather_for_city).to_dict(),
+        }
+    ]
     model = Gemini()
     model.set_tools(tools)
     response = model.invoke(
@@ -161,7 +197,10 @@ def test_pydantic_model_parameters_tool_parsing():
 
 def test_complex_nested_parameters_tool_parsing():
     def travel_recommendation(
-        destination: str, preferences: Dict[str, Any], budget_range: List[float], include_weather: bool = True
+        destination: str,
+        preferences: Dict[str, Any],
+        budget_range: List[float],
+        include_weather: bool = True,
     ) -> str:
         """
         Get travel recommendations for a destination
@@ -174,7 +213,12 @@ def test_complex_nested_parameters_tool_parsing():
         """
         return f"Here are your personalized recommendations for {destination}"
 
-    tools = [{"type": "function", "function": Function.from_callable(travel_recommendation).to_dict()}]
+    tools = [
+        {
+            "type": "function",
+            "function": Function.from_callable(travel_recommendation).to_dict(),
+        }
+    ]
     model = Gemini()
     model.set_tools(tools)
     response = model.invoke(
@@ -208,7 +252,10 @@ def test_multiple_functions_tool_parsing():
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
-            Message(role="user", content="What's the weather in London and what time is it there?"),
+            Message(
+                role="user",
+                content="What's the weather in London and what time is it there?",
+            ),
         ]
     )
     assert response.function_calls is not None
@@ -224,16 +271,24 @@ def test_list_with_generics_tool_parsing():
             cities: List of city names
             days: Number of days for forecast
         """
-        return f"{days}-day forecast for {', '.join(cities)}: Variable conditions expected"
+        return (
+            f"{days}-day forecast for {', '.join(cities)}: Variable conditions expected"
+        )
 
-    tools = [{"type": "function", "function": Function.from_callable(get_city_weather_forecast).to_dict()}]
+    tools = [
+        {
+            "type": "function",
+            "function": Function.from_callable(get_city_weather_forecast).to_dict(),
+        }
+    ]
     model = Gemini()
     model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
             Message(
-                role="user", content="What's the weather forecast for New York, London, and Tokyo for the next 5 days?"
+                role="user",
+                content="What's the weather forecast for New York, London, and Tokyo for the next 5 days?",
             ),
         ]
     )
@@ -252,13 +307,21 @@ def test_tuple_with_fixed_types_tool_parsing():
         """
         return f"Temperature range for {location} on {date}: 65.0-85.0°F, Mostly sunny"
 
-    tools = [{"type": "function", "function": Function.from_callable(get_temperature_range).to_dict()}]
+    tools = [
+        {
+            "type": "function",
+            "function": Function.from_callable(get_temperature_range).to_dict(),
+        }
+    ]
     model = Gemini()
     model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent."),
-            Message(role="user", content="What's the temperature range in Miami for 2024-04-07?"),
+            Message(
+                role="user",
+                content="What's the temperature range in Miami for 2024-04-07?",
+            ),
         ]
     )
     assert response.function_calls is not None
@@ -279,7 +342,12 @@ def test_sequence_with_optional_values_tool_parsing():
         """
         return f"Historical temperature data for {city} on {len(dates)} dates"
 
-    tools = [{"type": "function", "function": Function.from_callable(get_historical_temperatures).to_dict()}]
+    tools = [
+        {
+            "type": "function",
+            "function": Function.from_callable(get_historical_temperatures).to_dict(),
+        }
+    ]
     model = Gemini()
     model.set_tools(tools)
     response = model.invoke(
@@ -296,7 +364,9 @@ def test_sequence_with_optional_values_tool_parsing():
 
 
 def test_optional_sequence_tool_parsing():
-    def get_weather_alerts(region: str, severity: str = "all", affected_cities: Optional[List[str]] = None) -> str:
+    def get_weather_alerts(
+        region: str, severity: str = "all", affected_cities: Optional[List[str]] = None
+    ) -> str:
         """
         Get weather alerts for a region
 
@@ -305,16 +375,26 @@ def test_optional_sequence_tool_parsing():
             severity: Alert severity level (low, medium, high, or all)
             affected_cities: Optional list of cities to filter alerts for
         """
-        cities_info = f" for cities: {', '.join(affected_cities)}" if affected_cities else ""
+        cities_info = (
+            f" for cities: {', '.join(affected_cities)}" if affected_cities else ""
+        )
         return f"{severity} weather alerts for {region}{cities_info}"
 
-    tools = [{"type": "function", "function": Function.from_callable(get_weather_alerts).to_dict()}]
+    tools = [
+        {
+            "type": "function",
+            "function": Function.from_callable(get_weather_alerts).to_dict(),
+        }
+    ]
     model = Gemini()
     model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
-            Message(role="user", content="Are there any high severity weather alerts in the Northeast region?"),
+            Message(
+                role="user",
+                content="Are there any high severity weather alerts in the Northeast region?",
+            ),
         ]
     )
     assert response.function_calls is not None
@@ -336,10 +416,19 @@ def test_mixed_sequence_types_tool_parsing():
             optional_locations: Optional sequence of secondary locations to visit
         """
         start, end = travel_dates
-        optional = f" and {len(optional_locations)} optional locations" if optional_locations else ""
+        optional = (
+            f" and {len(optional_locations)} optional locations"
+            if optional_locations
+            else ""
+        )
         return f"Weather forecast for {len(destinations)} destinations{optional} from {start} to {end}"
 
-    tools = [{"type": "function", "function": Function.from_callable(get_trip_weather).to_dict()}]
+    tools = [
+        {
+            "type": "function",
+            "function": Function.from_callable(get_trip_weather).to_dict(),
+        }
+    ]
     model = Gemini()
     model.set_tools(tools)
     response = model.invoke(
@@ -392,7 +481,9 @@ def test_nested_pydantic_model_with_dict_tool_parsing():
         food_prefs = ", ".join(travel_plan.preferences.get("food", []))
         activity_prefs = ", ".join(travel_plan.preferences.get("activities", []))
 
-        budget_info = f" with a budget of ${travel_plan.budget}" if travel_plan.budget else ""
+        budget_info = (
+            f" with a budget of ${travel_plan.budget}" if travel_plan.budget else ""
+        )
 
         return (
             f"Vacation plan for {travelers} travelers to {city}, {country} for {days} days{budget_info}. "
@@ -400,7 +491,12 @@ def test_nested_pydantic_model_with_dict_tool_parsing():
             f"Food preferences: {food_prefs}. Activity preferences: {activity_prefs}."
         )
 
-    tools = [{"type": "function", "function": Function.from_callable(plan_vacation).to_dict()}]
+    tools = [
+        {
+            "type": "function",
+            "function": Function.from_callable(plan_vacation).to_dict(),
+        }
+    ]
     model = Gemini()
     model.set_tools(tools)
     response = model.invoke(

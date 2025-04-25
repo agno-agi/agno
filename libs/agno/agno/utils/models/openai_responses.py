@@ -34,7 +34,9 @@ def _process_image_path(image_path: Union[Path, str]) -> Dict[str, Any]:
 def _process_image_url(image_url: str) -> Dict[str, Any]:
     """Process image (base64 or URL)."""
 
-    if image_url.startswith("data:image") or image_url.startswith(("http://", "https://")):
+    if image_url.startswith("data:image") or image_url.startswith(
+        ("http://", "https://")
+    ):
         return {"type": "input_image", "image_url": image_url}
     else:
         raise ValueError("Image URL must start with 'data:image' or 'http(s)://'.")

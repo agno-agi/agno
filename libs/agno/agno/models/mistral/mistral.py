@@ -13,16 +13,9 @@ try:
     from mistralai import CompletionEvent
     from mistralai import Mistral as MistralClient
     from mistralai.extra.struct_chat import ParsedChatCompletionResponse
-    from mistralai.models import (
-        AssistantMessage,
-        HTTPValidationError,
-        ImageURLChunk,
-        SDKError,
-        SystemMessage,
-        TextChunk,
-        ToolMessage,
-        UserMessage,
-    )
+    from mistralai.models import (AssistantMessage, HTTPValidationError,
+                                  ImageURLChunk, SDKError, SystemMessage,
+                                  TextChunk, ToolMessage, UserMessage)
     from mistralai.models.chatcompletionresponse import ChatCompletionResponse
     from mistralai.models.deltamessage import DeltaMessage
     from mistralai.types.basemodel import Unset
@@ -30,7 +23,9 @@ try:
     MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
 
 except (ModuleNotFoundError, ImportError):
-    raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
+    raise ImportError(
+        "`mistralai` not installed. Please install using `pip install mistralai`"
+    )
 
 
 def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
@@ -42,7 +37,9 @@ def _format_image_for_message(image: Image) -> Optional[ImageURLChunk]:
         import base64
         from pathlib import Path
 
-        path = Path(image.filepath) if isinstance(image.filepath, str) else image.filepath
+        path = (
+            Path(image.filepath) if isinstance(image.filepath, str) else image.filepath
+        )
         if not path.exists() or not path.is_file():
             log_error(f"Image file not found: {image}")
             raise FileNotFoundError(f"Image file not found: {image}")
@@ -89,21 +86,31 @@ def _format_messages(messages: List[Message]) -> List[MistralMessage]:
                 mistral_message = UserMessage(role="user", content=message.content)
             elif message.tool_calls is not None:
                 mistral_message = AssistantMessage(
-                    role="assistant", content=message.content, tool_calls=message.tool_calls
+                    role="assistant",
+                    content=message.content,
+                    tool_calls=message.tool_calls,
                 )
             else:
-                mistral_message = AssistantMessage(role=message.role, content=message.content)
+                mistral_message = AssistantMessage(
+                    role=message.role, content=message.content
+                )
         elif message.role == "system":
             mistral_message = SystemMessage(role="system", content=message.content)
         elif message.role == "tool":
-            mistral_message = ToolMessage(name="tool", content=message.content, tool_call_id=message.tool_call_id)
+            mistral_message = ToolMessage(
+                name="tool", content=message.content, tool_call_id=message.tool_call_id
+            )
         else:
             raise ValueError(f"Unknown role: {message.role}")
 
         mistral_messages.append(mistral_message)
 
     # Check if the last message is an assistant message
-    if mistral_messages and hasattr(mistral_messages[-1], "role") and mistral_messages[-1].role == "assistant":
+    if (
+        mistral_messages
+        and hasattr(mistral_messages[-1], "role")
+        and mistral_messages[-1].role == "assistant"
+    ):
         # Set prefix=True for the last assistant message to allow it as the last message
         mistral_messages[-1].prefix = True
 
@@ -184,7 +191,9 @@ class MistralChat(Model):
 
         self.api_key = self.api_key or getenv("MISTRAL_API_KEY")
         if not self.api_key:
-            log_error("MISTRAL_API_KEY not set. Please set the MISTRAL_API_KEY environment variable.")
+            log_error(
+                "MISTRAL_API_KEY not set. Please set the MISTRAL_API_KEY environment variable."
+            )
 
         client_params.update(
             {
@@ -253,7 +262,9 @@ class MistralChat(Model):
         cleaned_dict = {k: v for k, v in _dict.items() if v is not None}
         return cleaned_dict
 
-    def invoke(self, messages: List[Message]) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
+    def invoke(
+        self, messages: List[Message]
+    ) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
         """
         Send a chat completion request to the Mistral model.
 
@@ -283,10 +294,14 @@ class MistralChat(Model):
 
         except HTTPValidationError as e:
             log_error(f"HTTPValidationError from Mistral: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
         except SDKError as e:
             log_error(f"SDKError from Mistral: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
         """
@@ -308,12 +323,18 @@ class MistralChat(Model):
             return stream
         except HTTPValidationError as e:
             log_error(f"HTTPValidationError from Mistral: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
         except SDKError as e:
             log_error(f"SDKError from Mistral: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
-    async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
+    async def ainvoke(
+        self, messages: List[Message]
+    ) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
         """
         Send an asynchronous chat completion request to the Mistral API.
 
@@ -342,10 +363,14 @@ class MistralChat(Model):
             return response
         except HTTPValidationError as e:
             log_error(f"HTTPValidationError from Mistral: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
         except SDKError as e:
             log_error(f"SDKError from Mistral: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> Any:
         """
@@ -370,12 +395,18 @@ class MistralChat(Model):
                 yield chunk
         except HTTPValidationError as e:
             log_error(f"HTTPValidationError from Mistral: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
         except SDKError as e:
             log_error(f"SDKError from Mistral: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
-    def parse_provider_response(self, response: ChatCompletionResponse) -> ModelResponse:
+    def parse_provider_response(
+        self, response: ChatCompletionResponse
+    ) -> ModelResponse:
         """
         Parse the response from the Mistral model.
 
@@ -393,7 +424,10 @@ class MistralChat(Model):
             model_response.role = response_message.role
 
             # -*- Set tool calls
-            if isinstance(response_message.tool_calls, list) and len(response_message.tool_calls) > 0:
+            if (
+                isinstance(response_message.tool_calls, list)
+                and len(response_message.tool_calls) > 0
+            ):
                 model_response.tool_calls = []
                 for tool_call in response_message.tool_calls:
                     model_response.tool_calls.append(
@@ -409,7 +443,9 @@ class MistralChat(Model):
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: CompletionEvent) -> Optional[ModelResponse]:
+    def parse_provider_response_delta(
+        self, response_delta: CompletionEvent
+    ) -> Optional[ModelResponse]:
         """
         Parse the response delta from the Mistral model.
         """

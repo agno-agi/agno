@@ -128,7 +128,9 @@ def test_storage_filtering(agent_storage: YamlStorage):
     assert all(s.agent_id == "agent-1" for s in agent1_sessions)
 
     # Test combined filtering
-    filtered_sessions = agent_storage.get_all_sessions(user_id="user-1", entity_id="agent-1")
+    filtered_sessions = agent_storage.get_all_sessions(
+        user_id="user-1", entity_id="agent-1"
+    )
     assert len(filtered_sessions) == 1
     assert filtered_sessions[0].user_id == "user-1"
     assert filtered_sessions[0].agent_id == "agent-1"
@@ -163,7 +165,9 @@ def test_workflow_storage_filtering(workflow_storage: YamlStorage):
     assert all(s.workflow_id == "workflow-1" for s in workflow1_sessions)
 
     # Test combined filtering
-    filtered_sessions = workflow_storage.get_all_sessions(user_id="user-1", entity_id="workflow-1")
+    filtered_sessions = workflow_storage.get_all_sessions(
+        user_id="user-1", entity_id="workflow-1"
+    )
     assert len(filtered_sessions) == 1
     assert filtered_sessions[0].user_id == "user-1"
     assert filtered_sessions[0].workflow_id == "workflow-1"

@@ -17,7 +17,10 @@ class MemoryDb(ABC):
 
     @abstractmethod
     def read_memories(
-        self, user_id: Optional[str] = None, limit: Optional[int] = None, sort: Optional[str] = None
+        self,
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        sort: Optional[str] = None,
     ) -> List[MemoryRow]:
         raise NotImplementedError
 

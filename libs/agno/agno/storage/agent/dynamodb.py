@@ -1,1 +1,2 @@
-from agno.storage.dynamodb import DynamoDbStorage as DynamoDbAgentStorage  # noqa: F401
+from agno.storage.dynamodb import \
+    DynamoDbStorage as DynamoDbAgentStorage  # noqa: F401

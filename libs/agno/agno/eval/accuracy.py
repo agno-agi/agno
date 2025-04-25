@@ -8,15 +8,21 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
 from agno.models.base import Model
-from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
+from agno.utils.log import (logger, set_log_level_to_debug,
+                            set_log_level_to_info)
 
 if TYPE_CHECKING:
     from rich.console import Console
 
 
 class AccuracyAgentResponse(BaseModel):
-    accuracy_score: int = Field(..., description="Accuracy Score between 1 and 10 assigned to the Agent's answer.")
-    accuracy_reason: str = Field(..., description="Detailed reasoning for the accuracy score.")
+    accuracy_score: int = Field(
+        ...,
+        description="Accuracy Score between 1 and 10 assigned to the Agent's answer.",
+    )
+    accuracy_reason: str = Field(
+        ..., description="Detailed reasoning for the accuracy score."
+    )
 
 
 @dataclass
@@ -247,7 +253,9 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
             structured_outputs=True,
         )
 
-    def get_question_to_evaluate(self, question: Optional[Union[str, Callable]] = None) -> Optional[str]:
+    def get_question_to_evaluate(
+        self, question: Optional[Union[str, Callable]] = None
+    ) -> Optional[str]:
         """Get the question to evaluate."""
         try:
             # Get question from the run method
@@ -324,7 +332,9 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
             logger.error(f"Failed to get answer to evaluate: {e}")
         return None
 
-    def get_expected_answer_to_evaluate(self, expected_answer: Optional[Union[str, Callable]] = None) -> Optional[str]:
+    def get_expected_answer_to_evaluate(
+        self, expected_answer: Optional[Union[str, Callable]] = None
+    ) -> Optional[str]:
         """Get the expected answer to evaluate."""
         try:
             # Get expected_answer from the run method
@@ -375,13 +385,15 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
         self.print_results = print_results
         self.print_summary = print_summary
 
-        question_to_evaluate: Optional[str] = self.get_question_to_evaluate(question=question)
+        question_to_evaluate: Optional[str] = self.get_question_to_evaluate(
+            question=question
+        )
         if question_to_evaluate is None:
             logger.error("No Question to evaluate.")
             return None
 
-        expected_answer_to_evaluate: Optional[str] = self.get_expected_answer_to_evaluate(
-            expected_answer=expected_answer
+        expected_answer_to_evaluate: Optional[str] = (
+            self.get_expected_answer_to_evaluate(expected_answer=expected_answer)
         )
         if expected_answer_to_evaluate is None:
             logger.error("No Expected Answer to evaluate.")
@@ -400,7 +412,12 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
         console = Console()
         with Live(console=console, transient=True) as live_log:
             for i in range(self.num_iterations):
-                status = Status(f"Running evaluation {i + 1}...", spinner="dots", speed=1.0, refresh_per_second=10)
+                status = Status(
+                    f"Running evaluation {i + 1}...",
+                    spinner="dots",
+                    speed=1.0,
+                    refresh_per_second=10,
+                )
                 live_log.update(status)
 
                 answer_to_evaluate: Optional[RunResponse] = self.get_answer_to_evaluate(
@@ -412,7 +429,9 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
 
                 try:
                     logger.debug(f"Answer #{i + 1}: {answer_to_evaluate.content}")
-                    accuracy_agent_response = evaluator_agent.run(answer_to_evaluate.content).content
+                    accuracy_agent_response = evaluator_agent.run(
+                        answer_to_evaluate.content
+                    ).content
                     if accuracy_agent_response is None or not isinstance(
                         accuracy_agent_response, AccuracyAgentResponse
                     ):
@@ -442,7 +461,11 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
             try:
                 import json
 
-                fn_path = Path(self.save_result_to_file.format(name=self.name, eval_id=self.eval_id))
+                fn_path = Path(
+                    self.save_result_to_file.format(
+                        name=self.name, eval_id=self.eval_id
+                    )
+                )
                 if not fn_path.parent.exists():
                     fn_path.parent.mkdir(parents=True, exist_ok=True)
                 fn_path.write_text(json.dumps(asdict(self.result), indent=4))

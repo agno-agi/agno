@@ -66,7 +66,9 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
             if path.exists() and path.is_file():
                 try:
                     with open(path, "rb") as audio_file:
-                        encoded_string = base64.b64encode(audio_file.read()).decode("utf-8")
+                        encoded_string = base64.b64encode(audio_file.read()).decode(
+                            "utf-8"
+                        )
                     if not audio_format:
                         audio_format = path.suffix.lstrip(".")
                 except Exception as e:
@@ -110,7 +112,9 @@ def _process_image_path(image_path: Union[Path, str]) -> Dict[str, Any]:
     if not path.is_file():
         raise IsADirectoryError(f"Image path is not a file: {image_path}")
 
-    mime_type = mimetypes.guess_type(path)[0] or "image/jpeg"  # Default to jpeg if guess fails
+    mime_type = (
+        mimetypes.guess_type(path)[0] or "image/jpeg"
+    )  # Default to jpeg if guess fails
     try:
         with open(path, "rb") as image_file:
             base64_image = base64.b64encode(image_file.read()).decode("utf-8")
@@ -124,7 +128,9 @@ def _process_image_path(image_path: Union[Path, str]) -> Dict[str, Any]:
 def _process_image_url(image_url: str) -> Dict[str, Any]:
     """Process image (base64 or URL)."""
 
-    if image_url.startswith("data:image") or image_url.startswith(("http://", "https://")):
+    if image_url.startswith("data:image") or image_url.startswith(
+        ("http://", "https://")
+    ):
         return {"type": "image_url", "image_url": {"url": image_url}}
     else:
         raise ValueError("Image URL must start with 'data:image' or 'http(s)://'.")
@@ -147,10 +153,14 @@ def _process_image(image: Image) -> Optional[Dict[str, Any]]:
             log_warning(f"Unsupported image format or no data provided: {image}")
             return None
 
-        if image_payload and image.detail:  # Check if payload was created before adding detail
+        if (
+            image_payload and image.detail
+        ):  # Check if payload was created before adding detail
             # Ensure image_url key exists before trying to access its sub-dictionary
             if "image_url" not in image_payload:
-                image_payload["image_url"] = {}  # Initialize if missing (though unlikely based on helper funcs)
+                image_payload["image_url"] = (
+                    {}
+                )  # Initialize if missing (though unlikely based on helper funcs)
             image_payload["image_url"]["detail"] = image.detail
 
         return image_payload

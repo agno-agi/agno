@@ -34,7 +34,9 @@ class WorkspaceConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def to_dict(self) -> dict:
-        return self.model_dump(include={"ws_root_path", "ws_schema", "ws_team", "ws_api_key"})
+        return self.model_dump(
+            include={"ws_root_path", "ws_schema", "ws_team", "ws_api_key"}
+        )
 
     @property
     def workspace_dir_path(self) -> Optional[Path]:
@@ -51,7 +53,9 @@ class WorkspaceConfig(BaseModel):
 
         if self.ws_root_path is not None and obj.ws_root is not None:
             if obj.ws_root != self.ws_root_path:
-                raise Exception(f"WorkspaceSettings.ws_root ({obj.ws_root}) must match {self.ws_root_path}")
+                raise Exception(
+                    f"WorkspaceSettings.ws_root ({obj.ws_root}) must match {self.ws_root_path}"
+                )
         return True
 
     @property
@@ -77,7 +81,10 @@ class WorkspaceConfig(BaseModel):
                 if isinstance(obj, WorkspaceSettings):
                     if self.validate_workspace_settings(obj):
                         self._workspace_settings = obj
-                        if self.ws_schema is not None and self._workspace_settings is not None:
+                        if (
+                            self.ws_schema is not None
+                            and self._workspace_settings is not None
+                        ):
                             self._workspace_settings.ws_schema = self.ws_schema
                             logger.debug("Added WorkspaceSchema to WorkspaceSettings")
         except Exception:
@@ -88,13 +95,10 @@ class WorkspaceConfig(BaseModel):
     def set_local_env(self) -> None:
         from os import environ
 
-        from agno.constants import (
-            AWS_REGION_ENV_VAR,
-            WORKSPACE_DIR_ENV_VAR,
-            WORKSPACE_ID_ENV_VAR,
-            WORKSPACE_NAME_ENV_VAR,
-            WORKSPACE_ROOT_ENV_VAR,
-        )
+        from agno.constants import (AWS_REGION_ENV_VAR, WORKSPACE_DIR_ENV_VAR,
+                                    WORKSPACE_ID_ENV_VAR,
+                                    WORKSPACE_NAME_ENV_VAR,
+                                    WORKSPACE_ROOT_ENV_VAR)
 
         if self.ws_root_path is not None:
             environ[WORKSPACE_ROOT_ENV_VAR] = str(self.ws_root_path)
@@ -154,9 +158,16 @@ class WorkspaceConfig(BaseModel):
 
                 resource_file_parts = resource_file.parts
                 workspace_dir_path_parts = workspace_dir_path.parts
-                resource_file_parts_after_ws = resource_file_parts[len(workspace_dir_path_parts) :]
+                resource_file_parts_after_ws = resource_file_parts[
+                    len(workspace_dir_path_parts) :
+                ]
                 # Check if file in ignored directory
-                if any([ignored_dir in resource_file_parts_after_ws for ignored_dir in ignored_dirs]):
+                if any(
+                    [
+                        ignored_dir in resource_file_parts_after_ws
+                        for ignored_dir in ignored_dirs
+                    ]
+                ):
                     logger.debug(f"Skipping file in ignored directory: {resource_file}")
                     continue
                 logger.debug(f"Reading file: {resource_file}")
@@ -165,14 +176,23 @@ class WorkspaceConfig(BaseModel):
                     # logger.debug(f"python_objects: {python_objects}")
                     for obj_name, obj in python_objects.items():
                         if isinstance(obj, WorkspaceSettings):
-                            logger.debug(f"Found: {obj.__class__.__module__}: {obj_name}")
+                            logger.debug(
+                                f"Found: {obj.__class__.__module__}: {obj_name}"
+                            )
                             if self.validate_workspace_settings(obj):
                                 self._workspace_settings = obj
-                                if self.ws_schema is not None and self._workspace_settings is not None:
+                                if (
+                                    self.ws_schema is not None
+                                    and self._workspace_settings is not None
+                                ):
                                     self._workspace_settings.ws_schema = self.ws_schema
-                                    logger.debug("Added WorkspaceSchema to WorkspaceSettings")
+                                    logger.debug(
+                                        "Added WorkspaceSchema to WorkspaceSettings"
+                                    )
                         elif isinstance(obj, InfraResources):
-                            logger.debug(f"Found: {obj.__class__.__module__}: {obj_name}")
+                            logger.debug(
+                                f"Found: {obj.__class__.__module__}: {obj_name}"
+                            )
                             if not obj.enabled:
                                 logger.debug(f"Skipping {obj_name}: disabled")
                                 continue
@@ -187,7 +207,9 @@ class WorkspaceConfig(BaseModel):
 
         # Filter resources by infra
         filtered_ws_objects_by_infra_type: Dict[str, InfraResources] = {}
-        logger.debug(f"Filtering resources for env: {env} | infra: {infra} | order: {order}")
+        logger.debug(
+            f"Filtering resources for env: {env} | infra: {infra} | order: {order}"
+        )
         if infra is None:
             filtered_ws_objects_by_infra_type = workspace_objects
         else:
@@ -215,7 +237,9 @@ class WorkspaceConfig(BaseModel):
         # Update the resources with the workspace settings
         if self._workspace_settings is not None:
             for resource_name, resource in filtered_infra_objects_by_env.items():
-                logger.debug(f"Setting workspace settings for {resource.__class__.__name__}")
+                logger.debug(
+                    f"Setting workspace settings for {resource.__class__.__name__}"
+                )
                 resource.set_workspace_settings(self._workspace_settings)
 
         # Create a list of InfraResources from the filtered resources
@@ -280,7 +304,9 @@ class WorkspaceConfig(BaseModel):
 
         # Filter resources by infra
         filtered_infra_objects_by_infra_type: Dict[str, InfraBase] = {}
-        logger.debug(f"Filtering resources for env: {env} | infra: {infra} | order: {order}")
+        logger.debug(
+            f"Filtering resources for env: {env} | infra: {infra} | order: {order}"
+        )
         if infra is None:
             filtered_infra_objects_by_infra_type = infra_objects
         else:
@@ -307,7 +333,9 @@ class WorkspaceConfig(BaseModel):
         # Update the resources with the workspace settings
         if temporary_ws_config._workspace_settings is not None:
             for resource_name, resource in filtered_infra_objects_by_env.items():
-                logger.debug(f"Setting workspace settings for {resource.__class__.__name__}")
+                logger.debug(
+                    f"Setting workspace settings for {resource.__class__.__name__}"
+                )
                 resource.set_workspace_settings(temporary_ws_config._workspace_settings)
 
         # Create a list of InfraResources from the filtered resources
@@ -319,7 +347,9 @@ class WorkspaceConfig(BaseModel):
             # Otherwise, get the InfraResources object from the resource
             else:
                 _infra_resources = resource.get_infra_resources()
-                if _infra_resources is not None and isinstance(_infra_resources, InfraResources):
+                if _infra_resources is not None and isinstance(
+                    _infra_resources, InfraResources
+                ):
                     infra_resources_list.append(_infra_resources)
 
         return infra_resources_list

@@ -7,10 +7,11 @@ Note: If the size of the file is greater than 20MB, and a file path is provided,
 from pathlib import Path
 from time import sleep
 
+from google import genai
+
 from agno.agent import Agent
 from agno.media import File
 from agno.models.google import Gemini
-from google import genai
 
 pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")
 

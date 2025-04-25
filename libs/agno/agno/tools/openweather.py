@@ -8,7 +8,9 @@ from agno.utils.log import log_info, logger
 try:
     import requests
 except ImportError:
-    raise ImportError("`requests` not installed. Please install using `pip install requests`")
+    raise ImportError(
+        "`requests` not installed. Please install using `pip install requests`"
+    )
 
 
 class OpenWeatherTools(Toolkit):

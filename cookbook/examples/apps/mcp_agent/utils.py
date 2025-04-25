@@ -4,10 +4,11 @@ from typing import Any, Dict, List, Optional
 
 import streamlit as st
 from agents import get_mcp_agent
+from mcp_client import MCPServerConfig
+
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools
 from agno.utils.log import logger
-from mcp_client import MCPServerConfig
 
 
 def get_selected_model() -> str:

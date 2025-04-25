@@ -79,7 +79,9 @@ class Function(BaseModel):
     _agent: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return self.model_dump(exclude_none=True, include={"name", "description", "parameters", "strict"})
+        return self.model_dump(
+            exclude_none=True, include={"name", "description", "parameters", "strict"}
+        )
 
     @classmethod
     def from_callable(cls, c: Callable, strict: bool = False) -> "Function":
@@ -100,7 +102,9 @@ class Function(BaseModel):
 
             # Filter out return type and only process parameters
             param_type_hints = {
-                name: type_hints.get(name) for name in sig.parameters if name != "return" and name != "agent"
+                name: type_hints.get(name)
+                for name in sig.parameters
+                if name != "return" and name != "agent"
             }
 
             # Parse docstring for parameters
@@ -116,23 +120,31 @@ class Function(BaseModel):
                         if param_type is None:
                             param_descriptions[param_name] = param.description
                         else:
-                            param_descriptions[param_name] = f"({param_type}) {param.description}"
+                            param_descriptions[param_name] = (
+                                f"({param_type}) {param.description}"
+                            )
 
             # Get JSON schema for parameters only
             parameters = get_json_schema(
-                type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict
+                type_hints=param_type_hints,
+                param_descriptions=param_descriptions,
+                strict=strict,
             )
 
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name != "agent"]
+                parameters["required"] = [
+                    name for name in parameters["properties"] if name != "agent"
+                ]
             else:
                 # Mark a field as required if it has no default value
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name != "agent"
+                    if param.default == param.empty
+                    and name != "self"
+                    and name != "agent"
                 ]
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
@@ -181,7 +193,9 @@ class Function(BaseModel):
 
             # Filter out return type and only process parameters
             param_type_hints = {
-                name: type_hints.get(name) for name in sig.parameters if name != "return" and name != "agent"
+                name: type_hints.get(name)
+                for name in sig.parameters
+                if name != "return" and name != "agent"
             }
 
             # Parse docstring for parameters
@@ -197,35 +211,49 @@ class Function(BaseModel):
 
                         # TODO: We should use type hints first, then map param types in docs to json schema types.
                         # This is temporary to not lose information
-                        param_descriptions[param_name] = f"({param_type}) {param.description}"
+                        param_descriptions[param_name] = (
+                            f"({param_type}) {param.description}"
+                        )
 
             # Get JSON schema for parameters only
             parameters = get_json_schema(
-                type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict
+                type_hints=param_type_hints,
+                param_descriptions=param_descriptions,
+                strict=strict,
             )
 
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name != "agent"]
+                parameters["required"] = [
+                    name for name in parameters["properties"] if name != "agent"
+                ]
             else:
                 # Mark a field as required if it has no default value
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name != "agent"
+                    if param.default == param.empty
+                    and name != "self"
+                    and name != "agent"
                 ]
 
             if params_set_by_user:
                 self.parameters["additionalProperties"] = False
                 if strict:
-                    self.parameters["required"] = [name for name in self.parameters["properties"] if name != "agent"]
+                    self.parameters["required"] = [
+                        name
+                        for name in self.parameters["properties"]
+                        if name != "agent"
+                    ]
                 else:
                     # Mark a field as required if it has no default value
                     self.parameters["required"] = [
                         name
                         for name, param in sig.parameters.items()
-                        if param.default == param.empty and name != "self" and name != "agent"
+                        if param.default == param.empty
+                        and name != "self"
+                        and name != "agent"
                     ]
 
             # log_debug(f"JSON schema for {self.name}: {parameters}")
@@ -279,7 +307,11 @@ class Function(BaseModel):
             return json.dumps(function_info, indent=2)
         return None
 
-    def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
+    def _get_cache_key(
+        self,
+        entrypoint_args: Dict[str, Any],
+        call_args: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """Generate a cache key based on function name and arguments."""
         from hashlib import md5
 
@@ -481,7 +513,9 @@ class FunctionCall(BaseModel):
                 self.result = result
                 # Only cache non-generator results
                 if self.function.cache_results:
-                    cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+                    cache_key = self.function._get_cache_key(
+                        entrypoint_args, self.arguments
+                    )
                     cache_file = self.function._get_cache_file_path(cache_key)
                     self.function._save_to_cache(cache_file, self.result)
 
@@ -550,7 +584,8 @@ class FunctionCall(BaseModel):
 
     async def aexecute(self) -> bool:
         """Runs the function call asynchronously."""
-        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
+        from inspect import (isasyncgen, isasyncgenfunction,
+                             iscoroutinefunction, isgenerator)
 
         if self.function.entrypoint is None:
             return False
@@ -568,7 +603,8 @@ class FunctionCall(BaseModel):
 
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not (
-            isasyncgen(self.function.entrypoint) or isgenerator(self.function.entrypoint)
+            isasyncgen(self.function.entrypoint)
+            or isgenerator(self.function.entrypoint)
         ):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
@@ -583,20 +619,28 @@ class FunctionCall(BaseModel):
         try:
             if self.arguments == {} or self.arguments is None:
                 result = self.function.entrypoint(**entrypoint_args)
-                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
+                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(
+                    self.function.entrypoint
+                ):
                     self.result = result  # Store async generator directly
                 else:
                     self.result = await result
             else:
                 result = self.function.entrypoint(**entrypoint_args, **self.arguments)
-                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
+                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(
+                    self.function.entrypoint
+                ):
                     self.result = result  # Store async generator directly
                 else:
                     self.result = await result
 
             # Only cache if not a generator
-            if self.function.cache_results and not (isgenerator(self.result) or isasyncgen(self.result)):
-                cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+            if self.function.cache_results and not (
+                isgenerator(self.result) or isasyncgen(self.result)
+            ):
+                cache_key = self.function._get_cache_key(
+                    entrypoint_args, self.arguments
+                )
                 cache_file = self.function._get_cache_file_path(cache_key)
                 self.function._save_to_cache(cache_file, self.result)
 

@@ -19,7 +19,9 @@ class SessionSummaryResponse(BaseModel):
         ...,
         description="Summary of the session. Be concise and focus on only important information. Do not make anything up.",
     )
-    topics: Optional[List[str]] = Field(None, description="Topics discussed in the session.")
+    topics: Optional[List[str]] = Field(
+        None, description="Topics discussed in the session."
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(exclude_none=True)
@@ -77,14 +79,16 @@ class SessionSummarizer:
             return Message(role="system", content=self.system_message)
 
         # -*- Return a system message for summarization
-        system_prompt = dedent("""\
+        system_prompt = dedent(
+            """\
         Analyze the following conversation between a user and an assistant, and extract the following details:
           - Summary (str): Provide a concise summary of the session, focusing on important information that would be helpful for future interactions.
           - Topics (Optional[List[str]]): List the topics discussed in the session.
         Keep the summary concise and to the point. Only include relevant information.
 
         <conversation>
-        """)
+        """
+        )
         conversation_messages = []
         for message in conversation:
             if message.role == "user":
@@ -153,9 +157,13 @@ class SessionSummarizer:
                 if session_summary is not None:
                     return session_summary
                 else:
-                    log_warning("Failed to convert session_summary response to SessionSummaryResponse")
+                    log_warning(
+                        "Failed to convert session_summary response to SessionSummaryResponse"
+                    )
             except Exception as e:
-                log_warning(f"Failed to convert session_summary response to SessionSummaryResponse: {e}")
+                log_warning(
+                    f"Failed to convert session_summary response to SessionSummaryResponse: {e}"
+                )
 
         return None
 
@@ -210,7 +218,11 @@ class SessionSummarizer:
                 if session_summary is not None:
                     return session_summary
                 else:
-                    log_warning("Failed to convert session_summary response to SessionSummaryResponse")
+                    log_warning(
+                        "Failed to convert session_summary response to SessionSummaryResponse"
+                    )
             except Exception as e:
-                log_warning(f"Failed to convert session_summary response to SessionSummaryResponse: {e}")
+                log_warning(
+                    f"Failed to convert session_summary response to SessionSummaryResponse: {e}"
+                )
         return None

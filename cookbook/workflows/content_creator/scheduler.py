@@ -2,10 +2,10 @@ import datetime
 from typing import Any, Dict, Optional
 
 import requests
-from agno.utils.log import logger
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
+from agno.utils.log import logger
 from cookbook.workflows.content_creator_workflow.config import (
     HEADERS,
     TYPEFULLY_API_URL,

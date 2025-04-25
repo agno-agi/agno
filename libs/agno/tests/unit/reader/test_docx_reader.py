@@ -104,7 +104,8 @@ def test_docx_reader_invalid_file():
 def test_docx_reader_file_error():
     """Test handling of file reading errors"""
     with patch("pathlib.Path.exists", return_value=True), patch(
-        "agno.document.reader.docx_reader.DocxDocument", side_effect=Exception("File error")
+        "agno.document.reader.docx_reader.DocxDocument",
+        side_effect=Exception("File error"),
     ):
         reader = DocxReader()
         documents = reader.read(Path("test.docx"))
@@ -125,7 +126,9 @@ async def test_async_docx_processing(mock_docx):
         assert all(len(docs) == 1 for docs in results)
         assert all(docs[0].name == "test" for docs in results)
         assert all(docs[0].id == "test_1" for docs in results)
-        assert all(docs[0].content == "First paragraph Second paragraph" for docs in results)
+        assert all(
+            docs[0].content == "First paragraph Second paragraph" for docs in results
+        )
 
 
 @pytest.mark.asyncio

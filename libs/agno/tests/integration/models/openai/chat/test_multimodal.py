@@ -27,7 +27,11 @@ def test_image_input():
 
     response = agent.run(
         "Tell me about this image and give me the latest news about it.",
-        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+        images=[
+            Image(
+                url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
+            )
+        ],
     )
 
     assert "golden" in response.content.lower()
@@ -43,7 +47,9 @@ def test_audio_input_bytes():
         telemetry=False,
         monitoring=False,
     )
-    response = agent.run("What is in this audio?", audio=[Audio(content=wav_data, format="wav")])
+    response = agent.run(
+        "What is in this audio?", audio=[Audio(content=wav_data, format="wav")]
+    )
 
     assert response.content is not None
 
@@ -58,7 +64,11 @@ def test_audio_input_url():
 
     response = agent.run(
         "What is in this audio?",
-        audio=[Audio(url="https://openaiassets.blob.core.windows.net/$web/API/docs/audio/alloy.wav")],
+        audio=[
+            Audio(
+                url="https://openaiassets.blob.core.windows.net/$web/API/docs/audio/alloy.wav"
+            )
+        ],
     )
 
     assert response.content is not None
@@ -76,13 +86,19 @@ def test_audio_tokens():
         ),
         markdown=True,
     )
-    response = agent.run("What is in this audio?", audio=[Audio(content=wav_data, format="wav")])
+    response = agent.run(
+        "What is in this audio?", audio=[Audio(content=wav_data, format="wav")]
+    )
 
     audio_tokens = response.metrics.get("audio_tokens")
     input_audio_tokens = response.metrics.get("input_audio_tokens")
     output_audio_tokens = response.metrics.get("output_audio_tokens")
 
-    assert audio_tokens is not None and input_audio_tokens is not None and output_audio_tokens is not None
+    assert (
+        audio_tokens is not None
+        and input_audio_tokens is not None
+        and output_audio_tokens is not None
+    )
     assert sum(audio_tokens) > 0
     assert sum(input_audio_tokens) > 0
     assert sum(output_audio_tokens) > 0

@@ -9,7 +9,12 @@ def test_image_input_bytes():
     """
     Only bytes input is supported for multimodal models
     """
-    agent = Agent(model=AwsBedrock(id="amazon.nova-pro-v1:0"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=AwsBedrock(id="amazon.nova-pro-v1:0"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     image_path = Path(__file__).parent.parent.parent.joinpath("sample_image.jpg")
 

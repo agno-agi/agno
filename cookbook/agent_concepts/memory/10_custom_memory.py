@@ -6,13 +6,14 @@ In this example, we use OpenRouter and LLama 3.3-70b-instruct for the memory man
 We also set custom system prompts for the memory manager and summarizer. You can either override the entire system prompt or add additional instructions which is added to the end of the system prompt.
 """
 
+from rich.pretty import pprint
+
 from agno.agent.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory, MemoryManager, SessionSummarizer
 from agno.models.anthropic.claude import Claude
 from agno.models.google.gemini import Gemini
 from agno.models.openrouter.openrouter import OpenRouter
-from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 

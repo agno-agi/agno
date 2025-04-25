@@ -2,23 +2,14 @@ from pathlib import Path
 from typing import List, Optional
 
 try:
-    from sqlalchemy import (
-        Column,
-        DateTime,
-        Engine,
-        MetaData,
-        String,
-        Table,
-        create_engine,
-        delete,
-        inspect,
-        select,
-        text,
-    )
+    from sqlalchemy import (Column, DateTime, Engine, MetaData, String, Table,
+                            create_engine, delete, inspect, select, text)
     from sqlalchemy.exc import SQLAlchemyError
     from sqlalchemy.orm import scoped_session, sessionmaker
 except ImportError:
-    raise ImportError("`sqlalchemy` not installed. Please install it with `pip install sqlalchemy`")
+    raise ImportError(
+        "`sqlalchemy` not installed. Please install it with `pip install sqlalchemy`"
+    )
 
 from agno.memory.db import MemoryDb
 from agno.memory.row import MemoryRow
@@ -84,7 +75,10 @@ class SqliteMemoryDb(MemoryDb):
             Column("memory", String),
             Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
             Column(
-                "updated_at", DateTime, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
+                "updated_at",
+                DateTime,
+                server_default=text("CURRENT_TIMESTAMP"),
+                onupdate=text("CURRENT_TIMESTAMP"),
             ),
             extend_existing=True,
         )
@@ -105,7 +99,10 @@ class SqliteMemoryDb(MemoryDb):
             return result is not None
 
     def read_memories(
-        self, user_id: Optional[str] = None, limit: Optional[int] = None, sort: Optional[str] = None
+        self,
+        user_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        sort: Optional[str] = None,
     ) -> List[MemoryRow]:
         memories: List[MemoryRow] = []
         try:
@@ -124,7 +121,11 @@ class SqliteMemoryDb(MemoryDb):
 
                 result = session.execute(stmt)
                 for row in result:
-                    memories.append(MemoryRow(id=row.id, user_id=row.user_id, memory=eval(row.memory)))
+                    memories.append(
+                        MemoryRow(
+                            id=row.id, user_id=row.user_id, memory=eval(row.memory)
+                        )
+                    )
         except SQLAlchemyError as e:
             log_debug(f"Exception reading from table: {e}")
             log_debug(f"Table does not exist: {self.table_name}")
@@ -136,14 +137,20 @@ class SqliteMemoryDb(MemoryDb):
         try:
             with self.Session() as session:
                 # Check if the memory already exists
-                existing = session.execute(select(self.table).where(self.table.c.id == memory.id)).first()
+                existing = session.execute(
+                    select(self.table).where(self.table.c.id == memory.id)
+                ).first()
 
                 if existing:
                     # Update existing memory
                     stmt = (
                         self.table.update()
                         .where(self.table.c.id == memory.id)
-                        .values(user_id=memory.user_id, memory=str(memory.memory), updated_at=text("CURRENT_TIMESTAMP"))
+                        .values(
+                            user_id=memory.user_id,
+                            memory=str(memory.memory),
+                            updated_at=text("CURRENT_TIMESTAMP"),
+                        )
                     )
                 else:
                     # Insert new memory

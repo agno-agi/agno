@@ -1,5 +1,6 @@
-from agno.agent import Agent
 from composio_agno import Action, ComposioToolSet
+
+from agno.agent import Agent
 
 toolset = ComposioToolSet()
 composio_tools = toolset.get_tools(

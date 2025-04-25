@@ -6,11 +6,12 @@ During each run the Agent can create/update/delete user memories.
 To enable this, set `enable_agentic_memory=True` in the Agent config.
 """
 
+from rich.pretty import pprint
+
 from agno.agent.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
-from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 

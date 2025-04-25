@@ -69,12 +69,16 @@ def get_function_call(
             function_call.arguments = clean_arguments
         except Exception as e:
             log_error(f"Unable to parsing function arguments:\n{arguments}\nError: {e}")
-            function_call.error = f"Error while parsing function arguments: {e}\n\n Please fix and retry."
+            function_call.error = (
+                f"Error while parsing function arguments: {e}\n\n Please fix and retry."
+            )
             return function_call
     return function_call
 
 
-def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cache_ttl: int = 3600):
+def cache_result(
+    enable_cache: bool = True, cache_dir: Optional[str] = None, cache_ttl: int = 3600
+):
     """
     Decorator factory that creates a file-based caching decorator for function results.
 
@@ -100,7 +104,11 @@ def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cac
             instance = args[0] if args else None
 
             # Skip caching if cache_results is False (only for class methods)
-            if instance and hasattr(instance, "cache_results") and not instance.cache_results:
+            if (
+                instance
+                and hasattr(instance, "cache_results")
+                and not instance.cache_results
+            ):
                 return func(*args, **kwargs)
 
             if not enable_cache:
@@ -108,12 +116,18 @@ def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cac
 
             # Get cache directory
             instance_cache_dir = (
-                getattr(instance, "cache_dir", cache_dir) if hasattr(instance, "cache_dir") else cache_dir
+                getattr(instance, "cache_dir", cache_dir)
+                if hasattr(instance, "cache_dir")
+                else cache_dir
             )
-            base_cache_dir = instance_cache_dir or os.path.join(tempfile.gettempdir(), "agno_cache")
+            base_cache_dir = instance_cache_dir or os.path.join(
+                tempfile.gettempdir(), "agno_cache"
+            )
 
             # Create cache directory if it doesn't exist
-            func_cache_dir = os.path.join(base_cache_dir, func.__module__, func.__qualname__)
+            func_cache_dir = os.path.join(
+                base_cache_dir, func.__module__, func.__qualname__
+            )
             os.makedirs(func_cache_dir, exist_ok=True)
 
             # Create a cache key using all arguments
@@ -139,7 +153,9 @@ def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cac
 
                     # Use instance ttl if available, otherwise use decorator ttl
                     effective_ttl = (
-                        getattr(instance, "cache_ttl", cache_ttl) if hasattr(instance, "cache_ttl") else cache_ttl
+                        getattr(instance, "cache_ttl", cache_ttl)
+                        if hasattr(instance, "cache_ttl")
+                        else cache_ttl
                     )
 
                     if time.time() - timestamp <= effective_ttl:

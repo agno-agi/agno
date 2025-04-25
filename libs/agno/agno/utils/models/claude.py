@@ -6,12 +6,11 @@ from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
 
 try:
-    from anthropic.types import (
-        TextBlock,
-        ToolUseBlock,
-    )
+    from anthropic.types import TextBlock, ToolUseBlock
 except (ModuleNotFoundError, ImportError):
-    raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
+    raise ImportError(
+        "`anthropic` not installed. Please install using `pip install anthropic`"
+    )
 
 ROLE_MAP = {
     "system": "system",
@@ -39,7 +38,9 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
 
             using_filetype = True
         except (ModuleNotFoundError, ImportError):
-            raise ImportError("`filetype` not installed. Please install using `pip install filetype`")
+            raise ImportError(
+                "`filetype` not installed. Please install using `pip install filetype`"
+            )
 
     type_mapping = {
         "jpeg": "image/jpeg",
@@ -58,7 +59,11 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         elif image.filepath is not None:
             from pathlib import Path
 
-            path = Path(image.filepath) if isinstance(image.filepath, str) else image.filepath
+            path = (
+                Path(image.filepath)
+                if isinstance(image.filepath, str)
+                else image.filepath
+            )
             if path.exists() and path.is_file():
                 with open(image.filepath, "rb") as f:
                     content_bytes = f.read()
@@ -165,7 +170,11 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         file_data = base64.standard_b64encode(file.content).decode("utf-8")
         return {
             "type": "document",
-            "source": {"type": "base64", "media_type": file.mime_type or "application/pdf", "data": file_data},
+            "source": {
+                "type": "base64",
+                "media_type": file.mime_type or "application/pdf",
+                "data": file_data,
+            },
             "citations": {"enabled": True},
         }
     return None
@@ -216,7 +225,8 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
             content = []
 
             if message.thinking is not None and message.provider_data is not None:
-                from anthropic.types import RedactedThinkingBlock, ThinkingBlock
+                from anthropic.types import (RedactedThinkingBlock,
+                                             ThinkingBlock)
 
                 content.append(
                     ThinkingBlock(
@@ -229,7 +239,11 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
             if message.redacted_thinking is not None:
                 from anthropic.types import RedactedThinkingBlock
 
-                content.append(RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking"))
+                content.append(
+                    RedactedThinkingBlock(
+                        data=message.redacted_thinking, type="redacted_thinking"
+                    )
+                )
 
             if isinstance(message.content, str) and message.content:
                 content.append(TextBlock(text=message.content, type="text"))
@@ -239,9 +253,11 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                     content.append(
                         ToolUseBlock(
                             id=tool_call["id"],
-                            input=json.loads(tool_call["function"]["arguments"])
-                            if "arguments" in tool_call["function"]
-                            else {},
+                            input=(
+                                json.loads(tool_call["function"]["arguments"])
+                                if "arguments" in tool_call["function"]
+                                else {}
+                            ),
                             name=tool_call["function"]["name"],
                             type="tool_use",
                         )

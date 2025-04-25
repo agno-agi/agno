@@ -47,13 +47,29 @@ def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
 
     if type_origin is not None:
         if type_origin in (list, tuple, set, frozenset):
-            json_schema_for_items = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
+            json_schema_for_items = (
+                get_json_schema_for_arg(type_args[0])
+                if type_args
+                else {"type": "string"}
+            )
             return {"type": "array", "items": json_schema_for_items}
         elif type_origin is dict:
             # Handle both key and value types for dictionaries
-            key_schema = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
-            value_schema = get_json_schema_for_arg(type_args[1]) if len(type_args) > 1 else {"type": "string"}
-            return {"type": "object", "propertyNames": key_schema, "additionalProperties": value_schema}
+            key_schema = (
+                get_json_schema_for_arg(type_args[0])
+                if type_args
+                else {"type": "string"}
+            )
+            value_schema = (
+                get_json_schema_for_arg(type_args[1])
+                if len(type_args) > 1
+                else {"type": "string"}
+            )
+            return {
+                "type": "object",
+                "propertyNames": key_schema,
+                "additionalProperties": value_schema,
+            }
         elif is_origin_union_type(type_origin):
             types = []
             for arg in type_args:
@@ -73,7 +89,9 @@ def get_json_schema_for_arg(t: Any) -> Optional[Dict[str, Any]]:
 
 
 def get_json_schema(
-    type_hints: Dict[str, Any], param_descriptions: Optional[Dict[str, str]] = None, strict: bool = False
+    type_hints: Dict[str, Any],
+    param_descriptions: Optional[Dict[str, str]] = None,
+    strict: bool = False,
 ) -> Dict[str, Any]:
     json_schema: Dict[str, Any] = {
         "type": "object",
@@ -91,7 +109,11 @@ def get_json_schema(
             # Check if type is Optional (Union with NoneType)
             type_origin = get_origin(v)
             type_args = get_args(v)
-            is_optional = type_origin is Union and len(type_args) == 2 and any(arg is type(None) for arg in type_args)
+            is_optional = (
+                type_origin is Union
+                and len(type_args) == 2
+                and any(arg is type(None) for arg in type_args)
+            )
 
             # Get the actual type if it's Optional
             if is_optional:
@@ -111,7 +133,11 @@ def get_json_schema(
                     else:
                         arg_json_schema["type"] = [arg_json_schema["type"], "null"]
                 # Add description
-                if param_descriptions and k in param_descriptions and param_descriptions[k]:
+                if (
+                    param_descriptions
+                    and k in param_descriptions
+                    and param_descriptions[k]
+                ):
                     arg_json_schema["description"] = param_descriptions[k]
 
                 json_schema["properties"][k] = arg_json_schema

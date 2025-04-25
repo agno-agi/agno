@@ -13,7 +13,9 @@ from agno.utils.log import log_debug, log_info, logger
 try:
     from redis import ConnectionError, Redis
 except ImportError:
-    raise ImportError("`redis` not installed. Please install it using `pip install redis`")
+    raise ImportError(
+        "`redis` not installed. Please install it using `pip install redis`"
+    )
 
 
 class RedisStorage(Storage):
@@ -95,7 +97,9 @@ class RedisStorage(Storage):
             logger.error(f"Error reading session: {e}")
             return None
 
-    def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
+    def get_all_session_ids(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[str]:
         """Get all session IDs, optionally filtered by user_id and/or entity_id."""
         session_ids = []
         try:
@@ -106,12 +110,22 @@ class RedisStorage(Storage):
 
                 if user_id or entity_id:
                     if user_id and entity_id:
-                        if self.mode == "agent" and data["agent_id"] == entity_id and data["user_id"] == user_id:
-                            session_ids.append(data["session_id"])
-                        elif self.mode == "team" and data["team_id"] == entity_id and data["user_id"] == user_id:
+                        if (
+                            self.mode == "agent"
+                            and data["agent_id"] == entity_id
+                            and data["user_id"] == user_id
+                        ):
                             session_ids.append(data["session_id"])
                         elif (
-                            self.mode == "workflow" and data["workflow_id"] == entity_id and data["user_id"] == user_id
+                            self.mode == "team"
+                            and data["team_id"] == entity_id
+                            and data["user_id"] == user_id
+                        ):
+                            session_ids.append(data["session_id"])
+                        elif (
+                            self.mode == "workflow"
+                            and data["workflow_id"] == entity_id
+                            and data["user_id"] == user_id
                         ):
                             session_ids.append(data["session_id"])
                     elif user_id and data["user_id"] == user_id:
@@ -121,7 +135,9 @@ class RedisStorage(Storage):
                             session_ids.append(data["session_id"])
                         elif self.mode == "team" and data["team_id"] == entity_id:
                             session_ids.append(data["session_id"])
-                        elif self.mode == "workflow" and data["workflow_id"] == entity_id:
+                        elif (
+                            self.mode == "workflow" and data["workflow_id"] == entity_id
+                        ):
                             session_ids.append(data["session_id"])
                 else:
                     # No filters applied, add all session_ids
@@ -132,7 +148,9 @@ class RedisStorage(Storage):
 
         return session_ids
 
-    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
+    def get_all_sessions(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[Session]:
         """Get all sessions, optionally filtered by user_id and/or entity_id."""
         sessions: List[Session] = []
         try:
@@ -144,12 +162,22 @@ class RedisStorage(Storage):
                     _session: Optional[Session] = None
 
                     if user_id and entity_id:
-                        if self.mode == "agent" and data["agent_id"] == entity_id and data["user_id"] == user_id:
+                        if (
+                            self.mode == "agent"
+                            and data["agent_id"] == entity_id
+                            and data["user_id"] == user_id
+                        ):
                             _session = AgentSession.from_dict(data)
-                        elif self.mode == "team" and data["team_id"] == entity_id and data["user_id"] == user_id:
+                        elif (
+                            self.mode == "team"
+                            and data["team_id"] == entity_id
+                            and data["user_id"] == user_id
+                        ):
                             _session = TeamSession.from_dict(data)
                         elif (
-                            self.mode == "workflow" and data["workflow_id"] == entity_id and data["user_id"] == user_id
+                            self.mode == "workflow"
+                            and data["workflow_id"] == entity_id
+                            and data["user_id"] == user_id
                         ):
                             _session = WorkflowSession.from_dict(data)
                     elif user_id and data["user_id"] == user_id:
@@ -164,7 +192,9 @@ class RedisStorage(Storage):
                             _session = AgentSession.from_dict(data)
                         elif self.mode == "team" and data["team_id"] == entity_id:
                             _session = TeamSession.from_dict(data)
-                        elif self.mode == "workflow" and data["workflow_id"] == entity_id:
+                        elif (
+                            self.mode == "workflow" and data["workflow_id"] == entity_id
+                        ):
                             _session = WorkflowSession.from_dict(data)
 
                     if _session:

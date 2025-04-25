@@ -110,10 +110,14 @@ class InfraApp(InfraBase):
 
     def get_dependencies(self) -> Optional[List[InfraResource]]:
         return (
-            [dep for dep in self.depends_on if isinstance(dep, InfraResource)] if self.depends_on is not None else None
+            [dep for dep in self.depends_on if isinstance(dep, InfraResource)]
+            if self.depends_on is not None
+            else None
         )
 
-    def add_app_properties_to_resources(self, resources: List[InfraResource]) -> List[InfraResource]:
+    def add_app_properties_to_resources(
+        self, resources: List[InfraResource]
+    ) -> List[InfraResource]:
         updated_resources = []
         app_properties = self.model_dump(exclude_defaults=True)
         app_group = self.get_group_name()
@@ -160,7 +164,10 @@ class InfraApp(InfraBase):
             if resource_skip_delete is None and app_skip_delete is not None:
                 resource.skip_delete = app_skip_delete
             # If recreate_on_update on resource is not set, use app level recreate_on_update (if set on app)
-            if resource_recreate_on_update is None and app_recreate_on_update is not None:
+            if (
+                resource_recreate_on_update is None
+                and app_recreate_on_update is not None
+            ):
                 resource.recreate_on_update = app_recreate_on_update
             # If use_cache on resource is not set, use app level use_cache (if set on app)
             if resource_use_cache is None and app_use_cache is not None:
@@ -184,7 +191,10 @@ class InfraApp(InfraBase):
             if resource_save_output is None and app_save_output is not None:
                 resource.save_output = app_save_output
             # If workspace_settings on resource is not set, use app level workspace_settings (if set on app)
-            if resource.workspace_settings is None and self.workspace_settings is not None:
+            if (
+                resource.workspace_settings is None
+                and self.workspace_settings is not None
+            ):
                 resource.set_workspace_settings(self.workspace_settings)
             # If group on resource is not set, use app level group (if set on app)
             if resource.group is None and app_group is not None:
@@ -219,7 +229,9 @@ class InfraApp(InfraBase):
     def matches_filters(self, group_filter: Optional[str] = None) -> bool:
         if group_filter is not None:
             group_name = self.get_group_name()
-            logger.debug(f"{self.get_app_name()}: Checking {group_filter} in {group_name}")
+            logger.debug(
+                f"{self.get_app_name()}: Checking {group_filter} in {group_name}"
+            )
             if group_name is None or group_filter not in group_name:
                 return False
         return True

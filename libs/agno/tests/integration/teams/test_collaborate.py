@@ -51,9 +51,17 @@ def test_collaborate_team_with_structured_output():
         perspective_two: str
         conclusion: str
 
-    agent1 = Agent(name="Perspective One", model=OpenAIChat("gpt-4o"), role="First perspective provider")
+    agent1 = Agent(
+        name="Perspective One",
+        model=OpenAIChat("gpt-4o"),
+        role="First perspective provider",
+    )
 
-    agent2 = Agent(name="Perspective Two", model=OpenAIChat("gpt-4o"), role="Second perspective provider")
+    agent2 = Agent(
+        name="Perspective Two",
+        model=OpenAIChat("gpt-4o"),
+        role="Second perspective provider",
+    )
 
     team = Team(
         name="Debate Team",
@@ -68,7 +76,9 @@ def test_collaborate_team_with_structured_output():
         response_model=DebateResult,
     )
 
-    response = team.run("Is artificial general intelligence possible in the next decade?")
+    response = team.run(
+        "Is artificial general intelligence possible in the next decade?"
+    )
 
     assert response.content is not None
     assert isinstance(response.content, DebateResult)

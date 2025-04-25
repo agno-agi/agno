@@ -6,6 +6,8 @@ Steps:
 2. Run: `python cookbook/teams/memory/03_user_memories.py` to run the agent
 """
 
+from utils import print_chat_history, print_team_memory
+
 from agno.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
@@ -15,7 +17,6 @@ from agno.models.perplexity.perplexity import Perplexity
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
-from utils import print_chat_history, print_team_memory
 
 # This memory is shared by all the agents in the team
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")

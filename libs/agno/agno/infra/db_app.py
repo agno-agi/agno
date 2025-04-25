@@ -1,6 +1,7 @@
 from typing import Optional
 
-from agno.infra.app import ContainerContext, InfraApp, InfraResource  # noqa: F401
+from agno.infra.app import (ContainerContext, InfraApp,  # noqa: F401
+                            InfraResource)
 
 
 class DbApp(InfraApp):

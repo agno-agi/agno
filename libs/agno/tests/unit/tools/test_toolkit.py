@@ -29,7 +29,11 @@ def basic_toolkit():
 @pytest.fixture
 def multi_func_toolkit():
     """Create a Toolkit instance with multiple functions."""
-    return Toolkit(name="multi_func_toolkit", tools=[example_func, another_func, third_func], auto_register=True)
+    return Toolkit(
+        name="multi_func_toolkit",
+        tools=[example_func, another_func, third_func],
+        auto_register=True,
+    )
 
 
 @pytest.fixture
@@ -127,13 +131,23 @@ def test_exclude_tools():
 def test_invalid_include_tools():
     """Test error when including a non-existent tool."""
     with pytest.raises(ValueError):
-        Toolkit(name="invalid_include", tools=[example_func], include_tools=["non_existent_func"], auto_register=True)
+        Toolkit(
+            name="invalid_include",
+            tools=[example_func],
+            include_tools=["non_existent_func"],
+            auto_register=True,
+        )
 
 
 def test_invalid_exclude_tools():
     """Test error when excluding a non-existent tool."""
     with pytest.raises(ValueError):
-        Toolkit(name="invalid_exclude", tools=[example_func], exclude_tools=["non_existent_func"], auto_register=True)
+        Toolkit(
+            name="invalid_exclude",
+            tools=[example_func],
+            exclude_tools=["non_existent_func"],
+            auto_register=True,
+        )
 
 
 def test_caching_parameters():
@@ -174,6 +188,8 @@ def test_auto_register_true(multi_func_toolkit):
 
 def test_auto_register_false():
     """Test no automatic registration with auto_register=False."""
-    toolkit = Toolkit(name="no_auto_toolkit", tools=[example_func, another_func], auto_register=False)
+    toolkit = Toolkit(
+        name="no_auto_toolkit", tools=[example_func, another_func], auto_register=False
+    )
 
     assert len(toolkit.functions) == 0

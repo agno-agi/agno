@@ -50,7 +50,9 @@ class UpstashVectorDb(VectorDb):
         self.url: str = url
         self.token: str = token
         self.retries: int = retries if retries is not None else 3
-        self.retry_interval: float = retry_interval if retry_interval is not None else 1.0
+        self.retry_interval: float = (
+            retry_interval if retry_interval is not None else 1.0
+        )
         self.dimension: Optional[int] = dimension
         self.namespace: str = namespace if namespace is not None else DEFAULT_NAMESPACE
         self.kwargs: Dict[str, Any] = kwargs
@@ -177,7 +179,10 @@ class UpstashVectorDb(VectorDb):
         return namespace in namespaces
 
     def upsert(
-        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, namespace: Optional[str] = None
+        self,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        namespace: Optional[str] = None,
     ) -> None:
         """Upsert documents into the index.
 
@@ -191,7 +196,9 @@ class UpstashVectorDb(VectorDb):
 
         for document in documents:
             if document.id is None:
-                logger.error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
+                logger.error(
+                    f"Document ID must not be None. Skipping document: {document.content[:100]}..."
+                )
                 continue
 
             document.meta_data["text"] = document.content
@@ -203,14 +210,21 @@ class UpstashVectorDb(VectorDb):
 
                 document.embed(embedder=self.embedder)
                 if document.embedding is None:
-                    logger.error(f"Failed to generate embedding for document: {document.id}")
+                    logger.error(
+                        f"Failed to generate embedding for document: {document.id}"
+                    )
                     continue
 
                 vector = Vector(
-                    id=document.id, vector=document.embedding, metadata=document.meta_data, data=document.content
+                    id=document.id,
+                    vector=document.embedding,
+                    metadata=document.meta_data,
+                    data=document.content,
                 )
             else:
-                vector = Vector(id=document.id, data=document.content, metadata=document.meta_data)
+                vector = Vector(
+                    id=document.id, data=document.content, metadata=document.meta_data
+                )
             vectors.append(vector)
 
         if not vectors:
@@ -226,7 +240,9 @@ class UpstashVectorDb(VectorDb):
         """
         return True
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents into the index.
         This method is not supported by Upstash. Use `upsert` instead.
         Args:
@@ -235,7 +251,9 @@ class UpstashVectorDb(VectorDb):
         Raises:
             NotImplementedError: This method is not supported by Upstash.
         """
-        raise NotImplementedError("Upstash does not support insert operations. Use upsert instead.")
+        raise NotImplementedError(
+            "Upstash does not support insert operations. Use upsert instead."
+        )
 
     def search(
         self,
@@ -290,7 +308,11 @@ class UpstashVectorDb(VectorDb):
 
         search_results = []
         for result in response:
-            if result.data is not None and result.id is not None and result.vector is not None:
+            if (
+                result.data is not None
+                and result.id is not None
+                and result.vector is not None
+            ):
                 search_results.append(
                     Document(
                         content=result.data,

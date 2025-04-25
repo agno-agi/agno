@@ -6,13 +6,6 @@ import nest_asyncio
 import requests
 import streamlit as st
 from agentic_rag import get_agentic_rag_agent
-from agno.agent import Agent
-from agno.document import Document
-from agno.document.reader.csv_reader import CSVReader
-from agno.document.reader.pdf_reader import PDFReader
-from agno.document.reader.text_reader import TextReader
-from agno.document.reader.website_reader import WebsiteReader
-from agno.utils.log import logger
 from utils import (
     CUSTOM_CSS,
     about_widget,
@@ -22,6 +15,14 @@ from utils import (
     rename_session_widget,
     session_selector_widget,
 )
+
+from agno.agent import Agent
+from agno.document import Document
+from agno.document.reader.csv_reader import CSVReader
+from agno.document.reader.pdf_reader import PDFReader
+from agno.document.reader.text_reader import TextReader
+from agno.document.reader.website_reader import WebsiteReader
+from agno.utils.log import logger
 
 nest_asyncio.apply()
 st.set_page_config(

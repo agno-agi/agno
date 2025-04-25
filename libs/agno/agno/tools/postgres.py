@@ -196,7 +196,9 @@ class PostgresTools(Toolkit):
         else:
             path = f"{path}/{table}.csv"
 
-        export_statement = f"COPY {self.table_schema}.{table} TO '{path}' DELIMITER ',' CSV HEADER;"
+        export_statement = (
+            f"COPY {self.table_schema}.{table} TO '{path}' DELIMITER ',' CSV HEADER;"
+        )
         result = self.run_query(export_statement)
         log_debug(f"Exported {table} to {path}/{table}")
 

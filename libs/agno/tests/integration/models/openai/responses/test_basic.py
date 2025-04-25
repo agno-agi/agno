@@ -34,7 +34,12 @@ def _assert_metrics(response: RunResponse):
 
 def test_basic():
     """Test basic functionality of the OpenAIResponses model."""
-    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-4o-mini"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     # Run a simple query
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -48,7 +53,12 @@ def test_basic():
 
 def test_basic_stream():
     """Test basic streaming functionality of the OpenAIResponses model."""
-    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-4o-mini"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -67,7 +77,12 @@ def test_basic_stream():
 @pytest.mark.asyncio
 async def test_async_basic():
     """Test basic async functionality of the OpenAIResponses model."""
-    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-4o-mini"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -80,7 +95,12 @@ async def test_async_basic():
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     """Test basic async streaming functionality of the OpenAIResponses model."""
-    agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-4o-mini"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -92,7 +112,12 @@ async def test_async_basic_stream():
 
 def test_exception_handling():
     """Test proper error handling for invalid model IDs."""
-    agent = Agent(model=OpenAIResponses(id="gpt-100"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-100"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     with pytest.raises(ModelProviderError) as exc:
         agent.run("Share a 2 sentence horror story")
@@ -124,7 +149,13 @@ def test_with_memory():
     # Verify memories were created
     messages = agent.get_messages_for_session()
     assert len(messages) == 5
-    assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
+    assert [m.role for m in messages] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
 
     # Test metrics structure and types
     _assert_metrics(response2)
@@ -137,7 +168,9 @@ def test_structured_output_json_mode():
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
-        release_date: Optional[str] = Field(None, description="Release date of the movie")
+        release_date: Optional[str] = Field(
+            None, description="Release date of the movie"
+        )
 
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
@@ -163,7 +196,9 @@ def test_structured_output():
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
-        release_date: Optional[str] = Field(None, description="Release date of the movie")
+        release_date: Optional[str] = Field(
+            None, description="Release date of the movie"
+        )
 
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
@@ -185,7 +220,9 @@ def test_history():
     """Test conversation history in the agent."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        storage=SqliteAgentStorage(table_name="responses_agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteAgentStorage(
+            table_name="responses_agent_sessions", db_file="tmp/agent_storage.db"
+        ),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,
@@ -212,7 +249,9 @@ def test_persistent_memory():
         instructions=[
             "You can search the internet with DuckDuckGo.",
         ],
-        storage=SqliteAgentStorage(table_name="responses_agent", db_file="tmp/agent_storage.db"),
+        storage=SqliteAgentStorage(
+            table_name="responses_agent", db_file="tmp/agent_storage.db"
+        ),
         # Adds the current date and time to the instructions
         add_datetime_to_instructions=True,
         # Adds the history of the conversation to the messages

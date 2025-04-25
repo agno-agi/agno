@@ -8,7 +8,9 @@ from agno.utils.log import logger
 try:
     from firecrawl import FirecrawlApp
 except ImportError:
-    raise ImportError("`firecrawl-py` not installed. Please install using `pip install firecrawl-py`")
+    raise ImportError(
+        "`firecrawl-py` not installed. Please install using `pip install firecrawl-py`"
+    )
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -47,7 +49,9 @@ class FirecrawlTools(Toolkit):
 
         self.api_key: Optional[str] = api_key or getenv("FIRECRAWL_API_KEY")
         if not self.api_key:
-            logger.error("FIRECRAWL_API_KEY not set. Please set the FIRECRAWL_API_KEY environment variable.")
+            logger.error(
+                "FIRECRAWL_API_KEY not set. Please set the FIRECRAWL_API_KEY environment variable."
+            )
 
         self.formats: Optional[List[str]] = formats
         self.limit: int = limit

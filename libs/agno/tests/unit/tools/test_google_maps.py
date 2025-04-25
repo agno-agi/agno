@@ -35,7 +35,10 @@ MOCK_PLACES_V1_RESPONSE.places = [
         international_phone_number="123-456-7890",
         website_uri="https://test.com",
         regular_opening_hours=MagicMock(
-            weekday_descriptions=["Monday: 9:00 AM – 5:00 PM", "Tuesday: 9:00 AM – 5:00 PM"]
+            weekday_descriptions=[
+                "Monday: 9:00 AM – 5:00 PM",
+                "Tuesday: 9:00 AM – 5:00 PM",
+            ]
         ),
     )
 ]
@@ -112,7 +115,9 @@ def mock_client():
 
 def test_search_places(google_maps_tools):
     """Test the search_places method."""
-    with patch.object(google_maps_tools.places_client, "search_text") as mock_search_text:
+    with patch.object(
+        google_maps_tools.places_client, "search_text"
+    ) as mock_search_text:
         mock_search_text.return_value = MOCK_PLACES_V1_RESPONSE
 
         result = json.loads(google_maps_tools.search_places("test query"))
@@ -141,7 +146,11 @@ def test_get_directions(google_maps_tools):
     with patch.object(google_maps_tools.client, "directions") as mock_directions:
         mock_directions.return_value = MOCK_DIRECTIONS_RESPONSE
 
-        result = eval(google_maps_tools.get_directions(origin="Test Origin", destination="Test Destination"))
+        result = eval(
+            google_maps_tools.get_directions(
+                origin="Test Origin", destination="Test Destination"
+            )
+        )
 
         assert isinstance(result, list)
         assert "legs" in result[0]
@@ -187,7 +196,11 @@ def test_get_distance_matrix(google_maps_tools):
     with patch.object(google_maps_tools.client, "distance_matrix") as mock_matrix:
         mock_matrix.return_value = MOCK_DISTANCE_MATRIX_RESPONSE
 
-        result = eval(google_maps_tools.get_distance_matrix(origins=["Origin"], destinations=["Destination"]))
+        result = eval(
+            google_maps_tools.get_distance_matrix(
+                origins=["Origin"], destinations=["Destination"]
+            )
+        )
 
         assert isinstance(result, dict)
         assert "rows" in result
@@ -241,7 +254,9 @@ def test_initialization_without_api_key():
 
 def test_search_places_success(google_maps_tools):
     """Test the search_places method with successful response."""
-    with patch.object(google_maps_tools.places_client, "search_text") as mock_search_text:
+    with patch.object(
+        google_maps_tools.places_client, "search_text"
+    ) as mock_search_text:
         mock_search_text.return_value = MOCK_PLACES_V1_RESPONSE
 
         result = json.loads(google_maps_tools.search_places("test query"))
@@ -259,7 +274,9 @@ def test_search_places_success(google_maps_tools):
 
 def test_search_places_no_results(google_maps_tools):
     """Test search_places when no results are returned."""
-    with patch.object(google_maps_tools.places_client, "search_text") as mock_search_text:
+    with patch.object(
+        google_maps_tools.places_client, "search_text"
+    ) as mock_search_text:
         empty_response = MagicMock()
         empty_response.places = []
         mock_search_text.return_value = empty_response
@@ -270,7 +287,9 @@ def test_search_places_no_results(google_maps_tools):
 
 def test_search_places_error(google_maps_tools):
     """Test search_places when an error occurs."""
-    with patch.object(google_maps_tools.places_client, "search_text") as mock_search_text:
+    with patch.object(
+        google_maps_tools.places_client, "search_text"
+    ) as mock_search_text:
         mock_search_text.side_effect = Exception("API Error")
 
         result = json.loads(google_maps_tools.search_places("test query"))

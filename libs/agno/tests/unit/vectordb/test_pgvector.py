@@ -52,18 +52,27 @@ def mock_pgvector(mock_engine, mock_embedder):
         mock_inspect.return_value = inspector
 
         # Mock the session factory and session
-        with patch("agno.vectordb.pgvector.pgvector.scoped_session") as mock_scoped_session:
+        with patch(
+            "agno.vectordb.pgvector.pgvector.scoped_session"
+        ) as mock_scoped_session:
             mock_session_factory = MagicMock()
             mock_scoped_session.return_value = mock_session_factory
 
             # Mock the session instance
             mock_session_instance = MagicMock()
-            mock_session_factory.return_value.__enter__.return_value = mock_session_instance
+            mock_session_factory.return_value.__enter__.return_value = (
+                mock_session_instance
+            )
 
             # Mock Vector class
             with patch("agno.vectordb.pgvector.pgvector.Vector"):
                 # Create PgVector instance
-                db = PgVector(table_name=TEST_TABLE, schema=TEST_SCHEMA, db_engine=mock_engine, embedder=mock_embedder)
+                db = PgVector(
+                    table_name=TEST_TABLE,
+                    schema=TEST_SCHEMA,
+                    db_engine=mock_engine,
+                    embedder=mock_embedder,
+                )
 
                 # Mock the table attribute
                 db.table = MagicMock()
@@ -98,13 +107,24 @@ def test_initialization():
     # More complete patching to prevent SQLAlchemy from validating the mock objects
     with patch("agno.vectordb.pgvector.pgvector.scoped_session"), patch(
         "agno.vectordb.pgvector.pgvector.Vector"
-    ), patch("agno.vectordb.pgvector.pgvector.Table"), patch("agno.vectordb.pgvector.pgvector.Column"), patch(
+    ), patch("agno.vectordb.pgvector.pgvector.Table"), patch(
+        "agno.vectordb.pgvector.pgvector.Column"
+    ), patch(
         "agno.vectordb.pgvector.pgvector.Index"
-    ), patch("agno.vectordb.pgvector.pgvector.MetaData"), patch.object(PgVector, "get_table"):
+    ), patch(
+        "agno.vectordb.pgvector.pgvector.MetaData"
+    ), patch.object(
+        PgVector, "get_table"
+    ):
         # Skip the actual table creation by patching get_table to return a mock
         PgVector.get_table = MagicMock(return_value=MagicMock())
 
-        db = PgVector(table_name=TEST_TABLE, schema=TEST_SCHEMA, db_engine=engine, embedder=embedder)
+        db = PgVector(
+            table_name=TEST_TABLE,
+            schema=TEST_SCHEMA,
+            db_engine=engine,
+            embedder=embedder,
+        )
         assert db.table_name == TEST_TABLE
         assert db.schema == TEST_SCHEMA
         assert db.embedder == embedder
@@ -112,10 +132,14 @@ def test_initialization():
 
 def test_initialization_failures(mock_embedder):
     """Test initialization with invalid parameters."""
-    with pytest.raises(ValueError), patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+    with pytest.raises(ValueError), patch(
+        "agno.vectordb.pgvector.pgvector.scoped_session"
+    ):
         PgVector(table_name="", schema=TEST_SCHEMA, db_engine=MagicMock())
 
-    with pytest.raises(ValueError), patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+    with pytest.raises(ValueError), patch(
+        "agno.vectordb.pgvector.pgvector.scoped_session"
+    ):
         PgVector(table_name=TEST_TABLE, schema=TEST_SCHEMA, db_engine=None, db_url=None)
 
 
@@ -211,7 +235,9 @@ def test_search(mock_pgvector):
     with patch.object(mock_pgvector, "keyword_search") as mock_keyword_search:
         mock_pgvector.search_type = SearchType.keyword
         mock_pgvector.search("test query")
-        mock_keyword_search.assert_called_with(query="test query", limit=5, filters=None)
+        mock_keyword_search.assert_called_with(
+            query="test query", limit=5, filters=None
+        )
 
     # Test hybrid search
     with patch.object(mock_pgvector, "hybrid_search") as mock_hybrid_search:
@@ -224,7 +250,11 @@ def test_vector_search(mock_pgvector, mock_embedder):
     """Test vector_search method using more comprehensive mocking."""
     # Create expected results
     expected_result = Document(
-        id="doc_1", name="test_doc_1", meta_data={"type": "test"}, content="Test content", embedding=[0.1] * 1024
+        id="doc_1",
+        name="test_doc_1",
+        meta_data={"type": "test"},
+        content="Test content",
+        embedding=[0.1] * 1024,
     )
 
     # Bypass the real implementation by mocking vector_search directly
@@ -275,7 +305,9 @@ def test_delete(mock_pgvector):
 @pytest.mark.asyncio
 async def test_async_create(mock_pgvector):
     """Test async_create method."""
-    with patch.object(mock_pgvector, "create"), patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pgvector, "create"), patch(
+        "asyncio.to_thread"
+    ) as mock_to_thread:
         mock_to_thread.return_value = None
 
         await mock_pgvector.async_create()
@@ -289,7 +321,9 @@ async def test_async_doc_exists(mock_pgvector):
     """Test async_doc_exists method."""
     doc = create_test_documents(1)[0]
 
-    with patch.object(mock_pgvector, "doc_exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pgvector, "doc_exists", return_value=True), patch(
+        "asyncio.to_thread"
+    ) as mock_to_thread:
         mock_to_thread.return_value = True
 
         result = await mock_pgvector.async_doc_exists(doc)
@@ -302,7 +336,9 @@ async def test_async_doc_exists(mock_pgvector):
 @pytest.mark.asyncio
 async def test_async_name_exists(mock_pgvector):
     """Test async_name_exists method."""
-    with patch.object(mock_pgvector, "name_exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pgvector, "name_exists", return_value=True), patch(
+        "asyncio.to_thread"
+    ) as mock_to_thread:
         mock_to_thread.return_value = True
 
         result = await mock_pgvector.async_name_exists("test_name")
@@ -317,7 +353,9 @@ async def test_async_insert(mock_pgvector):
     """Test async_insert method."""
     docs = create_test_documents()
 
-    with patch.object(mock_pgvector, "insert"), patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pgvector, "insert"), patch(
+        "asyncio.to_thread"
+    ) as mock_to_thread:
         mock_to_thread.return_value = None
 
         await mock_pgvector.async_insert(docs)
@@ -331,7 +369,9 @@ async def test_async_upsert(mock_pgvector):
     """Test async_upsert method."""
     docs = create_test_documents()
 
-    with patch.object(mock_pgvector, "upsert"), patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pgvector, "upsert"), patch(
+        "asyncio.to_thread"
+    ) as mock_to_thread:
         mock_to_thread.return_value = None
 
         await mock_pgvector.async_upsert(docs)
@@ -354,13 +394,17 @@ async def test_async_search(mock_pgvector):
 
         # Check results and that search was called via to_thread
         assert results == expected_results
-        mock_to_thread.assert_called_once_with(mock_pgvector.search, "test query", 5, None)
+        mock_to_thread.assert_called_once_with(
+            mock_pgvector.search, "test query", 5, None
+        )
 
 
 @pytest.mark.asyncio
 async def test_async_drop(mock_pgvector):
     """Test async_drop method."""
-    with patch.object(mock_pgvector, "drop"), patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pgvector, "drop"), patch(
+        "asyncio.to_thread"
+    ) as mock_to_thread:
         mock_to_thread.return_value = None
 
         await mock_pgvector.async_drop()
@@ -372,7 +416,9 @@ async def test_async_drop(mock_pgvector):
 @pytest.mark.asyncio
 async def test_async_exists(mock_pgvector):
     """Test async_exists method."""
-    with patch.object(mock_pgvector, "exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
+    with patch.object(mock_pgvector, "exists", return_value=True), patch(
+        "asyncio.to_thread"
+    ) as mock_to_thread:
         mock_to_thread.return_value = True
 
         result = await mock_pgvector.async_exists()

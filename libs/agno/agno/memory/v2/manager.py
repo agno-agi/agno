@@ -59,7 +59,9 @@ class MemoryManager:
                     func = Function.from_callable(tool, strict=True)  # type: ignore
                     func.strict = True
                     _functions_for_model[func.name] = func
-                    _tools_for_model.append({"type": "function", "function": func.to_dict()})
+                    _tools_for_model.append(
+                        {"type": "function", "function": func.to_dict()}
+                    )
                     log_debug(f"Added function {func.name}")
             except Exception as e:
                 log_warning(f"Could not add function {tool}: {e}")
@@ -78,14 +80,16 @@ class MemoryManager:
         if self.system_message is not None:
             return Message(role="system", content=self.system_message)
 
-        memory_capture_instructions = self.memory_capture_instructions or dedent("""\
+        memory_capture_instructions = self.memory_capture_instructions or dedent(
+            """\
             Memories should include details that could personalize ongoing interactions with the user, such as:
               - Personal facts: name, age, occupation, location, interests, preferences, etc.
               - Significant life events or experiences shared by the user
               - Important context about the user's current situation, challenges or goals
               - What the user likes or dislikes, their opinions, beliefs, values, etc.
               - Any other details that provide valuable insights into the user's personality, perspective or needs\
-        """)
+        """
+        )
 
         # -*- Return a system message for the memory manager
         system_prompt_lines = [
@@ -123,9 +127,13 @@ class MemoryManager:
             "  3. Decide to update an existing memory, using the `update_memory` tool.",
         ]
         if enable_delete_memory:
-            system_prompt_lines.append("  4. Decide to delete an existing memory, using the `delete_memory` tool.")
+            system_prompt_lines.append(
+                "  4. Decide to delete an existing memory, using the `delete_memory` tool."
+            )
         if enable_clear_memory:
-            system_prompt_lines.append("  5. Decide to clear all memories, using the `clear_memory` tool.")
+            system_prompt_lines.append(
+                "  5. Decide to clear all memories, using the `clear_memory` tool."
+            )
         system_prompt_lines += [
             "You can call multiple tools in a single response if needed. ",
             "Only add or update memories if it is necessary to capture key information provided by the user.",
@@ -162,16 +170,18 @@ class MemoryManager:
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
         else:
-            input_string = (
-                f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
-            )
+            input_string = f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
         self.add_tools_to_model(
             model_copy,
             self._get_db_tools(
-                user_id, db, input_string, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+                user_id,
+                db,
+                input_string,
+                enable_delete_memory=delete_memories,
+                enable_clear_memory=clear_memories,
             ),
         )
 
@@ -212,16 +222,18 @@ class MemoryManager:
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
         else:
-            input_string = (
-                f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
-            )
+            input_string = f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
         self.add_tools_to_model(
             model_copy,
             self._get_db_tools(
-                user_id, db, input_string, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+                user_id,
+                db,
+                input_string,
+                enable_delete_memory=delete_memories,
+                enable_clear_memory=clear_memories,
             ),
         )
 
@@ -264,14 +276,20 @@ class MemoryManager:
         self.add_tools_to_model(
             model_copy,
             self._get_db_tools(
-                user_id, db, task, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+                user_id,
+                db,
+                task,
+                enable_delete_memory=delete_memories,
+                enable_clear_memory=clear_memories,
             ),
         )
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
             self.get_system_message(
-                existing_memories, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+                existing_memories,
+                enable_delete_memory=delete_memories,
+                enable_clear_memory=clear_memories,
             ),
             # For models that require a non-system message
             Message(role="user", content=task),
@@ -306,14 +324,20 @@ class MemoryManager:
         self.add_tools_to_model(
             model_copy,
             self._get_db_tools(
-                user_id, db, task, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+                user_id,
+                db,
+                task,
+                enable_delete_memory=delete_memories,
+                enable_clear_memory=clear_memories,
             ),
         )
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
             self.get_system_message(
-                existing_memories, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+                existing_memories,
+                enable_delete_memory=delete_memories,
+                enable_clear_memory=clear_memories,
             ),
             # For models that require a non-system message
             Message(role="user", content=task),
@@ -374,7 +398,9 @@ class MemoryManager:
                 log_warning(f"Error storing memory in db: {e}")
                 return f"Error adding memory: {e}"
 
-        def update_memory(memory_id: str, memory: str, topics: Optional[List[str]] = None) -> str:
+        def update_memory(
+            memory_id: str, memory: str, topics: Optional[List[str]] = None
+        ) -> str:
             """Use this function to update an existing memory in the database.
             Args:
                 memory_id (str): The id of the memory to be updated.
@@ -422,7 +448,7 @@ class MemoryManager:
 
         def clear_memory() -> str:
             """Use this function to remove all (or clear all) memories from the database.
-            
+
             Returns:
                 str: A message indicating if the memory was cleared successfully or not.
             """

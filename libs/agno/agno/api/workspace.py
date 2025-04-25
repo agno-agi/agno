@@ -5,12 +5,8 @@ from httpx import Response
 from agno.api.api import api, invalid_response
 from agno.api.routes import ApiRoutes
 from agno.api.schemas.user import TeamIdentifier, TeamSchema, UserSchema
-from agno.api.schemas.workspace import (
-    WorkspaceCreate,
-    WorkspaceEvent,
-    WorkspaceSchema,
-    WorkspaceUpdate,
-)
+from agno.api.schemas.workspace import (WorkspaceCreate, WorkspaceEvent,
+                                        WorkspaceSchema, WorkspaceUpdate)
 from agno.cli.settings import agno_cli_settings
 from agno.utils.log import logger
 
@@ -33,7 +29,9 @@ def get_teams_for_user(user: UserSchema) -> Optional[List[TeamSchema]]:
             if response_json is None:
                 return None
 
-            teams: List[TeamSchema] = [TeamSchema.model_validate(team) for team in response_json]
+            teams: List[TeamSchema] = [
+                TeamSchema.model_validate(team) for team in response_json
+            ]
             return teams
         except Exception as e:
             logger.debug(f"Could not read teams: {e}")
@@ -70,7 +68,9 @@ def create_workspace_for_user(
             if response_json is None:
                 return None
 
-            created_workspace: WorkspaceSchema = WorkspaceSchema.model_validate(response_json)
+            created_workspace: WorkspaceSchema = WorkspaceSchema.model_validate(
+                response_json
+            )
             if created_workspace is not None:
                 return created_workspace
         except Exception as e:
@@ -78,7 +78,9 @@ def create_workspace_for_user(
     return None
 
 
-def update_workspace_for_user(user: UserSchema, workspace: WorkspaceUpdate) -> Optional[WorkspaceSchema]:
+def update_workspace_for_user(
+    user: UserSchema, workspace: WorkspaceUpdate
+) -> Optional[WorkspaceSchema]:
     logger.debug("--**-- Updating workspace for user")
     with api.AuthenticatedClient() as api_client:
         try:
@@ -103,7 +105,9 @@ def update_workspace_for_user(user: UserSchema, workspace: WorkspaceUpdate) -> O
             if response_json is None:
                 return None
 
-            updated_workspace: WorkspaceSchema = WorkspaceSchema.model_validate(response_json)
+            updated_workspace: WorkspaceSchema = WorkspaceSchema.model_validate(
+                response_json
+            )
             if updated_workspace is not None:
                 return updated_workspace
         except Exception as e:
@@ -119,7 +123,9 @@ def update_workspace_for_team(
         try:
             payload = {
                 "user": user.model_dump(include={"id_user", "email"}),
-                "team_workspace": workspace.model_dump(exclude_none=True).update({"id_team": team.id_team}),
+                "team_workspace": workspace.model_dump(exclude_none=True).update(
+                    {"id_team": team.id_team}
+                ),
             }
 
             r: Response = api_client.post(
@@ -138,7 +144,9 @@ def update_workspace_for_team(
             if response_json is None:
                 return None
 
-            updated_workspace: WorkspaceSchema = WorkspaceSchema.model_validate(response_json)
+            updated_workspace: WorkspaceSchema = WorkspaceSchema.model_validate(
+                response_json
+            )
             if updated_workspace is not None:
                 return updated_workspace
         except Exception as e:
@@ -167,7 +175,10 @@ def log_workspace_event(user: UserSchema, workspace_event: WorkspaceEvent) -> bo
             if response_json is None:
                 return False
 
-            if isinstance(response_json, dict) and response_json.get("status") == "success":
+            if (
+                isinstance(response_json, dict)
+                and response_json.get("status") == "success"
+            ):
                 return True
             return False
         except Exception as e:

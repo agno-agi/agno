@@ -1,4 +1,5 @@
 import requests
+
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.mistral.mistral import MistralChat

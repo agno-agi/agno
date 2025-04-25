@@ -1,11 +1,12 @@
 from pathlib import Path
 
+from rich import print
+from rich.text import Text
+
 from agno.agent import Agent, RunResponse
 from agno.media import Image
 from agno.models.openai import OpenAIChat
 from agno.utils.audio import write_audio_to_file
-from rich import print
-from rich.text import Text
 
 cwd = Path(__file__).parent.resolve()
 

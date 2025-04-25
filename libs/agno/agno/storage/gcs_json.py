@@ -12,7 +12,9 @@ from agno.utils.log import logger
 try:
     from google.cloud import storage as gcs
 except ImportError:
-    raise ImportError("`google-cloud-storage` not installed. Please install it with `pip install google-cloud-storage`")
+    raise ImportError(
+        "`google-cloud-storage` not installed. Please install it with `pip install google-cloud-storage`"
+    )
 
 
 class GCSJsonStorage(JsonStorage):
@@ -63,7 +65,9 @@ class GCSJsonStorage(JsonStorage):
         The client and bucket are already stored in self.
         """
         try:
-            self.bucket = self.client.create_bucket(self.bucket_name, self.location, self.project)
+            self.bucket = self.client.create_bucket(
+                self.bucket_name, self.location, self.project
+            )
             logger.info(f"Bucket {self.bucket_name} created successfully.")
         except Exception as e:
             # If the bucket already exists, check for conflict (HTTP 409) and continue.
@@ -106,7 +110,9 @@ class GCSJsonStorage(JsonStorage):
             return WorkflowSession.from_dict(data)
         return None
 
-    def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
+    def get_all_session_ids(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[str]:
         """
         Lists all session IDs stored in the bucket.
         """
@@ -116,7 +122,9 @@ class GCSJsonStorage(JsonStorage):
                 session_ids.append(blob.name.replace(".json", ""))
         return session_ids
 
-    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
+    def get_all_sessions(
+        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[Session]:
         """
         Retrieves all sessions stored in the bucket.
         """

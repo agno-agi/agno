@@ -15,7 +15,9 @@ try:
     import requests
     from requests.exceptions import RequestException
 except ImportError:
-    raise ImportError("`requests` not installed. Please install using `pip install requests`")
+    raise ImportError(
+        "`requests` not installed. Please install using `pip install requests`"
+    )
 
 MODELS_LAB_URLS = {
     "MP4": "https://modelslab.com/api/v6/video/text2video",
@@ -52,7 +54,9 @@ class ModelsLabTools(Toolkit):
         self.api_key = api_key or getenv("MODELS_LAB_API_KEY")
 
         if not self.api_key:
-            logger.error("MODELS_LAB_API_KEY not set. Please set the MODELS_LAB_API_KEY environment variable.")
+            logger.error(
+                "MODELS_LAB_API_KEY not set. Please set the MODELS_LAB_API_KEY environment variable."
+            )
 
         self.register(self.generate_media)
 
@@ -86,11 +90,17 @@ class ModelsLabTools(Toolkit):
         return base_payload
 
     def _add_media_artifact(
-        self, agent: Union[Agent, Team], media_id: str, media_url: str, eta: Optional[str] = None
+        self,
+        agent: Union[Agent, Team],
+        media_id: str,
+        media_url: str,
+        eta: Optional[str] = None,
     ) -> None:
         """Add appropriate media artifact based on file type."""
         if self.file_type == FileType.MP4:
-            agent.add_video(VideoArtifact(id=str(media_id), url=media_url, eta=str(eta)))
+            agent.add_video(
+                VideoArtifact(id=str(media_id), url=media_url, eta=str(eta))
+            )
         elif self.file_type == FileType.GIF:
             agent.add_image(ImageArtifact(id=str(media_id), url=media_url))
         elif self.file_type == FileType.MP3:
@@ -99,7 +109,9 @@ class ModelsLabTools(Toolkit):
     def _wait_for_media(self, media_id: str, eta: int) -> bool:
         """Wait for media generation to complete."""
         time_to_wait = min(eta + self.add_to_eta, self.max_wait_time)
-        log_info(f"Waiting for {time_to_wait} seconds for {self.file_type.value} to be ready")
+        log_info(
+            f"Waiting for {time_to_wait} seconds for {self.file_type.value} to be ready"
+        )
 
         for seconds_waited in range(time_to_wait):
             try:
@@ -141,7 +153,9 @@ class ModelsLabTools(Toolkit):
                 return f"Error: {result.get('message')}"
 
             if "error" in result:
-                error_msg = f"Failed to generate {self.file_type.value}: {result['error']}"
+                error_msg = (
+                    f"Failed to generate {self.file_type.value}: {result['error']}"
+                )
                 logger.error(error_msg)
                 return f"Error: {result['error']}"
 

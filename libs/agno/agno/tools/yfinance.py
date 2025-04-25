@@ -6,7 +6,9 @@ from agno.utils.log import log_debug
 try:
     import yfinance as yf
 except ImportError:
-    raise ImportError("`yfinance` not installed. Please install using `pip install yfinance`.")
+    raise ImportError(
+        "`yfinance` not installed. Please install using `pip install yfinance`."
+    )
 
 
 class YFinanceTools(Toolkit):
@@ -74,8 +76,14 @@ class YFinanceTools(Toolkit):
             log_debug(f"Fetching current price for {symbol}")
             stock = yf.Ticker(symbol)
             # Use "regularMarketPrice" for regular market hours, or "currentPrice" for pre/post market
-            current_price = stock.info.get("regularMarketPrice", stock.info.get("currentPrice"))
-            return f"{current_price:.4f}" if current_price else f"Could not fetch current price for {symbol}"
+            current_price = stock.info.get(
+                "regularMarketPrice", stock.info.get("currentPrice")
+            )
+            return (
+                f"{current_price:.4f}"
+                if current_price
+                else f"Could not fetch current price for {symbol}"
+            )
         except Exception as e:
             return f"Error fetching current price for {symbol}: {e}"
 
@@ -116,7 +124,9 @@ class YFinanceTools(Toolkit):
                 "Website": company_info_full.get("website"),
                 "Summary": company_info_full.get("longBusinessSummary"),
                 "Analyst Recommendation": company_info_full.get("recommendationKey"),
-                "Number Of Analyst Opinions": company_info_full.get("numberOfAnalystOpinions"),
+                "Number Of Analyst Opinions": company_info_full.get(
+                    "numberOfAnalystOpinions"
+                ),
                 "Employees": company_info_full.get("fullTimeEmployees"),
                 "Total Cash": company_info_full.get("totalCash"),
                 "Free Cash flow": company_info_full.get("freeCashflow"),
@@ -130,7 +140,9 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching company profile for {symbol}: {e}"
 
-    def get_historical_stock_prices(self, symbol: str, period: str = "1mo", interval: str = "1d") -> str:
+    def get_historical_stock_prices(
+        self, symbol: str, period: str = "1mo", interval: str = "1d"
+    ) -> str:
         """
         Use this function to get the historical stock price for a given symbol.
 

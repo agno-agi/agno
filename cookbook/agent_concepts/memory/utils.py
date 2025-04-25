@@ -1,9 +1,10 @@
 import json
 
-from agno.run.response import RunResponse
 from rich.console import Console
 from rich.json import JSON
 from rich.panel import Panel
+
+from agno.run.response import RunResponse
 
 console = Console()
 

@@ -2,6 +2,8 @@ import json
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
+from uagi import UAgIConfig, create_uagi
+
 from agno.document import Document
 from agno.document.reader import Reader
 from agno.document.reader.csv_reader import CSVReader
@@ -12,7 +14,6 @@ from agno.document.reader.website_reader import WebsiteReader
 from agno.memory.v2 import Memory, UserMemory
 from agno.team import Team
 from agno.utils.log import logger
-from uagi import UAgIConfig, create_uagi
 
 
 async def initialize_session_state():

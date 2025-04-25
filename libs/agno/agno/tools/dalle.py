@@ -12,7 +12,9 @@ try:
     from openai import OpenAI
     from openai.types.images_response import ImagesResponse
 except ImportError:
-    raise ImportError("`openai` not installed. Please install using `pip install openai`")
+    raise ImportError(
+        "`openai` not installed. Please install using `pip install openai`"
+    )
 
 
 class DalleTools(Toolkit):
@@ -20,7 +22,9 @@ class DalleTools(Toolkit):
         self,
         model: str = "dall-e-3",
         n: int = 1,
-        size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = "1024x1024",
+        size: Optional[
+            Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]
+        ] = "1024x1024",
         quality: Literal["standard", "hd"] = "standard",
         style: Literal["vivid", "natural"] = "vivid",
         api_key: Optional[str] = None,
@@ -37,7 +41,9 @@ class DalleTools(Toolkit):
 
         # Validations
         if model not in ["dall-e-3", "dall-e-2"]:
-            raise ValueError("Invalid model. Please choose from 'dall-e-3' or 'dall-e-2'.")
+            raise ValueError(
+                "Invalid model. Please choose from 'dall-e-3' or 'dall-e-2'."
+            )
         if size not in ["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]:
             raise ValueError(
                 "Invalid size. Please choose from '256x256', '512x512', '1024x1024', '1792x1024', '1024x1792'."
@@ -45,12 +51,16 @@ class DalleTools(Toolkit):
         if quality not in ["standard", "hd"]:
             raise ValueError("Invalid quality. Please choose from 'standard' or 'hd'.")
         if not isinstance(n, int) or n <= 0:
-            raise ValueError("Invalid number of images. Please provide a positive integer.")
+            raise ValueError(
+                "Invalid number of images. Please provide a positive integer."
+            )
         if model == "dall-e-3" and n > 1:
             raise ValueError("Dall-e-3 only supports a single image generation.")
 
         if not self.api_key:
-            logger.error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
+            logger.error(
+                "OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable."
+            )
 
         self.register(self.create_image)
         # TODO:
@@ -88,7 +98,10 @@ class DalleTools(Toolkit):
             for img in response.data:
                 agent.add_image(
                     ImageArtifact(
-                        id=str(uuid4()), url=img.url, original_prompt=prompt, revised_prompt=img.revised_prompt
+                        id=str(uuid4()),
+                        url=img.url,
+                        original_prompt=prompt,
+                        revised_prompt=img.revised_prompt,
                     )
                 )
                 response_str += f"Image has been generated at the URL {img.url}\n"

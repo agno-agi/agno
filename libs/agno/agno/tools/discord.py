@@ -45,7 +45,9 @@ class DiscordTools(Toolkit):
         if enable_message_management:
             self.register(self.delete_message)
 
-    def _make_request(self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _make_request(
+        self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Make a request to Discord API."""
         url = f"{self.base_url}{endpoint}"
         response = requests.request(method, url, headers=self.headers, json=data)
@@ -117,7 +119,9 @@ class DiscordTools(Toolkit):
             str: A JSON string containing the channel's message history.
         """
         try:
-            response = self._make_request("GET", f"/channels/{channel_id}/messages?limit={limit}")
+            response = self._make_request(
+                "GET", f"/channels/{channel_id}/messages?limit={limit}"
+            )
             return json.dumps(response, indent=2)
         except Exception as e:
             logger.error(f"Error getting messages: {e}")
@@ -135,8 +139,12 @@ class DiscordTools(Toolkit):
             str: A success message or error message.
         """
         try:
-            self._make_request("DELETE", f"/channels/{channel_id}/messages/{message_id}")
-            return f"Message {message_id} deleted successfully from channel {channel_id}"
+            self._make_request(
+                "DELETE", f"/channels/{channel_id}/messages/{message_id}"
+            )
+            return (
+                f"Message {message_id} deleted successfully from channel {channel_id}"
+            )
         except Exception as e:
             logger.error(f"Error deleting message: {e}")
             return f"Error deleting message: {str(e)}"
@@ -155,5 +163,9 @@ class DiscordTools(Toolkit):
     def get_tool_config() -> dict:
         """Get the required configuration for the tool."""
         return {
-            "bot_token": {"type": "string", "description": "Discord bot token for authentication", "required": True}
+            "bot_token": {
+                "type": "string",
+                "description": "Discord bot token for authentication",
+                "required": True,
+            }
         }

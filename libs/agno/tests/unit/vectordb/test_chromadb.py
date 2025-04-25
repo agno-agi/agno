@@ -23,7 +23,12 @@ def chroma_db(mock_embedder):
         shutil.rmtree(TEST_PATH)
         os.makedirs(TEST_PATH)
 
-    db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, persistent_client=False, embedder=mock_embedder)
+    db = ChromaDb(
+        collection=TEST_COLLECTION,
+        path=TEST_PATH,
+        persistent_client=False,
+        embedder=mock_embedder,
+    )
     db.create()
     yield db
 
@@ -42,9 +47,13 @@ def sample_documents() -> List[Document]:
     """Fixture to create sample documents"""
     return [
         Document(
-            content="Tom Kha Gai is a Thai coconut soup with chicken", meta_data={"cuisine": "Thai", "type": "soup"}
+            content="Tom Kha Gai is a Thai coconut soup with chicken",
+            meta_data={"cuisine": "Thai", "type": "soup"},
         ),
-        Document(content="Pad Thai is a stir-fried rice noodle dish", meta_data={"cuisine": "Thai", "type": "noodles"}),
+        Document(
+            content="Pad Thai is a stir-fried rice noodle dish",
+            meta_data={"cuisine": "Thai", "type": "noodles"},
+        ),
         Document(
             content="Green curry is a spicy Thai curry with coconut milk",
             meta_data={"cuisine": "Thai", "type": "curry"},
@@ -82,7 +91,8 @@ def test_upsert_documents(chroma_db, sample_documents):
 
     # Upsert same document with different content
     modified_doc = Document(
-        content="Tom Kha Gai is a spicy and sour Thai coconut soup", meta_data={"cuisine": "Thai", "type": "soup"}
+        content="Tom Kha Gai is a spicy and sour Thai coconut soup",
+        meta_data={"cuisine": "Thai", "type": "soup"},
     )
     chroma_db.upsert([modified_doc])
 
@@ -106,10 +116,14 @@ def test_distance_metrics():
     # Ensure the test directory exists
     os.makedirs(TEST_PATH, exist_ok=True)
 
-    db_cosine = ChromaDb(collection="test_cosine", path=TEST_PATH, distance=Distance.cosine)
+    db_cosine = ChromaDb(
+        collection="test_cosine", path=TEST_PATH, distance=Distance.cosine
+    )
     db_cosine.create()
 
-    db_euclidean = ChromaDb(collection="test_euclidean", path=TEST_PATH, distance=Distance.l2)
+    db_euclidean = ChromaDb(
+        collection="test_euclidean", path=TEST_PATH, distance=Distance.l2
+    )
     db_euclidean.create()
 
     assert db_cosine._collection is not None
@@ -222,7 +236,8 @@ async def test_async_upsert_documents(chroma_db, sample_documents):
 
     # Upsert same document with different content
     modified_doc = Document(
-        content="Tom Kha Gai is a spicy and sour Thai coconut soup", meta_data={"cuisine": "Thai", "type": "soup"}
+        content="Tom Kha Gai is a spicy and sour Thai coconut soup",
+        meta_data={"cuisine": "Thai", "type": "soup"},
     )
     await chroma_db.async_upsert([modified_doc])
 

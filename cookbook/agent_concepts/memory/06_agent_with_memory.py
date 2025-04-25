@@ -6,13 +6,14 @@ After each run, user memories are created/updated.
 To enable this, set `enable_user_memories=True` in the Agent config.
 """
 
+from rich.pretty import pprint
+from utils import print_chat_history
+
 from agno.agent.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
-from rich.pretty import pprint
-from utils import print_chat_history
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 

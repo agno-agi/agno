@@ -2,12 +2,13 @@ import os
 from pathlib import Path
 from typing import List
 
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.arxiv import ArxivTools
 from agno.tools.exa import ExaTools
-from dotenv import load_dotenv
-from pydantic import BaseModel, Field
 
 load_dotenv()
 

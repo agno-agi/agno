@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Sequence
+from typing import (Any, AsyncGenerator, Dict, Iterator, List, Optional,
+                    Sequence)
 
 from pydantic import BaseModel
 
@@ -15,7 +16,9 @@ try:
     from ibm_watsonx_ai import Credentials
     from ibm_watsonx_ai.foundation_models import ModelInference
 except ImportError:
-    raise ImportError("`ibm-watsonx-ai` is not installed. Please install it using `pip install ibm-watsonx-ai`.")
+    raise ImportError(
+        "`ibm-watsonx-ai` is not installed. Please install it using `pip install ibm-watsonx-ai`."
+    )
 
 
 def _format_images_for_message(message: Message, images: Sequence[Image]) -> Message:
@@ -24,7 +27,9 @@ def _format_images_for_message(message: Message, images: Sequence[Image]) -> Mes
     """
 
     # Create a default message content with text
-    message_content_with_image: List[Dict[str, Any]] = [{"type": "text", "text": message.content}]
+    message_content_with_image: List[Dict[str, Any]] = [
+        {"type": "text", "text": message.content}
+    ]
 
     # Add images to the message content
     for image in images:
@@ -94,16 +99,22 @@ class WatsonX(Model):
         # Fetch API key and project ID from env if not already set
         self.api_key = self.api_key or getenv("IBM_WATSONX_API_KEY")
         if not self.api_key:
-            log_error("IBM_WATSONX_API_KEY not set. Please set the IBM_WATSONX_API_KEY environment variable.")
+            log_error(
+                "IBM_WATSONX_API_KEY not set. Please set the IBM_WATSONX_API_KEY environment variable."
+            )
 
         self.project_id = self.project_id or getenv("IBM_WATSONX_PROJECT_ID")
         if not self.project_id:
-            log_error("IBM_WATSONX_PROJECT_ID not set. Please set the IBM_WATSONX_PROJECT_ID environment variable.")
+            log_error(
+                "IBM_WATSONX_PROJECT_ID not set. Please set the IBM_WATSONX_PROJECT_ID environment variable."
+            )
 
         self.url = getenv("IBM_WATSONX_URL") or self.url
 
         # Create credentials object
-        credentials = Credentials(url=self.url, api_key=self.api_key, verify=self.verify)
+        credentials = Credentials(
+            url=self.url, api_key=self.api_key, verify=self.verify
+        )
 
         return {
             "credentials": credentials,
@@ -202,7 +213,9 @@ class WatsonX(Model):
 
         except Exception as e:
             log_error(f"Error calling WatsonX API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke(self, messages: List[Message]) -> Any:
         """
@@ -224,7 +237,9 @@ class WatsonX(Model):
 
         except Exception as e:
             log_error(f"Error calling WatsonX API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
         """
@@ -246,9 +261,13 @@ class WatsonX(Model):
 
         except Exception as e:
             log_error(f"Error calling WatsonX API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> AsyncGenerator[Any, None]:
+    async def ainvoke_stream(
+        self, messages: List[Message]
+    ) -> AsyncGenerator[Any, None]:
         """
         Sends an asynchronous streaming chat completion request to the WatsonX API.
 
@@ -265,13 +284,17 @@ class WatsonX(Model):
             # Get parameters for chat
             request_params = self._get_request_params()
 
-            async_stream = await client.achat_stream(messages=formatted_messages, **request_params)
+            async_stream = await client.achat_stream(
+                messages=formatted_messages, **request_params
+            )
             async for chunk in async_stream:
                 yield chunk
 
         except Exception as e:
             log_error(f"Error in async streaming from WatsonX API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     # Override base method
     @staticmethod
@@ -350,7 +373,10 @@ class WatsonX(Model):
             model_response.content = response_message["content"]
 
         # Add tool calls
-        if response_message.get("tool_calls") is not None and len(response_message["tool_calls"]) > 0:
+        if (
+            response_message.get("tool_calls") is not None
+            and len(response_message["tool_calls"]) > 0
+        ):
             try:
                 model_response.tool_calls = response_message["tool_calls"]
             except Exception as e:
@@ -361,7 +387,9 @@ class WatsonX(Model):
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:
+    def parse_provider_response_delta(
+        self, response_delta: Dict[str, Any]
+    ) -> ModelResponse:
         """
         Parse the OpenAI streaming response into a ModelResponse.
 

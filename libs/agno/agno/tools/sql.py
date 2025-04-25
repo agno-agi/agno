@@ -38,7 +38,9 @@ class SQLTools(Toolkit):
             _engine = create_engine(db_url)
         elif user and password and host and port and dialect:
             if schema is not None:
-                _engine = create_engine(f"{dialect}://{user}:{password}@{host}:{port}/{schema}")
+                _engine = create_engine(
+                    f"{dialect}://{user}:{password}@{host}:{port}/{schema}"
+                )
             else:
                 _engine = create_engine(f"{dialect}://{user}:{password}@{host}:{port}")
 

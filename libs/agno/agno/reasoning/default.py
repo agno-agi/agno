@@ -24,7 +24,8 @@ def get_default_reasoning_agent(
     agent = Agent(
         model=reasoning_model,
         description="You are a meticulous, thoughtful, and logical Reasoning Agent who solves complex problems through clear, structured, step-by-step analysis.",
-        instructions=dedent(f"""\
+        instructions=dedent(
+            f"""\
         Step 1 - Problem Analysis:
         - Restate the user's task clearly in your own words to ensure full comprehension.
         - Identify explicitly what information is required and what tools or resources might be necessary.
@@ -77,7 +78,8 @@ def get_default_reasoning_agent(
         - Adhere strictly to a minimum of {min_steps} and maximum of {max_steps} steps to ensure effective task resolution.
         - Execute necessary tools proactively and without hesitation, clearly documenting tool usage.
         - Only create a single instance of ReasoningSteps for your response.\
-        """),
+        """
+        ),
         tools=tools,
         show_tool_calls=False,
         response_model=ReasoningSteps,

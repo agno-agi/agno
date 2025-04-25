@@ -3,9 +3,6 @@
 2. Run the script using: `python cookbook/workflows/workflows_playground.py`
 """
 
-from agno.playground import Playground, serve_playground_app
-from agno.storage.sqlite import SqliteStorage
-
 # Import the workflows
 from blog_post_generator import BlogPostGenerator
 from investment_report_generator import (
@@ -13,6 +10,9 @@ from investment_report_generator import (
 )
 from personalized_email_generator import PersonalisedEmailGenerator
 from startup_idea_validator import StartupIdeaValidator
+
+from agno.playground import Playground, serve_playground_app
+from agno.storage.sqlite import SqliteStorage
 
 # Initialize the workflows with SQLite storage
 

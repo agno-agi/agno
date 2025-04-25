@@ -57,15 +57,29 @@ class AgentGetResponse(BaseModel):
             agent_id=agent.agent_id,
             name=agent.name,
             model=AgentModel(
-                name=agent.model.name or agent.model.__class__.__name__ if agent.model else None,
+                name=(
+                    agent.model.name or agent.model.__class__.__name__
+                    if agent.model
+                    else None
+                ),
                 model=agent.model.id if agent.model else None,
-                provider=agent.model.provider or agent.model.__class__.__name__ if agent.model else None,
+                provider=(
+                    agent.model.provider or agent.model.__class__.__name__
+                    if agent.model
+                    else None
+                ),
             ),
             add_context=agent.add_context,
             tools=format_tools(tools) if tools else None,
             memory=memory_dict,
-            storage={"name": agent.storage.__class__.__name__} if agent.storage else None,
-            knowledge={"name": agent.knowledge.__class__.__name__} if agent.knowledge else None,
+            storage=(
+                {"name": agent.storage.__class__.__name__} if agent.storage else None
+            ),
+            knowledge=(
+                {"name": agent.knowledge.__class__.__name__}
+                if agent.knowledge
+                else None
+            ),
             description=agent.description,
             instructions=agent.instructions,
         )
@@ -176,26 +190,42 @@ class TeamGetResponse(BaseModel):
             team_id=team.team_id,
             name=team.name,
             model=TeamModel(
-                name=team.model.name or team.model.__class__.__name__ if team.model else None,
+                name=(
+                    team.model.name or team.model.__class__.__name__
+                    if team.model
+                    else None
+                ),
                 model=team.model.id if team.model else None,
-                provider=team.model.provider or team.model.__class__.__name__ if team.model else None,
+                provider=(
+                    team.model.provider or team.model.__class__.__name__
+                    if team.model
+                    else None
+                ),
             ),
             success_criteria=team.success_criteria,
             instructions=team.instructions,
             description=team.description,
             expected_output=team.expected_output,
-            context=json.dumps(team.context) if isinstance(team.context, dict) else team.context,
+            context=(
+                json.dumps(team.context)
+                if isinstance(team.context, dict)
+                else team.context
+            ),
             enable_agentic_context=team.enable_agentic_context,
             response_model=team.response_model,
             mode=team.mode,
             storage={"name": team.storage.__class__.__name__} if team.storage else None,
             memory=memory_dict,
             members=[
-                AgentGetResponse.from_agent(member)
-                if isinstance(member, Agent)
-                else TeamGetResponse.from_team(member)
-                if isinstance(member, Team)
-                else None
+                (
+                    AgentGetResponse.from_agent(member)
+                    if isinstance(member, Agent)
+                    else (
+                        TeamGetResponse.from_team(member)
+                        if isinstance(member, Team)
+                        else None
+                    )
+                )
                 for member in team.members
             ],
         )

@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
+from agno.embedder.base import Embedder
+from agno.embedder.openai import OpenAIEmbedder
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.memory.v2.db.base import MemoryDb
 from agno.memory.v2.db.schema import MemoryRow
@@ -17,16 +19,16 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
-from agno.utils.log import log_debug, log_warning, logger, set_log_level_to_debug, set_log_level_to_info
-from agno.utils.prompts import get_json_output_prompt
-from agno.utils.string import parse_response_model_str
+from agno.utils.log import (log_debug, log_warning, logger,
+                            set_log_level_to_debug, set_log_level_to_info)
 
 
 class MemorySearchResponse(BaseModel):
     """Model for Memory Search Response."""
 
     memory_ids: List[str] = Field(
-        ..., description="The IDs of the memories that are most semantically similar to the query."
+        ...,
+        description="The IDs of the memories that are most semantically similar to the query.",
     )
 
 
@@ -45,7 +47,11 @@ class TeamMemberInteraction:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamMemberInteraction":
-        return cls(member_name=data["member_name"], task=data["task"], response=RunResponse.from_dict(data["response"]))
+        return cls(
+            member_name=data["member_name"],
+            task=data["task"],
+            response=RunResponse.from_dict(data["response"]),
+        )
 
 
 @dataclass
@@ -56,7 +62,9 @@ class TeamContext:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "member_interactions": [interaction.to_dict() for interaction in self.member_interactions],
+            "member_interactions": [
+                interaction.to_dict() for interaction in self.member_interactions
+            ],
             "text": self.text,
         }
 
@@ -64,7 +72,8 @@ class TeamContext:
     def from_dict(cls, data: Dict[str, Any]) -> "TeamContext":
         return cls(
             member_interactions=[
-                TeamMemberInteraction.from_dict(interaction) for interaction in data["member_interactions"]
+                TeamMemberInteraction.from_dict(interaction)
+                for interaction in data["member_interactions"]
             ],
             text=data["text"],
         )
@@ -86,6 +95,7 @@ class Memory:
     summary_manager: Optional[SessionSummarizer] = None
 
     db: Optional[MemoryDb] = None
+    embedder: Optional[Embedder] = None
 
     # runs per session
     runs: Optional[Dict[str, List[Union[RunResponse, TeamRunResponse]]]] = None
@@ -107,6 +117,7 @@ class Memory:
         memory_manager: Optional[MemoryManager] = None,
         summarizer: Optional[SessionSummarizer] = None,
         db: Optional[MemoryDb] = None,
+        embedder: Optional[Embedder] = None,
         memories: Optional[Dict[str, Dict[str, UserMemory]]] = None,
         summaries: Optional[Dict[str, Dict[str, SessionSummary]]] = None,
         runs: Optional[Dict[str, List[Union[RunResponse, TeamRunResponse]]]] = None,
@@ -129,10 +140,17 @@ class Memory:
             raise ValueError("Model must be a Model object, not a string")
 
         self.memory_manager = memory_manager
-
         self.summary_manager = summarizer
-
         self.db = db
+        self.embedder = embedder
+
+        # Initialize default OpenAI embedder if model exists but no embedder provided
+        if self.embedder is None and self.model is not None:
+            try:
+                self.embedder = OpenAIEmbedder()
+                log_debug("Initialized default OpenAI embedder for semantic search")
+            except Exception as e:
+                log_warning(f"Could not initialize default embedder: {e}")
 
         # We are making memories
         if self.model is not None:
@@ -153,6 +171,7 @@ class Memory:
         self.debug_mode = debug_mode
 
     def set_model(self, model: Model) -> None:
+        self.model = deepcopy(model)
         if self.memory_manager is None:
             self.memory_manager = MemoryManager(model=deepcopy(model))
         if self.memory_manager.model is None:
@@ -161,6 +180,14 @@ class Memory:
             self.summary_manager = SessionSummarizer(model=deepcopy(model))
         if self.summary_manager.model is None:
             self.summary_manager.model = deepcopy(model)
+
+        # Initialize embedder if it's not already set
+        if self.embedder is None:
+            try:
+                self.embedder = OpenAIEmbedder()
+                log_debug("Initialized default OpenAI embedder for semantic search")
+            except Exception as e:
+                log_warning(f"Could not initialize default embedder: {e}")
 
     def get_model(self) -> Model:
         if self.model is None:
@@ -186,7 +213,9 @@ class Memory:
             self.memories = {}
             for memory in all_memories:
                 if memory.user_id is not None and memory.id is not None:
-                    self.memories.setdefault(memory.user_id, {})[memory.id] = UserMemory.from_dict(memory.memory)
+                    self.memories.setdefault(memory.user_id, {})[memory.id] = (
+                        UserMemory.from_dict(memory.memory)
+                    )
 
     def set_log_level(self):
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
@@ -204,13 +233,19 @@ class Memory:
         # Add summary if it exists
         if self.summaries is not None:
             _memory_dict["summaries"] = {
-                user_id: {session_id: summary.to_dict() for session_id, summary in session_summaries.items()}
+                user_id: {
+                    session_id: summary.to_dict()
+                    for session_id, summary in session_summaries.items()
+                }
                 for user_id, session_summaries in self.summaries.items()
             }
         # Add memories if they exist
         if self.memories is not None:
             _memory_dict["memories"] = {
-                user_id: {memory_id: memory.to_dict() for memory_id, memory in user_memories.items()}
+                user_id: {
+                    memory_id: memory.to_dict()
+                    for memory_id, memory in user_memories.items()
+                }
                 for user_id, user_memories in self.memories.items()
             }
         # Add runs if they exist
@@ -230,19 +265,37 @@ class Memory:
         return _memory_dict
 
     # -*- Public Functions
-    def get_user_memories(self, user_id: Optional[str] = None, refresh_from_db: bool = True) -> List[UserMemory]:
+    def get_user_memories(
+        self,
+        user_id: Optional[str] = None,
+        refresh_from_db: bool = True,
+        limit: Optional[int] = None,  # Add limit parameter
+    ) -> List[UserMemory]:
         """Get the user memories for a given user id"""
         if user_id is None:
             user_id = "default"
         # Refresh from the DB
         if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
+            # Modify refresh_from_db to accept limit or handle limit after fetching
+            self.refresh_from_db(user_id=user_id)  # Keep existing refresh logic for now
 
         if self.memories is None:
             return []
-        return list(self.memories.get(user_id, {}).values())
 
-    def get_session_summaries(self, user_id: Optional[str] = None) -> List[SessionSummary]:
+        user_mems = list(self.memories.get(user_id, {}).values())
+
+        # Sort by last_updated descending to get latest first
+        user_mems.sort(key=lambda m: m.last_updated or datetime.min, reverse=True)
+
+        # Apply limit if provided
+        if limit is not None:
+            return user_mems[:limit]
+        else:
+            return user_mems
+
+    def get_session_summaries(
+        self, user_id: Optional[str] = None
+    ) -> List[SessionSummary]:
         """Get the session summaries for a given user id"""
         if user_id is None:
             user_id = "default"
@@ -251,7 +304,10 @@ class Memory:
         return list(self.summaries.get(user_id, {}).values())
 
     def get_user_memory(
-        self, memory_id: str, user_id: Optional[str] = None, refresh_from_db: bool = True
+        self,
+        memory_id: str,
+        user_id: Optional[str] = None,
+        refresh_from_db: bool = True,
     ) -> Optional[UserMemory]:
         """Get the user memory for a given user id"""
         if user_id is None:
@@ -263,7 +319,9 @@ class Memory:
             return None
         return self.memories.get(user_id, {}).get(memory_id, None)
 
-    def get_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
+    def get_session_summary(
+        self, session_id: str, user_id: Optional[str] = None
+    ) -> Optional[SessionSummary]:
         """Get the session summary for a given user id"""
 
         if user_id is None:
@@ -274,18 +332,22 @@ class Memory:
 
     def add_user_memory(
         self,
-        memory: UserMemory,
+        memory: Union[str, UserMemory],
         user_id: Optional[str] = None,
         refresh_from_db: bool = True,
     ) -> str:
         """Add a user memory for a given user id
         Args:
-            memory (UserMemory): The memory to add
+            memory (Union[str, UserMemory]): The memory to add, either as a string or UserMemory object
             user_id (Optional[str]): The user id to add the memory to. If not provided, the memory is added to the "default" user.
         Returns:
             str: The id of the memory
         """
         from uuid import uuid4
+
+        # Convert string to UserMemory if needed
+        if isinstance(memory, str):
+            memory = UserMemory(memory=memory)
 
         memory_id = memory.memory_id or str(uuid4())
         if memory.memory_id is None:
@@ -301,13 +363,23 @@ class Memory:
             memory.last_updated = datetime.now()
 
         self.memories.setdefault(user_id, {})[memory_id] = memory  # type: ignore
+
         if self.db:
+            # Generate embedding if embedder is available
+            embedding = None
+            if self.embedder and memory.memory:
+                try:
+                    embedding = self.embedder.get_embedding(memory.memory)
+                except Exception as e:
+                    log_warning(f"Failed to generate embedding for memory: {e}")
+
             self._upsert_db_memory(
                 memory=MemoryRow(
                     id=memory_id,
                     user_id=user_id,
                     memory=memory.to_dict(),
                     last_updated=memory.last_updated or datetime.now(),
+                    embedding=embedding,
                 )
             )
 
@@ -393,7 +465,9 @@ class Memory:
         return self.runs.get(session_id, [])
 
     # -*- Agent Functions
-    def create_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
+    def create_session_summary(
+        self, session_id: str, user_id: Optional[str] = None
+    ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
 
         if not self.summary_manager:
@@ -404,17 +478,23 @@ class Memory:
         if user_id is None:
             user_id = "default"
 
-        summary_response = self.summary_manager.run(conversation=self.get_messages_for_session(session_id=session_id))
+        summary_response = self.summary_manager.run(
+            conversation=self.get_messages_for_session(session_id=session_id)
+        )
         if summary_response is None:
             return None
         session_summary = SessionSummary(
-            summary=summary_response.summary, topics=summary_response.topics, last_updated=datetime.now()
+            summary=summary_response.summary,
+            topics=summary_response.topics,
+            last_updated=datetime.now(),
         )
         self.summaries.setdefault(user_id, {})[session_id] = session_summary  # type: ignore
 
         return session_summary
 
-    async def acreate_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
+    async def acreate_session_summary(
+        self, session_id: str, user_id: Optional[str] = None
+    ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         if not self.summary_manager:
             raise ValueError("Summarizer not initialized")
@@ -430,7 +510,9 @@ class Memory:
         if summary_response is None:
             return None
         session_summary = SessionSummary(
-            summary=summary_response.summary, topics=summary_response.topics, last_updated=datetime.now()
+            summary=summary_response.summary,
+            topics=summary_response.topics,
+            last_updated=datetime.now(),
         )
         self.summaries.setdefault(user_id, {})[session_id] = session_summary  # type: ignore
 
@@ -469,7 +551,8 @@ class Memory:
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
-            {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
+            {"memory_id": memory_id, "memory": memory.memory}
+            for memory_id, memory in existing_memories.items()
         ]
         response = self.memory_manager.create_or_update_memories(  # type: ignore
             messages=messages,
@@ -517,7 +600,8 @@ class Memory:
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
-            {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
+            {"memory_id": memory_id, "memory": memory.memory}
+            for memory_id, memory in existing_memories.items()
         ]
 
         response = await self.memory_manager.acreate_or_update_memories(  # type: ignore
@@ -551,7 +635,8 @@ class Memory:
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
-            {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
+            {"memory_id": memory_id, "memory": memory.memory}
+            for memory_id, memory in existing_memories.items()
         ]
         # The memory manager updates the DB directly
         response = self.memory_manager.run_memory_task(  # type: ignore
@@ -568,7 +653,9 @@ class Memory:
 
         return response
 
-    async def aupdate_memory_task(self, task: str, user_id: Optional[str] = None) -> str:
+    async def aupdate_memory_task(
+        self, task: str, user_id: Optional[str] = None
+    ) -> str:
         """Updates the memory with a task"""
         self.set_log_level()
         if not self.memory_manager:
@@ -585,7 +672,8 @@ class Memory:
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
-            {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
+            {"memory_id": memory_id, "memory": memory.memory}
+            for memory_id, memory in existing_memories.items()
         ]
         # The memory manager updates the DB directly
         response = await self.memory_manager.arun_memory_task(  # type: ignore
@@ -647,7 +735,11 @@ class Memory:
 
                 # Start from the beginning to look for the user message
                 for message in run_response.messages:
-                    if hasattr(message, "from_history") and message.from_history and skip_history_messages:
+                    if (
+                        hasattr(message, "from_history")
+                        and message.from_history
+                        and skip_history_messages
+                    ):
                         continue
                     if message.role == user_role:
                         user_message_from_run = message
@@ -655,7 +747,11 @@ class Memory:
 
                 # Start from the end to look for the assistant response
                 for message in run_response.messages[::-1]:
-                    if hasattr(message, "from_history") and message.from_history and skip_history_messages:
+                    if (
+                        hasattr(message, "from_history")
+                        and message.from_history
+                        and skip_history_messages
+                    ):
                         continue
                     if message.role in assistant_role:
                         assistant_message_from_run = message
@@ -666,7 +762,9 @@ class Memory:
                     final_messages.append(assistant_message_from_run)
         return final_messages
 
-    def add_run(self, session_id: str, run: Union[RunResponse, TeamRunResponse]) -> None:
+    def add_run(
+        self, session_id: str, run: Union[RunResponse, TeamRunResponse]
+    ) -> None:
         """Adds a RunResponse to the runs list."""
         if not self.runs:
             self.runs = {}
@@ -705,7 +803,11 @@ class Memory:
                 if skip_role and message.role == skip_role:
                     continue
                 # Skip messages that were tagged as history in previous runs
-                if hasattr(message, "from_history") and message.from_history and skip_history_messages:
+                if (
+                    hasattr(message, "from_history")
+                    and message.from_history
+                    and skip_history_messages
+                ):
                     continue
                 if message.role == "system":
                     # Only add the system message once
@@ -718,7 +820,9 @@ class Memory:
         log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
 
-    def get_tool_calls(self, session_id: str, num_calls: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_tool_calls(
+        self, session_id: str, num_calls: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
         """Returns a list of tool calls from the messages"""
 
         tool_calls = []
@@ -735,208 +839,90 @@ class Memory:
 
     def search_user_memories(
         self,
-        query: Optional[str] = None,
-        limit: Optional[int] = None,
-        retrieval_method: Optional[Literal["last_n", "first_n", "agentic"]] = None,
+        query: str,
         user_id: Optional[str] = None,
-        refresh_from_db: bool = True,
+        limit: Optional[int] = None,
+        retrieval_method: Literal["latest", "semantic"] = "latest",
     ) -> List[UserMemory]:
-        """Search through user memories using the specified retrieval method.
+        """
+        Search for user memories based on the query.
 
         Args:
-            query: The search query for agentic search. Required if retrieval_method is "agentic".
-            limit: Maximum number of memories to return. Defaults to self.retrieval_limit if not specified. Optional.
-            retrieval_method: The method to use for retrieving memories. Defaults to self.retrieval if not specified.
-                - "last_n": Return the most recent memories
-                - "first_n": Return the oldest memories
-                - "agentic": Return memories most similar to the query, but using an agentic approach
-            user_id: The user to search for. Optional.
+            query (str): The search query
+            user_id (Optional[str]): The user ID to search memories for
+            limit (Optional[int]): Maximum number of memories to return
+            retrieval_method (str): Method to retrieve memories - 'latest' or 'semantic'
 
         Returns:
-            A list of UserMemory objects matching the search criteria.
+            List[UserMemory]: List of user memories matching the query
         """
-
         if user_id is None:
             user_id = "default"
 
-        self.set_log_level()
-
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
-
-        if not self.memories:
+        if not self.db:
+            log_warning("No database configured for memory search")
             return []
 
-        # Use default retrieval method if not specified
-        retrieval_method = retrieval_method
-        # Use default limit if not specified
-        limit = limit
+        # Default limit if none provided
+        limit = limit or 10
 
-        # Handle different retrieval methods
-        if retrieval_method == "agentic":
-            if not query:
-                raise ValueError("Query is required for agentic search")
+        if retrieval_method == "semantic":
+            # Check if we have an embedder
+            if not self.embedder:
+                log_warning(
+                    "Semantic search requested but no embedder configured, falling back to latest."
+                )
+                # Fallback to latest memories if no embedder
+                return self.get_user_memories(user_id=user_id, limit=limit)
 
-            return self._search_user_memories_agentic(user_id=user_id, query=query, limit=limit)
-
-        elif retrieval_method == "first_n":
-            return self._get_first_n_memories(user_id=user_id, limit=limit)
-
-        else:  # Default to last_n
-            return self._get_last_n_memories(user_id=user_id, limit=limit)
-
-    def _update_model_for_agentic_search(self) -> None:
-        model = self.get_model()
-        if model.supports_native_structured_outputs:
-            model.response_format = MemorySearchResponse
-            model.structured_outputs = True
-
-        elif model.supports_json_schema_outputs:
-            model.response_format = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": MemorySearchResponse.__name__,
-                    "schema": MemorySearchResponse.model_json_schema(),
-                },
-            }
-            model.structured_outputs = False
-        else:
-            model.response_format = {"type": "json_object"}
-            model.structured_outputs = False
-
-    def _search_user_memories_agentic(self, user_id: str, query: str, limit: Optional[int] = None) -> List[UserMemory]:
-        """Search through user memories using agentic search."""
-        if not self.memories:
-            return []
-
-        model = self.get_model()
-
-        self._update_model_for_agentic_search()
-
-        log_debug("Searching for memories", center=True)
-
-        # Get all memories as a list
-        user_memories: Dict[str, UserMemory] = self.memories[user_id]
-        system_message_str = "Your task is to search through user memories and return the IDs of the memories that are related to the query.\n"
-        system_message_str += "\n<user_memories>\n"
-        for memory in user_memories.values():
-            system_message_str += f"ID: {memory.memory_id}\n"
-            system_message_str += f"Memory: {memory.memory}\n"
-            if memory.topics:
-                system_message_str += f"Topics: {','.join(memory.topics)}\n"
-            system_message_str += "\n"
-        system_message_str = system_message_str.strip()
-        system_message_str += "\n</user_memories>\n\n"
-        system_message_str += "REMEMBER: Only return the IDs of the memories that are related to the query."
-
-        if model.response_format == {"type": "json_object"}:
-            system_message_str += "\n" + get_json_output_prompt(MemorySearchResponse)  # type: ignore
-
-        messages_for_model = [
-            Message(role="system", content=system_message_str),
-            Message(
-                role="user",
-                content=f"Return the IDs of the memories related to the following query: {query}",
-            ),
-        ]
-
-        # Generate a response from the Model (includes running function calls)
-        response = model.response(messages=messages_for_model)
-        log_debug("Search for memories complete", center=True)
-
-        memory_search: Optional[MemorySearchResponse] = None
-        # If the model natively supports structured outputs, the parsed value is already in the structured format
-        if (
-            model.supports_native_structured_outputs
-            and response.parsed is not None
-            and isinstance(response.parsed, MemorySearchResponse)
-        ):
-            memory_search = response.parsed
-
-        # Otherwise convert the response to the structured format
-        if isinstance(response.content, str):
             try:
-                memory_search = parse_response_model_str(response.content, MemorySearchResponse)  # type: ignore
+                # Get embedding for the query
+                query_embedding = self.embedder.get_embedding(query)
 
-                # Update RunResponse
-                if memory_search is None:
-                    log_warning("Failed to convert memory_search response to MemorySearchResponse")
-                    return []
+                # Use the DB's semantic search capability
+                db_memories = self.db.search_memories_semantic(
+                    query_embedding=query_embedding, user_id=user_id, limit=limit
+                )
+
+                # Convert to UserMemory objects
+                return self._convert_db_memories_to_user_memories(db_memories)
+
             except Exception as e:
-                log_warning(f"Failed to convert memory_search response to MemorySearchResponse: {e}")
-                return []
-
-        memories_to_return = []
-        if memory_search:
-            for memory_id in memory_search.memory_ids:
-                memories_to_return.append(user_memories[memory_id])
-        return memories_to_return[:limit]
-
-    def _get_last_n_memories(self, user_id: str, limit: Optional[int] = None) -> List[UserMemory]:
-        """Get the most recent user memories.
-
-        Args:
-            limit: Maximum number of memories to return.
-
-        Returns:
-            A list of the most recent UserMemory objects.
-        """
-        if not self.memories:
-            return []
-
-        memories_dict = self.memories.get(user_id, {})
-
-        # Sort memories by last_updated timestamp if available
-        if memories_dict:
-            # Convert to list of values for sorting
-            memories_list = list(memories_dict.values())
-
-            # Sort memories by last_updated timestamp (newest first)
-            # If last_updated is None, place at the beginning of the list
-            sorted_memories_list = sorted(
-                memories_list,
-                key=lambda memory: memory.last_updated or datetime.min,
-            )
+                log_warning(f"Error during semantic search: {e}")
+                # Fallback to latest memories if semantic search fails
+                log_warning("Falling back to latest memories retrieval")
+                # Pass limit to the fallback call
+                return self.get_user_memories(user_id=user_id, limit=limit)
         else:
-            sorted_memories_list = []
+            # Default to retrieving the latest memories
+            # Pass limit to the default call
+            return self.get_user_memories(user_id=user_id, limit=limit)
 
-        if limit is not None and limit > 0:
-            sorted_memories_list = sorted_memories_list[-limit:]
+    def _convert_db_memories_to_user_memories(
+        self, db_memories: List[MemoryRow]
+    ) -> List[UserMemory]:
+        """Convert database memory rows to UserMemory objects."""
+        user_memories = []
+        for row in db_memories:
+            try:
+                if isinstance(row.memory, str):
+                    memory_dict = json.loads(row.memory)
+                else:
+                    # Assuming row.memory is already a dict if not a string
+                    memory_dict = row.memory
 
-        return sorted_memories_list
+                # Ensure memory_id is set correctly from the row id
+                memory_dict["memory_id"] = row.id
 
-    def _get_first_n_memories(self, user_id: str, limit: Optional[int] = None) -> List[UserMemory]:
-        """Get the oldest user memories.
-
-        Args:
-            limit: Maximum number of memories to return.
-
-        Returns:
-            A list of the oldest UserMemory objects.
-        """
-        if not self.memories:
-            return []
-
-        memories_dict = self.memories.get(user_id, {})
-        # Sort memories by last_updated timestamp if available
-        if memories_dict:
-            # Convert to list of values for sorting
-            memories_list = list(memories_dict.values())
-
-            # Sort memories by last_updated timestamp (oldest first)
-            # If last_updated is None, place at the end of the list
-            sorted_memories_list = sorted(
-                memories_list,
-                key=lambda memory: memory.last_updated or datetime.max,
-            )
-
-        else:
-            sorted_memories_list = []
-
-        if limit is not None and limit > 0:
-            sorted_memories_list = sorted_memories_list[:limit]
-
-        return sorted_memories_list
+                # Use the from_dict classmethod for the dataclass
+                user_memory = UserMemory.from_dict(memory_dict)
+                user_memories.append(user_memory)
+            except Exception as e:
+                # Log the problematic row data for debugging
+                log_warning(
+                    f"Error converting memory row (id: {row.id}) to UserMemory: {e}. Data: {row.memory}"
+                )
+        return user_memories
 
     def clear(self) -> None:
         """Clears the memory."""
@@ -968,7 +954,11 @@ class Memory:
 
     # -*- Team Functions
     def add_interaction_to_team_context(
-        self, session_id: str, member_name: str, task: str, run_response: Union[RunResponse, TeamRunResponse]
+        self,
+        session_id: str,
+        member_name: str,
+        task: str,
+        run_response: Union[RunResponse, TeamRunResponse],
     ) -> None:
         if self.team_context is None:
             self.team_context = {}
@@ -1022,7 +1012,12 @@ class Memory:
                 response_dict = interaction.response.to_dict()
                 response_content = (
                     response_dict.get("content")
-                    or ",".join([tool.get("content", "") for tool in response_dict.get("tools", [])])
+                    or ",".join(
+                        [
+                            tool.get("content", "")
+                            for tool in response_dict.get("tools", [])
+                        ]
+                    )
                     or ""
                 )
                 team_member_interactions_str += f"Member: {interaction.member_name}\n"

@@ -4,9 +4,12 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
 
 try:
-    from moviepy import ColorClip, CompositeVideoClip, TextClip, VideoFileClip  # type: ignore
+    from moviepy import CompositeVideoClip  # type: ignore
+    from moviepy import ColorClip, TextClip, VideoFileClip
 except ImportError:
-    raise ImportError("`moviepy` not installed. Please install using `pip install moviepy ffmpeg`")
+    raise ImportError(
+        "`moviepy` not installed. Please install using `pip install moviepy ffmpeg`"
+    )
 
 
 class MoviePyVideoTools(Toolkit):
@@ -51,7 +54,9 @@ class MoviePyVideoTools(Toolkit):
 
             duration_exceeded = line_duration > MAX_DURATION
             chars_exceeded = len(temp) > MAX_CHARS
-            maxgap_exceeded = idx > 0 and word_data["start"] - words[idx - 1]["end"] > MAX_GAP
+            maxgap_exceeded = (
+                idx > 0 and word_data["start"] - words[idx - 1]["end"] > MAX_GAP
+            )
 
             if duration_exceeded or chars_exceeded or maxgap_exceeded:
                 if line:
@@ -130,7 +135,13 @@ class MoviePyVideoTools(Toolkit):
 
             # Create space clip
             space_clip = (
-                TextClip(text=" ", font=font, font_size=int(fontsize), color=color, method="label")
+                TextClip(
+                    text=" ",
+                    font=font,
+                    font_size=int(fontsize),
+                    color=color,
+                    method="label",
+                )
                 .with_start(text_json["start"])
                 .with_duration(full_duration)
             )
@@ -141,7 +152,9 @@ class MoviePyVideoTools(Toolkit):
             # Handle line wrapping
             if line_width + word_width + space_width <= max_line_width:
                 word_clip = word_clip.with_position((x_pos + x_buffer, y_pos))
-                space_clip = space_clip.with_position((x_pos + word_width + x_buffer, y_pos))
+                space_clip = space_clip.with_position(
+                    (x_pos + word_width + x_buffer, y_pos)
+                )
                 x_pos += word_width + space_width
                 line_width += word_width + space_width
             else:
@@ -303,7 +316,9 @@ class MoviePyVideoTools(Toolkit):
                 # Increase background height to accommodate larger text
                 bg_height = int(video.h * 0.15)
                 bg_clip = ColorClip(
-                    size=(video.w, bg_height), color=(0, 0, 0), duration=line["end"] - line["start"]
+                    size=(video.w, bg_height),
+                    color=(0, 0, 0),
+                    duration=line["end"] - line["start"],
                 ).with_opacity(0.6)
 
                 # Position background even closer to bottom (90% instead of 85%)
@@ -314,14 +329,16 @@ class MoviePyVideoTools(Toolkit):
                 word_clips = self.create_caption_clips(line, (video.w, bg_height))
 
                 # Combine background and words
-                caption_composite = CompositeVideoClip([bg_clip] + word_clips, size=bg_clip.size).with_position(
-                    bg_position
-                )
+                caption_composite = CompositeVideoClip(
+                    [bg_clip] + word_clips, size=bg_clip.size
+                ).with_position(bg_position)
 
                 all_caption_clips.append(caption_composite)
 
             # Combine video with all captions
-            final_video = CompositeVideoClip([video] + all_caption_clips, size=video.size)
+            final_video = CompositeVideoClip(
+                [video] + all_caption_clips, size=video.size
+            )
 
             # Write output with optimized settings
             final_video.write_videofile(

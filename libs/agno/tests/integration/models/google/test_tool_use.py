@@ -90,7 +90,9 @@ async def test_async_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -175,7 +177,9 @@ def test_parallel_tool_calls():
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
-    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
+    assert (
+        len([call for call in tool_calls if call.get("type", "") == "function"]) == 2
+    )  # Total of 2 tool calls made
     assert response.content is not None
     assert "TSLA" in response.content and "AAPL" in response.content
 
@@ -192,14 +196,18 @@ def test_multiple_tool_calls():
         monitoring=False,
     )
 
-    response = agent.run("What is the current price of TSLA and what is the latest news about it?")
+    response = agent.run(
+        "What is the current price of TSLA and what is the latest news about it?"
+    )
 
     # Verify tool usage
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
-    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
+    assert (
+        len([call for call in tool_calls if call.get("type", "") == "function"]) == 2
+    )  # Total of 2 tool calls made
     assert response.content is not None
     assert "TSLA" in response.content
 
@@ -255,7 +263,10 @@ def test_search_stream():
         monitoring=False,
     )
 
-    response_stream = agent.run("What are the latest scientific studies about climate change from 2024?", stream=True)
+    response_stream = agent.run(
+        "What are the latest scientific studies about climate change from 2024?",
+        stream=True,
+    )
 
     responses = []
     citations_found = False

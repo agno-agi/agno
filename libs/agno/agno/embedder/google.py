@@ -10,7 +10,9 @@ try:
     from google.genai import Client as GeminiClient
     from google.genai.types import EmbedContentResponse
 except ImportError:
-    raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
+    raise ImportError(
+        "`google-genai` not installed. Please install it using `pip install google-genai`"
+    )
 
 
 @dataclass
@@ -33,7 +35,9 @@ class GeminiEmbedder(Embedder):
 
         self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
         if not self.api_key:
-            logger.error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
+            logger.error(
+                "GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable."
+            )
 
         if self.api_key:
             _client_params["api_key"] = self.api_key
@@ -74,7 +78,9 @@ class GeminiEmbedder(Embedder):
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         response = self._response(text=text)
-        usage = response.metadata.billable_character_count if response.metadata else None
+        usage = (
+            response.metadata.billable_character_count if response.metadata else None
+        )
         try:
             return response.embeddings[0].values, usage
         except Exception as e:

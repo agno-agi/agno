@@ -4,12 +4,13 @@ This example demonstrates how to create session summaries.
 To enable this, set `enable_session_summaries=True` in the Agent config.
 """
 
+from rich.pretty import pprint
+
 from agno.agent.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.memory.v2.summarizer import SessionSummarizer
 from agno.models.anthropic.claude import Claude
-from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 

@@ -85,7 +85,10 @@ def test_read_with_chunking(mock_html_content):
         return [
             doc,  # Original document
             Document(
-                name=f"{doc.name}_chunk", id=f"{doc.id}_chunk", content="Chunked content", meta_data=doc.meta_data
+                name=f"{doc.name}_chunk",
+                id=f"{doc.id}_chunk",
+                content="Chunked content",
+                meta_data=doc.meta_data,
             ),
         ]
 
@@ -141,7 +144,9 @@ def test_get_primary_domain():
     assert reader._get_primary_domain("https://example.com/page1") == "example.com"
 
     # Test with subdomain
-    assert reader._get_primary_domain("https://blog.example.com/article") == "example.com"
+    assert (
+        reader._get_primary_domain("https://blog.example.com/article") == "example.com"
+    )
 
     # Test with www
     assert reader._get_primary_domain("https://www.example.com") == "example.com"
@@ -225,7 +230,10 @@ async def test_async_read_with_chunking(mock_html_content):
         return [
             doc,  # Original document
             Document(
-                name=f"{doc.name}_chunk", id=f"{doc.id}_chunk", content="Chunked content", meta_data=doc.meta_data
+                name=f"{doc.name}_chunk",
+                id=f"{doc.id}_chunk",
+                content="Chunked content",
+                meta_data=doc.meta_data,
             ),
         ]
 

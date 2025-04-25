@@ -20,19 +20,27 @@ def test_reasoning_content_from_reasoning_tools():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         tools=[ReasoningTools(add_instructions=True)],
-        instructions=dedent("""\
+        instructions=dedent(
+            """\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
             Use step-by-step reasoning to solve the problem.
             \
-        """),
+        """
+        ),
     )
 
     # Run the agent in non-streaming mode
-    response = agent.run("What is the sum of the first 10 natural numbers?", stream=False)
+    response = agent.run(
+        "What is the sum of the first 10 natural numbers?", stream=False
+    )
 
     # Assert that reasoning_content exists and is populated
-    assert hasattr(response, "reasoning_content"), "Response should have reasoning_content attribute"
-    assert response.reasoning_content is not None, "reasoning_content should not be None"
+    assert hasattr(
+        response, "reasoning_content"
+    ), "Response should have reasoning_content attribute"
+    assert (
+        response.reasoning_content is not None
+    ), "reasoning_content should not be None"
     assert len(response.reasoning_content) > 0, "reasoning_content should not be empty"
     assert response.extra_data.reasoning_steps is not None
     assert len(response.extra_data.reasoning_steps) > 0
@@ -45,23 +53,39 @@ def test_reasoning_content_from_reasoning_tools_streaming():
     streaming_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         tools=[ReasoningTools(add_instructions=True)],
-        instructions=dedent("""\
+        instructions=dedent(
+            """\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
             Use step-by-step reasoning to solve the problem.
             \
-        """),
+        """
+        ),
     )
 
     # Consume all streaming responses
-    _ = list(streaming_agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
+    _ = list(
+        streaming_agent.run(
+            "What is the value of 5! (factorial)?",
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+    )
 
     # Check the agent's run_response directly after streaming is complete
-    assert hasattr(streaming_agent, "run_response"), "Agent should have run_response after streaming"
-    assert streaming_agent.run_response is not None, "Agent's run_response should not be None"
-    assert hasattr(streaming_agent.run_response, "reasoning_content"), (
-        "Response should have reasoning_content attribute"
-    )
-    assert streaming_agent.run_response.reasoning_content is not None, "reasoning_content should not be None"
-    assert len(streaming_agent.run_response.reasoning_content) > 0, "reasoning_content should not be empty"
+    assert hasattr(
+        streaming_agent, "run_response"
+    ), "Agent should have run_response after streaming"
+    assert (
+        streaming_agent.run_response is not None
+    ), "Agent's run_response should not be None"
+    assert hasattr(
+        streaming_agent.run_response, "reasoning_content"
+    ), "Response should have reasoning_content attribute"
+    assert (
+        streaming_agent.run_response.reasoning_content is not None
+    ), "reasoning_content should not be None"
+    assert (
+        len(streaming_agent.run_response.reasoning_content) > 0
+    ), "reasoning_content should not be empty"
     assert streaming_agent.run_response.extra_data.reasoning_steps is not None
     assert len(streaming_agent.run_response.extra_data.reasoning_steps) > 0

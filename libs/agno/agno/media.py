@@ -44,7 +44,9 @@ class AudioArtifact(Media):
 class Video(BaseModel):
     filepath: Optional[Union[Path, str]] = None  # Absolute local location for video
     content: Optional[Any] = None  # Actual video bytes content
-    format: Optional[str] = None  # E.g. `mp4`, `mov`, `avi`, `mkv`, `webm`, `flv`, `mpeg`, `mpg`, `wmv`, `three_gp`
+    format: Optional[str] = (
+        None  # E.g. `mp4`, `mov`, `avi`, `mkv`, `webm`, `flv`, `mpeg`, `mpg`, `wmv`, `three_gp`
+    )
 
     @model_validator(mode="before")
     def validate_data(cls, data: Any):
@@ -84,11 +86,15 @@ class Video(BaseModel):
         import zlib
 
         response_dict = {
-            "content": base64.b64encode(
-                zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode("utf-8")
-            ).decode("utf-8")
-            if self.content
-            else None,
+            "content": (
+                base64.b64encode(
+                    zlib.compress(self.content)
+                    if isinstance(self.content, bytes)
+                    else self.content.encode("utf-8")
+                ).decode("utf-8")
+                if self.content
+                else None
+            ),
             "filepath": self.filepath,
             "format": self.format,
         }
@@ -133,9 +139,13 @@ class Audio(BaseModel):
         count = len([field for field in [filepath, content, url] if field is not None])
 
         if count == 0:
-            raise ValueError("One of `filepath` or `content` or `url` must be provided.")
+            raise ValueError(
+                "One of `filepath` or `content` or `url` must be provided."
+            )
         elif count > 1:
-            raise ValueError("Only one of `filepath` or `content` or `url` should be provided.")
+            raise ValueError(
+                "Only one of `filepath` or `content` or `url` should be provided."
+            )
 
         return data
 
@@ -153,11 +163,15 @@ class Audio(BaseModel):
         import zlib
 
         response_dict = {
-            "content": base64.b64encode(
-                zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode("utf-8")
-            ).decode("utf-8")
-            if self.content
-            else None,
+            "content": (
+                base64.b64encode(
+                    zlib.compress(self.content)
+                    if isinstance(self.content, bytes)
+                    else self.content.encode("utf-8")
+                ).decode("utf-8")
+                if self.content
+                else None
+            ),
             "filepath": self.filepath,
             "format": self.format,
         }
@@ -166,7 +180,9 @@ class Audio(BaseModel):
 
     @classmethod
     def from_artifact(cls, artifact: AudioArtifact) -> "Audio":
-        return cls(url=artifact.url, content=artifact.base64_audio, format=artifact.mime_type)
+        return cls(
+            url=artifact.url, content=artifact.base64_audio, format=artifact.mime_type
+        )
 
 
 class AudioResponse(BaseModel):
@@ -184,9 +200,11 @@ class AudioResponse(BaseModel):
 
         response_dict = {
             "id": self.id,
-            "content": base64.b64encode(self.content).decode("utf-8")
-            if isinstance(self.content, bytes)
-            else self.content,
+            "content": (
+                base64.b64encode(self.content).decode("utf-8")
+                if isinstance(self.content, bytes)
+                else self.content
+            ),
             "expires_at": self.expires_at,
             "transcript": self.transcript,
             "mime_type": self.mime_type,
@@ -245,7 +263,9 @@ class Image(BaseModel):
         if count == 0:
             raise ValueError("One of `url`, `filepath`, or `content` must be provided.")
         elif count > 1:
-            raise ValueError("Only one of `url`, `filepath`, or `content` should be provided.")
+            raise ValueError(
+                "Only one of `url`, `filepath`, or `content` should be provided."
+            )
 
         return data
 
@@ -254,11 +274,15 @@ class Image(BaseModel):
         import zlib
 
         response_dict = {
-            "content": base64.b64encode(
-                zlib.compress(self.content) if isinstance(self.content, bytes) else self.content.encode("utf-8")
-            ).decode("utf-8")
-            if self.content
-            else None,
+            "content": (
+                base64.b64encode(
+                    zlib.compress(self.content)
+                    if isinstance(self.content, bytes)
+                    else self.content.encode("utf-8")
+                ).decode("utf-8")
+                if self.content
+                else None
+            ),
             "filepath": self.filepath,
             "url": self.url,
             "detail": self.detail,
@@ -284,8 +308,12 @@ class File(BaseModel):
     @classmethod
     def check_at_least_one_source(cls, data):
         """Ensure at least one of url, filepath, or content is provided."""
-        if isinstance(data, dict) and not any(data.get(field) for field in ["url", "filepath", "content", "external"]):
-            raise ValueError("At least one of url, filepath, content or external must be provided")
+        if isinstance(data, dict) and not any(
+            data.get(field) for field in ["url", "filepath", "content", "external"]
+        ):
+            raise ValueError(
+                "At least one of url, filepath, content or external must be provided"
+            )
         return data
 
     @field_validator("mime_type")
@@ -293,7 +321,9 @@ class File(BaseModel):
     def validate_mime_type(cls, v):
         """Validate that the mime_type is one of the allowed types."""
         if v is not None and v not in cls.valid_mime_types():
-            raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}")
+            raise ValueError(
+                f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}"
+            )
         return v
 
     @classmethod

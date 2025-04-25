@@ -8,7 +8,9 @@ from agno.utils.log import logger
 try:
     from todoist_api_python.api import TodoistAPI
 except ImportError:
-    raise ImportError("`todoist-api-python` not installed. Please install using `pip install todoist-api-python`")
+    raise ImportError(
+        "`todoist-api-python` not installed. Please install using `pip install todoist-api-python`"
+    )
 
 
 class TodoistTools(Toolkit):
@@ -42,7 +44,9 @@ class TodoistTools(Toolkit):
 
         self.api_token = api_token or os.getenv("TODOIST_API_TOKEN")
         if not self.api_token:
-            raise ValueError("TODOIST_API_TOKEN not set. Please set the TODOIST_API_TOKEN environment variable.")
+            raise ValueError(
+                "TODOIST_API_TOKEN not set. Please set the TODOIST_API_TOKEN environment variable."
+            )
 
         self.api = TodoistAPI(self.api_token)
 
@@ -111,7 +115,11 @@ class TodoistTools(Toolkit):
         """
         try:
             task = self.api.add_task(
-                content=content, project_id=project_id, due_string=due_string, priority=priority, labels=labels or []
+                content=content,
+                project_id=project_id,
+                due_string=due_string,
+                priority=priority,
+                labels=labels or [],
             )
             # Convert task to a dictionary and handle the Due object
             task_dict = self._task_to_dict(task)

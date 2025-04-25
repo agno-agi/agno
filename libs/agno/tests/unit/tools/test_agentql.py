@@ -14,7 +14,9 @@ def mock_playwright():
         mock_browser = Mock()
         mock_page = Mock()
         mock_browser.new_page.return_value = mock_page
-        mock_pw.return_value.__enter__.return_value.chromium.launch.return_value = mock_browser
+        mock_pw.return_value.__enter__.return_value.chromium.launch.return_value = (
+            mock_browser
+        )
         return mock_pw
 
 
@@ -75,7 +77,10 @@ def test_scrape_website_success(mock_playwright, mock_agentql, agentql_tools):
 
     # Set up the mock response for query_data
     wrapped_page.query_data.return_value = {
-        "text_content": ["Example Domain", "This domain is for use in illustrative examples"]
+        "text_content": [
+            "Example Domain",
+            "This domain is for use in illustrative examples",
+        ]
     }
 
     result = agentql_tools.scrape_website("https://example.com")
@@ -84,11 +89,13 @@ def test_scrape_website_success(mock_playwright, mock_agentql, agentql_tools):
     wrapped_page.goto.assert_called_once_with("https://example.com")
 
     # Verify query_data was called with correct query
-    wrapped_page.query_data.assert_called_once_with("""
+    wrapped_page.query_data.assert_called_once_with(
+        """
         {
             text_content[]
         }
-        """)
+        """
+    )
 
     # Check the result contains expected content
     assert "Example Domain" in result

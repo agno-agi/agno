@@ -16,7 +16,6 @@ except ImportError:
 from agno.document import Document
 from agno.embedder import Embedder
 from agno.reranker.base import Reranker
-
 # from agno.vectordb.singlestore.index import Ivfflat, HNSWFlat
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
@@ -92,7 +91,8 @@ class SingleStore(VectorDb):
             log_info(f"Creating table: {self.collection}")
             with self.db_engine.connect() as connection:
                 connection.execute(
-                    text(f"""
+                    text(
+                        f"""
                     CREATE TABLE IF NOT EXISTS {self.schema}.{self.collection} (
                         id TEXT,
                         name TEXT,
@@ -104,7 +104,8 @@ class SingleStore(VectorDb):
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                         content_hash TEXT
                     );
-                    """)
+                    """
+                    )
                 )
             # Call optimize to create indexes
             self.optimize()
@@ -118,7 +119,9 @@ class SingleStore(VectorDb):
         """
         log_debug(f"Checking if table exists: {self.table.name}")
         try:
-            return inspect(self.db_engine).has_table(self.table.name, schema=self.schema)
+            return inspect(self.db_engine).has_table(
+                self.table.name, schema=self.schema
+            )
         except Exception as e:
             logger.error(e)
             return False
@@ -133,7 +136,9 @@ class SingleStore(VectorDb):
         columns = [self.table.c.name, self.table.c.content_hash]
         with self.Session.begin() as sess:
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            stmt = select(*columns).where(self.table.c.content_hash == md5(cleaned_content.encode()).hexdigest())
+            stmt = select(*columns).where(
+                self.table.c.content_hash == md5(cleaned_content.encode()).hexdigest()
+            )
             result = sess.execute(stmt).first()
             return result is not None
 
@@ -161,7 +166,12 @@ class SingleStore(VectorDb):
             result = sess.execute(stmt).first()
             return result is not None
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, batch_size: int = 10) -> None:
+    def insert(
+        self,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 10,
+    ) -> None:
         """
         Insert documents into the table.
 
@@ -182,7 +192,11 @@ class SingleStore(VectorDb):
                 usage_json = json.dumps(document.usage)
 
                 # Convert embedding list to SingleStore VECTOR format
-                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
+                embeddings = (
+                    f"[{','.join(map(str, document.embedding))}]"
+                    if document.embedding
+                    else None
+                )
 
                 stmt = mysql.insert(self.table).values(
                     id=_id,
@@ -204,7 +218,12 @@ class SingleStore(VectorDb):
         """Indicate that upsert functionality is available."""
         return True
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, batch_size: int = 20) -> None:
+    def upsert(
+        self,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 20,
+    ) -> None:
         """
         Upsert (insert or update) documents in the table.
 
@@ -225,7 +244,11 @@ class SingleStore(VectorDb):
                 usage_json = json.dumps(document.usage)
 
                 # Convert embedding list to SingleStore VECTOR format
-                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
+                embeddings = (
+                    f"[{','.join(map(str, document.embedding))}]"
+                    if document.embedding
+                    else None
+                )
                 stmt = (
                     mysql.insert(self.table)
                     .values(
@@ -253,7 +276,9 @@ class SingleStore(VectorDb):
             sess.commit()
             log_debug(f"Committed {counter} documents")
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
         Search for documents based on a query and optional filters.
 
@@ -286,15 +311,21 @@ class SingleStore(VectorDb):
                     stmt = stmt.where(getattr(self.table.c, key) == value)
 
         if self.distance == Distance.l2:
-            stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
+            stmt = stmt.order_by(
+                self.table.c.embedding.max_inner_product(query_embedding)
+            )
         if self.distance == Distance.cosine:
             embeddings = json.dumps(query_embedding)
-            dot_product_expr = func.dot_product(self.table.c.embedding, text(":embedding"))
+            dot_product_expr = func.dot_product(
+                self.table.c.embedding, text(":embedding")
+            )
             stmt = stmt.order_by(dot_product_expr.desc())
             stmt = stmt.params(embedding=embeddings)
             # stmt = stmt.order_by(self.table.c.embedding.cosine_distance(query_embedding))
         if self.distance == Distance.max_inner_product:
-            stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
+            stmt = stmt.order_by(
+                self.table.c.embedding.max_inner_product(query_embedding)
+            )
 
         stmt = stmt.limit(limit=limit)
         log_debug(f"Query: {stmt}")
@@ -317,7 +348,9 @@ class SingleStore(VectorDb):
         # Build search results
         search_results: List[Document] = []
         for neighbor in neighbors:
-            meta_data_dict = json.loads(neighbor.meta_data) if neighbor.meta_data else {}
+            meta_data_dict = (
+                json.loads(neighbor.meta_data) if neighbor.meta_data else {}
+            )
             usage_dict = json.loads(neighbor.usage) if neighbor.usage else {}
 
             # Convert SingleStore VECTOR type to list
@@ -399,10 +432,14 @@ class SingleStore(VectorDb):
     async def async_doc_exists(self, document: Document) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
     async def async_search(

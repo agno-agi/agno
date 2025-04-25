@@ -10,14 +10,15 @@ from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
 
 try:
-    from anthropic import AnthropicBedrock, APIConnectionError, APIStatusError, AsyncAnthropicBedrock, RateLimitError
+    from anthropic import (AnthropicBedrock, APIConnectionError,
+                           APIStatusError, AsyncAnthropicBedrock,
+                           RateLimitError)
     from anthropic.types import Message as AnthropicMessage
-    from anthropic.types import (
-        TextBlock,
-        ToolUseBlock,
-    )
+    from anthropic.types import TextBlock, ToolUseBlock
 except ImportError:
-    log_error("`anthropic[bedrock]` not installed. Please install it via `pip install anthropic[bedrock]`.")
+    log_error(
+        "`anthropic[bedrock]` not installed. Please install it via `pip install anthropic[bedrock]`."
+    )
     raise
 
 try:
@@ -53,7 +54,9 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
 
             using_filetype = True
         except (ModuleNotFoundError, ImportError):
-            raise ImportError("`filetype` not installed. Please install using `pip install filetype`")
+            raise ImportError(
+                "`filetype` not installed. Please install using `pip install filetype`"
+            )
 
     type_mapping = {
         "jpeg": "image/jpeg",
@@ -72,7 +75,11 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         elif image.filepath is not None:
             from pathlib import Path
 
-            path = Path(image.filepath) if isinstance(image.filepath, str) else image.filepath
+            path = (
+                Path(image.filepath)
+                if isinstance(image.filepath, str)
+                else image.filepath
+            )
             if path.exists() and path.is_file():
                 with open(image.filepath, "rb") as f:
                     content_bytes = f.read()
@@ -172,9 +179,11 @@ def _format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str
                     content.append(
                         ToolUseBlock(
                             id=tool_call["id"],
-                            input=json.loads(tool_call["function"]["arguments"])
-                            if "arguments" in tool_call["function"]
-                            else {},
+                            input=(
+                                json.loads(tool_call["function"]["arguments"])
+                                if "arguments" in tool_call["function"]
+                                else {}
+                            ),
                             name=tool_call["function"]["name"],
                             type="tool_use",
                         )
@@ -335,18 +344,27 @@ class Claude(AnthropicClaude):
             )
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelRateLimitError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
             raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                message=e.message,
+                status_code=e.status_code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     def invoke_stream(self, messages: List[Message]) -> Any:
         """
@@ -374,18 +392,27 @@ class Claude(AnthropicClaude):
             )
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelRateLimitError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
             raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                message=e.message,
+                status_code=e.status_code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke(self, messages: List[Message]) -> AnthropicMessage:
         """
@@ -414,18 +441,27 @@ class Claude(AnthropicClaude):
             )
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelRateLimitError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
             raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                message=e.message,
+                status_code=e.status_code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
         """
@@ -450,15 +486,24 @@ class Claude(AnthropicClaude):
                     yield chunk
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelRateLimitError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
             raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                message=e.message,
+                status_code=e.status_code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e

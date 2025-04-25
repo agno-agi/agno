@@ -57,7 +57,9 @@ def test_init_with_default_scopes():
 def test_init_with_custom_scopes():
     """Test initialization with custom scopes."""
     custom_scopes = [GoogleSheetsTools.DEFAULT_SCOPES["read"]]
-    tools = GoogleSheetsTools(scopes=custom_scopes, read=True, create=False, update=False)
+    tools = GoogleSheetsTools(
+        scopes=custom_scopes, read=True, create=False, update=False
+    )
     assert tools.scopes == custom_scopes
 
 
@@ -81,7 +83,9 @@ def test_read_sheet(sheets_tools, mock_sheets_service):
     mock_sheets_service.spreadsheets().values().get().execute.return_value = mock_data
 
     # Execute test
-    result = sheets_tools.read_sheet(spreadsheet_id="test_id", spreadsheet_range="Sheet1!A1:B2")
+    result = sheets_tools.read_sheet(
+        spreadsheet_id="test_id", spreadsheet_range="Sheet1!A1:B2"
+    )
     # Verify the result
     parsed_result = json.loads(result)
     assert parsed_result == mock_data["values"]
@@ -90,7 +94,10 @@ def test_read_sheet(sheets_tools, mock_sheets_service):
 def test_create_sheet(sheets_tools, mock_sheets_service):
     """Test creating a new sheet."""
     # Setup mock data
-    mock_response = {"spreadsheetId": "new_sheet_id", "properties": {"title": "Test Sheet"}}
+    mock_response = {
+        "spreadsheetId": "new_sheet_id",
+        "properties": {"title": "Test Sheet"},
+    }
 
     # Setup mock chain
     mock_sheets_service.spreadsheets().create().execute.return_value = mock_response
@@ -109,13 +116,19 @@ def test_update_sheet(sheets_tools, mock_sheets_service):
     mock_response = {"updatedCells": 4}
 
     # Setup mock chain
-    mock_sheets_service.spreadsheets().values().update().execute.return_value = mock_response
+    mock_sheets_service.spreadsheets().values().update().execute.return_value = (
+        mock_response
+    )
 
     # Execute test
-    result = sheets_tools.update_sheet(data=test_data, spreadsheet_id="test_id", range_name="Sheet1!A1:B2")
+    result = sheets_tools.update_sheet(
+        data=test_data, spreadsheet_id="test_id", range_name="Sheet1!A1:B2"
+    )
 
     # Execute test
-    result = sheets_tools.update_sheet(data=test_data, spreadsheet_id="test_id", range_name="Sheet1!A1:B2")
+    result = sheets_tools.update_sheet(
+        data=test_data, spreadsheet_id="test_id", range_name="Sheet1!A1:B2"
+    )
 
     # Verify the result
     assert "Sheet updated successfully: test_id" in result
@@ -124,7 +137,10 @@ def test_update_sheet(sheets_tools, mock_sheets_service):
 def test_create_duplicate_sheet(sheets_tools, mock_sheets_service, mock_drive_service):
     """Test duplicating a sheet."""
     # Setup mock data
-    mock_source = {"properties": {"title": "Source Sheet"}, "sheets": [{"properties": {"title": "Sheet1"}}]}
+    mock_source = {
+        "properties": {"title": "Source Sheet"},
+        "sheets": [{"properties": {"title": "Sheet1"}}],
+    }
     mock_new_file = {"id": "new_id"}
     mock_permissions = {
         "permissions": [
@@ -171,15 +187,20 @@ def test_create_duplicate_sheet(sheets_tools, mock_sheets_service, mock_drive_se
     assert "https://docs.google.com/spreadsheets/d/new_id" in result
 
     # Verify drive service calls
-    files_mock.copy.assert_called_once_with(fileId="source_id", body={"name": "New Sheet"})
+    files_mock.copy.assert_called_once_with(
+        fileId="source_id", body={"name": "New Sheet"}
+    )
 
     # Verify permissions were listed and created (excluding owner)
-    permissions_mock.list.assert_called_once_with(fileId="source_id", fields="permissions(emailAddress,role,type)")
+    permissions_mock.list.assert_called_once_with(
+        fileId="source_id", fields="permissions(emailAddress,role,type)"
+    )
 
     # Verify one permission was created (excluding owner)
     assert permissions_mock.create.call_count == 1
     permissions_mock.create.assert_called_once_with(
-        fileId="new_id", body={"role": "writer", "type": "user", "emailAddress": "user@example.com"}
+        fileId="new_id",
+        body={"role": "writer", "type": "user", "emailAddress": "user@example.com"},
     )
 
 
@@ -194,6 +215,8 @@ def test_error_handling(sheets_tools, mock_sheets_service):
     )
 
     # Execute test
-    result = sheets_tools.read_sheet(spreadsheet_id="test_id", spreadsheet_range="A1:B2")
+    result = sheets_tools.read_sheet(
+        spreadsheet_id="test_id", spreadsheet_range="A1:B2"
+    )
 
     assert "Error reading Google Sheet" in result

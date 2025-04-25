@@ -1,8 +1,9 @@
+from rich.pretty import pprint
+
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
-from rich.pretty import pprint
 
 agent = Agent(
     # This session_id is usually auto-generated

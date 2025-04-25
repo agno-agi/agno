@@ -48,7 +48,10 @@ class AgentKnowledge(BaseModel):
         raise NotImplementedError
 
     def search(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        num_documents: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
         try:
@@ -58,13 +61,18 @@ class AgentKnowledge(BaseModel):
 
             _num_documents = num_documents or self.num_documents
             log_debug(f"Getting {_num_documents} relevant documents for query: {query}")
-            return self.vector_db.search(query=query, limit=_num_documents, filters=filters)
+            return self.vector_db.search(
+                query=query, limit=_num_documents, filters=filters
+            )
         except Exception as e:
             logger.error(f"Error searching for documents: {e}")
             return []
 
     async def async_search(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        num_documents: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
         try:
@@ -75,10 +83,14 @@ class AgentKnowledge(BaseModel):
             _num_documents = num_documents or self.num_documents
             log_debug(f"Getting {_num_documents} relevant documents for query: {query}")
             try:
-                return await self.vector_db.async_search(query=query, limit=_num_documents, filters=filters)
+                return await self.vector_db.async_search(
+                    query=query, limit=_num_documents, filters=filters
+                )
             except NotImplementedError:
                 logger.info("Vector db does not support async search")
-                return self.search(query=query, num_documents=_num_documents, filters=filters)
+                return self.search(
+                    query=query, num_documents=_num_documents, filters=filters
+                )
         except Exception as e:
             logger.error(f"Error searching for documents: {e}")
             return []
@@ -127,7 +139,10 @@ class AgentKnowledge(BaseModel):
                     seen_content = set()
                     documents_to_load = []
                     for doc in document_list:
-                        if doc.content not in seen_content and not self.vector_db.doc_exists(doc):
+                        if (
+                            doc.content not in seen_content
+                            and not self.vector_db.doc_exists(doc)
+                        ):
                             seen_content.add(doc.content)
                             documents_to_load.append(doc)
                 self.vector_db.insert(documents=documents_to_load, filters=filters)
@@ -168,7 +183,9 @@ class AgentKnowledge(BaseModel):
             documents_to_load = document_list
             # Upsert documents if upsert is True and vector db supports upsert
             if upsert and self.vector_db.upsert_available():
-                await self.vector_db.async_upsert(documents=documents_to_load, filters=filters)
+                await self.vector_db.async_upsert(
+                    documents=documents_to_load, filters=filters
+                )
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
@@ -177,10 +194,14 @@ class AgentKnowledge(BaseModel):
                     seen_content = set()
                     documents_to_load = []
                     for doc in document_list:
-                        if doc.content not in seen_content and not (await self.vector_db.async_doc_exists(doc)):
+                        if doc.content not in seen_content and not (
+                            await self.vector_db.async_doc_exists(doc)
+                        ):
                             seen_content.add(doc.content)
                             documents_to_load.append(doc)
-                await self.vector_db.async_insert(documents=documents_to_load, filters=filters)
+                await self.vector_db.async_insert(
+                    documents=documents_to_load, filters=filters
+                )
             num_documents += len(documents_to_load)
             log_info(f"Added {len(documents_to_load)} documents to knowledge base")
 
@@ -215,7 +236,11 @@ class AgentKnowledge(BaseModel):
         else:
             # Filter out documents which already exist in the vector db
             documents_to_load = (
-                [document for document in documents if not self.vector_db.doc_exists(document)]
+                [
+                    document
+                    for document in documents
+                    if not self.vector_db.doc_exists(document)
+                ]
                 if skip_existing
                 else documents
             )
@@ -268,7 +293,11 @@ class AgentKnowledge(BaseModel):
                 try:
                     # Parallelize existence checks using asyncio.gather
                     existence_checks = await asyncio.gather(
-                        *[self.vector_db.async_doc_exists(document) for document in documents], return_exceptions=True
+                        *[
+                            self.vector_db.async_doc_exists(document)
+                            for document in documents
+                        ],
+                        return_exceptions=True,
                     )
 
                     documents_to_load = [
@@ -278,14 +307,20 @@ class AgentKnowledge(BaseModel):
                     ]
                 except NotImplementedError:
                     logger.warning("Vector db does not support async doc_exists")
-                    documents_to_load = [document for document in documents if not self.vector_db.doc_exists(document)]
+                    documents_to_load = [
+                        document
+                        for document in documents
+                        if not self.vector_db.doc_exists(document)
+                    ]
             else:
                 documents_to_load = documents
 
             # Insert documents
             if len(documents_to_load) > 0:
                 try:
-                    await self.vector_db.async_insert(documents=documents_to_load, filters=filters)
+                    await self.vector_db.async_insert(
+                        documents=documents_to_load, filters=filters
+                    )
                 except NotImplementedError:
                     logger.warning("Vector db does not support async insert")
                     self.vector_db.insert(documents=documents_to_load, filters=filters)
@@ -308,7 +343,12 @@ class AgentKnowledge(BaseModel):
             skip_existing (bool): If True, skips documents which already exist in the vector db. Defaults to True.
             filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
-        self.load_documents(documents=[document], upsert=upsert, skip_existing=skip_existing, filters=filters)
+        self.load_documents(
+            documents=[document],
+            upsert=upsert,
+            skip_existing=skip_existing,
+            filters=filters,
+        )
 
     async def async_load_document(
         self,
@@ -326,7 +366,10 @@ class AgentKnowledge(BaseModel):
             filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
         await self.async_load_documents(
-            documents=[document], upsert=upsert, skip_existing=skip_existing, filters=filters
+            documents=[document],
+            upsert=upsert,
+            skip_existing=skip_existing,
+            filters=filters,
         )
 
     def load_dict(
@@ -345,11 +388,18 @@ class AgentKnowledge(BaseModel):
             filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
         self.load_documents(
-            documents=[Document.from_dict(document)], upsert=upsert, skip_existing=skip_existing, filters=filters
+            documents=[Document.from_dict(document)],
+            upsert=upsert,
+            skip_existing=skip_existing,
+            filters=filters,
         )
 
     def load_json(
-        self, document: str, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None
+        self,
+        document: str,
+        upsert: bool = False,
+        skip_existing: bool = True,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Load a json representation of a document to the knowledge base
 
@@ -360,11 +410,18 @@ class AgentKnowledge(BaseModel):
             filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
         self.load_documents(
-            documents=[Document.from_json(document)], upsert=upsert, skip_existing=skip_existing, filters=filters
+            documents=[Document.from_json(document)],
+            upsert=upsert,
+            skip_existing=skip_existing,
+            filters=filters,
         )
 
     def load_text(
-        self, text: str, upsert: bool = False, skip_existing: bool = True, filters: Optional[Dict[str, Any]] = None
+        self,
+        text: str,
+        upsert: bool = False,
+        skip_existing: bool = True,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Load a text to the knowledge base
 
@@ -375,7 +432,10 @@ class AgentKnowledge(BaseModel):
             filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
         self.load_documents(
-            documents=[Document(content=text)], upsert=upsert, skip_existing=skip_existing, filters=filters
+            documents=[Document(content=text)],
+            upsert=upsert,
+            skip_existing=skip_existing,
+            filters=filters,
         )
 
     def exists(self) -> bool:

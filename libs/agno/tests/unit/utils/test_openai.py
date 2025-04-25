@@ -124,7 +124,9 @@ def test_audio_to_message_bytes_no_format(dummy_audio_bytes):
         ("tmp_flac_file", "flac"),
     ],
 )
-def test_audio_to_message_filepath_formats(file_fixture_name, expected_format, request, dummy_audio_bytes):
+def test_audio_to_message_filepath_formats(
+    file_fixture_name, expected_format, request, dummy_audio_bytes
+):
     """Test audio_to_message with various valid file path formats."""
     tmp_file = request.getfixturevalue(file_fixture_name)
     audio = [Audio(filepath=str(tmp_file))]
@@ -174,7 +176,12 @@ def test_audio_to_message_url(url, expected_format, mocker):
     mock_content = b"mocked_audio_content_for_" + url.encode()
     mock_audio = Audio(url=url)
     # Mock the property that fetches URL content
-    mocker.patch.object(Audio, "audio_url_content", new_callable=mocker.PropertyMock, return_value=mock_content)
+    mocker.patch.object(
+        Audio,
+        "audio_url_content",
+        new_callable=mocker.PropertyMock,
+        return_value=mock_content,
+    )
 
     result = audio_to_message([mock_audio])
     assert len(result) == 1
@@ -187,7 +194,9 @@ def test_audio_to_message_url(url, expected_format, mocker):
 def test_audio_to_message_url_no_fetch(mocker):
     """Test audio_to_message when URL fetch returns None."""
     mock_audio = Audio(url="http://example.com/bad_audio.wav")
-    mocker.patch.object(Audio, "audio_url_content", new_callable=mocker.PropertyMock, return_value=None)
+    mocker.patch.object(
+        Audio, "audio_url_content", new_callable=mocker.PropertyMock, return_value=None
+    )
     result = audio_to_message([mock_audio])
     assert result == []  # Should skip if content is None
 
@@ -197,15 +206,22 @@ def test_audio_to_message_mixed(tmp_wav_file, dummy_audio_bytes, mocker):
     mock_content = b"more_mock_audio"
     # Configure mock to return content first time, None second time for the same object if needed,
     # but here we use different objects anyway. Patching the class affects all instances.
-    mock_prop = mocker.patch.object(Audio, "audio_url_content", new_callable=mocker.PropertyMock)
-    mock_prop.side_effect = [mock_content, None]  # Define side effects for consecutive calls
+    mock_prop = mocker.patch.object(
+        Audio, "audio_url_content", new_callable=mocker.PropertyMock
+    )
+    mock_prop.side_effect = [
+        mock_content,
+        None,
+    ]  # Define side effects for consecutive calls
 
     audios = [
         Audio(content=dummy_audio_bytes),  # Valid bytes
         Audio(filepath=str(tmp_wav_file)),  # Valid file
         Audio(filepath="/non/existent/path.wav"),  # Invalid file
         Audio(url="http://example.com/good.aac"),  # Valid URL (first call to property)
-        Audio(url="http://example.com/fails.mp3"),  # Invalid URL (second call to property)
+        Audio(
+            url="http://example.com/fails.mp3"
+        ),  # Invalid URL (second call to property)
     ]
     result = audio_to_message(audios)
     assert len(result) == 3  # Should skip the two invalid ones
@@ -241,7 +257,9 @@ def test_images_to_message_bytes(dummy_image_bytes):
         ("tmp_webp_file", "image/webp"),
     ],
 )
-def test_images_to_message_filepath_formats(file_fixture_name, expected_mime, request, dummy_image_bytes):
+def test_images_to_message_filepath_formats(
+    file_fixture_name, expected_mime, request, dummy_image_bytes
+):
     """Test images_to_message with various valid file path formats."""
     tmp_file = request.getfixturevalue(file_fixture_name)
     images = [Image(filepath=str(tmp_file))]
@@ -270,7 +288,9 @@ def test_images_to_message_filepath_is_dir(tmp_path):
 
 def test_images_to_message_url_data_uri():
     """Test images_to_message with a data URI."""
-    data_uri = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+    data_uri = (
+        "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+    )
     images = [Image(url=data_uri)]
     result = images_to_message(images)
     assert len(result) == 1

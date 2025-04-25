@@ -1,9 +1,10 @@
+from rich.pretty import pprint
+
 from agno.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
-from rich.pretty import pprint
 
 user_id = "ava"
 db_file = "tmp/memory.db"

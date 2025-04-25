@@ -1,9 +1,10 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
-from agno.models.deepinfra import DeepInfra  # noqa
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+from agno.agent import Agent, RunResponse  # noqa
+from agno.models.deepinfra import DeepInfra  # noqa
 
 
 class MovieScript(BaseModel):

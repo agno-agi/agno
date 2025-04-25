@@ -17,13 +17,14 @@ import os
 from textwrap import dedent
 from typing import List, Optional
 
+from mcp import StdioServerParameters
+from pydantic import BaseModel
+
 from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.mcp import MCPTools
-from mcp import StdioServerParameters
-from pydantic import BaseModel
 
 
 # Define response models

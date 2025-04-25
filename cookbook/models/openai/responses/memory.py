@@ -6,12 +6,13 @@ Steps:
 3. Run: `python cookbook/agents/personalized_memories_and_summaries.py` to run the agent
 """
 
+from rich.pretty import pprint
+
 from agno.agent import Agent
 from agno.memory.v2.db.postgres import PostgresMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIResponses
 from agno.storage.agent.postgres import PostgresAgentStorage
-from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(

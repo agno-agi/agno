@@ -25,7 +25,11 @@ class DocxKnowledgeBase(AgentKnowledge):
             for _file in _file_path.glob("**/*"):
                 if _file.suffix in self.formats:
                     yield self.reader.read(file=_file)
-        elif _file_path.exists() and _file_path.is_file() and _file_path.suffix in self.formats:
+        elif (
+            _file_path.exists()
+            and _file_path.is_file()
+            and _file_path.suffix in self.formats
+        ):
             yield self.reader.read(file=_file_path)
 
     @property
@@ -43,7 +47,11 @@ class DocxKnowledgeBase(AgentKnowledge):
                     docs = await self.reader.async_read(file=_file)
                     if docs:
                         yield docs
-        elif _file_path.exists() and _file_path.is_file() and _file_path.suffix in self.formats:
+        elif (
+            _file_path.exists()
+            and _file_path.is_file()
+            and _file_path.suffix in self.formats
+        ):
             docs = await self.reader.async_read(file=_file_path)
             if docs:
                 yield docs

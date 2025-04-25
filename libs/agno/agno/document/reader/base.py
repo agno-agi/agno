@@ -13,7 +13,9 @@ class Reader:
 
     chunk: bool = True
     chunk_size: int = 3000
-    separators: List[str] = field(default_factory=lambda: ["\n", "\n\n", "\r", "\r\n", "\n\r", "\t", " ", "  "])
+    separators: List[str] = field(
+        default_factory=lambda: ["\n", "\n\n", "\r", "\r\n", "\n\r", "\t", " ", "  "]
+    )
     chunking_strategy: ChunkingStrategy = field(default_factory=FixedSizeChunking)
 
     def read(self, obj: Any) -> List[Document]:
@@ -40,6 +42,8 @@ class Reader:
             return await asyncio.to_thread(self.chunk_document, doc)
 
         # Process chunking in parallel for all documents
-        chunked_lists = await asyncio.gather(*[_chunk_document_async(doc) for doc in documents])
+        chunked_lists = await asyncio.gather(
+            *[_chunk_document_async(doc) for doc in documents]
+        )
         # Flatten the result
         return [chunk for sublist in chunked_lists for chunk in sublist]

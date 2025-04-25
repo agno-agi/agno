@@ -28,7 +28,9 @@ def user_ping() -> bool:
     return False
 
 
-def authenticate_and_get_user(auth_token: str, existing_user: Optional[UserSchema] = None) -> Optional[UserSchema]:
+def authenticate_and_get_user(
+    auth_token: str, existing_user: Optional[UserSchema] = None
+) -> Optional[UserSchema]:
     if not agno_cli_settings.api_enabled:
         return None
 
@@ -47,7 +49,9 @@ def authenticate_and_get_user(auth_token: str, existing_user: Optional[UserSchem
             }
     with api.Client() as api_client:
         try:
-            r: Response = api_client.post(ApiRoutes.USER_CLI_AUTH, headers=auth_header, json=anon_user)
+            r: Response = api_client.post(
+                ApiRoutes.USER_CLI_AUTH, headers=auth_header, json=anon_user
+            )
             if invalid_response(r):
                 return None
 
@@ -71,7 +75,9 @@ def sign_in_user(sign_in_data: EmailPasswordAuthSchema) -> Optional[UserSchema]:
     logger.debug("--**-- Signing in user")
     with api.Client() as api_client:
         try:
-            r: Response = api_client.post(ApiRoutes.USER_SIGN_IN, json=sign_in_data.model_dump())
+            r: Response = api_client.post(
+                ApiRoutes.USER_SIGN_IN, json=sign_in_data.model_dump()
+            )
             if invalid_response(r):
                 return None
 
@@ -109,7 +115,8 @@ def user_is_authenticated() -> bool:
     with api.AuthenticatedClient() as api_client:
         try:
             r: Response = api_client.post(
-                ApiRoutes.USER_AUTHENTICATE, json=user.model_dump(include={"id_user", "email"})
+                ApiRoutes.USER_AUTHENTICATE,
+                json=user.model_dump(include={"id_user", "email"}),
             )
             if invalid_response(r):
                 return False
@@ -136,7 +143,9 @@ def create_anon_user() -> Optional[UserSchema]:
         try:
             r: Response = api_client.post(
                 ApiRoutes.USER_CREATE_ANON,
-                json={"user": {"email": "anon", "username": "anon", "is_machine": True}},
+                json={
+                    "user": {"email": "anon", "username": "anon", "is_machine": True}
+                },
                 timeout=2.0,
             )
             if invalid_response(r):

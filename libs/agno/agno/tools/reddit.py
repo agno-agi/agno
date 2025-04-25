@@ -39,7 +39,9 @@ class RedditTools(Toolkit):
             # Get credentials from environment variables if not provided
             self.client_id = client_id or getenv("REDDIT_CLIENT_ID")
             self.client_secret = client_secret or getenv("REDDIT_CLIENT_SECRET")
-            self.user_agent = user_agent or getenv("REDDIT_USER_AGENT", "RedditTools v1.0")
+            self.user_agent = user_agent or getenv(
+                "REDDIT_USER_AGENT", "RedditTools v1.0"
+            )
             self.username = username or getenv("REDDIT_USERNAME")
             self.password = password or getenv("REDDIT_PASSWORD")
 
@@ -56,7 +58,9 @@ class RedditTools(Toolkit):
                     )
                 # Initialize with user authentication if credentials provided
                 else:
-                    log_info(f"Initializing Reddit client with user authentication for u/{self.username}")
+                    log_info(
+                        f"Initializing Reddit client with user authentication for u/{self.username}"
+                    )
                     self.reddit = praw.Reddit(
                         client_id=self.client_id,
                         client_secret=self.client_secret,
@@ -95,7 +99,9 @@ class RedditTools(Toolkit):
             return False
 
         if not all([self.username, self.password]):
-            logger.error("User authentication required. Please provide username and password.")
+            logger.error(
+                "User authentication required. Please provide username and password."
+            )
             return False
 
         try:
@@ -130,7 +136,9 @@ class RedditTools(Toolkit):
         except Exception as e:
             return f"Error getting user info: {e}"
 
-    def get_top_posts(self, subreddit: str, time_filter: str = "week", limit: int = 10) -> str:
+    def get_top_posts(
+        self, subreddit: str, time_filter: str = "week", limit: int = 10
+    ) -> str:
         """
         Get top posts from a subreddit for a specific time period.
         Args:
@@ -145,7 +153,9 @@ class RedditTools(Toolkit):
 
         try:
             log_debug(f"Getting top posts from r/{subreddit}")
-            posts = self.reddit.subreddit(subreddit).top(time_filter=time_filter, limit=limit)
+            posts = self.reddit.subreddit(subreddit).top(
+                time_filter=time_filter, limit=limit
+            )
             top_posts: List[Dict[str, Union[str, int, float]]] = [
                 {
                     "id": post.id,
@@ -206,7 +216,9 @@ class RedditTools(Toolkit):
         try:
             log_debug("Getting trending subreddits")
             popular_subreddits = self.reddit.subreddits.popular(limit=5)
-            trending: List[str] = [subreddit.display_name for subreddit in popular_subreddits]
+            trending: List[str] = [
+                subreddit.display_name for subreddit in popular_subreddits
+            ]
             return json.dumps({"trending_subreddits": trending})
         except Exception as e:
             return f"Error getting trending subreddits: {e}"
@@ -270,7 +282,9 @@ class RedditTools(Toolkit):
             subreddit_obj = self.reddit.subreddit(subreddit)
 
             if flair:
-                available_flairs = [f["text"] for f in subreddit_obj.flair.link_templates]
+                available_flairs = [
+                    f["text"] for f in subreddit_obj.flair.link_templates
+                ]
                 if flair not in available_flairs:
                     return f"Invalid flair. Available flairs: {', '.join(available_flairs)}"
 
@@ -303,7 +317,9 @@ class RedditTools(Toolkit):
         except Exception as e:
             return f"Error creating post: {e}"
 
-    def reply_to_post(self, post_id: str, content: str, subreddit: Optional[str] = None) -> str:
+    def reply_to_post(
+        self, post_id: str, content: str, subreddit: Optional[str] = None
+    ) -> str:
         """
         Post a reply to an existing Reddit post or comment.
 
@@ -337,7 +353,9 @@ class RedditTools(Toolkit):
 
             # Verify post exists
             if not self._check_post_exists(post_id):
-                error_msg = f"Post with ID {post_id} does not exist or is not accessible"
+                error_msg = (
+                    f"Post with ID {post_id} does not exist or is not accessible"
+                )
                 logger.error(error_msg)
                 return error_msg
 
@@ -349,7 +367,10 @@ class RedditTools(Toolkit):
             )
 
             # If subreddit was provided, verify we're in the right place
-            if subreddit and submission.subreddit.display_name.lower() != subreddit.lower():
+            if (
+                subreddit
+                and submission.subreddit.display_name.lower() != subreddit.lower()
+            ):
                 error_msg = f"Error: Post ID belongs to r/{submission.subreddit.display_name}, not r/{subreddit}"
                 logger.error(error_msg)
                 return error_msg
@@ -376,7 +397,9 @@ class RedditTools(Toolkit):
 
         except praw.exceptions.RedditAPIException as api_error:
             # Handle specific Reddit API errors
-            error_messages = [f"{error.error_type}: {error.message}" for error in api_error.items]
+            error_messages = [
+                f"{error.error_type}: {error.message}" for error in api_error.items
+            ]
             error_msg = f"Reddit API Error: {'; '.join(error_messages)}"
             logger.error(error_msg)
             return error_msg
@@ -386,7 +409,9 @@ class RedditTools(Toolkit):
             logger.error(error_msg)
             return error_msg
 
-    def reply_to_comment(self, comment_id: str, content: str, subreddit: Optional[str] = None) -> str:
+    def reply_to_comment(
+        self, comment_id: str, content: str, subreddit: Optional[str] = None
+    ) -> str:
         """
         Post a reply to an existing Reddit comment.
 
@@ -420,10 +445,15 @@ class RedditTools(Toolkit):
             # Get the comment object
             comment = self.reddit.comment(id=comment_id)
 
-            log_debug(f"Comment details: Author: {comment.author}, Subreddit: {comment.subreddit.display_name}")
+            log_debug(
+                f"Comment details: Author: {comment.author}, Subreddit: {comment.subreddit.display_name}"
+            )
 
             # If subreddit was provided, verify we're in the right place
-            if subreddit and comment.subreddit.display_name.lower() != subreddit.lower():
+            if (
+                subreddit
+                and comment.subreddit.display_name.lower() != subreddit.lower()
+            ):
                 error_msg = f"Error: Comment ID belongs to r/{comment.subreddit.display_name}, not r/{subreddit}"
                 logger.error(error_msg)
                 return error_msg
@@ -450,7 +480,9 @@ class RedditTools(Toolkit):
 
         except praw.exceptions.RedditAPIException as api_error:
             # Handle specific Reddit API errors
-            error_messages = [f"{error.error_type}: {error.message}" for error in api_error.items]
+            error_messages = [
+                f"{error.error_type}: {error.message}" for error in api_error.items
+            ]
             error_msg = f"Reddit API Error: {'; '.join(error_messages)}"
             logger.error(error_msg)
             return error_msg

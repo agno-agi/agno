@@ -78,7 +78,9 @@ class MessageMetrics:
         metrics_dict = {
             k: v
             for k, v in metrics_dict.items()
-            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
+            if v is not None
+            and (not isinstance(v, (int, float)) or v != 0)
+            and (not isinstance(v, dict) or len(v) > 0)
         }
         return metrics_dict
 
@@ -121,7 +123,9 @@ class MessageMetrics:
             # Add values from other
             if other.prompt_tokens_details:
                 for key, value in other.prompt_tokens_details.items():
-                    result.prompt_tokens_details[key] = result.prompt_tokens_details.get(key, 0) + value
+                    result.prompt_tokens_details[key] = (
+                        result.prompt_tokens_details.get(key, 0) + value
+                    )
 
         # Handle completion_tokens_details similarly
         if self.completion_tokens_details or other.completion_tokens_details:
@@ -130,7 +134,9 @@ class MessageMetrics:
                 result.completion_tokens_details.update(self.completion_tokens_details)
             if other.completion_tokens_details:
                 for key, value in other.completion_tokens_details.items():
-                    result.completion_tokens_details[key] = result.completion_tokens_details.get(key, 0) + value
+                    result.completion_tokens_details[key] = (
+                        result.completion_tokens_details.get(key, 0) + value
+                    )
 
         # Handle additional metrics
         if self.additional_metrics or other.additional_metrics:
@@ -149,7 +155,9 @@ class MessageMetrics:
             result.time = other.time
 
         # Handle time_to_first_token (take the first non-None value)
-        result.time_to_first_token = self.time_to_first_token or other.time_to_first_token
+        result.time_to_first_token = (
+            self.time_to_first_token or other.time_to_first_token
+        )
 
         return result
 
@@ -217,14 +225,20 @@ class Message(BaseModel):
     # The Unix timestamp the message was created.
     created_at: int = Field(default_factory=lambda: int(time()))
 
-    model_config = ConfigDict(extra="allow", populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(
+        extra="allow", populate_by_name=True, arbitrary_types_allowed=True
+    )
 
     def get_content_string(self) -> str:
         """Returns the content as a string."""
         if isinstance(self.content, str):
             return self.content
         if isinstance(self.content, list):
-            if len(self.content) > 0 and isinstance(self.content[0], dict) and "text" in self.content[0]:
+            if (
+                len(self.content) > 0
+                and isinstance(self.content[0], dict)
+                and "text" in self.content[0]
+            ):
                 return self.content[0].get("text", "")
             else:
                 return json.dumps(self.content)
@@ -249,7 +263,9 @@ class Message(BaseModel):
         }
         # Filter out None and empty collections
         message_dict = {
-            k: v for k, v in message_dict.items() if v is not None and not (isinstance(v, (list, dict)) and len(v) == 0)
+            k: v
+            for k, v in message_dict.items()
+            if v is not None and not (isinstance(v, (list, dict)) and len(v) == 0)
         }
 
         # Convert media objects to dictionaries
@@ -326,11 +342,18 @@ class Message(BaseModel):
                 tool_id = tool_call.get("id")
                 function_name = tool_call.get("function", {}).get("name")
                 tool_calls_list.append(f"  - ID: '{tool_id}'") if tool_id else None
-                tool_calls_list.append(f"    Name: '{function_name}'") if function_name else None
+                (
+                    tool_calls_list.append(f"    Name: '{function_name}'")
+                    if function_name
+                    else None
+                )
                 tool_call_arguments = tool_call.get("function", {}).get("arguments")
                 if tool_call_arguments:
                     try:
-                        arguments = ", ".join(f"{k}: {v}" for k, v in json.loads(tool_call_arguments).items())
+                        arguments = ", ".join(
+                            f"{k}: {v}"
+                            for k, v in json.loads(tool_call_arguments).items()
+                        )
                         tool_calls_list.append(f"    Arguments: '{arguments}'")
                     except json.JSONDecodeError:
                         tool_calls_list.append("    Arguments: 'Invalid JSON format'")
@@ -367,17 +390,27 @@ class Message(BaseModel):
             if token_metrics:
                 _logger(f"* Tokens:                      {', '.join(token_metrics)}")
             if self.metrics.prompt_tokens_details:
-                _logger(f"* Prompt tokens details:       {self.metrics.prompt_tokens_details}")
+                _logger(
+                    f"* Prompt tokens details:       {self.metrics.prompt_tokens_details}"
+                )
             if self.metrics.completion_tokens_details:
-                _logger(f"* Completion tokens details:   {self.metrics.completion_tokens_details}")
+                _logger(
+                    f"* Completion tokens details:   {self.metrics.completion_tokens_details}"
+                )
             if self.metrics.time is not None:
                 _logger(f"* Time:                        {self.metrics.time:.4f}s")
             if self.metrics.output_tokens and self.metrics.time:
-                _logger(f"* Tokens per second:           {self.metrics.output_tokens / self.metrics.time:.4f} tokens/s")
+                _logger(
+                    f"* Tokens per second:           {self.metrics.output_tokens / self.metrics.time:.4f} tokens/s"
+                )
             if self.metrics.time_to_first_token is not None:
-                _logger(f"* Time to first token:         {self.metrics.time_to_first_token:.4f}s")
+                _logger(
+                    f"* Time to first token:         {self.metrics.time_to_first_token:.4f}s"
+                )
             if self.metrics.additional_metrics:
-                _logger(f"* Additional metrics:          {self.metrics.additional_metrics}")
+                _logger(
+                    f"* Additional metrics:          {self.metrics.additional_metrics}"
+                )
             _logger(metrics_header, center=True, symbol="*")
 
     def content_is_valid(self) -> bool:

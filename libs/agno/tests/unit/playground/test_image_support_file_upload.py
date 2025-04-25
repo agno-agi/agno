@@ -103,7 +103,14 @@ def mock_docx_file():
     """Creates a mock DOCX file."""
     content = b"fake docx content"
     file_obj = io.BytesIO(content)
-    return ("files", ("test.docx", file_obj, "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+    return (
+        "files",
+        (
+            "test.docx",
+            file_obj,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+    )
 
 
 @pytest.fixture
@@ -134,7 +141,9 @@ def test_single_image_upload(test_app, mock_agent, mock_image_file):
         "user_id": "test_user",
     }
     files = [mock_image_file]
-    response = test_app.post("/v1/playground/agents/test-agent/runs", data=data, files=files)
+    response = test_app.post(
+        "/v1/playground/agents/test-agent/runs", data=data, files=files
+    )
     assert response.status_code == 200
 
     # Get the copied agent that was actually used
@@ -160,7 +169,9 @@ def test_multiple_image_upload(test_app, mock_agent, mock_image_file):
         "user_id": "test_user",
     }
     files = [mock_image_file] * 3  # Upload 3 images
-    response = test_app.post("/v1/playground/agents/test-agent/runs", data=data, files=files)
+    response = test_app.post(
+        "/v1/playground/agents/test-agent/runs", data=data, files=files
+    )
     assert response.status_code == 200
 
     # Get the copied agent that was actually used
@@ -174,7 +185,9 @@ def test_multiple_image_upload(test_app, mock_agent, mock_image_file):
     assert call_args["videos"] is None
 
 
-def test_pdf_upload_with_knowledge(test_app, mock_agent_with_knowledge, mock_pdf_file, mock_pdf_reader):
+def test_pdf_upload_with_knowledge(
+    test_app, mock_agent_with_knowledge, mock_pdf_file, mock_pdf_reader
+):
     """Test uploading a PDF file with knowledge base enabled."""
     data = {
         "message": "Analyze this PDF",
@@ -183,11 +196,15 @@ def test_pdf_upload_with_knowledge(test_app, mock_agent_with_knowledge, mock_pdf
         "user_id": "test_user",
     }
     files = [mock_pdf_file]
-    response = test_app.post("/v1/playground/agents/test-agent/runs", data=data, files=files)
+    response = test_app.post(
+        "/v1/playground/agents/test-agent/runs", data=data, files=files
+    )
     assert response.status_code == 200
 
     # Verify knowledge.load_documents was called
-    mock_agent_with_knowledge.knowledge.load_documents.assert_called_once_with(["This is mock PDF content"])
+    mock_agent_with_knowledge.knowledge.load_documents.assert_called_once_with(
+        ["This is mock PDF content"]
+    )
     mock_agent_with_knowledge.run.assert_called_once()
 
 
@@ -200,12 +217,16 @@ def test_pdf_upload_without_knowledge(test_app, mock_pdf_file):
         "user_id": "test_user",
     }
     files = [mock_pdf_file]
-    response = test_app.post("/v1/playground/agents/test-agent/runs", data=data, files=files)
+    response = test_app.post(
+        "/v1/playground/agents/test-agent/runs", data=data, files=files
+    )
     assert response.status_code == 404
     assert "KnowledgeBase not found" in response.json()["detail"]
 
 
-def test_mixed_file_upload(test_app, mock_agent_with_knowledge, mock_image_file, mock_pdf_file, mock_pdf_reader):
+def test_mixed_file_upload(
+    test_app, mock_agent_with_knowledge, mock_image_file, mock_pdf_file, mock_pdf_reader
+):
     """Test uploading both image and PDF files."""
     data = {
         "message": "Analyze these files",
@@ -214,11 +235,15 @@ def test_mixed_file_upload(test_app, mock_agent_with_knowledge, mock_image_file,
         "user_id": "test_user",
     }
     files = [mock_image_file, mock_pdf_file]
-    response = test_app.post("/v1/playground/agents/test-agent/runs", data=data, files=files)
+    response = test_app.post(
+        "/v1/playground/agents/test-agent/runs", data=data, files=files
+    )
     assert response.status_code == 200
 
     # Verify knowledge.load_documents was called for PDF
-    mock_agent_with_knowledge.knowledge.load_documents.assert_called_once_with(["This is mock PDF content"])
+    mock_agent_with_knowledge.knowledge.load_documents.assert_called_once_with(
+        ["This is mock PDF content"]
+    )
     # Verify agent.run was called with image
     mock_agent_with_knowledge.run.assert_called_once()
     call_args = mock_agent_with_knowledge.run.call_args[1]
@@ -237,7 +262,9 @@ def test_unsupported_file_type(test_app, mock_agent_with_knowledge):
         "user_id": "test_user",
     }
     files = [("files", ("test.xyz", io.BytesIO(b"content"), "application/xyz"))]
-    response = test_app.post("/v1/playground/agents/test-agent/runs", data=data, files=files)
+    response = test_app.post(
+        "/v1/playground/agents/test-agent/runs", data=data, files=files
+    )
     assert response.status_code == 400
     assert "Unsupported file type" in response.json()["detail"]
 
@@ -252,7 +279,9 @@ def test_empty_file_upload(test_app):
     }
     empty_file = ("files", ("empty.jpg", io.BytesIO(b""), "image/jpeg"))
     files = [empty_file]
-    response = test_app.post("/v1/playground/agents/test-agent/runs", data=data, files=files)
+    response = test_app.post(
+        "/v1/playground/agents/test-agent/runs", data=data, files=files
+    )
     assert response.status_code == 200
 
 
@@ -282,5 +311,7 @@ def test_document_upload_with_knowledge(test_app, mock_agent_with_knowledge):
 
     for doc_file in document_files:
         files = [doc_file]
-        response = test_app.post("/v1/playground/agents/test-agent/runs", data=data, files=files)
+        response = test_app.post(
+            "/v1/playground/agents/test-agent/runs", data=data, files=files
+        )
         assert response.status_code == 200

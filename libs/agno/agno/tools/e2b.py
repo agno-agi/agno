@@ -17,7 +17,9 @@ from agno.utils.log import logger
 try:
     from e2b_code_interpreter import Sandbox
 except ImportError:
-    raise ImportError("`e2b_code_interpreter` not installed. Please install using `pip install e2b_code_interpreter`")
+    raise ImportError(
+        "`e2b_code_interpreter` not installed. Please install using `pip install e2b_code_interpreter`"
+    )
 
 
 class E2BTools(Toolkit):
@@ -52,14 +54,18 @@ class E2BTools(Toolkit):
 
         self.api_key = api_key or getenv("E2B_API_KEY")
         if not self.api_key:
-            raise ValueError("E2B_API_KEY not set. Please set the E2B_API_KEY environment variable.")
+            raise ValueError(
+                "E2B_API_KEY not set. Please set the E2B_API_KEY environment variable."
+            )
 
         # Create the sandbox once and reuse it
         self.sandbox_options = sandbox_options or {}
 
         # According to official docs, the parameter is 'timeout' (in seconds), not 'timeout_ms'
         try:
-            self.sandbox = Sandbox(api_key=self.api_key, timeout=timeout, **self.sandbox_options)
+            self.sandbox = Sandbox(
+                api_key=self.api_key, timeout=timeout, **self.sandbox_options
+            )
         except Exception as e:
             logger.error(f"Warning: Could not create sandbox: {e}")
             raise e
@@ -142,7 +148,9 @@ class E2BTools(Toolkit):
                 if hasattr(result, "text") and result.text:
                     results.append(f"Result {i + 1}: {result.text}")
                 elif hasattr(result, "png") and result.png:
-                    results.append(f"Result {i + 1}: Generated PNG image (use download_png_result to save)")
+                    results.append(
+                        f"Result {i + 1}: Generated PNG image (use download_png_result to save)"
+                    )
                 elif hasattr(result, "chart") and result.chart:
                     chart_type = result.chart.get("type", "unknown")
                     results.append(
@@ -151,10 +159,16 @@ class E2BTools(Toolkit):
                 else:
                     results.append(f"Result {i + 1}: Output available")
 
-            return json.dumps(results) if results else "Code executed successfully with no output."
+            return (
+                json.dumps(results)
+                if results
+                else "Code executed successfully with no output."
+            )
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error executing code: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error executing code: {str(e)}"}
+            )
 
     #  File Upload/Download Functions
     def upload_file(self, file_path: str, sandbox_path: Optional[str] = None) -> str:
@@ -179,10 +193,15 @@ class E2BTools(Toolkit):
 
             return file_in_sandbox.path
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error uploading file: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error uploading file: {str(e)}"}
+            )
 
     def download_png_result(
-        self, agent: Union[Agent, Team], result_index: int = 0, output_path: Optional[str] = None
+        self,
+        agent: Union[Agent, Team],
+        result_index: int = 0,
+        output_path: Optional[str] = None,
     ) -> str:
         """
         Add a PNG image result from the last code execution as an ImageArtifact to the agent.
@@ -232,7 +251,9 @@ class E2BTools(Toolkit):
             image_id = str(uuid4())
             agent.add_image(
                 ImageArtifact(
-                    id=image_id, url=file_url, original_prompt=f"Generated from code execution result {result_index}"
+                    id=image_id,
+                    url=file_url,
+                    original_prompt=f"Generated from code execution result {result_index}",
                 )
             )
 
@@ -242,10 +263,16 @@ class E2BTools(Toolkit):
                 return f"Image added as artifact with ID {image_id}"
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error processing PNG: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error processing PNG: {str(e)}"}
+            )
 
     def download_chart_data(
-        self, agent: Agent, result_index: int = 0, output_path: Optional[str] = None, add_as_artifact: bool = True
+        self,
+        agent: Agent,
+        result_index: int = 0,
+        output_path: Optional[str] = None,
+        add_as_artifact: bool = True,
     ) -> str:
         """
         Extract chart data from an interactive chart in the execution results.
@@ -316,7 +343,9 @@ class E2BTools(Toolkit):
                 image_id = str(uuid4())
                 agent.add_image(
                     ImageArtifact(
-                        id=image_id, url=file_url, original_prompt=f"Interactive {chart_type} chart from code execution"
+                        id=image_id,
+                        url=file_url,
+                        original_prompt=f"Interactive {chart_type} chart from code execution",
                     )
                 )
 
@@ -325,9 +354,13 @@ class E2BTools(Toolkit):
             return summary
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error extracting chart data: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error extracting chart data: {str(e)}"}
+            )
 
-    def download_file_from_sandbox(self, sandbox_path: str, local_path: Optional[str] = None) -> str:
+    def download_file_from_sandbox(
+        self, sandbox_path: str, local_path: Optional[str] = None
+    ) -> str:
         """
         Download a file from the E2B sandbox to the local system.
 
@@ -351,7 +384,9 @@ class E2BTools(Toolkit):
 
             return local_path
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error downloading file: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error downloading file: {str(e)}"}
+            )
 
     # Command Execution Functions
     def run_command(
@@ -382,7 +417,9 @@ class E2BTools(Toolkit):
                 kwargs["on_stderr"] = on_stderr
 
             # Set background execution if requested
-            process_kwargs = {"background": background}  # Using a separate dict for process arguments
+            process_kwargs = {
+                "background": background
+            }  # Using a separate dict for process arguments
 
             # Execute the command
             result = self.sandbox.commands.run(command, **kwargs, **process_kwargs)
@@ -398,10 +435,16 @@ class E2BTools(Toolkit):
             if hasattr(result, "stderr") and result.stderr:
                 output.append(f"STDERR:\n{result.stderr}")
 
-            return json.dumps(output) if output else "Command executed successfully with no output."
+            return (
+                json.dumps(output)
+                if output
+                else "Command executed successfully with no output."
+            )
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error executing command: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error executing command: {str(e)}"}
+            )
 
     def stream_command(self, command: str) -> str:
         """
@@ -424,10 +467,16 @@ class E2BTools(Toolkit):
             logger.error(f"STDERR: {data}")
 
         try:
-            self.run_command(command, on_stdout=stdout_callback, on_stderr=stderr_callback)
-            return json.dumps(outputs) if outputs else "Command completed with no output."
+            self.run_command(
+                command, on_stdout=stdout_callback, on_stderr=stderr_callback
+            )
+            return (
+                json.dumps(outputs) if outputs else "Command completed with no output."
+            )
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error streaming command: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error streaming command: {str(e)}"}
+            )
 
     def run_background_command(self, command: str) -> Any:
         """
@@ -444,7 +493,12 @@ class E2BTools(Toolkit):
             command_obj = self.sandbox.commands.run(command, background=True)
             return command_obj
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error starting background command: {str(e)}"})
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": f"Error starting background command: {str(e)}",
+                }
+            )
 
     def kill_background_command(self, command_obj: Any) -> str:
         """
@@ -463,7 +517,12 @@ class E2BTools(Toolkit):
             command_obj.kill()
             return "Background command terminated successfully."
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error killing background command: {str(e)}"})
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": f"Error killing background command: {str(e)}",
+                }
+            )
 
     # Filesystem Operations
     def list_files(self, directory_path: str = "/") -> str:
@@ -489,7 +548,9 @@ class E2BTools(Toolkit):
 
             return result
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error listing files: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error listing files: {str(e)}"}
+            )
 
     def read_file_content(self, file_path: str, encoding: str = "utf-8") -> str:
         """
@@ -513,7 +574,9 @@ class E2BTools(Toolkit):
                 return f"File read successfully but contains binary data ({len(content)} bytes). Use download_file_from_sandbox to save it."
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error reading file: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error reading file: {str(e)}"}
+            )
 
     def write_file_content(self, file_path: str, content: str) -> str:
         """
@@ -535,7 +598,9 @@ class E2BTools(Toolkit):
 
             return file_info.path
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error writing file: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error writing file: {str(e)}"}
+            )
 
     def watch_directory(self, directory_path: str, duration_seconds: int = 5) -> str:
         """
@@ -581,7 +646,9 @@ class E2BTools(Toolkit):
                 )
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error watching directory: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error watching directory: {str(e)}"}
+            )
 
     # Internet Access Functions
     def get_public_url(self, port: int) -> str:
@@ -599,7 +666,9 @@ class E2BTools(Toolkit):
 
             return f"http://{host}"
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error getting public URL: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error getting public URL: {str(e)}"}
+            )
 
     def run_server(self, command: str, port: int) -> str:
         """
@@ -625,7 +694,9 @@ class E2BTools(Toolkit):
 
             return url
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error starting server: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error starting server: {str(e)}"}
+            )
 
     # Sandbox Management Functions
     def set_sandbox_timeout(self, timeout: int) -> str:
@@ -648,7 +719,12 @@ class E2BTools(Toolkit):
 
             return str(timeout)  # Convert int to str before returning
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error updating sandbox timeout: {str(e)}"})
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": f"Error updating sandbox timeout: {str(e)}",
+                }
+            )
 
     def get_sandbox_status(self) -> str:
         """
@@ -664,7 +740,12 @@ class E2BTools(Toolkit):
             return sandbox_id
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error getting sandbox status: {str(e)}"})
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": f"Error getting sandbox status: {str(e)}",
+                }
+            )
 
     def shutdown_sandbox(self) -> str:
         """
@@ -675,9 +756,17 @@ class E2BTools(Toolkit):
         """
         try:
             cont = self.sandbox.kill()
-            return json.dumps({"status": "success", "message": "Sandbox shut down successfully", "content": cont})
+            return json.dumps(
+                {
+                    "status": "success",
+                    "message": "Sandbox shut down successfully",
+                    "content": cont,
+                }
+            )
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error shutting down sandbox: {str(e)}"})
+            return json.dumps(
+                {"status": "error", "message": f"Error shutting down sandbox: {str(e)}"}
+            )
 
     def list_running_sandboxes(self) -> str:
         """
@@ -690,7 +779,13 @@ class E2BTools(Toolkit):
             running_sandboxes = self.sandbox.list()
 
             if not running_sandboxes:
-                return json.dumps({"status": "success", "message": "No running sandboxes found", "sandboxes": []})
+                return json.dumps(
+                    {
+                        "status": "success",
+                        "message": "No running sandboxes found",
+                        "sandboxes": [],
+                    }
+                )
 
             sandboxes_info = []
             for sandbox in running_sandboxes:
@@ -712,4 +807,9 @@ class E2BTools(Toolkit):
             )
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error listing running sandboxes: {str(e)}"})
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": f"Error listing running sandboxes: {str(e)}",
+                }
+            )

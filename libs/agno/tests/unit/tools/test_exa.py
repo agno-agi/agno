@@ -207,7 +207,9 @@ def test_error_handling(exa_tools, mock_exa_client):
     assert "Error: Contents API Error" in result
 
     # Test find_similar error
-    mock_exa_client.find_similar_and_contents.side_effect = Exception("Similar API Error")
+    mock_exa_client.find_similar_and_contents.side_effect = Exception(
+        "Similar API Error"
+    )
     result = exa_tools.find_similar("https://example.com")
     assert "Error: Similar API Error" in result
 

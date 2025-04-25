@@ -1,9 +1,10 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
-from agno.models.ollama import OllamaTools
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+from agno.agent import Agent, RunResponse  # noqa
+from agno.models.ollama import OllamaTools
 
 
 class MovieScript(BaseModel):

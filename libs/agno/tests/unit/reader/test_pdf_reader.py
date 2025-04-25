@@ -5,12 +5,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from agno.document.reader.pdf_reader import (
-    PDFImageReader,
-    PDFReader,
-    PDFUrlImageReader,
-    PDFUrlReader,
-)
+from agno.document.reader.pdf_reader import (PDFImageReader, PDFReader,
+                                             PDFUrlImageReader, PDFUrlReader)
 
 
 @pytest.fixture(scope="session")

@@ -37,7 +37,9 @@ def mock_crawl_response():
 
 def test_scrape_basic(mock_scrape_response):
     """Test basic scraping functionality"""
-    with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
+    with patch(
+        "agno.document.reader.firecrawl_reader.FirecrawlApp"
+    ) as MockFirecrawlApp:
         # Set up mock
         mock_app = MockFirecrawlApp.return_value
         mock_app.scrape_url.return_value = mock_scrape_response
@@ -61,7 +63,9 @@ def test_scrape_basic(mock_scrape_response):
 
 def test_scrape_with_api_key_and_params():
     """Test scraping with API key and custom parameters"""
-    with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
+    with patch(
+        "agno.document.reader.firecrawl_reader.FirecrawlApp"
+    ) as MockFirecrawlApp:
         # Set up mock
         mock_app = MockFirecrawlApp.return_value
         mock_app.scrape_url.return_value = {"markdown": "Test content"}
@@ -74,12 +78,16 @@ def test_scrape_with_api_key_and_params():
 
         # Verify FirecrawlApp was called with correct parameters
         MockFirecrawlApp.assert_called_once_with(api_key=api_key)
-        mock_app.scrape_url.assert_called_once_with("https://example.com", params=params)
+        mock_app.scrape_url.assert_called_once_with(
+            "https://example.com", params=params
+        )
 
 
 def test_scrape_empty_response():
     """Test handling of empty response from scrape_url"""
-    with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
+    with patch(
+        "agno.document.reader.firecrawl_reader.FirecrawlApp"
+    ) as MockFirecrawlApp:
         # Set up mock for empty response
         mock_app = MockFirecrawlApp.return_value
         mock_app.scrape_url.return_value = {}
@@ -95,7 +103,9 @@ def test_scrape_empty_response():
 
 def test_scrape_none_content():
     """Test handling of None content from scrape_url"""
-    with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
+    with patch(
+        "agno.document.reader.firecrawl_reader.FirecrawlApp"
+    ) as MockFirecrawlApp:
         # Set up mock for None content
         mock_app = MockFirecrawlApp.return_value
         mock_app.scrape_url.return_value = {"markdown": None}
@@ -111,7 +121,9 @@ def test_scrape_none_content():
 
 def test_scrape_with_chunking(mock_scrape_response):
     """Test scraping with chunking enabled"""
-    with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
+    with patch(
+        "agno.document.reader.firecrawl_reader.FirecrawlApp"
+    ) as MockFirecrawlApp:
         # Set up mock
         mock_app = MockFirecrawlApp.return_value
         mock_app.scrape_url.return_value = mock_scrape_response
@@ -147,7 +159,9 @@ def test_scrape_with_chunking(mock_scrape_response):
 
 def test_crawl_basic(mock_crawl_response):
     """Test basic crawling functionality"""
-    with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
+    with patch(
+        "agno.document.reader.firecrawl_reader.FirecrawlApp"
+    ) as MockFirecrawlApp:
         # Set up mock
         mock_app = MockFirecrawlApp.return_value
         mock_app.crawl_url.return_value = mock_crawl_response
@@ -171,7 +185,9 @@ def test_crawl_basic(mock_crawl_response):
 
 def test_crawl_empty_response():
     """Test handling of empty response from crawl_url"""
-    with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
+    with patch(
+        "agno.document.reader.firecrawl_reader.FirecrawlApp"
+    ) as MockFirecrawlApp:
         # Set up mock for empty response
         mock_app = MockFirecrawlApp.return_value
         mock_app.crawl_url.return_value = {}
@@ -186,7 +202,9 @@ def test_crawl_empty_response():
 
 def test_crawl_empty_data():
     """Test handling of empty data array from crawl_url"""
-    with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
+    with patch(
+        "agno.document.reader.firecrawl_reader.FirecrawlApp"
+    ) as MockFirecrawlApp:
         # Set up mock for empty data array
         mock_app = MockFirecrawlApp.return_value
         mock_app.crawl_url.return_value = {"data": []}
@@ -201,7 +219,9 @@ def test_crawl_empty_data():
 
 def test_crawl_with_chunking(mock_crawl_response):
     """Test crawling with chunking enabled"""
-    with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
+    with patch(
+        "agno.document.reader.firecrawl_reader.FirecrawlApp"
+    ) as MockFirecrawlApp:
         # Set up mock
         mock_app = MockFirecrawlApp.return_value
         mock_app.crawl_url.return_value = mock_crawl_response
@@ -215,7 +235,9 @@ def test_crawl_with_chunking(mock_crawl_response):
             # Simple mock that splits into 2 chunks
             return [
                 doc,  # Original document
-                Document(name=doc.name, id=f"{doc.id}_chunk", content="Chunked content"),
+                Document(
+                    name=doc.name, id=f"{doc.id}_chunk", content="Chunked content"
+                ),
             ]
 
         with patch.object(reader, "chunk_document", side_effect=mock_chunk_document):
@@ -225,7 +247,9 @@ def test_crawl_with_chunking(mock_crawl_response):
 
 def test_read_scrape_mode(mock_scrape_response):
     """Test read method in scrape mode"""
-    with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
+    with patch(
+        "agno.document.reader.firecrawl_reader.FirecrawlApp"
+    ) as MockFirecrawlApp:
         # Set up mock
         mock_app = MockFirecrawlApp.return_value
         mock_app.scrape_url.return_value = mock_scrape_response
@@ -243,7 +267,9 @@ def test_read_scrape_mode(mock_scrape_response):
 
 def test_read_crawl_mode(mock_crawl_response):
     """Test read method in crawl mode"""
-    with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
+    with patch(
+        "agno.document.reader.firecrawl_reader.FirecrawlApp"
+    ) as MockFirecrawlApp:
         # Set up mock
         mock_app = MockFirecrawlApp.return_value
         mock_app.crawl_url.return_value = mock_crawl_response
@@ -269,7 +295,9 @@ def test_read_invalid_mode():
 @pytest.mark.asyncio
 async def test_async_scrape_basic(mock_scrape_response):
     """Test basic async scraping functionality"""
-    with patch("asyncio.to_thread") as mock_to_thread, patch("firecrawl.FirecrawlApp") as MockFirecrawlApp:
+    with patch("asyncio.to_thread") as mock_to_thread, patch(
+        "firecrawl.FirecrawlApp"
+    ) as MockFirecrawlApp:
         # Configure mock to return the expected result
         mock_app = MockFirecrawlApp.return_value
         mock_app.scrape_url.return_value = mock_scrape_response
@@ -288,7 +316,10 @@ async def test_async_scrape_basic(mock_scrape_response):
         assert len(documents) == 1
         assert documents[0].name == "https://example.com"
         assert documents[0].id == "https://example.com_1"
-        assert documents[0].content == "# Test Website\n\nThis is test content from a scraped website."
+        assert (
+            documents[0].content
+            == "# Test Website\n\nThis is test content from a scraped website."
+        )
 
         # Verify to_thread was called with the right arguments
         mock_to_thread.assert_called_once()
@@ -297,7 +328,9 @@ async def test_async_scrape_basic(mock_scrape_response):
 @pytest.mark.asyncio
 async def test_async_crawl_basic(mock_crawl_response):
     """Test basic async crawling functionality"""
-    with patch("asyncio.to_thread") as mock_to_thread, patch("firecrawl.FirecrawlApp") as MockFirecrawlApp:
+    with patch("asyncio.to_thread") as mock_to_thread, patch(
+        "firecrawl.FirecrawlApp"
+    ) as MockFirecrawlApp:
         # Configure mock for crawl
         mock_app = MockFirecrawlApp.return_value
         mock_app.crawl_url.return_value = mock_crawl_response
@@ -332,7 +365,9 @@ async def test_async_crawl_basic(mock_crawl_response):
 @pytest.mark.asyncio
 async def test_async_read_scrape_mode(mock_scrape_response):
     """Test async_read method in scrape mode"""
-    with patch("agno.document.reader.firecrawl_reader.FirecrawlReader.async_scrape") as mock_async_scrape:
+    with patch(
+        "agno.document.reader.firecrawl_reader.FirecrawlReader.async_scrape"
+    ) as mock_async_scrape:
         # Create a document to return
         document = Document(
             name="https://example.com",
@@ -345,7 +380,10 @@ async def test_async_read_scrape_mode(mock_scrape_response):
         documents = await reader.async_read("https://example.com")
 
         assert len(documents) == 1
-        assert documents[0].content == "# Test Website\n\nThis is test content from a scraped website."
+        assert (
+            documents[0].content
+            == "# Test Website\n\nThis is test content from a scraped website."
+        )
 
         # Verify async_scrape was called
         mock_async_scrape.assert_called_once_with("https://example.com")
@@ -354,7 +392,9 @@ async def test_async_read_scrape_mode(mock_scrape_response):
 @pytest.mark.asyncio
 async def test_async_read_crawl_mode(mock_crawl_response):
     """Test async_read method in crawl mode"""
-    with patch("agno.document.reader.firecrawl_reader.FirecrawlReader.async_crawl") as mock_async_crawl:
+    with patch(
+        "agno.document.reader.firecrawl_reader.FirecrawlReader.async_crawl"
+    ) as mock_async_crawl:
         # Create documents to return
         documents = [
             Document(

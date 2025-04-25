@@ -7,12 +7,16 @@ from agno.utils.log import log_debug
 try:
     from baidusearch.baidusearch import search  # type: ignore
 except ImportError:
-    raise ImportError("`baidusearch` not installed. Please install using `pip install baidusearch`")
+    raise ImportError(
+        "`baidusearch` not installed. Please install using `pip install baidusearch`"
+    )
 
 try:
     from pycountry import pycountry
 except ImportError:
-    raise ImportError("`pycountry` not installed. Please install using `pip install pycountry`")
+    raise ImportError(
+        "`pycountry` not installed. Please install using `pip install pycountry`"
+    )
 
 
 class BaiduSearchTools(Toolkit):
@@ -46,7 +50,9 @@ class BaiduSearchTools(Toolkit):
         self.debug = debug
         self.register(self.baidu_search)
 
-    def baidu_search(self, query: str, max_results: int = 5, language: str = "zh") -> str:
+    def baidu_search(
+        self, query: str, max_results: int = 5, language: str = "zh"
+    ) -> str:
         """Execute Baidu search and return results
 
         Args:

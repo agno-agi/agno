@@ -32,7 +32,8 @@ class Document:
         return {
             field: getattr(self, field)
             for field in fields
-            if getattr(self, field) is not None or field == "content"  # content is always included
+            if getattr(self, field) is not None
+            or field == "content"  # content is always included
         }
 
     @classmethod

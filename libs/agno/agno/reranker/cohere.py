@@ -33,7 +33,9 @@ class CohereReranker(Reranker):
 
         top_n = self.top_n
         if top_n and not (0 < top_n):
-            logger.warning(f"top_n should be a positive integer, got {self.top_n}, setting top_n to None")
+            logger.warning(
+                f"top_n should be a positive integer, got {self.top_n}, setting top_n to None"
+            )
             top_n = None
 
         compressed_docs: list[Document] = []
@@ -46,7 +48,9 @@ class CohereReranker(Reranker):
 
         # Order by relevance score
         compressed_docs.sort(
-            key=lambda x: x.reranking_score if x.reranking_score is not None else float("-inf"),
+            key=lambda x: (
+                x.reranking_score if x.reranking_score is not None else float("-inf")
+            ),
             reverse=True,
         )
 
@@ -60,5 +64,7 @@ class CohereReranker(Reranker):
         try:
             return self._rerank(query=query, documents=documents)
         except Exception as e:
-            logger.error(f"Error reranking documents: {e}. Returning original documents")
+            logger.error(
+                f"Error reranking documents: {e}. Returning original documents"
+            )
             return documents

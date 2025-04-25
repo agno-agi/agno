@@ -10,7 +10,9 @@ try:
     from openai import AsyncAzureOpenAI as AsyncAzureOpenAIClient
     from openai import AzureOpenAI as AzureOpenAIClient
 except (ModuleNotFoundError, ImportError):
-    raise ImportError("`openai` not installed. Please install using `pip install openai`")
+    raise ImportError(
+        "`openai` not installed. Please install using `pip install openai`"
+    )
 
 
 @dataclass
@@ -60,7 +62,9 @@ class AzureOpenAI(OpenAILike):
 
         self.api_key = self.api_key or getenv("AZURE_OPENAI_API_KEY")
         self.azure_endpoint = self.azure_endpoint or getenv("AZURE_OPENAI_ENDPOINT")
-        self.azure_deployment = self.azure_deployment or getenv("AZURE_OPENAI_DEPLOYMENT")
+        self.azure_deployment = self.azure_deployment or getenv(
+            "AZURE_OPENAI_DEPLOYMENT"
+        )
         params_mapping = {
             "api_key": self.api_key,
             "api_version": self.api_version,
@@ -77,7 +81,9 @@ class AzureOpenAI(OpenAILike):
         if self.default_query is not None:
             _client_params["default_query"] = self.default_query
 
-        _client_params.update({k: v for k, v in params_mapping.items() if v is not None})
+        _client_params.update(
+            {k: v for k, v in params_mapping.items() if v is not None}
+        )
         if self.client_params:
             _client_params.update(self.client_params)
         return _client_params

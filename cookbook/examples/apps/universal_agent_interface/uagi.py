@@ -4,6 +4,8 @@ from textwrap import dedent
 from typing import List, Optional
 
 from agents import get_agent
+from tools import get_toolkit
+
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge import AgentKnowledge
@@ -19,7 +21,6 @@ from agno.tools import Toolkit
 from agno.tools.reasoning import ReasoningTools
 from agno.utils.log import logger
 from agno.vectordb.lancedb import LanceDb, SearchType
-from tools import get_toolkit
 
 cwd = Path(__file__).parent.resolve()
 tmp_dir = cwd.joinpath("tmp")

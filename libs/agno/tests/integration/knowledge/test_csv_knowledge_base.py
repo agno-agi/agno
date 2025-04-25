@@ -79,9 +79,14 @@ def test_csv_knowledge_base(setup_csv_files):
     assert vector_db.get_count() == 2
 
     agent = Agent(knowledge=knowledge_base)
-    response = agent.run("Tell me about the employees in the Engineering department", markdown=True)
+    response = agent.run(
+        "Tell me about the employees in the Engineering department", markdown=True
+    )
 
-    assert any(term in response.content.lower() for term in ["engineering", "employee", "department"])
+    assert any(
+        term in response.content.lower()
+        for term in ["engineering", "employee", "department"]
+    )
 
     vector_db.drop()
 
@@ -113,7 +118,9 @@ def test_csv_knowledge_base_single_file():
         agent = Agent(knowledge=knowledge_base)
         response = agent.run("What was the revenue for the West region?", markdown=True)
 
-        assert any(term in response.content.lower() for term in ["west", "revenue", "region"])
+        assert any(
+            term in response.content.lower() for term in ["west", "revenue", "region"]
+        )
 
         vector_db.drop()
 
@@ -140,10 +147,14 @@ async def test_csv_knowledge_base_async(setup_csv_files):
 
     # Create and use the agent
     agent = Agent(knowledge=knowledge_base)
-    response = await agent.arun("Which employees have salaries above 80000?", markdown=True)
+    response = await agent.arun(
+        "Which employees have salaries above 80000?", markdown=True
+    )
 
     # Check for relevant content in the response
-    assert any(term in response.content.lower() for term in ["salary", "80000", "employee"])
+    assert any(
+        term in response.content.lower() for term in ["salary", "80000", "employee"]
+    )
 
     # Clean up
     await vector_db.async_drop()
@@ -176,6 +187,8 @@ async def test_csv_knowledge_base_async_single_file():
         agent = Agent(knowledge=knowledge_base)
         response = await agent.arun("Compare Q1 and Q2 laptop sales", markdown=True)
 
-        assert any(term in response.content.lower() for term in ["q1", "q2", "laptop", "sales"])
+        assert any(
+            term in response.content.lower() for term in ["q1", "q2", "laptop", "sales"]
+        )
 
         await vector_db.async_drop()

@@ -90,7 +90,9 @@ async def test_async_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -166,7 +168,9 @@ def test_multiple_tool_calls():
         monitoring=False,
     )
 
-    response = agent.run("What is the current price of TSLA and what is the latest news about it?")
+    response = agent.run(
+        "What is the current price of TSLA and what is the latest news about it?"
+    )
 
     # Verify tool usage
     tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
@@ -237,12 +241,17 @@ def test_web_search_built_in_tool():
         monitoring=False,
     )
 
-    response = agent.run("What was the most recent Olympic Games and who won the most medals?")
+    response = agent.run(
+        "What was the most recent Olympic Games and who won the most medals?"
+    )
 
     assert response.content is not None
     assert "medal" in response.content.lower()
     # Check for typical web search result indicators
-    assert any(term in response.content.lower() for term in ["olympic", "games", "gold", "medal"])
+    assert any(
+        term in response.content.lower()
+        for term in ["olympic", "games", "gold", "medal"]
+    )
     assert response.citations is not None
 
 
@@ -257,7 +266,10 @@ def test_web_search_built_in_tool_stream():
         monitoring=False,
     )
 
-    response_stream = agent.run("What was the most recent Olympic Games and who won the most medals?", stream=True)
+    response_stream = agent.run(
+        "What was the most recent Olympic Games and who won the most medals?",
+        stream=True,
+    )
 
     responses = list(response_stream)
     assert len(responses) > 0
@@ -273,7 +285,9 @@ def test_web_search_built_in_tool_stream():
     assert response_citations is not None
 
     assert "medal" in final_response.lower()
-    assert any(term in final_response.lower() for term in ["olympic", "games", "gold", "medal"])
+    assert any(
+        term in final_response.lower() for term in ["olympic", "games", "gold", "medal"]
+    )
 
 
 def test_web_search_built_in_tool_with_other_tools():
@@ -287,7 +301,9 @@ def test_web_search_built_in_tool_with_other_tools():
         monitoring=False,
     )
 
-    response = agent.run("What is the current price of TSLA and the latest news about it?")
+    response = agent.run(
+        "What is the current price of TSLA and the latest news about it?"
+    )
 
     tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
     assert len(tool_calls) >= 1  # At least one message has tool calls

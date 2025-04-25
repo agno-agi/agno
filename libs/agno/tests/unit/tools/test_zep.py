@@ -48,7 +48,10 @@ def test_initialization_no_api_key(monkeypatch):
 
 def test_add_zep_message(zep_tools):
     result = zep_tools.add_zep_message("user", "test message")
-    assert result == f"Message from 'user' added successfully to session {MOCK_SESSION_ID}."
+    assert (
+        result
+        == f"Message from 'user' added successfully to session {MOCK_SESSION_ID}."
+    )
     zep_tools.zep_client.memory.add.assert_called_once()
 
     # Check that ZepMessage was created with correct parameters
@@ -156,7 +159,10 @@ async def test_async_initialization(async_zep_tools):
 @pytest.mark.asyncio
 async def test_async_add_zep_message(async_zep_tools):
     result = await async_zep_tools.add_zep_message("user", "test message")
-    assert result == f"Message from 'user' added successfully to session {MOCK_SESSION_ID}."
+    assert (
+        result
+        == f"Message from 'user' added successfully to session {MOCK_SESSION_ID}."
+    )
     async_zep_tools.zep_client.memory.add.assert_called_once()
 
     # Check that ZepMessage was created with correct parameters

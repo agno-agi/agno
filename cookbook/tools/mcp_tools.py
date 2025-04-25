@@ -2,10 +2,11 @@ import asyncio
 import sys
 from pathlib import Path
 
-from agno.agent import Agent
-from agno.tools.mcp import MCPTools
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+from agno.agent import Agent
+from agno.tools.mcp import MCPTools
 
 
 async def main(prompt: str) -> None:

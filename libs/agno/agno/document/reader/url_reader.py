@@ -25,7 +25,9 @@ class URLReader(Reader):
         # Retry the request up to 3 times with exponential backoff
         for attempt in range(3):
             try:
-                response = httpx.get(url, proxy=self.proxy) if self.proxy else httpx.get(url)
+                response = (
+                    httpx.get(url, proxy=self.proxy) if self.proxy else httpx.get(url)
+                )
                 break
             except httpx.RequestError as e:
                 if attempt == 2:  # Last attempt
@@ -44,7 +46,9 @@ class URLReader(Reader):
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
+            logger.error(
+                f"HTTP error occurred: {e.response.status_code} - {e.response.text}"
+            )
             raise
 
         document = self._create_document(url, response.text)
@@ -69,7 +73,9 @@ class URLReader(Reader):
                         logger.error(f"Failed to fetch URL after 3 attempts: {e}")
                         raise
                     wait_time = 2**attempt
-                    logger.warning(f"Request failed, retrying in {wait_time} seconds...")
+                    logger.warning(
+                        f"Request failed, retrying in {wait_time} seconds..."
+                    )
                     await asyncio.sleep(wait_time)
 
             try:
@@ -81,7 +87,9 @@ class URLReader(Reader):
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
+                logger.error(
+                    f"HTTP error occurred: {e.response.status_code} - {e.response.text}"
+                )
                 raise
 
             document = self._create_document(url, response.text)

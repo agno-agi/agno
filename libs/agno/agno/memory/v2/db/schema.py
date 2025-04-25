@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -12,6 +12,8 @@ class MemoryRow(BaseModel):
     memory: Dict[str, Any]
     user_id: Optional[str] = None
     last_updated: Optional[datetime] = None
+    # Optional embedding vector for semantic search
+    embedding: Optional[List[float]] = None
 
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 
@@ -25,7 +27,9 @@ class MemoryRow(BaseModel):
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = self.model_dump(exclude={"last_updated"})
-        _dict["last_updated"] = self.last_updated.isoformat() if self.last_updated else None
+        _dict["last_updated"] = (
+            self.last_updated.isoformat() if self.last_updated else None
+        )
         return _dict
 
 
@@ -50,5 +54,7 @@ class SummaryRow(BaseModel):
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = self.model_dump(exclude={"last_updated"})
-        _dict["last_updated"] = self.last_updated.isoformat() if self.last_updated else None
+        _dict["last_updated"] = (
+            self.last_updated.isoformat() if self.last_updated else None
+        )
         return _dict

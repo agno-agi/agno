@@ -21,7 +21,10 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
             or ("4.1" in reasoning_model.id)
             or ("4.5" in reasoning_model.id)
         )
-    ) or (isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower())
+    ) or (
+        isinstance(reasoning_model, OpenAILike)
+        and "deepseek-r1" in reasoning_model.id.lower()
+    )
 
 
 def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
@@ -46,7 +49,9 @@ def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> O
             reasoning_content = content
 
     return Message(
-        role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
+        role="assistant",
+        content=f"<thinking>\n{reasoning_content}\n</thinking>",
+        reasoning_content=reasoning_content,
     )
 
 
@@ -59,7 +64,9 @@ async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunResponse = await reasoning_agent.arun(messages=messages)
+        reasoning_agent_response: RunResponse = await reasoning_agent.arun(
+            messages=messages
+        )
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
@@ -76,5 +83,7 @@ async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message
             reasoning_content = content
 
     return Message(
-        role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
+        role="assistant",
+        content=f"<thinking>\n{reasoning_content}\n</thinking>",
+        reasoning_content=reasoning_content,
     )

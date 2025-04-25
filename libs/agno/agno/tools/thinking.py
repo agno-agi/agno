@@ -23,7 +23,8 @@ class ThinkingTools(Toolkit):
         )
 
         if instructions is None:
-            self.instructions = dedent("""\
+            self.instructions = dedent(
+                """\
             ## Using the think tool
             Before taking any action or responding to the user after receiving tool results, use the think tool as a scratchpad to:
             - List the specific rules that apply to the current request
@@ -33,7 +34,8 @@ class ThinkingTools(Toolkit):
 
             ## Rules
             - Use the think tool generously to jot down thoughts and ideas.\
-            """)
+            """
+            )
 
         if think:
             # Register the think tool

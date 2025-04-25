@@ -70,14 +70,19 @@ def test_connection_error(mock_redis_client):
 def test_memory_exists(memory_db, mock_redis_client):
     """Test checking if memory exists."""
     # Create a test memory
-    memory = MemoryRow(id="test-id-1", user_id="test-user", memory={"text": "Test memory"})
+    memory = MemoryRow(
+        id="test-id-1", user_id="test-user", memory={"text": "Test memory"}
+    )
 
     # Mock that memory doesn't exist initially
     assert not memory_db.memory_exists(memory)
 
     # Set the memory in Redis
     key = "test_memory:test-id-1"
-    mock_redis_client.set(key, '{"id": "test-id-1", "user_id": "test-user", "memory": {"text": "Test memory"}}')
+    mock_redis_client.set(
+        key,
+        '{"id": "test-id-1", "user_id": "test-user", "memory": {"text": "Test memory"}}',
+    )
 
     # Now it should exist
     assert memory_db.memory_exists(memory)
@@ -86,7 +91,9 @@ def test_memory_exists(memory_db, mock_redis_client):
 def test_upsert_memory(memory_db, mock_redis_client):
     """Test upserting a memory."""
     # Create a test memory
-    memory = MemoryRow(id="test-id-1", user_id="test-user", memory={"text": "Test memory"})
+    memory = MemoryRow(
+        id="test-id-1", user_id="test-user", memory={"text": "Test memory"}
+    )
 
     # Upsert memory
     with patch("time.time", return_value=12345):
@@ -110,13 +117,16 @@ def test_read_memories(memory_db, mock_redis_client):
     """Test reading memories from Redis."""
     # Set up test data
     mock_redis_client.set(
-        "test_memory:1", '{"id": "1", "user_id": "user1", "memory": {"text": "Memory 1"}, "created_at": 1000}'
+        "test_memory:1",
+        '{"id": "1", "user_id": "user1", "memory": {"text": "Memory 1"}, "created_at": 1000}',
     )
     mock_redis_client.set(
-        "test_memory:2", '{"id": "2", "user_id": "user1", "memory": {"text": "Memory 2"}, "created_at": 2000}'
+        "test_memory:2",
+        '{"id": "2", "user_id": "user1", "memory": {"text": "Memory 2"}, "created_at": 2000}',
     )
     mock_redis_client.set(
-        "test_memory:3", '{"id": "3", "user_id": "user2", "memory": {"text": "Memory 3"}, "created_at": 3000}'
+        "test_memory:3",
+        '{"id": "3", "user_id": "user2", "memory": {"text": "Memory 3"}, "created_at": 3000}',
     )
 
     # Test reading all memories
@@ -145,7 +155,8 @@ def test_delete_memory(memory_db, mock_redis_client):
     """Test deleting a memory."""
     # Set up test data
     mock_redis_client.set(
-        "test_memory:to-delete", '{"id": "to-delete", "user_id": "user1", "memory": {"text": "Delete me"}}'
+        "test_memory:to-delete",
+        '{"id": "to-delete", "user_id": "user1", "memory": {"text": "Delete me"}}',
     )
 
     # Verify memory exists

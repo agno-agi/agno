@@ -16,14 +16,28 @@ def _assert_metrics(response: RunResponse):
     assert sum(total_tokens) > 0
     assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
 
-    assert response.metrics.get("additional_metrics")[0].get("total_duration") is not None
-    assert response.metrics.get("additional_metrics")[0].get("load_duration") is not None
-    assert response.metrics.get("additional_metrics")[0].get("prompt_eval_duration") is not None
-    assert response.metrics.get("additional_metrics")[0].get("eval_duration") is not None
+    assert (
+        response.metrics.get("additional_metrics")[0].get("total_duration") is not None
+    )
+    assert (
+        response.metrics.get("additional_metrics")[0].get("load_duration") is not None
+    )
+    assert (
+        response.metrics.get("additional_metrics")[0].get("prompt_eval_duration")
+        is not None
+    )
+    assert (
+        response.metrics.get("additional_metrics")[0].get("eval_duration") is not None
+    )
 
 
 def test_basic():
-    agent = Agent(model=Ollama(id="llama3.2:latest"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Ollama(id="llama3.2:latest"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response: RunResponse = agent.run("Share a 2 sentence horror story")
 
@@ -35,7 +49,12 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=Ollama(id="llama3.2:latest"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Ollama(id="llama3.2:latest"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -53,7 +72,12 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=Ollama(id="llama3.2:latest"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Ollama(id="llama3.2:latest"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -65,7 +89,12 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=Ollama(id="llama3.2:latest"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(
+        model=Ollama(id="llama3.2:latest"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -97,7 +126,13 @@ def test_with_memory():
     # Verify memories were created
     messages = agent.get_messages_for_session()
     assert len(messages) == 5
-    assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
+    assert [m.role for m in messages] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
 
     # Test metrics structure and types
     _assert_metrics(response2)
@@ -110,7 +145,11 @@ def test_response_model():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=Ollama(id="mistral"), markdown=True, telemetry=False, monitoring=False, response_model=MovieScript
+        model=Ollama(id="mistral"),
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+        response_model=MovieScript,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -171,7 +210,9 @@ def test_structured_outputs_deprecated():
 def test_history():
     agent = Agent(
         model=Ollama(id="llama3.2:latest"),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(
+            table_name="agent_sessions", db_file="tmp/agent_storage.db"
+        ),
         add_history_to_messages=True,
         telemetry=False,
         monitoring=False,
