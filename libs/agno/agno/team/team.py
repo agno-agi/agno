@@ -54,6 +54,7 @@ from agno.utils.log import (
     use_agent_logger,
     use_team_logger,
 )
+from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.message import get_text_from_message
 from agno.utils.response import (
     check_if_run_cancelled,
@@ -170,6 +171,8 @@ class Team:
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
+    # A list of hooks to be called before and after the tool call
+    tool_hooks: Optional[List[Callable]] = None
 
     # --- Structured output ---
     # Response model for the team response
@@ -257,6 +260,7 @@ class Team:
         show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_hooks: Optional[List[Callable]] = None,
         response_model: Optional[Type[BaseModel]] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
@@ -321,31 +325,22 @@ class Team:
         self.show_tool_calls = show_tool_calls
         self.tool_choice = tool_choice
         self.tool_call_limit = tool_call_limit
+        self.tool_hooks = tool_hooks
 
         self.response_model = response_model
         self.use_json_mode = use_json_mode
         self.parse_response = parse_response
 
         self.memory = memory
-
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
-        if add_memory_references is None:
-            self.add_memory_references = enable_user_memories or enable_agentic_memory
-        else:
-            self.add_memory_references = add_memory_references
-
+        self.add_memory_references = add_memory_references
         self.enable_session_summaries = enable_session_summaries
-        if add_session_summary_references is None:
-            self.add_session_summary_references = enable_session_summaries
-        else:
-            self.add_session_summary_references = add_session_summary_references
+        self.add_session_summary_references = add_session_summary_references
 
         self.enable_team_history = enable_team_history
         self.num_of_interactions_from_history = num_of_interactions_from_history
         self.num_history_runs = num_history_runs
-        if num_of_interactions_from_history is not None:
-            self.num_history_runs = num_of_interactions_from_history
 
         self.storage = storage
         self.extra_data = extra_data
@@ -380,8 +375,6 @@ class Team:
         # Team session
         self.team_session: Optional[TeamSession] = None
 
-        self._tools_for_model: Optional[List[Dict]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
         self._tool_instructions: Optional[List[str]] = None
 
         # True if we should parse a member response model
@@ -401,7 +394,7 @@ class Team:
         else:
             set_log_level_to_info(source_type="team")
 
-    def _set_storage_mode(self):
+    def _set_storage_mode(self) -> None:
         if self.storage is not None:
             self.storage.mode = "team"
 
@@ -417,7 +410,7 @@ class Team:
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
-    def _initialize_member(self, member: Union["Team", Agent], session_id: Optional[str] = None):
+    def _initialize_member(self, member: Union["Team", Agent], session_id: Optional[str] = None) -> None:
         # Set debug mode for all members
         if self.debug_mode:
             member.debug_mode = True
@@ -429,12 +422,26 @@ class Team:
         if session_id is not None:
             member.team_session_id = session_id
 
-        member.team_id = self.team_id
+        # Set the team session state on members
+        if self.session_state is not None:
+            if isinstance(member, Agent):
+                if member.team_session_state is None:
+                    member.team_session_state = self.session_state
+                else:
+                    merge_dictionaries(member.team_session_state, self.session_state)
+            elif isinstance(member, Team):
+                if member.session_state is None:
+                    member.session_state = self.session_state
+                else:
+                    merge_dictionaries(member.session_state, self.session_state)
+
+        if isinstance(member, Agent):
+            member.team_id = self.team_id
 
         if member.name is None:
             log_warning("Team member name is undefined.")
 
-    def _set_default_model(self):
+    def _set_default_model(self) -> None:
         # Set the default model
         if self.model is None:
             try:
@@ -450,9 +457,19 @@ class Team:
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
 
-    def initialize_team(self, session_id: Optional[str] = None) -> None:
-        self._set_default_model()
+    def _set_defaults(self) -> None:
+        if self.add_memory_references is None:
+            self.add_memory_references = self.enable_user_memories or self.enable_agentic_memory
 
+        if self.add_session_summary_references is None:
+            self.add_session_summary_references = self.enable_session_summaries
+
+        if self.num_of_interactions_from_history is not None:
+            self.num_history_runs = self.num_of_interactions_from_history
+
+    def initialize_team(self, session_id: Optional[str] = None) -> None:
+        self._set_defaults()
+        self._set_default_model()
         self._set_storage_mode()
 
         # Set debug mode
@@ -464,7 +481,7 @@ class Team:
         # Set monitoring and telemetry
         self._set_monitoring()
 
-        # Set the team ID if not yet set
+        # Set the team ID if not set
         self._set_team_id()
 
         log_debug(f"Team ID: {self.team_id}", center=True)
@@ -4286,8 +4303,8 @@ class Team:
 
     def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
         # We have to reset for every run, because we will have new images/audio/video to attach
-        self._functions_for_model = {}
-        self._tools_for_model = []
+        _functions_for_model: Dict[str, Function] = {}
+        _tools_for_model: List[Dict] = []
 
         # Get Agent tools
         if len(tools) > 0:
@@ -4302,20 +4319,23 @@ class Team:
                 if isinstance(tool, Dict):
                     # If a dict is passed, it is a builtin tool
                     # that is run by the model provider and not the Agent
-                    self._tools_for_model.append(tool)
+                    _tools_for_model.append(tool)
                     log_debug(f"Included builtin tool {tool}")
 
                 elif isinstance(tool, Toolkit):
                     # For each function in the toolkit and process entrypoint
                     for name, func in tool.functions.items():
                         # If the function does not exist in self.functions
-                        if name not in self._functions_for_model:
+                        if name not in _functions_for_model:
                             func._agent = self
+                            func._team = self
                             func.process_entrypoint(strict=strict)
                             if strict:
                                 func.strict = True
-                            self._functions_for_model[name] = func
-                            self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                            if self.tool_hooks:
+                                func.tool_hooks = self.tool_hooks
+                            _functions_for_model[name] = func
+                            _tools_for_model.append({"type": "function", "function": func.to_dict()})
                             log_debug(f"Added function {name} from {tool.name}")
 
                     # Add instructions from the toolkit
@@ -4325,13 +4345,16 @@ class Team:
                         self._tool_instructions.append(tool.instructions)
 
                 elif isinstance(tool, Function):
-                    if tool.name not in self._functions_for_model:
+                    if tool.name not in _functions_for_model:
                         tool._agent = self
+                        tool._team = self
                         tool.process_entrypoint(strict=strict)
                         if strict and tool.strict is None:
                             tool.strict = True
-                        self._functions_for_model[tool.name] = tool
-                        self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
+                        if self.tool_hooks:
+                            tool.tool_hooks = self.tool_hooks
+                        _functions_for_model[tool.name] = tool
+                        _tools_for_model.append({"type": "function", "function": tool.to_dict()})
                         log_debug(f"Added function {tool.name}")
 
                     # Add instructions from the Function
@@ -4345,18 +4368,21 @@ class Team:
                     try:
                         func = Function.from_callable(tool, strict=strict)
                         func._agent = self
+                        func._team = self
                         if strict:
                             func.strict = True
-                        self._functions_for_model[func.name] = func
-                        self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                        if self.tool_hooks:
+                            func.tool_hooks = self.tool_hooks
+                        _functions_for_model[func.name] = func
+                        _tools_for_model.append({"type": "function", "function": func.to_dict()})
                         log_debug(f"Added function {func.name}")
                     except Exception as e:
                         log_warning(f"Could not add function {tool}: {e}")
 
             # Set tools on the model
-            model.set_tools(tools=self._tools_for_model)
+            model.set_tools(tools=_tools_for_model)
             # Set functions on the model
-            model.set_functions(functions=self._functions_for_model)
+            model.set_functions(functions=_functions_for_model)
 
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
@@ -4841,7 +4867,7 @@ class Team:
         json_output_prompt += "\nMake sure it only contains valid JSON."
         return json_output_prompt
 
-    def _update_team_state(self, run_response: Union[TeamRunResponse, RunResponse]) -> None:
+    def _update_team_media(self, run_response: Union[TeamRunResponse, RunResponse]) -> None:
         """Update the team state with the run response."""
         if run_response.images is not None:
             if self.images is None:
@@ -4979,6 +5005,18 @@ class Team:
 
         return set_shared_context
 
+    def _update_team_session_state(self, member_agent: Union[Agent, "Team"]) -> None:
+        if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
+            if self.session_state is None:
+                self.session_state = member_agent.team_session_state
+            else:
+                merge_dictionaries(self.session_state, member_agent.team_session_state)
+        elif isinstance(member_agent, Team) and member_agent.session_state is not None:
+            if self.session_state is None:
+                self.session_state = member_agent.session_state
+            else:
+                merge_dictionaries(self.session_state, member_agent.session_state)
+
     def get_run_member_agents_function(
         self,
         session_id: str,
@@ -5058,6 +5096,7 @@ class Team:
                 member_agent_task += f"\n\n{team_member_interactions_str}"
 
             for member_agent_index, member_agent in enumerate(self.members):
+                self._initialize_member(member_agent, session_id=session_id)
                 if stream:
                     member_agent_run_response_stream = member_agent.run(
                         member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True
@@ -5122,8 +5161,11 @@ class Team:
                 self.run_response = cast(TeamRunResponse, self.run_response)
                 self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-                # Update the team state
-                self._update_team_state(member_agent.run_response)  # type: ignore
+                # Update team session state
+                self._update_team_session_state(member_agent)
+
+                # Update the team media
+                self._update_team_media(member_agent.run_response)  # type: ignore
 
             # Afterward, switch back to the team logger
             use_team_logger()
@@ -5195,6 +5237,7 @@ class Team:
                 # We cannot stream responses with async gather
                 current_agent = member_agent  # Create a reference to the current agent
                 current_index = member_agent_index  # Create a reference to the current index
+                self._initialize_member(current_agent, session_id=session_id)
 
                 async def run_member_agent(agent=current_agent, idx=current_index) -> str:
                     response = await agent.arun(
@@ -5222,8 +5265,11 @@ class Team:
                     self.run_response = cast(TeamRunResponse, self.run_response)
                     self.run_response.add_member_run(agent.run_response)
 
-                    # Update the team state
-                    self._update_team_state(agent.run_response)
+                    # Update team session state
+                    self._update_team_session_state(current_agent)
+
+                    # Update the team media
+                    self._update_team_media(agent.run_response)
 
                     if response.content is None and (response.tools is None or len(response.tools) == 0):
                         return f"Agent {member_name}: No response from the member agent."
@@ -5426,8 +5472,11 @@ class Team:
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-            # Update the team state
-            self._update_team_state(member_agent.run_response)  # type: ignore
+            # Update team session state
+            self._update_team_session_state(member_agent)
+
+            # Update the team media
+            self._update_team_media(member_agent.run_response)  # type: ignore
 
         async def atransfer_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
@@ -5567,8 +5616,11 @@ class Team:
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-            # Update the team state
-            self._update_team_state(member_agent.run_response)  # type: ignore
+            # Update team session state
+            self._update_team_session_state(member_agent)
+
+            # Update the team media
+            self._update_team_media(member_agent.run_response)  # type: ignore
 
         if async_mode:
             transfer_function = atransfer_task_to_member  # type: ignore
@@ -5734,8 +5786,11 @@ class Team:
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-            # Update the team state
-            self._update_team_state(member_agent.run_response)  # type: ignore
+            # Update team session state
+            self._update_team_session_state(member_agent)
+
+            # Update the team media
+            self._update_team_media(member_agent.run_response)  # type: ignore
 
         async def aforward_task_to_member(member_id: str, expected_output: Optional[str] = None) -> AsyncIterator[str]:
             """Use this function to forward a message to the selected team member.
@@ -5832,8 +5887,11 @@ class Team:
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-            # Update the team state
-            self._update_team_state(member_agent.run_response)  # type: ignore
+            # Update team session state
+            self._update_team_session_state(member_agent)
+
+            # Update the team media
+            self._update_team_media(member_agent.run_response)  # type: ignore
 
         if async_mode:
             forward_function = aforward_task_to_member  # type: ignore
