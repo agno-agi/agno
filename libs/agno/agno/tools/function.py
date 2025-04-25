@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, Callable, Dict, Optional, Type, TypeVar, get_type_hints
+from typing import Any, Callable, Dict, List, Optional, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
 from pydantic import BaseModel, Field, validate_call
@@ -64,10 +64,15 @@ class Function(BaseModel):
     stop_after_tool_call: bool = False
     # Hook that runs before the function is executed.
     # If defined, can accept the FunctionCall instance as a parameter.
+    # Deprecated: Use tool_hooks instead.
     pre_hook: Optional[Callable] = None
     # Hook that runs after the function is executed, regardless of success/failure.
     # If defined, can accept the FunctionCall instance as a parameter.
+    # Deprecated: Use tool_hooks instead.
     post_hook: Optional[Callable] = None
+
+    # A list of hooks to run around tool calls.
+    tool_hooks: Optional[List[Callable]] = None
 
     # Caching configuration
     cache_results: bool = False
@@ -77,6 +82,8 @@ class Function(BaseModel):
     # --*-- FOR INTERNAL USE ONLY --*--
     # The agent that the function is associated with
     _agent: Optional[Any] = None
+    # The team that the function is associated with
+    _team: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(exclude_none=True, include={"name", "description", "parameters", "strict"})
@@ -96,11 +103,15 @@ class Function(BaseModel):
             # If function has an the agent argument, remove the agent parameter from the type hints
             if "agent" in sig.parameters:
                 del type_hints["agent"]
+            if "team" in sig.parameters:
+                del type_hints["team"]
             # log_info(f"Type hints for {function_name}: {type_hints}")
 
             # Filter out return type and only process parameters
             param_type_hints = {
-                name: type_hints.get(name) for name in sig.parameters if name != "return" and name != "agent"
+                name: type_hints.get(name)
+                for name in sig.parameters
+                if name != "return" and name not in ["agent", "team"]
             }
 
             # Parse docstring for parameters
@@ -126,13 +137,13 @@ class Function(BaseModel):
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name != "agent"]
+                parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team"]]
             else:
                 # Mark a field as required if it has no default value
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name != "agent"
+                    if param.default == param.empty and name != "self" and name not in ["agent", "team"]
                 ]
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
@@ -177,11 +188,15 @@ class Function(BaseModel):
             # If function has an the agent argument, remove the agent parameter from the type hints
             if "agent" in sig.parameters:
                 del type_hints["agent"]
+            if "team" in sig.parameters:
+                del type_hints["team"]
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
             param_type_hints = {
-                name: type_hints.get(name) for name in sig.parameters if name != "return" and name != "agent"
+                name: type_hints.get(name)
+                for name in sig.parameters
+                if name != "return" and name not in ["agent", "team"]
             }
 
             # Parse docstring for parameters
@@ -207,25 +222,27 @@ class Function(BaseModel):
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name != "agent"]
+                parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team"]]
             else:
                 # Mark a field as required if it has no default value
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name != "agent"
+                    if param.default == param.empty and name != "self" and name not in ["agent", "team"]
                 ]
 
             if params_set_by_user:
                 self.parameters["additionalProperties"] = False
                 if strict:
-                    self.parameters["required"] = [name for name in self.parameters["properties"] if name != "agent"]
+                    self.parameters["required"] = [
+                        name for name in self.parameters["properties"] if name not in ["agent", "team"]
+                    ]
                 else:
                     # Mark a field as required if it has no default value
                     self.parameters["required"] = [
                         name
                         for name, param in sig.parameters.items()
-                        if param.default == param.empty and name != "self" and name != "agent"
+                        if param.default == param.empty and name != "self" and name not in ["agent", "team"]
                     ]
 
             # log_debug(f"JSON schema for {self.name}: {parameters}")
@@ -287,6 +304,8 @@ class Function(BaseModel):
         # Remove agent from entrypoint_args
         if "agent" in copy_entrypoint_args:
             del copy_entrypoint_args["agent"]
+        if "team" in copy_entrypoint_args:
+            del copy_entrypoint_args["team"]
         args_str = str(copy_entrypoint_args)
 
         kwargs_str = str(sorted((call_args or {}).items()))
@@ -393,6 +412,9 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has and agent argument
                 if "agent" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["agent"] = self.function._agent
+                # Check if the pre-hook has an team argument
+                if "team" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["team"] = self.function._team
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -415,6 +437,9 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has and agent argument
                 if "agent" in signature(self.function.post_hook).parameters:
                     post_hook_args["agent"] = self.function._agent
+                # Check if the post-hook has an team argument
+                if "team" in signature(self.function.post_hook).parameters:
+                    post_hook_args["team"] = self.function._team
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
@@ -435,10 +460,59 @@ class FunctionCall(BaseModel):
         # Check if the entrypoint has an agent argument
         if "agent" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["agent"] = self.function._agent
+        # Check if the entrypoint has an team argument
+        if "team" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["team"] = self.function._team
         # Check if the entrypoint has an fc argument
         if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["fc"] = self
         return entrypoint_args
+
+    def _build_nested_execution_chain(self, entrypoint_args: Dict[str, Any]):
+        """Build a nested chain of hook executions with the entrypoint at the center.
+
+        This creates a chain where each hook wraps the next one, with the function call
+        at the innermost level. Returns bubble back up through each hook.
+        """
+        from functools import reduce
+        from inspect import iscoroutinefunction
+
+        def execute_entrypoint(name, func, args):
+            """Execute the entrypoint function."""
+            arguments = entrypoint_args.copy()
+            if self.arguments is not None:
+                arguments.update(self.arguments)
+            return self.function.entrypoint(**arguments)  # type: ignore
+
+        # If no hooks, just return the entrypoint execution function
+        if not self.function.tool_hooks:
+            return execute_entrypoint
+
+        def create_hook_wrapper(inner_func, hook):
+            """Create a nested wrapper for the hook."""
+
+            def wrapper(name, func, args):
+                # Pass the inner function as next_func to the hook
+                # The hook will call next_func to continue the chain
+                def next_func(**kwargs):
+                    return inner_func(name, func, kwargs)
+
+                return hook(name, next_func, args)
+
+            return wrapper
+
+        # Remove coroutine hooks
+        final_hooks = []
+        for hook in self.function.tool_hooks:
+            if iscoroutinefunction(hook):
+                log_warning(f"Cannot use async hooks with sync function calls. Skipping hook: {hook.__name__}")
+            else:
+                final_hooks.append(hook)
+
+        # Build the chain from inside out - reverse the hooks to start from the innermost
+        hooks = list(reversed(final_hooks))
+        chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
+        return chain
 
     def execute(self) -> bool:
         """Runs the function call."""
@@ -469,10 +543,15 @@ class FunctionCall(BaseModel):
 
         # Execute function
         try:
-            if self.arguments == {} or self.arguments is None:
-                result = self.function.entrypoint(**entrypoint_args)
+            # Build and execute the nested chain of hooks
+            if self.function.tool_hooks is not None:
+                execution_chain = self._build_nested_execution_chain(entrypoint_args=entrypoint_args)
+                result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
-                result = self.function.entrypoint(**entrypoint_args, **self.arguments)
+                arguments = entrypoint_args
+                if self.arguments is not None:
+                    arguments.update(self.arguments)
+                result = self.function.entrypoint(**arguments)
 
             # Handle generator case
             if isgenerator(result):
@@ -512,6 +591,9 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an agent argument
                 if "agent" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["agent"] = self.function._agent
+                # Check if the pre-hook has an team argument
+                if "team" in signature(self.function.pre_hook).parameters:
+                    pre_hook_args["team"] = self.function._team
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
@@ -535,6 +617,9 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an agent argument
                 if "agent" in signature(self.function.post_hook).parameters:
                     post_hook_args["agent"] = self.function._agent
+                # Check if the post-hook has an team argument
+                if "team" in signature(self.function.post_hook).parameters:
+                    post_hook_args["team"] = self.function._team
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
@@ -547,6 +632,70 @@ class FunctionCall(BaseModel):
             except Exception as e:
                 log_warning(f"Error in post-hook callback: {e}")
                 log_exception(e)
+
+    async def _build_nested_execution_chain_async(self, entrypoint_args: Dict[str, Any]):
+        """Build a nested chain of async hook executions with the entrypoint at the center.
+
+        Similar to _build_nested_execution_chain but for async execution.
+        """
+        from functools import reduce
+        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction
+
+        async def execute_entrypoint_async(name, func, args):
+            """Execute the entrypoint function asynchronously."""
+            arguments = entrypoint_args.copy()
+            if self.arguments is not None:
+                arguments.update(self.arguments)
+
+            result = self.function.entrypoint(**arguments)  # type: ignore
+            if iscoroutinefunction(self.function.entrypoint) and not (
+                isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint)
+            ):
+                result = await result
+            return result
+
+        def execute_entrypoint(name, func, args):
+            """Execute the entrypoint function synchronously."""
+            arguments = entrypoint_args.copy()
+            if self.arguments is not None:
+                arguments.update(self.arguments)
+            return self.function.entrypoint(**arguments)  # type: ignore
+
+        # If no hooks, just return the entrypoint execution function
+        if not self.function.tool_hooks:
+            return execute_entrypoint
+
+        def create_hook_wrapper(inner_func, hook):
+            """Create a nested wrapper for the hook."""
+
+            async def wrapper(name, func, args):
+                """Create a nested wrapper for the hook."""
+
+                # Pass the inner function as next_func to the hook
+                # The hook will call next_func to continue the chain
+                async def next_func(**kwargs):
+                    if iscoroutinefunction(inner_func):
+                        return await inner_func(name, func, kwargs)
+                    else:
+                        return inner_func(name, func, kwargs)
+
+                if iscoroutinefunction(hook):
+                    return await hook(name, next_func, args)
+                else:
+                    return hook(name, next_func, args)
+
+            return wrapper
+
+        # Build the chain from inside out - reverse the hooks to start from the innermost
+        hooks = list(reversed(self.function.tool_hooks))
+
+        # Handle async and sync entrypoints
+        if iscoroutinefunction(self.function.entrypoint):
+            chain = reduce(create_hook_wrapper, hooks, execute_entrypoint_async)
+        else:
+            chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
+
+        return chain
 
     async def aexecute(self) -> bool:
         """Runs the function call asynchronously."""
@@ -581,14 +730,16 @@ class FunctionCall(BaseModel):
 
         # Execute function
         try:
-            if self.arguments == {} or self.arguments is None:
-                result = self.function.entrypoint(**entrypoint_args)
-                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
-                    self.result = result  # Store async generator directly
-                else:
-                    self.result = await result
+            # Build and execute the nested chain of hooks
+            if self.function.tool_hooks is not None:
+                execution_chain = await self._build_nested_execution_chain_async(entrypoint_args)
+                self.result = await execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
-                result = self.function.entrypoint(**entrypoint_args, **self.arguments)
+                if self.arguments is None or self.arguments == {}:
+                    result = self.function.entrypoint(**entrypoint_args)
+                else:
+                    result = self.function.entrypoint(**entrypoint_args, **self.arguments)
+
                 if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
                     self.result = result  # Store async generator directly
                 else:

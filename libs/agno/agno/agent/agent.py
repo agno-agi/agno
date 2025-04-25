@@ -144,6 +144,9 @@ class Agent:
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
+    # A function that acts as middleware and is called around tool calls.
+    tool_hooks: Optional[List[Callable]] = None
+
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
     reasoning: bool = False
@@ -256,6 +259,8 @@ class Agent:
     team_session_id: Optional[str] = None
     # Optional team ID. Indicates this agent is part of a team.
     team_id: Optional[str] = None
+    # Optional team session state. Set by the team leader agent.
+    team_session_state: Optional[Dict[str, Any]] = None
 
     # --- Debug & Monitoring ---
     # Enable debug logs
@@ -299,6 +304,7 @@ class Agent:
         show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_hooks: Optional[List[Callable]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -383,6 +389,7 @@ class Agent:
         self.show_tool_calls = show_tool_calls
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
+        self.tool_hooks = tool_hooks
 
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
@@ -458,8 +465,6 @@ class Agent:
         # Agent session
         self.agent_session: Optional[AgentSession] = None
 
-        self._tools_for_model: Optional[List[Dict]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
         self._tool_instructions: Optional[List[str]] = None
 
         self._formatter: Optional[SafeFormatter] = None
@@ -586,8 +591,8 @@ class Agent:
             self.memory = cast(AgentMemory, self.memory)
         else:
             self.memory = cast(Memory, self.memory)
-
         # 1.2 Set streaming and stream intermediate steps
+
         self.stream = self.stream or (stream and self.is_streamable)
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
         # 1.3 Create a run_id and RunResponse
@@ -777,7 +782,7 @@ class Agent:
                                 reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                                 metrics = tool_call.get("metrics")
-                                if metrics is not None:
+                                if metrics is not None and metrics.time is not None:
                                     reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if self.stream_intermediate_steps:
@@ -878,7 +883,6 @@ class Agent:
 
         # 8. Update RunResponse
         # Build a list of messages that should be added to the RunResponse
-
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         # Update the RunResponse messages
         self.run_response.messages = messages_for_run_response
@@ -1419,7 +1423,7 @@ class Agent:
                                 reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                                 metrics = tool_call.get("metrics")
-                                if metrics is not None:
+                                if metrics is not None and metrics.time is not None:
                                     reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if self.stream_intermediate_steps:
@@ -1960,10 +1964,22 @@ class Agent:
     def add_tools_to_model(
         self, model: Model, session_id: str, async_mode: bool = False, user_id: Optional[str] = None
     ) -> None:
-        # Skip if functions_for_model is not None
-        if self._functions_for_model is None or self._tools_for_model is None:
+        agent_tools = self.get_tools(session_id=session_id, async_mode=async_mode, user_id=user_id)
+        agent_tool_names = []
+        # Get all the tool names
+        if agent_tools is not None:
+            for tool in agent_tools:
+                if isinstance(tool, Function):
+                    agent_tool_names.append(tool.name)
+                elif isinstance(tool, Toolkit):
+                    agent_tool_names.extend([f for f in tool.functions.keys()])
+                elif callable(tool):
+                    agent_tool_names.append(tool.__name__)
+
+        # Create new functions if we don't have any set on the model OR if the list of tool names is different than what is set on the model
+        existing_model_functions = model.get_functions()
+        if existing_model_functions is None or set(existing_model_functions.keys()) != set(agent_tool_names):
             # Get Agent tools
-            agent_tools = self.get_tools(session_id=session_id, async_mode=async_mode, user_id=user_id)
             if agent_tools is not None and len(agent_tools) > 0:
                 log_debug("Processing tools for model")
 
@@ -1976,27 +1992,29 @@ class Agent:
                 ):
                     strict = True
 
-                self._tools_for_model = []
-                self._functions_for_model = {}
+                _tools_for_model = []
+                _functions_for_model = {}
 
                 for tool in agent_tools:
                     if isinstance(tool, Dict):
                         # If a dict is passed, it is a builtin tool
                         # that is run by the model provider and not the Agent
-                        self._tools_for_model.append(tool)
+                        _tools_for_model.append(tool)
                         log_debug(f"Included builtin tool {tool}")
 
                     elif isinstance(tool, Toolkit):
                         # For each function in the toolkit and process entrypoint
                         for name, func in tool.functions.items():
                             # If the function does not exist in self.functions
-                            if name not in self._functions_for_model:
+                            if name not in _functions_for_model:
                                 func._agent = self
                                 func.process_entrypoint(strict=strict)
                                 if strict:
                                     func.strict = True
-                                self._functions_for_model[name] = func
-                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                if self.tool_hooks is not None:
+                                    func.tool_hooks = self.tool_hooks
+                                _functions_for_model[name] = func
+                                _tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added function {name} from {tool.name}")
 
                         # Add instructions from the toolkit
@@ -2006,13 +2024,15 @@ class Agent:
                             self._tool_instructions.append(tool.instructions)
 
                     elif isinstance(tool, Function):
-                        if tool.name not in self._functions_for_model:
+                        if tool.name not in _functions_for_model:
                             tool._agent = self
                             tool.process_entrypoint(strict=strict)
                             if strict and tool.strict is None:
                                 tool.strict = True
-                            self._functions_for_model[tool.name] = tool
-                            self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
+                            if self.tool_hooks is not None:
+                                tool.tool_hooks = self.tool_hooks
+                            _functions_for_model[tool.name] = tool
+                            _tools_for_model.append({"type": "function", "function": tool.to_dict()})
                             log_debug(f"Added function {tool.name}")
 
                         # Add instructions from the Function
@@ -2024,21 +2044,23 @@ class Agent:
                     elif callable(tool):
                         try:
                             function_name = tool.__name__
-                            if function_name not in self._functions_for_model:
+                            if function_name not in _functions_for_model:
                                 func = Function.from_callable(tool, strict=strict)
                                 func._agent = self
                                 if strict:
                                     func.strict = True
-                                self._functions_for_model[func.name] = func
-                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                if self.tool_hooks is not None:
+                                    func.tool_hooks = self.tool_hooks
+                                _functions_for_model[func.name] = func
+                                _tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added function {func.name}")
                         except Exception as e:
                             log_warning(f"Could not add function {tool}: {e}")
 
                 # Set tools on the model
-                model.set_tools(tools=self._tools_for_model)
+                model.set_tools(tools=_tools_for_model)
                 # Set functions on the model
-                model.set_functions(functions=self._functions_for_model)
+                model.set_functions(functions=_functions_for_model)
 
     def update_model(self, session_id: str, async_mode: bool = False, user_id: Optional[str] = None) -> None:
         self.set_default_model()
@@ -2157,6 +2179,8 @@ class Agent:
             session_data["session_name"] = self.session_name
         if self.session_state is not None and len(self.session_state) > 0:
             session_data["session_state"] = self.session_state
+        if self.team_session_state is not None and len(self.team_session_state) > 0:
+            session_data["team_session_state"] = self.team_session_state
         if self.session_metrics is not None:
             session_data["session_metrics"] = asdict(self.session_metrics) if self.session_metrics is not None else None
         if self.team_data is not None:
@@ -2244,8 +2268,26 @@ class Agent:
                         # This updates session_state_from_db
                         # If there are conflicting keys, values from session_state_from_db will take precedence
                         merge_dictionaries(self.session_state, session_state_from_db)
-                    # Update the current session_state
-                    self.session_state = session_state_from_db
+                    else:
+                        # Update the current session_state
+                        self.session_state = session_state_from_db
+
+            # Get the team_session_state from the database and update the current team_session_state
+            if "team_session_state" in session.session_data:
+                team_session_state_from_db = session.session_data.get("team_session_state")
+                if (
+                    team_session_state_from_db is not None
+                    and isinstance(team_session_state_from_db, dict)
+                    and len(team_session_state_from_db) > 0
+                ):
+                    # If the team_session_state is already set, merge the team_session_state from the database with the current team_session_state
+                    if self.team_session_state is not None and len(self.team_session_state) > 0:
+                        # This updates team_session_state_from_db
+                        # If there are conflicting keys, values from team_session_state_from_db will take precedence
+                        merge_dictionaries(self.team_session_state, team_session_state_from_db)
+                    else:
+                        # Update the current team_session_state
+                        self.team_session_state = team_session_state_from_db
 
             # Get the session_metrics from the database
             if "session_metrics" in session.session_data:
@@ -4073,6 +4115,7 @@ class Agent:
             """
             self.memory = cast(Memory, self.memory)
             response = self.memory.update_memory_task(task=task, user_id=user_id)
+
             return response
 
         async def aupdate_user_memory(task: str) -> str:
@@ -4408,7 +4451,7 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         markdown: bool = False,
         show_message: bool = True,
@@ -4436,6 +4479,7 @@ class Agent:
             stream = False
 
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
+        stream = stream or self.stream or False
 
         if stream:
             _response_content: str = ""
@@ -4805,7 +4849,7 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
-        stream: bool = False,
+        stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         markdown: bool = False,
         show_message: bool = True,
@@ -4833,7 +4877,7 @@ class Agent:
             stream = False
 
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
-
+        stream = stream or self.stream or False
         if stream:
             _response_content: str = ""
             _response_thinking: str = ""
@@ -5318,6 +5362,7 @@ class Agent:
 
                 # Add the metrics message to the reasoning_messages
                 self.run_response.extra_data.reasoning_messages.append(metrics_message)
+
         except Exception as e:
             # Log the error but don't crash
             from agno.utils.log import log_error
