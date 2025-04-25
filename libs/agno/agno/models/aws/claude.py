@@ -239,6 +239,7 @@ class Claude(AnthropicClaude):
             client_params = {
                 "aws_access_key": credentials.access_key,
                 "aws_secret_key": credentials.secret_key,
+                "aws_session_token": credentials.token,
                 "aws_region": self.session.region_name,
             }
         else:
@@ -271,6 +272,7 @@ class Claude(AnthropicClaude):
             client_params = {
                 "aws_access_key": credentials.access_key,
                 "aws_secret_key": credentials.secret_key,
+                "aws_session_token": credentials.token,
                 "aws_region": self.session.region_name,
             }
         else:
