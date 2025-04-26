@@ -893,6 +893,18 @@ class Agent:
         if self.stream and model_response.audio is not None:
             self.run_response.response_audio = model_response.audio
 
+        # Yield Updating Agent Memory event
+        if self.stream_intermediate_steps:
+            run_resp:RunResponse = self.create_run_response(
+                content=self.run_response.content,
+                session_id=session_id,
+                event=RunEvent.updating_agent_memory,
+            )
+            yield run_resp
+            if run_resp.event==RunEvent.cancelled:
+                return
+            self.run_response.content = run_resp.content
+
         # 9. Update Agent Memory
         if isinstance(self.memory, AgentMemory):
             # Add the system message to the memory
@@ -1532,6 +1544,18 @@ class Agent:
         # Update the run_response audio if streaming
         if self.stream and model_response.audio is not None:
             self.run_response.response_audio = model_response.audio
+
+        # Yield Updating Agent Memory event
+        if self.stream_intermediate_steps:
+            run_resp:RunResponse = self.create_run_response(
+                content=self.run_response.content,
+                session_id=session_id,
+                event=RunEvent.updating_agent_memory,
+            )
+            yield run_resp
+            if run_resp.event==RunEvent.cancelled:
+                return
+            self.run_response.content = run_resp.content
 
         # 9. Update Agent Memory
         if isinstance(self.memory, AgentMemory):
