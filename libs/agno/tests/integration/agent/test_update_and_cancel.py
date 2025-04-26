@@ -1,15 +1,11 @@
 import sys,os
-import re
 import asyncio
 
 sys.path.append('libs/agno')
 from agno.agent import Agent, RunResponse
-from agno.run.team import TeamRunResponse
 from agno.memory.v2.memory import Memory
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
-from agno.memory.agent import AgentRun
 from agno.models.openai import OpenAIChat
-from agno.models.message import Message
 from agno.run.response import RunEvent
 from agno.storage.agent.sqlite import SqliteAgentStorage
 
@@ -119,18 +115,18 @@ def reset_db():
     return dbpath
 
 async def test_async_update0(test_data_list):
-    """オンメモリでのテスト"""
+    """Test with in-memory storage"""
     agent = make_agent(None)
     await async_agent_run(agent, test_data_list)
 
 async def test_async_update1(test_data_list):
-    """SQLiteを使ったテスト"""
+    """Test using SQLite"""
     dbpath=reset_db()
     agent = make_agent(dbpath)
     await async_agent_run(agent, test_data_list)
 
 async def test_async_update2(test_data_list):
-    """SQLiteを使ったテスト"""
+    """Test using SQLite"""
     dbpath=reset_db()
     session_id=None
     for inp in test_data_list:
@@ -139,18 +135,18 @@ async def test_async_update2(test_data_list):
         session_id=agent.session_id
 
 def test_update0(test_data_list):
-    """オンメモリでのテスト"""
+    """Test with in-memory storage"""
     agent = make_agent(None)
     agent_run(agent, test_data_list)
 
 def test_update1(test_data_list):
-    """SQLiteを使ったテスト"""
+    """Test using SQLite"""
     dbpath=reset_db()
     agent = make_agent(dbpath)
     agent_run(agent, test_data_list)
 
 def test_update2(test_data_list):
-    """SQLiteを使ったテスト"""
+    """Test using SQLite"""
     dbpath=reset_db()
     session_id=None
     for inp in test_data_list:
@@ -159,10 +155,10 @@ def test_update2(test_data_list):
         session_id=agent.session_id
 
 async def test():
-    test_data_list_jp = [
-        ('きょうの気分は?','今日の天気は晴れのち曇り，時々雨，ところによっては雪が降るでしょう。'),
-        ('ごめん、さっき何て言ったの?','')
-    ]
+    # test_data_list_jp = [
+    #     ('きょうの気分は?','今日の天気は晴れのち曇り，時々雨，ところによっては雪が降るでしょう。'),
+    #     ('ごめん、さっき何て言ったの?','')
+    # ]
     test_data_list_en = [
         ("How are you feeling today?", "The weather today is sunny with occasional clouds, sometimes rain, and possibly snow in some areas."),
         ("Sorry, what did you just say?", ""),
@@ -173,7 +169,6 @@ async def test():
     test_update0(test_data_list_en)
     test_update1(test_data_list_en)
     test_update2(test_data_list_en)
-
 
 if __name__ == "__main__":
     asyncio.run( test() )
