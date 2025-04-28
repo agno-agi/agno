@@ -11,9 +11,9 @@ class Media(BaseModel):
 
 
 class VideoArtifact(Media):
-    url: Optional[str] = None  # Remote location for file
-    content: Optional[bytes] = None  # Base64-encoded video bytes
-    mime_type: Optional[str] = None  
+    url: Optional[str] = None  # Remote location for file (if no inline content)
+    content: Optional[Union[str, bytes]] = None  # type: ignore
+    mime_type: Optional[str] = None  # MIME type of the video content
     eta: Optional[str] = None
     length: Optional[str] = None
     

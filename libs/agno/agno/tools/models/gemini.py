@@ -1,13 +1,13 @@
 import base64
 import time
 from os import getenv
-from typing import Optional, Any
+from typing import Any, Optional
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import ImageArtifact, VideoArtifact
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error
 
 try:
     from google.genai import Client
@@ -30,32 +30,26 @@ class GeminiTools(Toolkit):
     ):
         super().__init__(name="gemini_tools", tools=[self.generate_image, self.generate_video], **kwargs)
 
+        # Set mode and credentials
         self.vertexai = vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
-        adc_path = getenv("GOOGLE_APPLICATION_CREDENTIALS") or getenv("GOOGLE_CLOUD_KEYFILE_JSON")
-        if not self.vertexai and adc_path:
-            self.vertexai = True
-            log_info(f"Detected ADC credentials at {adc_path}, switching to Vertex AI mode.")
         self.project_id = project_id
         self.location = location
 
-        # Build client parameters for google.genai.Client
-        client_params = {}
-        if not self.vertexai:
-            # Use API key for Gemini
-            self.api_key = api_key or getenv("GOOGLE_API_KEY")
-            if not self.api_key:
-                log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
-                raise ValueError("GOOGLE_API_KEY not set. Please provide api_key or set the environment variable.")
-            client_params["api_key"] = self.api_key
-            log_debug("Using Gemini API")
-        else:
-            # Use Vertex AI credentials
+        self.api_key = api_key or getenv("GOOGLE_API_KEY")
+        if not self.vertexai and not self.api_key:
+            log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
+            raise ValueError("GOOGLE_API_KEY not set. Please provide api_key or set the environment variable.")
+
+        client_params: dict[str, Any] = {}
+        if self.vertexai:
             log_debug("Using Vertex AI API")
             client_params["vertexai"] = True
             client_params["project"] = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
             client_params["location"] = self.location or getenv("GOOGLE_CLOUD_LOCATION")
+        else:
+            log_debug("Using Gemini API")
+            client_params["api_key"] = self.api_key
 
-        # Initialize the GenAI client
         try:
             self.client = Client(**client_params)
             log_debug("Google GenAI Client created successfully.")
@@ -80,27 +74,16 @@ class GeminiTools(Toolkit):
         """
 
         try:
-            response = self.client.models.generate_images(
+            response: Any = self.client.models.generate_images(
                 model=self.image_model,
                 prompt=prompt,
             )
 
             log_debug("DEBUG: Raw Gemini API response")
 
-            image_bytes = None
-            actual_mime_type = "image/png"
-
-            if response.generated_images and response.generated_images[0].image.image_bytes:
-                image_bytes = response.generated_images[0].image.image_bytes
-            else:
-                log_error("No image data found in the response structure.")
-                return "Failed to generate image: No valid image data extracted."
-
-            if image_bytes is None:
-                log_error("image_bytes is None after extraction.")
-                return "Failed to generate image: No valid image data extracted."
-
+            image_bytes = response.generated_images[0].image.image_bytes
             base64_encoded_image_bytes = base64.b64encode(image_bytes)
+            actual_mime_type = "image/png"
 
             media_id = str(uuid4())
             agent.add_image(
@@ -132,12 +115,15 @@ class GeminiTools(Toolkit):
         # Video generation requires Vertex AI mode.
         if not self.vertexai:
             log_error("Video generation requires Vertex AI mode. Please enable Vertex AI mode.")
-            return ("Video generation requires Vertex AI mode. "
-                    "Please set `vertexai=True` or environment variable `GOOGLE_GENAI_USE_VERTEXAI=true`.")
-        
+            return (
+                "Video generation requires Vertex AI mode. "
+                "Please set `vertexai=True` or environment variable `GOOGLE_GENAI_USE_VERTEXAI=true`."
+            )
+
         from google.genai.types import GenerateVideosConfig
+
         try:
-            operation = self.client.models.generate_videos(
+            operation: Any = self.client.models.generate_videos(
                 model=self.video_model,
                 prompt=prompt,
                 config=GenerateVideosConfig(
@@ -150,9 +136,9 @@ class GeminiTools(Toolkit):
                 operation = self.client.operations.get(operation=operation)
 
             generated_video = operation.result.generated_videos[0].video
-            media_id = str(uuid4())
 
-            encoded_video = base64.b64encode(generated_video.video_bytes).decode('utf-8')
+            media_id = str(uuid4())
+            encoded_video = base64.b64encode(generated_video.video_bytes).decode("utf-8")
 
             agent.add_video(
                 VideoArtifact(

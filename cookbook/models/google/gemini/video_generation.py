@@ -18,7 +18,7 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.models.gemini import GeminiTools
-from agno.utils.media import save_base64_data, download_video
+from agno.utils.media import save_base64_data
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
