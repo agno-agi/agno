@@ -1,47 +1,63 @@
 import asyncio
-from pathlib import Path
 
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.knowledge.text import TextKnowledgeBase
 from agno.vectordb.qdrant import Qdrant
 
-COLLECTION_NAME = "resume-pdf-url-test"
+# Set a unique collection name to avoid conflicts with other examples
+COLLECTION_NAME = "resume-pdf-url"
 
+# Initialize the vector database
 vector_db = Qdrant(collection=COLLECTION_NAME, url="http://localhost:6333")
 
+# Step 1: Initialize knowledge base with documents and metadata
+# ------------------------------------------------------------------------------
+# When initializing the knowledge base, we can attach metadata that will be used for filtering
+# This metadata can include user IDs, document types, dates, or any other attributes
+
 knowledge_base = PDFUrlKnowledgeBase(
+    urls=[
+        {
+            "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf": {
+                "metadata": {
+                    "cuisine": "Thai",
+                    "source": "Thai Cookbook",
+                    "region": "Southeast Asia",
+                }
+            }
+        },
+        {
+            "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf": {
+                "metadata": {
+                    "cuisine": "Cape",
+                    "source": "Cape Cookbook",
+                    "region": "South Africa",
+                }
+            }
+        },
+    ],
     vector_db=vector_db,
 )
 
-# Initialize the Agent with the knowledge_base
+# Step 2: Query the knowledge base with different filter combinations
+# ------------------------------------------------------------------------------
+
+# Option 1: Filters on the Agent
+# Initialize the Agent with the knowledge base and filters
 agent = Agent(
     knowledge=knowledge_base,
     search_knowledge=True,
 )
 
-
 if __name__ == "__main__":
-    asyncio.run(
-        knowledge_base.aload_url(
-            url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
-            metadata={"cuisine": "Thai", "source": "Thai Cookbook"},
-            recreate=True,  # only use at the first run, True/False
-        )
-    )
+    # Load all documents into the vector database
+    asyncio.run(knowledge_base.aload(recreate=True))
 
-    asyncio.run(
-        knowledge_base.aload_url(
-            url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
-            metadata={"cuisine": "Cape", "source": "Cape Cookbook"},
-        )
-    )
-
+    # Query for Alex Rivera's experience and skills
     asyncio.run(
         agent.aprint_response(
-            "Tell me about Pad Thai and how to make it",
+            "Tell me how to make Pad Thai",
             knowledge_filters={"cuisine": "Thai"},
             markdown=True,
-            stream=True,
         )
     )
