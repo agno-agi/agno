@@ -11,11 +11,12 @@ class Media(BaseModel):
 
 
 class VideoArtifact(Media):
-    url: str  # Remote location for file
+    url: Optional[str] = None  # Remote location for file
+    content: Optional[bytes] = None  # Base64-encoded video bytes
+    mime_type: Optional[str] = None  
     eta: Optional[str] = None
     length: Optional[str] = None
-
-
+    
 class ImageArtifact(Media):
     url: Optional[str] = None  # Remote location for file
     content: Optional[bytes] = None  # Actual image bytes content
