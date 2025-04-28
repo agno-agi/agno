@@ -108,10 +108,11 @@ class ReliabilityEval:
                 tool_name = tool_call.get("function", {}).get("name")
                 if not tool_name:
                     continue
-                if tool_name and tool_name not in self.expected_tool_calls:  # type: ignore
-                    failed_tool_calls.append(tool_call.get("function", {}).get("name"))
                 else:
-                    passed_tool_calls.append(tool_call.get("function", {}).get("name"))
+                    if tool_name not in self.expected_tool_calls:  # type: ignore
+                        failed_tool_calls.append(tool_call.get("function", {}).get("name"))
+                    else:
+                        passed_tool_calls.append(tool_call.get("function", {}).get("name"))
 
             self.result = ReliabilityResult(
                 eval_status="PASSED" if len(failed_tool_calls) == 0 else "FAILED",
