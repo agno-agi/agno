@@ -44,22 +44,6 @@ class Playground:
         self.agents: Optional[List[Agent]] = agents
         self.workflows: Optional[List[Workflow]] = workflows
         self.teams: Optional[List[Team]] = teams
-
-        if self.agents:
-            for agent in self.agents:
-                if not agent.agent_id:
-                    agent.agent_id = generate_id(agent.name)
-
-        if self.teams:
-            for team in self.teams:
-                if not team.team_id:
-                    team.team_id = generate_id(team.name)
-
-        if self.workflows:
-            for workflow in self.workflows:
-                if not workflow.workflow_id:
-                    workflow.workflow_id = generate_id(workflow.name)
-
         self.settings: PlaygroundSettings = settings or PlaygroundSettings()
         self.api_app: Optional[FastAPI] = api_app
         self.router: Optional[APIRouter] = router
@@ -68,7 +52,27 @@ class Playground:
         self.name: Optional[str] = name
         self.monitoring = monitoring
 
+        if self.agents:
+            for agent in self.agents:
+                if not agent.agent_id:
+                    agent.agent_id = generate_id(agent.name) 
+                if not agent.app_id:
+                    agent.app_id = self.app_id
+
+        if self.teams:
+            for team in self.teams:
+                if not team.team_id:
+                    team.team_id = generate_id(team.name)
+                if not team.app_id:
+                    team.app_id = self.app_id
+
+        if self.workflows:
+            for workflow in self.workflows:
+                if not workflow.workflow_id:
+                    workflow.workflow_id = generate_id(workflow.name)
+
     def set_app_id(self) -> str:
+        # If app_id is already set, keep it instead of overriding with UUID
         if self.app_id is None:
             app_id_parts = []
             if self.agents and self.agents is not None:
@@ -80,10 +84,8 @@ class Playground:
 
             if app_id_parts:
                 self.app_id = "-".join(app_id_parts)
-            else:
-                self.app_id = str(uuid4())
-        else:
-            self.app_id = str(uuid4())
+
+        # Don't override existing app_id
         return self.app_id
 
     def _set_monitoring(self) -> None:
@@ -150,7 +152,7 @@ class Playground:
             allow_headers=["*"],
             expose_headers=["*"],
         )
-        self.set_app_id()
+
 
         # asyncio.create_task(self.aregister_app_on_platform())
         return self.api_app
@@ -197,6 +199,7 @@ class Playground:
         # Print the panel
         console.print(panel)
         print(app, "this is app")
+        self.set_app_id()
         thread = threading.Thread(target=self.register_app_on_platform)
         thread.start()
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)

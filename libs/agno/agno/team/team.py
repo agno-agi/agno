@@ -208,7 +208,8 @@ class Team:
     reasoning_model: Optional[Model] = None
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
-
+    # Optional app ID. Indicates this team is part of an app.
+    app_id: Optional[str] = None
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
@@ -6306,7 +6307,8 @@ class Team:
                     team_id=self.team_id,
                     name=self.name,
                     config=self.to_platform_dict(),
-                    parent_team_id=team_id
+                    parent_team_id=team_id,
+                    app_id=self.app_id
                 ),
             )
             
@@ -6323,7 +6325,8 @@ class Team:
                     team_id=self.team_id,
                     name=self.name,
                     config=self.to_platform_dict(),
-                    parent_team_id=team_id
+                    parent_team_id=team_id,
+                    app_id=self.app_id
                 ),
             )
         except Exception as e:

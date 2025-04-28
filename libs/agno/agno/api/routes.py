@@ -23,7 +23,7 @@ class ApiRoutes:
     AGENT_SESSION_CREATE: str = "/v1/agent-sessions"
     AGENT_RUN_CREATE: str = "/v1/agent-runs"
     AGENT_CREATE: str = "/v2/agents"
- 
+
     # App paths
     APP_CREATE: str = "/v2/apps"
     # Team paths

@@ -258,7 +258,8 @@ class Agent:
     team_session_id: Optional[str] = None
     # Optional team ID. Indicates this agent is part of a team.
     team_id: Optional[str] = None
-
+    # Optional app ID. Indicates this agent is part of an app.
+    app_id: Optional[str] = None
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
@@ -4163,7 +4164,7 @@ class Agent:
         try:
             log_debug(f"Creating Agent on Platform: {self.name}, {self.agent_id}, {self.team_id},")
             print("HERE", self.agent_id, self.get_agent_config_dict())
-            create_agent(agent=AgentCreate(name=self.name, agent_id=self.agent_id, team_id=self.team_id,  config=self.get_agent_config_dict()))
+            create_agent(agent=AgentCreate(name=self.name, agent_id=self.agent_id, team_id=self.team_id, app_id=self.app_id, config=self.get_agent_config_dict()))
         except Exception as e:
             log_debug(f"Could not create Agent app: {e}")
         log_debug(f"Agent app created: {self.name}, {self.agent_id}, {self.team_id},")
@@ -4178,7 +4179,7 @@ class Agent:
         try:
             log_debug(f"Creating Agent on Platform: {self.name}, {self.agent_id}, {self.team_id},")
             await acreate_agent(
-                agent=AgentCreate(name=self.name, agent_id=self.agent_id, team_id=self.team_id, config=self.get_agent_config_dict())
+                agent=AgentCreate(name=self.name, agent_id=self.agent_id, team_id=self.team_id, app_id=self.app_id, config=self.get_agent_config_dict())
             )
         except Exception as e:
             log_debug(f"Could not create Agent app: {e}")
