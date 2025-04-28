@@ -4345,7 +4345,7 @@ class Agent:
     def search_knowledge_base_function(self, async_mode: bool = False) -> Callable:
         """Factory function to create a search_knowledge_base function with filters."""
         # Determine which filters to use
-        effective_filters = getattr(self, "effective_knowledge_filters", None)
+        effective_filters = self.effective_knowledge_filters
 
         def search_knowledge_base(query: str) -> str:
             """Use this function to search the knowledge base for information about a query.
