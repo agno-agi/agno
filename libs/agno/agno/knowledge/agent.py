@@ -8,7 +8,7 @@ from agno.document import Document
 from agno.document.chunking.fixed import FixedSizeChunking
 from agno.document.chunking.strategy import ChunkingStrategy
 from agno.document.reader.base import Reader
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb import VectorDb
 
 
@@ -448,16 +448,21 @@ class AgentKnowledge(BaseModel):
                 self.valid_metadata_filters.add(key)
 
     def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
-        """Validate user-provided filters against known valid filter keys
-
-        Args:
-            filters (Optional[Dict[str, Any]]): Filters to validate
-
-        Returns:
-            Tuple[Dict[str, Any], List[str]]: (valid_filters, invalid_keys)
-        """
         if not filters:
             return {}, []
+
+        if self.valid_metadata_filters is None:
+            # Scan documents and collect metadata keys
+            try:
+                for doc_list in self.document_lists:
+                    for doc in doc_list:
+                        if doc.meta_data:
+                            self._track_metadata_structure(doc.meta_data)
+            except Exception as e:
+                log_warning(
+                    f"Failed to populate valid_metadata_filters during filter validation: {e}. "
+                    "This may be due to missing or unreadable documents, or the knowledge base not being loaded."
+                )
 
         valid_filters = {}
         invalid_keys = []
@@ -471,7 +476,6 @@ class AgentKnowledge(BaseModel):
         for key, value in filters.items():
             # Handle both normal keys and prefixed keys like meta_data.key
             base_key = key.split(".")[-1] if "." in key else key
-
             if base_key in self.valid_metadata_filters or key in self.valid_metadata_filters:
                 valid_filters[key] = value
             else:
