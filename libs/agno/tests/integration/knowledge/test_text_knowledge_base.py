@@ -417,3 +417,215 @@ async def test_async_knowledge_base_filter_override(setup_vector_db):
 
     # Taylor Brooks' CV should not be used instead of Jordan Mitchell's
     assert not any(term in response_content for term in ["taylor", "brooks", "senior", "developer", "mid level"])
+
+
+# for the one with new knowledge filter DX
+def test_text_knowledge_base_with_metadata_path(setup_vector_db):
+    """Test loading text files with metadata using the new path structure."""
+    kb = TextKnowledgeBase(
+        path=[
+            {
+                str(get_filtered_data_dir() / "cv_1.txt"): {
+                    "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"}
+                }
+            },
+            {
+                str(get_filtered_data_dir() / "cv_2.txt"): {
+                    "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"}
+                }
+            },
+        ],
+        vector_db=setup_vector_db,
+    )
+
+    kb.load(recreate=True)
+
+    # Verify documents were loaded with metadata
+    agent = Agent(knowledge=kb)
+    response = agent.run(
+        "Tell me about Jordan Mitchell's experience?", knowledge_filters={"user_id": "jordan_mitchell"}, markdown=True
+    )
+
+    assert (
+        "entry" in response.content.lower()
+        or "junior" in response.content.lower()
+        or "Jordan" in response.content.lower()
+    )
+    assert "senior developer" not in response.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_async_text_knowledge_base_with_metadata_path(setup_vector_db):
+    """Test async loading of text files with metadata using the new path structure."""
+    kb = TextKnowledgeBase(
+        path=[
+            {
+                str(get_filtered_data_dir() / "cv_1.txt"): {
+                    "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"}
+                }
+            },
+            {
+                str(get_filtered_data_dir() / "cv_2.txt"): {
+                    "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"}
+                }
+            },
+        ],
+        vector_db=setup_vector_db,
+    )
+
+    await kb.aload(recreate=True)
+
+    agent = Agent(knowledge=kb)
+    response = await agent.arun(
+        "Tell me about Jordan Mitchell's experience?", knowledge_filters={"user_id": "jordan_mitchell"}, markdown=True
+    )
+
+    assert (
+        "entry" in response.content.lower()
+        or "junior" in response.content.lower()
+        or "Jordan" in response.content.lower()
+    )
+    assert "senior developer" not in response.content.lower()
+
+
+def test_text_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
+    """Test loading text files with metadata using the new path structure and invalid filters."""
+    kb = TextKnowledgeBase(
+        path=[
+            {
+                str(get_filtered_data_dir() / "cv_1.txt"): {
+                    "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"}
+                }
+            },
+            {
+                str(get_filtered_data_dir() / "cv_2.txt"): {
+                    "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"}
+                }
+            },
+        ],
+        vector_db=setup_vector_db,
+    )
+
+    kb.load(recreate=True)
+
+    # Initialize agent with invalid filters
+    agent = Agent(knowledge=kb, knowledge_filters={"nonexistent_filter": "value"})
+
+    response = agent.run("Tell me about the candidate's experience?", markdown=True)
+    response_content = response.content.lower()
+
+    # Check that we have a substantive response
+    assert len(response_content) > 50
+
+    # The response should either ask for clarification or mention candidates
+    clarification_phrases = [
+        "specify which",
+        "which candidate",
+        "please clarify",
+        "need more information",
+        "be more specific",
+    ]
+
+    candidates_mentioned = any(name in response_content for name in ["jordan", "mitchell", "taylor", "brooks"])
+    valid_response = any(phrase in response_content for phrase in clarification_phrases) or candidates_mentioned
+
+    # Print debug information
+    print(f"Response content: {response_content}")
+    print(f"Contains clarification phrase: {any(phrase in response_content for phrase in clarification_phrases)}")
+    print(f"Candidates mentioned: {candidates_mentioned}")
+
+    assert valid_response
+
+    # Verify that invalid filter was not used in tool calls
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+
+    function_calls = [
+        call
+        for call in tool_calls
+        if call.get("type") == "function" and call["function"]["name"] == "search_knowledge_base"
+    ]
+
+    # Check if any of the search_knowledge_base calls had the invalid filter
+    found_invalid_filters = False
+    for call in function_calls:
+        call_args = call["function"].get("arguments", "{}")
+        if "nonexistent_filter" in call_args:
+            found_invalid_filters = True
+
+    # Assert that the invalid filter was not used in the actual calls
+    assert not found_invalid_filters
+
+
+@pytest.mark.asyncio
+async def test_async_text_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
+    """Test async loading of text files with metadata using the new path structure and invalid filters."""
+    kb = TextKnowledgeBase(
+        path=[
+            {
+                str(get_filtered_data_dir() / "cv_1.txt"): {
+                    "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"}
+                }
+            },
+            {
+                str(get_filtered_data_dir() / "cv_2.txt"): {
+                    "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"}
+                }
+            },
+        ],
+        vector_db=setup_vector_db,
+    )
+
+    await kb.aload(recreate=True)
+
+    # Initialize agent with invalid filters
+    agent = Agent(knowledge=kb, knowledge_filters={"nonexistent_filter": "value"})
+
+    response = await agent.arun("Tell me about the candidate's experience?", markdown=True)
+    response_content = response.content.lower()
+
+    # Check that we have a substantive response
+    assert len(response_content) > 50
+
+    # The response should either ask for clarification or mention candidates
+    clarification_phrases = [
+        "specify which",
+        "which candidate",
+        "please clarify",
+        "need more information",
+        "be more specific",
+    ]
+
+    candidates_mentioned = any(name in response_content for name in ["jordan", "mitchell", "taylor", "brooks"])
+    valid_response = any(phrase in response_content for phrase in clarification_phrases) or candidates_mentioned
+
+    # Print debug information
+    print(f"Response content: {response_content}")
+    print(f"Contains clarification phrase: {any(phrase in response_content for phrase in clarification_phrases)}")
+    print(f"Candidates mentioned: {candidates_mentioned}")
+
+    assert valid_response
+
+    # Verify that invalid filter was not used in tool calls
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+
+    function_calls = [
+        call
+        for call in tool_calls
+        if call.get("type") == "function" and call["function"]["name"] == "asearch_knowledge_base"
+    ]
+
+    # Check if any of the search_knowledge_base calls had the invalid filter
+    found_invalid_filters = False
+    for call in function_calls:
+        call_args = call["function"].get("arguments", "{}")
+        if "nonexistent_filter" in call_args:
+            found_invalid_filters = True
+
+    # Assert that the invalid filter was not used in the actual calls
+    assert not found_invalid_filters
