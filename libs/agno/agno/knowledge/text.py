@@ -4,7 +4,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 from agno.document import Document
 from agno.document.reader.text_reader import TextReader
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_info
 
 
 class TextKnowledgeBase(AgentKnowledge):
@@ -83,67 +83,3 @@ class TextKnowledgeBase(AgentKnowledge):
                         yield await self.reader.async_read(file=_file)
             elif self._is_valid_text(_file_path):
                 yield await self.reader.async_read(file=_file_path)
-
-    def load_text(
-        self,
-        path: Union[str, Path],
-        metadata: Optional[Dict[str, Any]] = None,
-        recreate: bool = False,
-        upsert: bool = False,
-        skip_existing: bool = True,
-    ) -> None:
-        """Load documents from a single text file with specific metadata into the vector DB."""
-
-        _file_path = Path(path) if isinstance(path, str) else path
-
-        # Validate file and prepare collection in one step
-        if not self.prepare_load(_file_path, self.formats, metadata, recreate):
-            return
-
-        # Read documents
-        try:
-            documents = self.reader.read(file=_file_path)
-        except Exception as e:
-            logger.exception(f"Failed to read documents from file {_file_path}: {e}")
-            return
-
-        # Process documents
-        self.process_documents(
-            documents=documents,
-            metadata=metadata,
-            upsert=upsert,
-            skip_existing=skip_existing,
-            source_info=str(_file_path),
-        )
-
-    async def aload_text(
-        self,
-        path: Union[str, Path],
-        metadata: Optional[Dict[str, Any]] = None,
-        recreate: bool = False,
-        upsert: bool = False,
-        skip_existing: bool = True,
-    ) -> None:
-        """Load documents from a single text file with specific metadata into the vector DB."""
-
-        _file_path = Path(path) if isinstance(path, str) else path
-
-        # Validate file and prepare collection in one step
-        if not await self.aprepare_load(_file_path, self.formats, metadata, recreate):
-            return
-
-        # Read documents
-        try:
-            documents = await self.reader.async_read(file=_file_path)
-        except Exception as e:
-            logger.exception(f"Failed to read documents from file {_file_path}: {e}")
-            return
-
-        # Process documents
-        await self.aprocess_documents(
-            documents=documents,
-            metadata=metadata,
-            upsert=upsert,
-            skip_existing=skip_existing,
-            source_info=str(_file_path),
-        )

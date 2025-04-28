@@ -4,7 +4,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 from agno.document import Document
 from agno.document.reader.json_reader import JSONReader
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_info
 
 
 class JSONKnowledgeBase(AgentKnowledge):
@@ -83,63 +83,3 @@ class JSONKnowledgeBase(AgentKnowledge):
                         yield await self.reader.async_read(path=_file)
             elif self._is_valid_json(_file_path):
                 yield await self.reader.async_read(path=_file_path)
-
-    def load_json(
-        self,
-        path: Union[str, Path],
-        metadata: Optional[Dict[str, Any]] = None,
-        recreate: bool = False,
-        upsert: bool = False,
-        skip_existing: bool = True,
-    ) -> None:
-        _file_path = Path(path) if isinstance(path, str) else path
-
-        # Validate file and prepare collection in one step
-        if not self.prepare_load(_file_path, self.formats, metadata, recreate):
-            return
-
-        # Read documents
-        try:
-            documents = self.reader.read(path=_file_path)
-        except Exception as e:
-            logger.exception(f"Failed to read documents from file {_file_path}: {e}")
-            return
-
-        # Process documents
-        self.process_documents(
-            documents=documents,
-            metadata=metadata,
-            upsert=upsert,
-            skip_existing=skip_existing,
-            source_info=str(_file_path),
-        )
-
-    async def aload_json(
-        self,
-        path: Union[str, Path],
-        metadata: Optional[Dict[str, Any]] = None,
-        recreate: bool = False,
-        upsert: bool = False,
-        skip_existing: bool = True,
-    ) -> None:
-        _file_path = Path(path) if isinstance(path, str) else path
-
-        # Validate file and prepare collection in one step
-        if not await self.aprepare_load(_file_path, self.formats, metadata, recreate):
-            return
-
-        # Read documents
-        try:
-            documents = await self.reader.async_read(path=_file_path)
-        except Exception as e:
-            logger.exception(f"Failed to read documents from file {_file_path}: {e}")
-            return
-
-        # Process documents
-        await self.aprocess_documents(
-            documents=documents,
-            metadata=metadata,
-            upsert=upsert,
-            skip_existing=skip_existing,
-            source_info=str(_file_path),
-        )
