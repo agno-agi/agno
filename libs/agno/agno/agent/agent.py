@@ -2212,11 +2212,14 @@ class Agent:
                     if agent_run.response is not None and agent_run.response.session_id == session_id
                 ]
             else:
-                self.memory = cast(Memory, self.memory)
                 # We fake the structure on storage, to maintain the interface with the legacy implementation
-                run_responses = self.memory.runs[session_id]  # type: ignore
-                memory_dict = self.memory.to_dict()
-                memory_dict["runs"] = [rr.to_dict() for rr in run_responses]
+                try:
+                    run_responses = self.memory.runs[session_id]  # type: ignore
+                    memory_dict = self.memory.to_dict()
+                    memory_dict["runs"] = [rr.to_dict() for rr in run_responses]
+                except KeyError:
+                    # memory not found
+                    memory_dict = None
         else:
             memory_dict = None
 
