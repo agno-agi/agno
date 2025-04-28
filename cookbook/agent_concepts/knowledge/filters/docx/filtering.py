@@ -9,7 +9,7 @@ Key concepts demonstrated:
 3. Combining multiple filter criteria
 4. Comparing results across different filter combinations
 
-You can pass filter's in the following ways:-
+You can pass filters in the following ways:
 1. If you pass on Agent only, we use that for all runs
 2. If you pass on run/print_response only, we use that for that run
 3. If you pass on both, we override with the filters passed on run/print_response for that run
@@ -27,62 +27,79 @@ COLLECTION_NAME = "resume-docx-test"
 # Initialize the vector database
 vector_db = Qdrant(collection=COLLECTION_NAME, url="http://localhost:6333")
 
-# Initialize the DocxKnowledgeBase with the vector database
+# Step 1: Initialize knowledge base with documents and metadata
+# ------------------------------------------------------------------------------
+# When initializing the knowledge base, we can attach metadata that will be used for filtering
+# This metadata can include user IDs, document types, dates, or any other attributes
+
 knowledge_base = DocxKnowledgeBase(
+    path=[
+        {
+            "cookbook/agent_concepts/knowledge/filters/data/cv_1.docx": {
+                "metadata": {
+                    "user_id": "jordan_mitchell",
+                    "document_type": "cv",
+                    "year": 2025,
+                }
+            }
+        },
+        {
+            "cookbook/agent_concepts/knowledge/filters/data/cv_2.docx": {
+                "metadata": {
+                    "user_id": "taylor_brooks",
+                    "document_type": "cv",
+                    "year": 2025,
+                }
+            }
+        },
+        {
+            "cookbook/agent_concepts/knowledge/filters/data/cv_3.docx": {
+                "metadata": {
+                    "user_id": "morgan_lee",
+                    "document_type": "cv",
+                    "year": 2025,
+                }
+            }
+        },
+        {
+            "cookbook/agent_concepts/knowledge/filters/data/cv_4.docx": {
+                "metadata": {
+                    "user_id": "casey_jordan",
+                    "document_type": "cv",
+                    "year": 2025,
+                }
+            }
+        },
+        {
+            "cookbook/agent_concepts/knowledge/filters/data/cv_5.docx": {
+                "metadata": {
+                    "user_id": "alex_rivera",
+                    "document_type": "cv",
+                    "year": 2025,
+                }
+            }
+        },
+    ],
     vector_db=vector_db,
 )
 
-# Step 1: Load documents with user-specific metadata
-# ------------------------------------------------------------------------------
-# When loading documents, we can attach metadata that will be used for filtering
-# This metadata can include user IDs, document types, dates, or any other attributes
-
-# Load first document with user_1 metadata
-knowledge_base.load_docx(
-    path=Path.joinpath(Path(__file__).parent.parent, "data/cv_1.docx"),
-    metadata={"user_id": "jordan_mitchell", "document_type": "cv", "year": 2025},
-    recreate=True,  # Set to True only for the first run, then set to False
-)
-
-# Load second document with user_2 metadata
-knowledge_base.load_docx(
-    path=Path.joinpath(Path(__file__).parent.parent, "data/cv_2.docx"),
-    metadata={"user_id": "taylor_brooks", "document_type": "cv", "year": 2025},
-)
-
-# Load second document with user_3 metadata
-knowledge_base.load_docx(
-    path=Path.joinpath(Path(__file__).parent.parent, "data/cv_3.docx"),
-    metadata={"user_id": "morgan_lee", "document_type": "cv", "year": 2025},
-)
-
-# Load second document with user_4 metadata
-knowledge_base.load_docx(
-    path=Path.joinpath(Path(__file__).parent.parent, "data/cv_4.docx"),
-    metadata={"user_id": "casey_jordan", "document_type": "cv", "year": 2025},
-)
-
-# Load second document with user_5 metadata
-knowledge_base.load_docx(
-    path=Path.joinpath(Path(__file__).parent.parent, "data/cv_5.docx"),
-    metadata={"user_id": "alex_rivera", "document_type": "cv", "year": 2025},
-)
+# Load all documents into the vector database
+knowledge_base.load(recreate=True)
 
 # Step 2: Query the knowledge base with different filter combinations
 # ------------------------------------------------------------------------------
-# Uncomment the example you want to run
 
 # Option 1: Filters on the Agent
-# Initialize the Agent with the knowledge base
+# Initialize the Agent with the knowledge base and filters
 agent = Agent(
     knowledge=knowledge_base,
     search_knowledge=True,
-    knowledge_filters={
-        "user_id": "alex_rivera"
-    },  # This will only return information from documents associated with Alex Rivera
+    knowledge_filters={"user_id": "jordan_mitchell"},
 )
+
+# Query for Alex Rivera's experience and skills
 agent.print_response(
-    "Tell me about alex rivera",
+    "Tell me about Jordan Mitchell's experience and skills",
     markdown=True,
 )
 
@@ -91,8 +108,10 @@ agent.print_response(
 #     knowledge=knowledge_base,
 #     search_knowledge=True,
 # )
+
+# # Query for Taylor Brooks as a candidate
 # agent.print_response(
-#     "I have a position for a software engineer. Tell me about alex rivera as a candidate.",
-#     knowledge_filters={"user_id": "alex_rivera"},
+#     "Tell me about Taylor Brooks as a candidate",
+#     knowledge_filters={"user_id": "taylor_brooks"},
 #     markdown=True,
 # )
