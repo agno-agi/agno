@@ -4343,7 +4343,7 @@ class Agent:
         return get_tool_call_history
 
     def search_knowledge_base_function(self, async_mode: bool = False) -> Callable:
-        """Factory function to create an search_knowledge_base function with filters."""
+        """Factory function to create a search_knowledge_base function with filters."""
         # Determine which filters to use
         effective_filters = getattr(self, "effective_knowledge_filters", None)
 
