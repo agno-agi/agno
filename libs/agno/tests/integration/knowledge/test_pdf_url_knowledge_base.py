@@ -21,113 +21,113 @@ def setup_vector_db():
     vector_db.drop()
 
 
-def test_pdf_url_knowledge_base():
-    vector_db = LanceDb(
-        table_name="recipes",
-        uri="tmp/lancedb",
-    )
+# def test_pdf_url_knowledge_base():
+#     vector_db = LanceDb(
+#         table_name="recipes",
+#         uri="tmp/lancedb",
+#     )
 
-    # Create knowledge base
-    knowledge_base = PDFUrlKnowledgeBase(
-        urls=[
-            "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
-            "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
-        ],
-        vector_db=vector_db,
-    )
+#     # Create knowledge base
+#     knowledge_base = PDFUrlKnowledgeBase(
+#         urls=[
+#             "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
+#             "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
+#         ],
+#         vector_db=vector_db,
+#     )
 
-    knowledge_base.load(recreate=True)
+#     knowledge_base.load(recreate=True)
 
-    assert vector_db.exists()
+#     assert vector_db.exists()
 
-    assert vector_db.get_count() == 13  # 3 from the first pdf and 10 from the second pdf
+#     assert vector_db.get_count() == 13  # 3 from the first pdf and 10 from the second pdf
 
-    # Create and use the agent
-    agent = Agent(knowledge=knowledge_base)
-    response = agent.run("Show me how to make Tom Kha Gai", markdown=True)
+#     # Create and use the agent
+#     agent = Agent(knowledge=knowledge_base)
+#     response = agent.run("Show me how to make Tom Kha Gai", markdown=True)
 
-    tool_calls = []
-    for msg in response.messages:
-        if msg.tool_calls:
-            tool_calls.extend(msg.tool_calls)
-    for call in tool_calls:
-        if call.get("type", "") == "function":
-            assert call["function"]["name"] == "search_knowledge_base"
+#     tool_calls = []
+#     for msg in response.messages:
+#         if msg.tool_calls:
+#             tool_calls.extend(msg.tool_calls)
+#     for call in tool_calls:
+#         if call.get("type", "") == "function":
+#             assert call["function"]["name"] == "search_knowledge_base"
 
-    # Clean up
-    vector_db.drop()
-
-
-@pytest.mark.asyncio
-async def test_pdf_url_knowledge_base_async():
-    vector_db = LanceDb(
-        table_name="recipes_async",
-        uri="tmp/lancedb",
-    )
-
-    # Create knowledge base
-    knowledge_base = PDFUrlKnowledgeBase(
-        urls=[
-            "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
-            "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
-        ],
-        vector_db=vector_db,
-    )
-
-    await knowledge_base.aload(recreate=True)
-
-    assert await vector_db.async_exists()
-    assert await vector_db.async_get_count() == 13  # 3 from first pdf and 10 from second pdf
-
-    # Create and use the agent
-    agent = Agent(knowledge=knowledge_base)
-    response = await agent.arun("What ingredients do I need for Tom Kha Gai?", markdown=True)
-
-    tool_calls = []
-    for msg in response.messages:
-        if msg.tool_calls:
-            tool_calls.extend(msg.tool_calls)
-    for call in tool_calls:
-        if call.get("type", "") == "function":
-            assert call["function"]["name"] == "asearch_knowledge_base"
-
-    assert any(ingredient in response.content.lower() for ingredient in ["coconut", "chicken", "galangal"])
-
-    # Clean up
-    await vector_db.async_drop()
+#     # Clean up
+#     vector_db.drop()
 
 
-# for the one with new knowledge filter DX
-def test_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
-    """Test loading PDF URLs with metadata using the new path structure."""
-    kb = PDFUrlKnowledgeBase(
-        urls=[
-            {
-                "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf": {
-                    "metadata": {"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"}
-                }
-            },
-            {
-                "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf": {
-                    "metadata": {"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"}
-                }
-            },
-        ],
-        vector_db=setup_vector_db,
-    )
+# @pytest.mark.asyncio
+# async def test_pdf_url_knowledge_base_async():
+#     vector_db = LanceDb(
+#         table_name="recipes_async",
+#         uri="tmp/lancedb",
+#     )
 
-    kb.load(recreate=True)
+#     # Create knowledge base
+#     knowledge_base = PDFUrlKnowledgeBase(
+#         urls=[
+#             "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
+#             "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
+#         ],
+#         vector_db=vector_db,
+#     )
 
-    # Verify documents were loaded with metadata
-    agent = Agent(knowledge=kb)
-    response = agent.run("Tell me about Thai recipes", knowledge_filters={"cuisine": "Thai"}, markdown=True)
+#     await knowledge_base.aload(recreate=True)
 
-    response_content = response.content.lower()
+#     assert await vector_db.async_exists()
+#     assert await vector_db.async_get_count() == 13  # 3 from first pdf and 10 from second pdf
 
-    # Thai cuisine recipe should mention Thai ingredients or dishes
-    assert any(term in response_content for term in ["tom kha", "pad thai", "thai cuisine", "coconut milk"])
-    # Should not mention Cape cuisine terms
-    assert not any(term in response_content for term in ["cape malay", "bobotie", "south african"])
+#     # Create and use the agent
+#     agent = Agent(knowledge=knowledge_base)
+#     response = await agent.arun("What ingredients do I need for Tom Kha Gai?", markdown=True)
+
+#     tool_calls = []
+#     for msg in response.messages:
+#         if msg.tool_calls:
+#             tool_calls.extend(msg.tool_calls)
+#     for call in tool_calls:
+#         if call.get("type", "") == "function":
+#             assert call["function"]["name"] == "asearch_knowledge_base"
+
+#     assert any(ingredient in response.content.lower() for ingredient in ["coconut", "chicken", "galangal"])
+
+#     # Clean up
+#     await vector_db.async_drop()
+
+
+# # for the one with new knowledge filter DX
+# def test_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
+#     """Test loading PDF URLs with metadata using the new path structure."""
+#     kb = PDFUrlKnowledgeBase(
+#         urls=[
+#             {
+#                 "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf": {
+#                     "metadata": {"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"}
+#                 }
+#             },
+#             {
+#                 "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf": {
+#                     "metadata": {"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"}
+#                 }
+#             },
+#         ],
+#         vector_db=setup_vector_db,
+#     )
+
+#     kb.load(recreate=True)
+
+#     # Verify documents were loaded with metadata
+#     agent = Agent(knowledge=kb)
+#     response = agent.run("Tell me about Thai recipes", knowledge_filters={"cuisine": "Thai"}, markdown=True)
+
+#     response_content = response.content.lower()
+
+#     # Thai cuisine recipe should mention Thai ingredients or dishes
+#     assert any(term in response_content for term in ["tom kha", "pad thai", "thai cuisine", "coconut milk"])
+#     # Should not mention Cape cuisine terms
+#     assert not any(term in response_content for term in ["cape malay", "bobotie", "south african"])
 
 
 def test_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):

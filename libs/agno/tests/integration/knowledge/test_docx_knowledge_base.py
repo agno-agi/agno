@@ -193,8 +193,8 @@ async def test_async_text_knowledge_base_with_metadata_path(setup_vector_db):
     assert "senior developer" not in response.content.lower()
 
 
-def test_text_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
-    """Test loading text files with metadata using the new path structure and invalid filters."""
+def test_docx_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
+    """Test filtering docx knowledge base with invalid filters using the new path structure."""
     kb = DocxKnowledgeBase(
         path=[
             {
@@ -219,10 +219,8 @@ def test_text_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
     response = agent.run("Tell me about the candidate's experience?", markdown=True)
     response_content = response.content.lower()
 
-    # Check that we have a substantive response
     assert len(response_content) > 50
 
-    # The response should either ask for clarification or mention candidates
     clarification_phrases = [
         "specify which",
         "which candidate",
@@ -230,18 +228,16 @@ def test_text_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
         "need more information",
         "be more specific",
     ]
-
     candidates_mentioned = any(name in response_content for name in ["jordan", "mitchell", "taylor", "brooks"])
     valid_response = any(phrase in response_content for phrase in clarification_phrases) or candidates_mentioned
 
-    # Print debug information
     print(f"Response content: {response_content}")
     print(f"Contains clarification phrase: {any(phrase in response_content for phrase in clarification_phrases)}")
     print(f"Candidates mentioned: {candidates_mentioned}")
 
     assert valid_response
 
-    # Verify that invalid filter was not used in tool calls
+    # Check the tool calls to verify the invalid filter was not used
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:
@@ -253,20 +249,18 @@ def test_text_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
         if call.get("type") == "function" and call["function"]["name"] == "search_knowledge_base"
     ]
 
-    # Check if any of the search_knowledge_base calls had the invalid filter
     found_invalid_filters = False
     for call in function_calls:
         call_args = call["function"].get("arguments", "{}")
         if "nonexistent_filter" in call_args:
             found_invalid_filters = True
 
-    # Assert that the invalid filter was not used in the actual calls
     assert not found_invalid_filters
 
 
 @pytest.mark.asyncio
-async def test_async_text_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
-    """Test async loading of text files with metadata using the new path structure and invalid filters."""
+async def test_async_docx_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
+    """Test async filtering docx knowledge base with invalid filters using the new path structure."""
     kb = DocxKnowledgeBase(
         path=[
             {
@@ -285,16 +279,13 @@ async def test_async_text_knowledge_base_with_metadata_path_invalid_filter(setup
 
     await kb.aload(recreate=True)
 
-    # Initialize agent with invalid filters
     agent = Agent(knowledge=kb, knowledge_filters={"nonexistent_filter": "value"})
 
     response = await agent.arun("Tell me about the candidate's experience?", markdown=True)
     response_content = response.content.lower()
 
-    # Check that we have a substantive response
     assert len(response_content) > 50
 
-    # The response should either ask for clarification or mention candidates
     clarification_phrases = [
         "specify which",
         "which candidate",
@@ -302,18 +293,16 @@ async def test_async_text_knowledge_base_with_metadata_path_invalid_filter(setup
         "need more information",
         "be more specific",
     ]
-
     candidates_mentioned = any(name in response_content for name in ["jordan", "mitchell", "taylor", "brooks"])
     valid_response = any(phrase in response_content for phrase in clarification_phrases) or candidates_mentioned
 
-    # Print debug information
     print(f"Response content: {response_content}")
     print(f"Contains clarification phrase: {any(phrase in response_content for phrase in clarification_phrases)}")
     print(f"Candidates mentioned: {candidates_mentioned}")
 
     assert valid_response
 
-    # Verify that invalid filter was not used in tool calls
+    # Check the tool calls to verify the invalid filter was not used
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:
@@ -325,12 +314,10 @@ async def test_async_text_knowledge_base_with_metadata_path_invalid_filter(setup
         if call.get("type") == "function" and call["function"]["name"] == "asearch_knowledge_base"
     ]
 
-    # Check if any of the search_knowledge_base calls had the invalid filter
     found_invalid_filters = False
     for call in function_calls:
         call_args = call["function"].get("arguments", "{}")
         if "nonexistent_filter" in call_args:
             found_invalid_filters = True
 
-    # Assert that the invalid filter was not used in the actual calls
     assert not found_invalid_filters
