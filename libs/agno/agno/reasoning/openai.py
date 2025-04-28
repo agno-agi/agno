@@ -16,7 +16,8 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
             or reasoning_model.__class__.__name__ == "AzureOpenAI"
         )
         and (
-            ("o3" in reasoning_model.id)
+            ("o4" in reasoning_model.id)
+            or ("o3" in reasoning_model.id)
             or ("o1" in reasoning_model.id)
             or ("4.1" in reasoning_model.id)
             or ("4.5" in reasoning_model.id)
