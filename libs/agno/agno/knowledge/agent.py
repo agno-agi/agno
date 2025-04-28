@@ -91,7 +91,6 @@ class AgentKnowledge(BaseModel):
         recreate: bool = False,
         upsert: bool = False,
         skip_existing: bool = True,
-        filters: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Load the knowledge base to the vector db
 
@@ -99,9 +98,7 @@ class AgentKnowledge(BaseModel):
             recreate (bool): If True, recreates the collection in the vector db. Defaults to False.
             upsert (bool): If True, upserts documents to the vector db. Defaults to False.
             skip_existing (bool): If True, skips documents which already exist in the vector db when inserting. Defaults to True.
-            filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
-
         if self.vector_db is None:
             logger.warning("No vector db provided")
             return
@@ -117,9 +114,14 @@ class AgentKnowledge(BaseModel):
         log_info("Loading knowledge base")
         num_documents = 0
         for document_list in self.document_lists:
+            # Track metadata for filtering capabilities
+            for doc in document_list:
+                if doc.meta_data:
+                    self._track_metadata_structure(doc.meta_data)
+
             # Upsert documents if upsert is True and vector db supports upsert
             if upsert and self.vector_db.upsert_available():
-                self.vector_db.upsert(documents=document_list, filters=filters)
+                self.vector_db.upsert(documents=document_list)
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
@@ -129,7 +131,7 @@ class AgentKnowledge(BaseModel):
                     documents_to_load = self.filter_existing_documents(document_list)
 
                 if documents_to_load:
-                    self.vector_db.insert(documents=documents_to_load, filters=filters)
+                    self.vector_db.insert(documents=documents_to_load)
 
             num_documents += len(documents_to_load)
             log_info(f"Added {len(documents_to_load)} documents to knowledge base")
@@ -139,7 +141,6 @@ class AgentKnowledge(BaseModel):
         recreate: bool = False,
         upsert: bool = False,
         skip_existing: bool = True,
-        filters: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Load the knowledge base to the vector db asynchronously
 
@@ -147,7 +148,6 @@ class AgentKnowledge(BaseModel):
             recreate (bool): If True, recreates the collection in the vector db. Defaults to False.
             upsert (bool): If True, upserts documents to the vector db. Defaults to False.
             skip_existing (bool): If True, skips documents which already exist in the vector db when inserting. Defaults to True.
-            filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
 
         if self.vector_db is None:
@@ -165,9 +165,14 @@ class AgentKnowledge(BaseModel):
         log_info("Loading knowledge base")
         num_documents = 0
         async for document_list in self.async_document_lists:
+            # Track metadata for filtering capabilities
+            for doc in document_list:
+                if doc.meta_data:
+                    self._track_metadata_structure(doc.meta_data)
+
             # Upsert documents if upsert is True and vector db supports upsert
             if upsert and self.vector_db.upsert_available():
-                await self.vector_db.async_upsert(documents=document_list, filters=filters)
+                await self.vector_db.async_upsert(documents=document_list)
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
@@ -177,7 +182,7 @@ class AgentKnowledge(BaseModel):
                     documents_to_load = self.filter_existing_documents(document_list)
 
                 if documents_to_load:
-                    await self.vector_db.async_insert(documents=documents_to_load, filters=filters)
+                    await self.vector_db.async_insert(documents=documents_to_load)
 
             num_documents += len(documents_to_load)
             log_info(f"Added {len(documents_to_load)} documents to knowledge base")

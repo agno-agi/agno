@@ -5,52 +5,85 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 from agno.document import Document
 from agno.document.reader.json_reader import JSONReader
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 
 class JSONKnowledgeBase(AgentKnowledge):
-    path: Optional[Union[str, Path]] = None
+    path: Optional[Union[str, Path, List[Union[str, Path, Dict[str, Dict[str, Any]]]]]] = None
     reader: JSONReader = JSONReader()
     formats: List[str] = [".json"]
 
     @property
     def document_lists(self) -> Iterator[List[Document]]:
-        """Iterate over Json files and yield lists of documents.
-        Each object yielded by the iterator is a list of documents.
+        """Iterate over JSON files and yield lists of documents."""
+        if self.path is None:
+            raise ValueError("Path is not set")
 
-        Returns:
-            Iterator[List[Document]]: Iterator yielding list of documents
-        """
-        _json_path: Path = Path(self.path) if isinstance(self.path, str) else self.path  # type: ignore
+        if isinstance(self.path, list):
+            for item in self.path:
+                if isinstance(item, dict):
+                    # Handle path with metadata
+                    for file_path, config in item.items():
+                        _file_path = Path(file_path)
+                        if self._is_valid_json(_file_path):
+                            documents = self.reader.read(path=_file_path)
+                            if config.get("metadata"):
+                                for doc in documents:
+                                    log_info(f"Adding metadata {config.get('metadata')} to document: {doc.name}")
+                                    doc.meta_data.update(config["metadata"])
+                            yield documents
+                else:
+                    # Handle simple path
+                    _file_path = Path(item)
+                    if self._is_valid_json(_file_path):
+                        yield self.reader.read(path=_file_path)
+        else:
+            # Handle single path
+            _file_path = Path(self.path)
+            if _file_path.is_dir():
+                for _file in _file_path.glob("**/*"):
+                    if self._is_valid_json(_file):
+                        yield self.reader.read(path=_file)
+            elif self._is_valid_json(_file_path):
+                yield self.reader.read(path=_file_path)
 
-        if _json_path.exists() and _json_path.is_dir():
-            for _json in _json_path.glob("*.json"):
-                yield self.reader.read(path=_json)
-        elif _json_path.exists() and _json_path.is_file() and _json_path.suffix in self.formats:
-            yield self.reader.read(path=_json_path)
+    def _is_valid_json(self, path: Path) -> bool:
+        """Helper to check if path is a valid JSON file."""
+        return path.exists() and path.is_file() and path.suffix in self.formats
 
     @property
     async def async_document_lists(self) -> AsyncIterator[List[Document]]:
-        """Asynchronously iterate over Json files and yield lists of documents.
-        Each object yielded by the iterator is a list of documents.
+        """Iterate over JSON files and yield lists of documents asynchronously."""
+        if self.path is None:
+            raise ValueError("Path is not set")
 
-        Returns:
-            AsyncIterator[List[Document]]: Async iterator yielding list of documents
-        """
-        _json_path: Path = Path(self.path) if isinstance(self.path, str) else self.path  # type: ignore
-
-        if _json_path.exists() and _json_path.is_dir():
-            json_files = list(_json_path.glob("*.json"))
-
-            tasks = [self.reader.async_read(path=json_file) for json_file in json_files]
-            if tasks:
-                results = await asyncio.gather(*tasks)
-                for result in results:
-                    yield result
-
-        elif _json_path.exists() and _json_path.is_file() and _json_path.suffix in self.formats:
-            result = await self.reader.async_read(path=_json_path)
-            yield result
+        if isinstance(self.path, list):
+            for item in self.path:
+                if isinstance(item, dict):
+                    # Handle path with metadata
+                    for file_path, config in item.items():
+                        _file_path = Path(file_path)
+                        if self._is_valid_json(_file_path):
+                            documents = await self.reader.async_read(path=_file_path)
+                            if config.get("metadata"):
+                                for doc in documents:
+                                    log_info(f"Adding metadata {config.get('metadata')} to document: {doc.name}")
+                                    doc.meta_data.update(config["metadata"])
+                            yield documents
+                else:
+                    # Handle simple path
+                    _file_path = Path(item)
+                    if self._is_valid_json(_file_path):
+                        yield await self.reader.async_read(path=_file_path)
+        else:
+            # Handle single path
+            _file_path = Path(self.path)
+            if _file_path.is_dir():
+                for _file in _file_path.glob("**/*"):
+                    if self._is_valid_json(_file):
+                        yield await self.reader.async_read(path=_file)
+            elif self._is_valid_json(_file_path):
+                yield await self.reader.async_read(path=_file_path)
 
     def load_json(
         self,
