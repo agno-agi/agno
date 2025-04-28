@@ -15,8 +15,6 @@ You can pass filters in the following ways:
 3. If you pass on both, we override with the filters passed on run/print_response for that run
 """
 
-from pathlib import Path
-
 from agno.agent import Agent
 from agno.knowledge.docx import DocxKnowledgeBase
 from agno.vectordb.qdrant import Qdrant
