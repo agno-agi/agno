@@ -10,7 +10,7 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.openai import OpenAITools
-from agno.utils.media import save_audio
+from agno.utils.media import save_base64_data
 
 output_file: str = Path("tmp/speech_output.mp3")
 
@@ -29,5 +29,5 @@ response = agent.run(
 print(f"Agent response: {response.get_content_as_string()}")
 
 if response.audio:
-    save_audio(response.audio[0].base64_audio, output_file)
+    save_base64_data(response.audio[0].base64_audio, output_file)
     print(f"Successfully saved generated speech to{output_file}")
