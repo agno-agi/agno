@@ -1,17 +1,22 @@
 import asyncio
-from os import getenv
 import threading
-from typing import Any, Dict, List, Optional, Set
+from os import getenv
+from typing import Any, Dict, List, Optional, Set, Union
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRouter
+from rich import box
+from rich.panel import Panel
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
 from agno.api.playground import PlaygroundEndpointCreate, create_playground_endpoint
+from agno.cli.console import console
+from agno.cli.settings import agno_cli_settings
 from agno.playground.async_router import get_async_playground_router
 from agno.playground.settings import PlaygroundSettings
 from agno.playground.sync_router import get_sync_playground_router
@@ -31,10 +36,7 @@ class Playground:
         router: Optional[APIRouter] = None,
         app_id: Optional[str] = None,
         name: Optional[str] = None,
-        scheme: str = "http",
-        host: str = "localhost",
-        port: int = 7777,
-        monitoring: bool = False
+        monitoring: bool = False,
     ):
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
@@ -64,10 +66,8 @@ class Playground:
         self.endpoints_created: Set[str] = set()
         self.app_id: Optional[str] = app_id
         self.name: Optional[str] = name
-        self.scheme: str = scheme
-        self.host: str = host
-        self.port: int = port
         self.monitoring = monitoring
+
     def set_app_id(self) -> str:
         if self.app_id is None:
             app_id_parts = []
@@ -85,6 +85,7 @@ class Playground:
         else:
             self.app_id = str(uuid4())
         return self.app_id
+
     def _set_monitoring(self) -> None:
         """Override monitoring and telemetry settings based on environment variables."""
 
@@ -149,31 +150,56 @@ class Playground:
             allow_headers=["*"],
             expose_headers=["*"],
         )
-        print("ENDPOINT CREATED", self.endpoints_created)
         self.set_app_id()
-        self.create_endpoint(f"{self.scheme}://{self.host}:{self.port}")
-        thread = threading.Thread(target=self.register_app_on_platform)
-        thread.start()
 
         # asyncio.create_task(self.aregister_app_on_platform())
         return self.api_app
 
-    def create_endpoint(self, endpoint: str, prefix: str = "/v1") -> None:
-        if endpoint in self.endpoints_created:
-            return
+    def register_playground_app(
+        self,
+        app: Union[str, FastAPI],
+        *,
+        scheme: str = "http",
+        host: str = "localhost",
+        port: int = 7777,
+        reload: bool = False,
+        prefix="/v1",
+        **kwargs,
+    ):
+        import uvicorn
 
         try:
-            logger.info(f"Creating playground endpoint: {endpoint}")
             create_playground_endpoint(
-                playground=PlaygroundEndpointCreate(endpoint=endpoint, playground_data={"prefix": prefix})
+                playground=PlaygroundEndpointCreate(
+                    endpoint=f"{scheme}://{host}:{port}", playground_data={"prefix": prefix}
+                ),
             )
         except Exception as e:
             logger.error(f"Could not create playground endpoint: {e}")
             logger.error("Please try again.")
             return
 
-        self.endpoints_created.add(endpoint)
-        print("ENDPOINT CREATED", self.endpoints_created)
+        logger.info(f"Starting playground on {scheme}://{host}:{port}")
+        # Encode the full endpoint (host:port)
+        encoded_endpoint = quote(f"{host}:{port}")
+        self.endpoints_created.add(encoded_endpoint)
+        # Create a panel with the playground URL
+        url = f"{agno_cli_settings.playground_url}?endpoint={encoded_endpoint}"
+        panel = Panel(
+            f"[bold green]Playground URL:[/bold green] [link={url}]{url}[/link]",
+            title="Agent Playground",
+            expand=False,
+            border_style="cyan",
+            box=box.HEAVY,
+            padding=(2, 2),
+        )
+
+        # Print the panel
+        console.print(panel)
+        print(app, "this is app")
+        thread = threading.Thread(target=self.register_app_on_platform)
+        thread.start()
+        uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
 
     def register_app_on_platform(self) -> None:
         self._set_monitoring()
