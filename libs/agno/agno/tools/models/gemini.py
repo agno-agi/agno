@@ -30,16 +30,18 @@ class GeminiTools(Toolkit):
     ):
         super().__init__(name="gemini_tools", tools=[self.generate_image, self.generate_video], **kwargs)
 
-        # Set mode and credentials
-        self.vertexai = vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
+        # Set mode and credentials: use only provided vertexai parameter
+        self.vertexai = vertexai
         self.project_id = project_id
         self.location = location
 
+        # Load API key from argument or environment
         self.api_key = api_key or getenv("GOOGLE_API_KEY")
         if not self.vertexai and not self.api_key:
             log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
             raise ValueError("GOOGLE_API_KEY not set. Please provide api_key or set the environment variable.")
 
+        # Prepare client parameters
         client_params: dict[str, Any] = {}
         if self.vertexai:
             log_debug("Using Vertex AI API")
@@ -81,7 +83,11 @@ class GeminiTools(Toolkit):
 
             log_debug("DEBUG: Raw Gemini API response")
 
-            image_bytes = response.generated_images[0].image.image_bytes
+            # Extract image bytes
+            image_bytes = response.generated_images[0].image.image_bytes  
+            if not image_bytes:
+                log_error("No valid image data extracted.")
+                return "Failed to generate image: No valid image data extracted."
             base64_encoded_image_bytes = base64.b64encode(image_bytes)
             actual_mime_type = "image/png"
 
