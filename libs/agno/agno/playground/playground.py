@@ -1,4 +1,5 @@
 import asyncio
+from os import getenv
 import threading
 from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
@@ -33,6 +34,7 @@ class Playground:
         scheme: str = "http",
         host: str = "localhost",
         port: int = 7777,
+        monitoring: bool = False
     ):
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
@@ -65,7 +67,7 @@ class Playground:
         self.scheme: str = scheme
         self.host: str = host
         self.port: int = port
-
+        self.monitoring = monitoring
     def set_app_id(self) -> str:
         if self.app_id is None:
             app_id_parts = []
@@ -83,6 +85,13 @@ class Playground:
         else:
             self.app_id = str(uuid4())
         return self.app_id
+    def _set_monitoring(self) -> None:
+        """Override monitoring and telemetry settings based on environment variables."""
+
+        # Only override if the environment variable is set
+        monitor_env = getenv("AGNO_MONITOR")
+        if monitor_env is not None:
+            self.monitoring = monitor_env.lower() == "true"
 
     def get_router(self) -> APIRouter:
         return get_sync_playground_router(self.agents, self.workflows, self.teams)
@@ -167,6 +176,10 @@ class Playground:
         print("ENDPOINT CREATED", self.endpoints_created)
 
     def register_app_on_platform(self) -> None:
+        self._set_monitoring()
+        if not self.monitoring:
+            return
+
         from agno.api.app import AppCreate, create_app
 
         try:
@@ -178,7 +191,7 @@ class Playground:
         log_debug(f"Agent app created: {self.name}, {self.app_id}")
 
     async def aregister_app_on_platform(self) -> None:
-        self.set_monitoring()
+        self._set_monitoring()
         if not self.monitoring:
             return
 
