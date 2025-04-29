@@ -1082,6 +1082,9 @@ class Agent:
         self.effective_knowledge_filters = None
 
         if self.knowledge_filters or knowledge_filters:
+            # refresh metadata (specially required in case when load/aload is commented out)
+            self.knowledge.refresh_valid_filters()  # type: ignore
+
             self.effective_knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # If no retries are set, use the agent's default retries
