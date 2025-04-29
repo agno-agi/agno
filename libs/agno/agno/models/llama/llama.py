@@ -10,13 +10,21 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning, log_info
+from agno.utils.log import log_error, log_info, log_warning
 
 try:
-    from llama_api_client import LlamaAPIClient, AsyncLlamaAPIClient
+    from llama_api_client import AsyncLlamaAPIClient, LlamaAPIClient
     from llama_api_client.types.create_chat_completion_response import CreateChatCompletionResponse
-    from llama_api_client.types.create_chat_completion_response_stream_chunk import CreateChatCompletionResponseStreamChunk
-    from llama_api_client.types.message_param import MessageParam, UserMessageParam, SystemMessageParam, ToolResponseMessageParam, CompletionMessageParam
+    from llama_api_client.types.create_chat_completion_response_stream_chunk import (
+        CreateChatCompletionResponseStreamChunk,
+    )
+    from llama_api_client.types.message_param import (
+        CompletionMessageParam,
+        MessageParam,
+        SystemMessageParam,
+        ToolResponseMessageParam,
+        UserMessageParam,
+    )
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`llama-api-client` not installed. Please install using `pip install llama-api-client`")
 
@@ -159,9 +167,6 @@ class Llama(Model):
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
 
-            if self.tool_choice is not None:
-                request_params["tool_choice"] = self.tool_choice
-
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
@@ -196,7 +201,7 @@ class Llama(Model):
                 model_dict["tool_choice"] = "auto"
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
-    
+
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """
         Format a message into the format expected by Llama API.
@@ -312,7 +317,6 @@ class Llama(Model):
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
-                stream_options={"include_usage": True},
                 **self.request_kwargs,
             )  # type: ignore
         except Exception as e:
@@ -335,7 +339,6 @@ class Llama(Model):
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
-                stream_options={"include_usage": True},
                 **self.request_kwargs,
             )
             async for chunk in async_stream:
@@ -344,46 +347,46 @@ class Llama(Model):
             log_error(f"Error from Llama API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    # Override base method
-    @staticmethod
-    def parse_tool_calls(tool_calls_data: List[ChoiceDeltaToolCall]) -> List[Dict[str, Any]]:
-        """
-        Build tool calls from streamed tool call data.
+    # # Override base method
+    # @staticmethod
+    # def parse_tool_calls(tool_calls_data: List[ChoiceDeltaToolCall]) -> List[Dict[str, Any]]:
+    #     """
+    #     Build tool calls from streamed tool call data.
 
-        Args:
-            tool_calls_data (List[ChoiceDeltaToolCall]): The tool call data to build from.
+    #     Args:
+    #         tool_calls_data (List[ChoiceDeltaToolCall]): The tool call data to build from.
 
-        Returns:
-            List[Dict[str, Any]]: The built tool calls.
-        """
-        tool_calls: List[Dict[str, Any]] = []
-        for _tool_call in tool_calls_data:
-            _index = _tool_call.index or 0
-            _tool_call_id = _tool_call.id
-            _tool_call_type = _tool_call.type
-            _function_name = _tool_call.function.name if _tool_call.function else None
-            _function_arguments = _tool_call.function.arguments if _tool_call.function else None
+    #     Returns:
+    #         List[Dict[str, Any]]: The built tool calls.
+    #     """
+    #     tool_calls: List[Dict[str, Any]] = []
+    #     for _tool_call in tool_calls_data:
+    #         _index = _tool_call.index or 0
+    #         _tool_call_id = _tool_call.id
+    #         _tool_call_type = _tool_call.type
+    #         _function_name = _tool_call.function.name if _tool_call.function else None
+    #         _function_arguments = _tool_call.function.arguments if _tool_call.function else None
 
-            if len(tool_calls) <= _index:
-                tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
-            tool_call_entry = tool_calls[_index]
-            if not tool_call_entry:
-                tool_call_entry["id"] = _tool_call_id
-                tool_call_entry["type"] = _tool_call_type
-                tool_call_entry["function"] = {
-                    "name": _function_name or "",
-                    "arguments": _function_arguments or "",
-                }
-            else:
-                if _function_name:
-                    tool_call_entry["function"]["name"] += _function_name
-                if _function_arguments:
-                    tool_call_entry["function"]["arguments"] += _function_arguments
-                if _tool_call_id:
-                    tool_call_entry["id"] = _tool_call_id
-                if _tool_call_type:
-                    tool_call_entry["type"] = _tool_call_type
-        return tool_calls
+    #         if len(tool_calls) <= _index:
+    #             tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
+    #         tool_call_entry = tool_calls[_index]
+    #         if not tool_call_entry:
+    #             tool_call_entry["id"] = _tool_call_id
+    #             tool_call_entry["type"] = _tool_call_type
+    #             tool_call_entry["function"] = {
+    #                 "name": _function_name or "",
+    #                 "arguments": _function_arguments or "",
+    #             }
+    #         else:
+    #             if _function_name:
+    #                 tool_call_entry["function"]["name"] += _function_name
+    #             if _function_arguments:
+    #                 tool_call_entry["function"]["arguments"] += _function_arguments
+    #             if _tool_call_id:
+    #                 tool_call_entry["id"] = _tool_call_id
+    #             if _tool_call_type:
+    #                 tool_call_entry["type"] = _tool_call_type
+    #     return tool_calls
 
     def parse_provider_response(self, response: CreateChatCompletionResponse) -> ModelResponse:
         """
@@ -402,26 +405,13 @@ class Llama(Model):
         # Get response message
         response_message = response.completion_message
 
-        # Parse structured outputs if enabled
-        try:
-            if (
-                self.response_format is not None
-                and self.structured_outputs
-                and issubclass(self.response_format, BaseModel)
-            ):
-                parsed_object = response_message.parsed  # type: ignore
-                if parsed_object is not None:
-                    model_response.parsed = parsed_object
-        except Exception as e:
-            log_warning(f"Error retrieving structured outputs: {e}")
-
         # Add role
         if response_message.role is not None:
             model_response.role = response_message.role
 
         # Add content
         if response_message.content is not None:
-            model_response.content = response_message.content
+            model_response.content = response_message.content.text
 
         # Add tool calls
         if response_message.tool_calls is not None and len(response_message.tool_calls) > 0:
@@ -429,9 +419,6 @@ class Llama(Model):
                 model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
             except Exception as e:
                 log_warning(f"Error processing tool calls: {e}")
-
-        if response.metrics is not None:
-            model_response.response_usage = response.metrics
 
         return model_response
 
@@ -446,19 +433,22 @@ class Llama(Model):
             ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
-        if response_delta.choices and len(response_delta.choices) > 0:
-            delta: ChoiceDelta = response_delta.choices[0].delta
+
+        log_info(f"Llama response delta: {response_delta}")
+
+        if response_delta is not None:
+            delta = response_delta.event
 
             # Add content
-            if delta.content is not None:
-                model_response.content = delta.content
+            if delta.delta.text is not None:
+                model_response.content = delta.delta.text
 
-            # Add tool calls
-            if delta.tool_calls is not None:
-                model_response.tool_calls = delta.tool_calls  # type: ignore
+            # # Add tool calls
+            # if delta.tool_calls is not None:
+            #     model_response.tool_calls = delta.tool_calls  # type: ignore
 
         # Add usage metrics if present
-        if response_delta.metrics is not None:
-            model_response.response_usage = response_delta.metrics
+        # if response_delta.metrics is not None:
+        #     model_response.response_usage = response_delta.metrics
 
         return model_response

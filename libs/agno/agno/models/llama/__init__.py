@@ -1,3 +1,4 @@
-from llama.llama import Llama
+from .llama import Llama
+from .llama_openai import LlamaOpenAI
 
-__all__ = ["Llama"]
+__all__ = ["Llama", "LlamaOpenAI"]
