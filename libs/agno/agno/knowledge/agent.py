@@ -470,7 +470,7 @@ class AgentKnowledge(BaseModel):
 
         return valid_filters, invalid_keys
 
-    def refresh_valid_filters(self) -> None:
+    def initialize_valid_filters(self) -> None:
         """Refresh the valid metadata filters by scanning the documents in the knowledge base.
         This will be required majorly for the case when load/aload is commented out but we still need a way to call document_lists for updating the valid metadata filters.
         """
