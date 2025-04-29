@@ -1,12 +1,12 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from os import getenv
-from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent
+from agno.eval.utils import store_result_in_file
 from agno.exceptions import EvalError
 from agno.models.base import Model
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
@@ -250,6 +250,25 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
                 raise EvalError(f"The eval prompt needs to be or return a string, but it returned: {type(_prompt)}")
         return self.prompt
 
+    def evaluate_answer(
+        self, answer: str, evaluator_agent: Agent, eval_prompt: str, eval_expected_answer: str
+    ) -> Optional[AccuracyEvaluation]:
+        """Orchestrate the evaluation process."""
+        try:
+            accuracy_agent_response = evaluator_agent.run(answer).content
+            if accuracy_agent_response is None or not isinstance(accuracy_agent_response, AccuracyAgentResponse):
+                raise EvalError(f"Evaluator Agent returned an invalid response: {accuracy_agent_response}")
+            return AccuracyEvaluation(
+                prompt=eval_prompt,
+                answer=answer,  # type: ignore
+                expected_answer=eval_expected_answer,
+                score=accuracy_agent_response.accuracy_score,
+                reason=accuracy_agent_response.accuracy_reason,
+            )
+        except Exception as e:
+            logger.exception(f"Failed to evaluate accuracy: {e}")
+            return None
+
     def run(
         self,
         *,
@@ -260,24 +279,19 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
         from rich.live import Live
         from rich.status import Status
 
-        self.print_results = print_results
-        self.print_summary = print_summary
-        self.result = AccuracyResult()
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
-        eval_prompt = self.get_eval_prompt()
-        eval_expected_answer = self.get_eval_expected_answer()
+        self.result = AccuracyResult()
 
         logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
-        logger.debug(f"Evaluation Prompt: {eval_prompt}")
-        logger.debug(f"Evaluation Expected Answer: {eval_expected_answer}")
-        logger.debug("***********************************************************")
-
-        evaluator_agent = self.get_evaluator_agent()
 
         # Add a spinner while running the evaluations
         console = Console()
         with Live(console=console, transient=True) as live_log:
+            evaluator_agent = self.get_evaluator_agent()
+            eval_prompt = self.get_eval_prompt()
+            eval_expected_answer = self.get_eval_expected_answer()
+
             for i in range(self.num_iterations):
                 status = Status(f"Running evaluation {i + 1}...", spinner="dots", speed=1.0, refresh_per_second=10)
                 live_log.update(status)
@@ -287,47 +301,36 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
                     logger.error(f"Failed to generate a valid answer on iteration {i + 1}: {answer}")
                     continue
 
-                try:
-                    logger.debug(f"Answer #{i + 1}: {answer}")
-                    accuracy_agent_response = evaluator_agent.run(answer).content
-                    if accuracy_agent_response is None or not isinstance(
-                        accuracy_agent_response, AccuracyAgentResponse
-                    ):
-                        logger.error(f"Evaluator Agent returned an invalid response on iteration {i + 1}")
-                        continue
-                    accuracy_evaluation = AccuracyEvaluation(
-                        prompt=eval_prompt,
-                        answer=answer,  # type: ignore
-                        expected_answer=eval_expected_answer,
-                        score=accuracy_agent_response.accuracy_score,
-                        reason=accuracy_agent_response.accuracy_reason,
-                    )
-                    if self.print_results:
-                        accuracy_evaluation.print_eval(console)
-                    self.result.results.append(accuracy_evaluation)
-                    self.result.compute_stats()
-                    status.update(f"Eval iteration {i + 1} finished")
-                except Exception as e:
-                    logger.exception(f"Failed to evaluate accuracy, run #{i + 1}: {e}")
-                    return None
-                status.stop()
+                logger.debug(f"Answer #{i + 1}: {answer}")
+                result = self.evaluate_answer(
+                    answer=answer,
+                    evaluator_agent=evaluator_agent,
+                    eval_prompt=eval_prompt,
+                    eval_expected_answer=eval_expected_answer,
+                )
+                if result is None:
+                    logger.error(f"Failed to evaluate accuracy on iteration {i + 1}")
+                    continue
+
+                self.result.results.append(result)
+                self.result.compute_stats()
+                status.update(f"Eval iteration {i + 1} finished")
+
+            status.stop()
 
         # Save result to file if requested
         if self.file_path_to_save_results is not None and self.result is not None:
-            try:
-                import json
+            store_result_in_file(
+                file_path=self.file_path_to_save_results,
+                name=self.name,
+                eval_id=self.eval_id,
+                result=self.result,
+            )
 
-                fn_path = Path(self.file_path_to_save_results.format(name=self.name, eval_id=self.eval_id))
-                if not fn_path.parent.exists():
-                    fn_path.parent.mkdir(parents=True, exist_ok=True)
-                fn_path.write_text(json.dumps(asdict(self.result), indent=4))
-            except Exception as e:
-                logger.warning(f"Failed to save eval results to file {self.file_path_to_save_results}: {e}")
-
-        # Show results if requested
-        if self.print_results:
+        # Print results if requested
+        if self.print_results or print_results:
             self.result.print_results(console)
-        elif self.print_summary:
+        elif self.print_summary or print_summary:
             self.result.print_summary(console)
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
@@ -341,61 +344,41 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
         print_results: bool = True,
     ) -> Optional[AccuracyResult]:
         """Run the evaluation logic against the given answer, instead of generating an answer with the Agent"""
-        from rich.console import Console
-
-        self.print_results = print_results
-        self.print_summary = print_summary
-        self.result = AccuracyResult()
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
-        eval_prompt = self.get_eval_prompt()
-        eval_expected_answer = self.get_eval_expected_answer()
+        self.result = AccuracyResult()
 
         logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
-        logger.debug(f"Evaluation Prompt: {eval_prompt}")
-        logger.debug(f"Evaluation Answer: {answer}")
-        logger.debug(f"Evaluation Expected Answer: {eval_expected_answer}")
-        logger.debug("***********************************************************")
 
         evaluator_agent = self.get_evaluator_agent()
+        eval_prompt = self.get_eval_prompt()
+        eval_expected_answer = self.get_eval_expected_answer()
+        result = self.evaluate_answer(
+            answer=answer,
+            evaluator_agent=evaluator_agent,
+            eval_prompt=eval_prompt,
+            eval_expected_answer=eval_expected_answer,
+        )
 
-        try:
-            accuracy_agent_response = evaluator_agent.run(answer).content
-            if accuracy_agent_response is None or not isinstance(accuracy_agent_response, AccuracyAgentResponse):
-                raise EvalError(f"Evaluator Agent returned an invalid response: {accuracy_agent_response}")
-            accuracy_evaluation = AccuracyEvaluation(
-                prompt=eval_prompt,
-                answer=answer,  # type: ignore
-                expected_answer=eval_expected_answer,
-                score=accuracy_agent_response.accuracy_score,
-                reason=accuracy_agent_response.accuracy_reason,
-            )
-            if self.print_results:
-                console = Console()
-                accuracy_evaluation.print_eval(console)
-            self.result.results.append(accuracy_evaluation)
+        if result is not None:
+            self.result.results.append(result)
             self.result.compute_stats()
-        except Exception as e:
-            logger.exception(f"Failed to evaluate accuracy: {e}")
-            return None
 
-        # Save result to file if requested
-        if self.file_path_to_save_results is not None and self.result is not None:
-            try:
-                import json
+            # Print results if requested
+            if self.print_results or print_results:
+                result.print_eval()
+                self.result.print_results()
+            elif self.print_summary or print_summary:
+                self.result.print_summary()
 
-                fn_path = Path(self.file_path_to_save_results.format(name=self.name, eval_id=self.eval_id))
-                if not fn_path.parent.exists():
-                    fn_path.parent.mkdir(parents=True, exist_ok=True)
-                fn_path.write_text(json.dumps(asdict(self.result), indent=4))
-            except Exception as e:
-                logger.warning(f"Failed to save eval results to file {self.file_path_to_save_results}: {e}")
-
-        # Show results if requested
-        if self.print_results:
-            self.result.print_results(console)
-        elif self.print_summary:
-            self.result.print_summary(console)
+            # Save result to file if requested
+            if self.file_path_to_save_results is not None:
+                store_result_in_file(
+                    file_path=self.file_path_to_save_results,
+                    name=self.name,
+                    eval_id=self.eval_id,
+                    result=self.result,
+                )
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
         return self.result
