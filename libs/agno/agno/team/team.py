@@ -6299,6 +6299,10 @@ class Team:
             log_debug(f"Could not create team monitor: {e}")
 
     def _register_team_on_platform(self,team_id: Optional[str] = None) -> None:
+        self._set_monitoring()
+        if not self.monitoring:
+            return
+        
         from agno.api.team import TeamCreate, create_team
 
         try:
@@ -6317,6 +6321,10 @@ class Team:
             print(f"Could not create team on platform: {e}")
 
     async def _aregister_team_on_platform(self,team_id: Optional[str] = None) -> None:
+        self._set_monitoring()
+        if not self.monitoring:
+            return
+        
         from agno.api.team import TeamCreate, acreate_team
 
         try:
