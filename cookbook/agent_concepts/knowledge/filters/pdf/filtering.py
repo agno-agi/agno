@@ -66,6 +66,9 @@ knowledge_base = PDFKnowledgeBase(
     vector_db=vector_db,
 )
 
+# Load all documents into the vector database
+knowledge_base.load(recreate=True)
+
 # Step 2: Query the knowledge base with different filter combinations
 # ------------------------------------------------------------------------------
 
@@ -76,15 +79,8 @@ agent = Agent(
     search_knowledge=True,
 )
 
-if __name__ == "__main__":
-    # Load all documents into the vector database
-    asyncio.run(knowledge_base.aload(recreate=True))
-
-    # Query for Alex Rivera's experience and skills
-    asyncio.run(
-        agent.aprint_response(
-            "Tell me about Jordan Mitchell's experience and skills",
-            knowledge_filters={"user_id": "jordan_mitchell"},
-            markdown=True,
-        )
-    )
+agent.aprint_response(
+    "Tell me about Jordan Mitchell's experience and skills",
+    knowledge_filters={"user_id": "jordan_mitchell"},
+    markdown=True,
+)
