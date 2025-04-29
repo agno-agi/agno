@@ -7,9 +7,10 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-
+from agno.playground import Playground
 simple_agent = Agent(
     name="Simple Agent",
+    agent_id="simple-agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=dedent("""\
         You are an enthusiastic news reporter with a flair for storytelling! 🗽
@@ -27,5 +28,23 @@ simple_agent = Agent(
     markdown=True,
 )
 
+
+playground = Playground(
+        agents=[simple_agent],
+        name="Simple Agent",
+        app_id="simple-agent",
+        monitoring=True,
+    )
+
+# Get the FastAPI app
+app = playground.get_app(use_async=False)
+
 if __name__ == "__main__":
-    simple_agent.print_response("Share a news story from NYC and SF.", stream=True)
+    # Start the playground server
+    playground.register_playground_app(
+        app="simple_agent:app",
+        host="localhost",
+        port=7777,
+        reload=True,
+    )
+

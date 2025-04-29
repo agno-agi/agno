@@ -201,16 +201,17 @@ class Playground:
         # Print the panel
         console.print(panel)
         print(app, "this is app")
-        self.set_app_id()
+        self.set_app_id()   
         thread = threading.Thread(target=self.register_app_on_platform)
         thread.start()
-        for agent in self.agents:
-            t1 = threading.Thread(target=agent.register_agent_on_platform)
-            t1.start()
-
-        for team in self.teams:
-            t2 = threading.Thread(target=team._register_team_on_platform)
-            t2.start()
+        if self.agents:
+            for agent in self.agents:
+                t1 = threading.Thread(target=agent.register_agent_on_platform)
+                t1.start()
+        if self.teams:
+            for team in self.teams:
+                t2 = threading.Thread(target=team._register_team_on_platform)
+                t2.start()
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
 
     def register_app_on_platform(self) -> None:
