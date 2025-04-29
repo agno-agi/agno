@@ -9,7 +9,7 @@ from agno.utils.log import logger
 
 def store_result_in_file(
     file_path: str,
-    result: Union["AccuracyResult", "PerformanceResult"],
+    result: Union["AccuracyResult", "PerformanceResult", "ReliabilityResult"],
     eval_id: Optional[str] = None,
     name: Optional[str] = None,
 ):
