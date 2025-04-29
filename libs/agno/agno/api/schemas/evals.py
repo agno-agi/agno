@@ -1,0 +1,24 @@
+from enum import Enum
+from typing import Any, Dict, Optional
+
+from pydantic import BaseModel
+
+
+class EvalType(str, Enum):
+    ACCURACY = "accuracy"
+    PERFORMANCE = "performance"
+    RELIABILITY = "reliability"
+
+
+class EvalRunCreate(BaseModel):
+    """Data sent to the API to create an evaluation run"""
+
+    agent_id: Optional[str] = None
+    user_id: Optional[str] = None
+    team_id: Optional[str] = None
+    workspace_id: Optional[str] = None
+    agent_name: Optional[str] = None
+
+    run_id: str
+    type: EvalType
+    data: Dict[str, Any]
