@@ -1,0 +1,68 @@
+name: "✨ Feature Request"
+description: "What’s missing? Suggest a feature to make Agno even better."
+title: "[Feature Request]"
+labels: [enhancement]
+assignees: [your-github-username]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting a feature! Please fill out the information below to help us understand and evaluate your idea.
+
+  - type: textarea
+    id: problem-description
+    attributes:
+      label: Problem Description
+      description: Provide a clear and concise explanation of the issue you're facing.
+      placeholder: |
+        Example: "I often find it frustrating when [...] because [...]"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed Solution
+      description: Explain your ideal solution. How should this feature work?
+      placeholder: |
+        Be as detailed as possible to help us understand your vision.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives-considered
+    attributes:
+      label: Alternatives Considered
+      description: Have you found any workarounds or alternative solutions?
+      placeholder: |
+        Share other approaches you've tried or thought about.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Include any extra information that might be helpful.
+      placeholder: |
+        - Screenshots
+        - Examples of similar features elsewhere
+        - Relevant links or references
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: work-on-this
+    attributes:
+      label: Would you like to work on this?
+      description: We welcome contributions! Let us know if you'd like to help implement this feature.
+      options:
+        - label: "Yes, I’d love to work on it!"
+          value: "yes"
+        - label: "I’m open to collaborating but need guidance."
+          value: "guidance"
+        - label: "No, I’m just sharing the idea."
+          value: "no"
+    validations:
+      required: false
