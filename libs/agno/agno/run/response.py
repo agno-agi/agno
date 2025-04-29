@@ -23,6 +23,8 @@ class RunEvent(str, Enum):
     reasoning_started = "ReasoningStarted"
     reasoning_step = "ReasoningStep"
     reasoning_completed = "ReasoningCompleted"
+    updating_agent_memory = "UpdatingAgentMemory"
+    cancelled = "Cancelled"
     updating_memory = "UpdatingMemory"
     workflow_started = "WorkflowStarted"
     workflow_completed = "WorkflowCompleted"
