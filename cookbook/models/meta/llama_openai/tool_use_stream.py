@@ -1,7 +1,7 @@
 """Run `pip install duckduckgo-search` to install dependencies."""
 
 from agno.agent import Agent
-from agno.models.llama import LlamaOpenAI
+from agno.models.meta import LlamaOpenAI
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(

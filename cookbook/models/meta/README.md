@@ -1,4 +1,4 @@
-# OpenAI Cookbook
+# Meta Llama API Cookbook
 
 > Note: Fork and clone this repository if needed
 
@@ -9,16 +9,16 @@ python3 -m venv ~/.venvs/aienv
 source ~/.venvs/aienv/bin/activate
 ```
 
-### 2. Export your `OPENAI_API_KEY`
+### 2. Export your `LLAMA_API_KEY`
 
 ```shell
-export OPENAI_API_KEY=***
+export LLAMA_API_KEY=***
 ```
 
 ### 3. Install libraries
 
 ```shell
-pip install -U openai duckduckgo-search duckdb yfinance agno
+pip install -U agno llama-api-client
 ```
 
 ### 4. Run basic Agent
@@ -26,13 +26,13 @@ pip install -U openai duckduckgo-search duckdb yfinance agno
 - Streaming on
 
 ```shell
-python cookbook/models/openai/basic_stream.py
+python cookbook/models/meta/llama/basic_stream.py
 ```
 
 - Streaming off
 
 ```shell
-python cookbook/models/openai/basic.py
+python cookbook/models/meta/llama/basic.py
 ```
 
 ### 5. Run Agent with Tools

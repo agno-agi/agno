@@ -1,7 +1,7 @@
 from typing import Iterator
 
 from agno.agent import Agent, RunResponse
-from agno.models.llama import Llama
+from agno.models.meta import Llama
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
 from rich.pretty import pprint

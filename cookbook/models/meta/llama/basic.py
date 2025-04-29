@@ -1,5 +1,5 @@
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.llama import Llama
+from agno.models.meta import Llama
 
 agent = Agent(
     model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),

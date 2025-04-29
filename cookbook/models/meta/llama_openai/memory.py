@@ -9,13 +9,13 @@ Steps:
 from agno.agent import Agent
 from agno.memory.v2.db.postgres import PostgresMemoryDb
 from agno.memory.v2.memory import Memory
-from agno.models.llama import Llama
+from agno.models.meta import LlamaOpenAI
 from agno.storage.postgres import PostgresStorage
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
-    model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+    model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
     # Store the memories and summary in a database
     memory=Memory(
         db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url),

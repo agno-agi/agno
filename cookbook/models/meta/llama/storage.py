@@ -1,7 +1,7 @@
 """Run `pip install duckduckgo-search sqlalchemy openai` to install dependencies."""
 
 from agno.agent import Agent
-from agno.models.llama import Llama
+from agno.models.meta import Llama
 from agno.storage.postgres import PostgresStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
