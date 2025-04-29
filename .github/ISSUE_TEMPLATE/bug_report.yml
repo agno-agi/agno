@@ -1,0 +1,121 @@
+name: "🐛 Bug Report"
+description: Report an issue to help us fix bugs and improve your experience.
+title: "[Bug]"
+labels: [bug]
+assignees: [your-github-username]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please complete the information below to help us reproduce and fix the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Briefly describe the issue you're experiencing or the bug you’ve found.
+      placeholder: e.g. App crashes when clicking the "Submit" button.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: List the steps needed to encounter this bug or issue.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '....'
+        3. Scroll down to '....'
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: agent-config
+    attributes:
+      label: Agent Configuration (if applicable)
+      description: Provide relevant agent configuration details.
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: Describe what you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: Describe what actually happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or Logs
+      description: Include any relevant screenshots or error logs that demonstrate the issue.
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: e.g. macOS, Windows 11
+    validations:
+      required: false
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser (if relevant)
+      placeholder: e.g. Chrome 108, Firefox 107
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Agno Version
+      placeholder: e.g. v1.0.0
+    validations:
+      required: false
+
+  - type: input
+    id: dependencies
+    attributes:
+      label: External Dependency Versions
+      placeholder: e.g. yfinance 0.2.52
+    validations:
+      required: false
+
+  - type: textarea
+    id: env-details
+    attributes:
+      label: Additional Environment Details
+      placeholder: e.g. Python 3.10
+    validations:
+      required: false
+
+  - type: textarea
+    id: solutions
+    attributes:
+      label: Possible Solutions (optional)
+      description: Suggest any ideas you might have to fix or address the issue.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Add any other context or details about the problem here.
+    validations:
+      required: false
