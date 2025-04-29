@@ -21,7 +21,7 @@ export LLAMA_API_KEY=***
 pip install -U agno llama-api-client
 ```
 
-### 4. Run basic Agent
+### 4. Run a basic Agent
 
 - Streaming on
 
@@ -35,64 +35,10 @@ python cookbook/models/meta/llama/basic_stream.py
 python cookbook/models/meta/llama/basic.py
 ```
 
-### 5. Run Agent with Tools
+### 5. Run an Agent with Tools
 
-- DuckDuckGo Search
-
-```shell
-python cookbook/models/openai/tool_use.py
-```
-
-### 6. Run Agent that returns structured output
+> Run `pip install duckduckgo-search` to install dependencies.
 
 ```shell
-python cookbook/models/openai/structured_output.py
-```
-
-### 7. Run Agent uses memory
-
-```shell
-python cookbook/models/openai/memory.py
-```
-
-### 8. Run Agent that uses storage
-
-```shell
-python cookbook/models/openai/storage.py
-```
-
-### 9. Run Agent that uses knowledge
-
-```shell
-python cookbook/models/openai/knowledge.py
-```
-
-### 10. Run Agent that generates an image using Dall-E
-
-```shell
-python cookbook/models/openai/generate_images.py
-```
-
-### 11. Run Agent that analyzes an image
-
-```shell
-python cookbook/models/openai/image_agent.py
-```
-
-or
-
-```shell
-python cookbook/models/openai/image_agent_with_memory.py
-```
-
-### 11. Run Agent that analyzes audio
-
-```shell
-python cookbook/models/openai/audio_input_agent.py
-```
-
-### 12. Run Agent that generates audio
-
-```shell
-python cookbook/models/openai/audio_output_agent.py
+python cookbook/models/meta/llama/tool_use.py
 ```

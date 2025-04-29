@@ -9,4 +9,4 @@ agent = Agent(
     tools=[DuckDuckGoTools()],
     markdown=True,
 )
-agent.print_response("Tell me about Llama API.")
+agent.print_response("Tell me about Llama API")
