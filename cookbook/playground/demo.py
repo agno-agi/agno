@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from textwrap import dedent
+from typing import List
 
 from agno.agent import Agent
 from agno.memory.v2 import Memory
@@ -14,6 +15,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 from agno.tools.youtube import YouTubeTools
+from pydantic import BaseModel, Field
 
 agent_storage_file: str = "tmp/agents.db"
 memory_storage_file: str = "tmp/memory.db"
@@ -187,6 +189,33 @@ youtube_agent = Agent(
     markdown=True,
 )
 
+
+class MovieScript(BaseModel):
+    setting: str = Field(
+        ..., description="Provide a nice setting for a blockbuster movie."
+    )
+    ending: str = Field(
+        ...,
+        description="Ending of the movie. If not available, provide a happy ending.",
+    )
+    genre: str = Field(
+        ...,
+        description="Genre of the movie. If not available, select action, thriller or romantic comedy.",
+    )
+    name: str = Field(..., description="Give a name to this movie")
+    characters: List[str] = Field(..., description="Name of characters for this movie.")
+    storyline: str = Field(
+        ..., description="3 sentence storyline for the movie. Make it exciting!"
+    )
+
+
+# Notice: agents with response model won't stream answers
+movie_writer = Agent(
+    name="Movie Writer Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    response_model=MovieScript,
+)
+
 app = Playground(
     agents=[
         simple_agent,
@@ -195,6 +224,7 @@ app = Playground(
         youtube_agent,
         research_agent,
         image_agent,
+        movie_writer,
     ],
 ).get_app()
 

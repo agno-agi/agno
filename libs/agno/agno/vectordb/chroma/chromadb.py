@@ -1,3 +1,4 @@
+import asyncio
 from hashlib import md5
 from typing import Any, Dict, List, Optional
 
@@ -86,6 +87,10 @@ class ChromaDb(VectorDb):
                 name=self.collection_name, metadata={"hnsw:space": self.distance.value}
             )
 
+    async def async_create(self) -> None:
+        """Create the collection asynchronously by running in a thread."""
+        await asyncio.to_thread(self.create)
+
     def doc_exists(self, document: Document) -> bool:
         """Check if a document exists in the collection.
         Args:
@@ -108,6 +113,10 @@ class ChromaDb(VectorDb):
             logger.error(f"Document does not exist: {e}")
         return False
 
+    async def async_doc_exists(self, document: Document) -> bool:
+        """Check if a document exists asynchronously."""
+        return await asyncio.to_thread(self.doc_exists, document)
+
     def name_exists(self, name: str) -> bool:
         """Check if a document with a given name exists in the collection.
         Args:
@@ -123,6 +132,10 @@ class ChromaDb(VectorDb):
             except Exception as e:
                 logger.error(f"Document with given name does not exist: {e}")
         return False
+
+    async def async_name_exists(self, name: str) -> bool:
+        """Check if a document with given name exists asynchronously."""
+        return await asyncio.to_thread(self.name_exists, name)
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the collection.
@@ -156,6 +169,10 @@ class ChromaDb(VectorDb):
             if len(docs) > 0:
                 self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
                 log_debug(f"Committed {len(docs)} documents")
+
+    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        """Insert documents asynchronously by running in a thread."""
+        await asyncio.to_thread(self.insert, documents, filters)
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in ChromaDB."""
@@ -193,6 +210,10 @@ class ChromaDb(VectorDb):
             if len(docs) > 0:
                 self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
                 log_debug(f"Committed {len(docs)} documents")
+
+    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        """Upsert documents asynchronously by running in a thread."""
+        await asyncio.to_thread(self.upsert, documents, filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Search the collection for a query.
@@ -250,11 +271,21 @@ class ChromaDb(VectorDb):
 
         return search_results
 
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        """Search asynchronously by running in a thread."""
+        return await asyncio.to_thread(self.search, query, limit, filters)
+
     def drop(self) -> None:
         """Delete the collection."""
         if self.exists():
             log_debug(f"Deleting collection: {self.collection_name}")
             self.client.delete_collection(name=self.collection_name)
+
+    async def async_drop(self) -> None:
+        """Drop the collection asynchronously by running in a thread."""
+        await asyncio.to_thread(self.drop)
 
     def exists(self) -> bool:
         """Check if the collection exists."""
@@ -264,6 +295,10 @@ class ChromaDb(VectorDb):
         except Exception as e:
             log_debug(f"Collection does not exist: {e}")
         return False
+
+    async def async_exists(self) -> bool:
+        """Check if collection exists asynchronously by running in a thread."""
+        return await asyncio.to_thread(self.exists)
 
     def get_count(self) -> int:
         """Get the count of documents in the collection."""
@@ -285,29 +320,3 @@ class ChromaDb(VectorDb):
         except Exception as e:
             logger.error(f"Error clearing collection: {e}")
             return False
-
-    async def async_create(self) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_drop(self) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_exists(self) -> bool:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
-    async def async_name_exists(self, name: str) -> bool:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

@@ -3,6 +3,7 @@ from typing import List, Optional
 import typer
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.memory import AgentMemory
 from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.vectordb.pgvector import PgVector, SearchType
 
@@ -28,6 +29,7 @@ def pdf_agent(new: bool = False, user: str = "user"):
             session_id = existing_sessions[0]
 
     agent = Agent(
+        memory=AgentMemory(),
         session_id=session_id,
         user_id=user,
         knowledge=knowledge_base,

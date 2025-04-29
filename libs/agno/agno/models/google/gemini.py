@@ -1,6 +1,5 @@
 import json
 import time
-import traceback
 from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
@@ -79,6 +78,7 @@ class Gemini(Model):
     seed: Optional[int] = None
     response_modalities: Optional[list[str]] = None  # "Text" and/or "Image"
     speech_config: Optional[dict[str, Any]] = None
+    cached_content: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -168,6 +168,7 @@ class Gemini(Model):
                 "seed": self.seed,
                 "response_modalities": self.response_modalities,
                 "speech_config": self.speech_config,
+                "cached_content": self.cached_content,
             }
         )
 
@@ -213,6 +214,7 @@ class Gemini(Model):
         # Filter out None values
         if self.request_params:
             request_params.update(self.request_params)
+
         return request_params
 
     def invoke(self, messages: List[Message]):
@@ -394,7 +396,6 @@ class Gemini(Model):
                                 if video_file is not None:
                                     message_parts.insert(0, video_file)  # type: ignore
                     except Exception as e:
-                        traceback.print_exc()
                         log_warning(f"Failed to load video from {message.videos}: {e}")
                         continue
 
@@ -694,6 +695,7 @@ class Gemini(Model):
                 "input_tokens": usage.prompt_token_count or 0,
                 "output_tokens": usage.candidates_token_count or 0,
                 "total_tokens": usage.total_token_count or 0,
+                "cached_tokens": usage.cached_content_token_count or 0,
             }
 
         return model_response
@@ -757,6 +759,49 @@ class Gemini(Model):
                 "input_tokens": usage.prompt_token_count or 0,
                 "output_tokens": usage.candidates_token_count or 0,
                 "total_tokens": usage.total_token_count or 0,
+                "cached_tokens": usage.cached_content_token_count or 0,
             }
 
         return model_response
+
+    def __deepcopy__(self, memo):
+        """
+        Creates a deep copy of the Gemini model instance but sets the client to None.
+
+        This is useful when we need to copy the model configuration without duplicating
+        the client connection.
+
+        This overrides the base class implementation.
+        """
+        from copy import copy, deepcopy
+
+        # Create a new instance without calling __init__
+        cls = self.__class__
+        new_instance = cls.__new__(cls)
+
+        # Update memo with the new instance to avoid circular references
+        memo[id(self)] = new_instance
+
+        # Deep copy all attributes except client and unpickleable attributes
+        for key, value in self.__dict__.items():
+            # Skip client and other unpickleable attributes
+            if key in {"client", "response_format", "_tools", "_functions", "_function_call_stack"}:
+                continue
+
+            # Try deep copy first, fall back to shallow copy, then direct assignment
+            try:
+                setattr(new_instance, key, deepcopy(value, memo))
+            except Exception:
+                try:
+                    setattr(new_instance, key, copy(value))
+                except Exception:
+                    setattr(new_instance, key, value)
+
+        # Explicitly set client to None
+        setattr(new_instance, "client", None)
+
+        # Clear the new model to remove any references to the old model
+        if hasattr(new_instance, "clear"):
+            new_instance.clear()
+
+        return new_instance
