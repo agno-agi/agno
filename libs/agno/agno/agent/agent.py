@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections import ChainMap, deque
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -3335,7 +3336,11 @@ class Agent:
                 if "agent" in sig.parameters:
                     retriever_kwargs = {"agent": self}
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-                result = await self.retriever(**retriever_kwargs)
+                result = self.retriever(**retriever_kwargs)
+
+                if inspect.isawaitable(result):
+                    result = await result
+
                 return result
             except Exception as e:
                 log_warning(f"Retriever failed: {e}")
