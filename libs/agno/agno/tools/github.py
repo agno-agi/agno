@@ -1,5 +1,5 @@
 import json
-import os
+from os import getenv
 from typing import List, Optional
 
 from agno.tools import Toolkit
@@ -18,7 +18,6 @@ class GithubTools(Toolkit):
         base_url: Optional[str] = None,
         search_repositories: bool = True,
         get_repository: bool = False,
-        list_pull_requests: bool = False,
         get_pull_request: bool = False,
         get_pull_request_changes: bool = False,
         create_issue: bool = False,
@@ -59,7 +58,7 @@ class GithubTools(Toolkit):
     ):
         super().__init__(name="github", **kwargs)
 
-        self.access_token = access_token or os.getenv("GITHUB_ACCESS_TOKEN")
+        self.access_token = access_token or getenv("GITHUB_ACCESS_TOKEN")
         self.base_url = base_url
 
         self.g = self.authenticate()
@@ -748,8 +747,6 @@ class GithubTools(Toolkit):
         state: str = "open",
         sort: str = "created",
         direction: str = "desc",
-        base: Optional[str] = None,
-        head: Optional[str] = None,
         limit: int = 50,
     ) -> str:
         """Get pull requests matching query parameters.
@@ -759,28 +756,14 @@ class GithubTools(Toolkit):
             state (str, optional): State of the PRs to retrieve. Can be 'open', 'closed', or 'all'. Defaults to 'open'.
             sort (str, optional): What to sort results by. Can be 'created', 'updated', 'popularity', 'long-running'. Defaults to 'created'.
             direction (str, optional): The direction of the sort. Can be 'asc' or 'desc'. Defaults to 'desc'.
-            base (str, optional): Filter pulls by base branch name. Defaults to None.
-            head (str, optional): Filter pulls by head branch name. Defaults to None.
             limit (int, optional): The maximum number of pull requests to return. Defaults to 20.
 
         Returns:
             A JSON-formatted string containing a list of pull requests.
         """
-        log_debug(f"Getting pull requests for repository: {repo_name} with state: {state}, sort: {sort}, base: {base}")
         try:
             repo = self.g.get_repo(repo_name)
-            # Conditionally build arguments for get_pulls
-            pulls_args = {
-                "state": state,
-                "sort": sort,
-                "direction": direction,
-            }
-            if base is not None:
-                pulls_args["base"] = base
-            if head is not None:
-                pulls_args["head"] = head
-
-            pulls = repo.get_pulls(**pulls_args)
+            pulls = repo.get_pulls(state=state, sort=sort, direction=direction)
 
             pr_list = []
             for pr in pulls[:limit]:
@@ -792,8 +775,6 @@ class GithubTools(Toolkit):
                     "updated_at": pr.updated_at.isoformat(),
                     "state": pr.state,
                     "url": pr.html_url,
-                    "base": pr.base.ref,
-                    "head": pr.head.ref,
                 }
                 pr_list.append(pr_info)
 

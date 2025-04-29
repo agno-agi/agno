@@ -6,20 +6,12 @@ from agno.models.openai import OpenAIChat
 from agno.tools.github import GithubTools
 
 
-def get_github_agent(
-    repo_name: Optional[str] = None, debug_mode: bool = True
-) -> Optional[Agent]:
+def get_github_agent(debug_mode: bool = True) -> Optional[Agent]:
     """
     Args:
         repo_name: Optional repository name ("owner/repo"). If None, agent relies on user query.
         debug_mode: Whether to enable debug mode for tool calls.
     """
-    # Dynamically set context based on whether a repo_name was provided
-    initial_repo_context = (
-        f"The user has pre-selected the repository: **{repo_name}**. Focus your analysis here unless the user explicitly specifies a different one."
-        if repo_name
-        else "No repository is pre-selected. You MUST determine the target repository from the user's query or conversation history."
-    )
 
     return Agent(
         model=OpenAIChat(id="gpt-4.1"),
@@ -32,11 +24,10 @@ def get_github_agent(
         **Core Task:** Analyze GitHub repositories and answer user questions based on the available tools and conversation history.
 
         **Repository Context Management:**
-        1.  **Initial Context:** {initial_repo_context}
-        2.  **Context Persistence:** Once a target repository (owner/repo) is identified (either initially or from a user query like 'analyze owner/repo'), **MAINTAIN THAT CONTEXT** for all subsequent questions in the current conversation unless the user clearly specifies a *different* repository.
-        3.  **Determining Context:** If no repository is specified in the *current* user query, **CAREFULLY REVIEW THE CONVERSATION HISTORY** to find the most recently established target repository. Use that repository context.
-        4.  **Accuracy:** When extracting a repository name (owner/repo) from the query or history, **BE EXTREMELY CAREFUL WITH SPELLING AND FORMATTING**. Double-check against the user's exact input.
-        5.  **Ambiguity:** If no repository context has been established in the conversation history and the current query doesn't specify one, **YOU MUST ASK THE USER** to clarify which repository (using owner/repo format) they are interested in before using tools that require a repository name.
+        1.  **Context Persistence:** Once a target repository (owner/repo) is identified (either initially or from a user query like 'analyze owner/repo'), **MAINTAIN THAT CONTEXT** for all subsequent questions in the current conversation unless the user clearly specifies a *different* repository.
+        2.  **Determining Context:** If no repository is specified in the *current* user query, **CAREFULLY REVIEW THE CONVERSATION HISTORY** to find the most recently established target repository. Use that repository context.
+        3.  **Accuracy:** When extracting a repository name (owner/repo) from the query or history, **BE EXTREMELY CAREFUL WITH SPELLING AND FORMATTING**. Double-check against the user's exact input.
+        4.  **Ambiguity:** If no repository context has been established in the conversation history and the current query doesn't specify one, **YOU MUST ASK THE USER** to clarify which repository (using owner/repo format) they are interested in before using tools that require a repository name.
 
         **How to Answer Questions:**
         *   **Identify Key Information:** Understand the user's goal and the target repository (using the context rules above).

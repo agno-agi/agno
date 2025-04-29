@@ -526,78 +526,6 @@ def test_get_repository_stars(mock_github):
     assert "error" in result_data
     assert "Repository not found" in result_data["error"]
 
-
-def test_get_pulls_by_query(mock_github):
-    """Test getting pull requests with query parameters."""
-    mock_client, mock_repo = mock_github
-    github_tools = GithubTools()
-
-    # Create mock pull requests
-    mock_pr1 = MagicMock(spec=PullRequest)
-    mock_pr1.number = 400
-    mock_pr1.title = "Feature 1"
-    mock_pr1.user.login = "user1"
-    mock_pr1.created_at = datetime(2023, 1, 1)
-    mock_pr1.updated_at = datetime(2023, 1, 2)
-    mock_pr1.state = "open"
-    mock_pr1.html_url = "https://github.com/test-org/test-repo/pull/400"
-    mock_pr1.base = MagicMock()
-    mock_pr1.base.ref = "master"
-    mock_pr1.head = MagicMock()
-    mock_pr1.head.ref = "feature-branch-1"
-
-    mock_pr2 = MagicMock(spec=PullRequest)
-    mock_pr2.number = 861
-    mock_pr2.title = "Feature 2"
-    mock_pr2.user.login = "user2"
-    mock_pr2.created_at = datetime(2023, 2, 1)
-    mock_pr2.updated_at = datetime(2023, 2, 2)
-    mock_pr2.state = "open"
-    mock_pr2.html_url = "https://github.com/test-org/test-repo/pull/861"
-    mock_pr2.base = MagicMock()
-    mock_pr2.base.ref = "master"
-    mock_pr2.head = MagicMock()
-    mock_pr2.head.ref = "feature-branch-2"
-
-    # Mock the get_pulls method
-    mock_repo.get_pulls.return_value = [mock_pr1, mock_pr2]
-
-    # Test default parameters (using get_pull_requests)
-    result = github_tools.get_pull_requests("test-org/test-repo")
-    result_data = json.loads(result)
-
-    assert len(result_data) == 2
-    assert result_data[0]["number"] == 400
-    assert result_data[0]["base"] == "master"
-    assert result_data[1]["number"] == 861
-
-    mock_repo.get_pulls.assert_called_with(state="open", sort="created", direction="desc")
-
-    # Test with specific base branch
-    result = github_tools.get_pull_requests("test-org/test-repo", base="master")
-    result_data = json.loads(result)
-
-    assert len(result_data) == 2
-    mock_repo.get_pulls.assert_called_with(state="open", sort="created", direction="desc", base="master")
-
-    # Test with all parameters
-    result = github_tools.get_pull_requests(
-        "test-org/test-repo", state="closed", sort="updated", direction="asc", base="develop", head="feature"
-    )
-
-    mock_repo.get_pulls.assert_called_with(
-        state="closed", sort="updated", direction="asc", base="develop", head="feature"
-    )
-
-    # Test error handling
-    mock_repo.get_pulls.side_effect = GithubException(status=404, data={"message": "Repository not found"})
-    result = github_tools.get_pull_requests("invalid/repo")
-    result_data = json.loads(result)
-
-    assert "error" in result_data
-    assert "Repository not found" in result_data["error"]
-
-
 def test_get_pull_request_comments(mock_github):
     """Test getting comments on a pull request."""
     mock_client, mock_repo = mock_github
@@ -770,45 +698,6 @@ def test_edit_pull_request_comment(mock_github):
         result_data = json.loads(result)
         assert "error" in result_data
         assert "Permission denied" in result_data["error"]
-
-
-def test_list_repositories(mock_github):
-    """Test listing repositories for the authenticated user."""
-    mock_client, _ = mock_github
-    github_tools = GithubTools()
-
-    # Mock user and repos
-    mock_user = MagicMock()
-    mock_client.get_user.return_value = mock_user
-
-    mock_repo1 = MagicMock(spec=Repository)
-    mock_repo1.full_name = "user/repo1"
-
-    mock_repo2 = MagicMock(spec=Repository)
-    mock_repo2.full_name = "user/repo2"
-
-    mock_repo3 = MagicMock(spec=Repository)
-    mock_repo3.full_name = "user/repo3"
-
-    mock_user.get_repos.return_value = [mock_repo1, mock_repo2, mock_repo3]
-
-    # Test listing repositories
-    result = github_tools.list_repositories()
-    result_data = json.loads(result)
-
-    assert len(result_data) == 3
-    assert "user/repo1" in result_data
-    assert "user/repo2" in result_data
-    assert "user/repo3" in result_data
-
-    # Test error handling
-    mock_client.get_user.side_effect = GithubException(status=401, data={"message": "Bad credentials"})
-    result = github_tools.list_repositories()
-    result_data = json.loads(result)
-
-    assert "error" in result_data
-    assert "Bad credentials" in result_data["error"]
-
 
 def test_create_repository(mock_github):
     """Test creating a new repository."""

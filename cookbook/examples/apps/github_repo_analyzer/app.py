@@ -42,7 +42,7 @@ def main() -> None:
         or st.session_state["github_agent"] is None
     ):
         logger.info("---*--- Creating new Github agent ---*---")
-        github_agent = get_github_agent("agno-agi/agno")
+        github_agent = get_github_agent()
         st.session_state["github_agent"] = github_agent
         st.session_state["messages"] = []
         st.session_state["github_token"] = getenv("GITHUB_ACCESS_TOKEN")
