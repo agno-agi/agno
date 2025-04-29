@@ -5,18 +5,20 @@ from agno.app.whatsapp.app import WhatsappAPI
 from agno.app.whatsapp.serve import serve_whatsapp_app
 from agno.memory import memory
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
-from agno.memory.v2.memory import Memory
-from agno.models.openai import OpenAIChat
-from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.memory.v2.manager import MemoryManager
+from agno.memory.v2.memory import Memory
+from agno.models.google import Gemini
+from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.youtube import YouTubeTools
 from agno.tools.whatsapp import WhatsAppTools
+from agno.tools.youtube import YouTubeTools
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
-memory = Memory(db=memory_db, memory_manager=MemoryManager(
+memory = Memory(
+    db=memory_db,
+    memory_manager=MemoryManager(
         memory_capture_instructions="""\
                     - Collect Information about the user's career and acaedemic goals
                     - Collect Information about the user's previous acaedemic and learning experiences
@@ -24,17 +26,18 @@ memory = Memory(db=memory_db, memory_manager=MemoryManager(
                     - Collect Information about the user's hobbies and passions
                     - Collect Information about the user's likes and dislikes
                     """,
-    ),)
+    ),
+)
 
 StudyBuddy = Agent(
     name="StudyBuddy",
     memory=memory,
-    model=OpenAIChat("gpt-4o-mini"),
+    model=Gemini("gemini-2.0-flash-exp"),
     enable_user_memories=True,
     storage=SqliteStorage(
         table_name="agent_sessions", db_file="tmp/persistent_memory.db"
     ),
-    tools=[WhatsAppTools(),DuckDuckGoTools(), YouTubeTools()],
+    tools=[WhatsAppTools(), DuckDuckGoTools(), YouTubeTools()],
     description=dedent("""\
         You are StudyBuddy, an expert educational mentor with deep expertise in personalized learning! 📚
 
