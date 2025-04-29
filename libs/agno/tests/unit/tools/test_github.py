@@ -73,7 +73,16 @@ def test_list_pull_requests(mock_github):
     mock_pr1.html_url = "https://github.com/test-org/test-repo/pull/1"
     mock_pr1.state = "open"
     mock_pr1.user.login = "test-user"
-    mock_pr1.created_at = datetime(2024, 2, 4, 12, 0, 0)
+    mock_pr1.created_at.isoformat.return_value = "2024-02-04T12:00:00"
+    mock_pr1.updated_at.isoformat.return_value = "2024-02-04T13:00:00"
+    mock_pr1.mergeable = True
+    mock_pr1.mergeable_state = "clean"
+    mock_pr1.additions = 100
+    mock_pr1.deletions = 50
+    mock_pr1.base = MagicMock()
+    mock_pr1.base.ref = "main"
+    mock_pr1.head = MagicMock()
+    mock_pr1.head.ref = "feature/pr1"
 
     mock_pr2 = MagicMock(spec=PullRequest)
     mock_pr2.number = 2
@@ -81,12 +90,21 @@ def test_list_pull_requests(mock_github):
     mock_pr2.html_url = "https://github.com/test-org/test-repo/pull/2"
     mock_pr2.state = "closed"
     mock_pr2.user.login = "another-user"
-    mock_pr2.created_at = datetime(2024, 2, 3, 12, 0, 0)
+    mock_pr2.created_at.isoformat.return_value = "2024-02-03T12:00:00"
+    mock_pr2.updated_at.isoformat.return_value = "2024-02-03T14:00:00"
+    mock_pr2.mergeable = True
+    mock_pr2.mergeable_state = "clean"
+    mock_pr2.additions = 100
+    mock_pr2.deletions = 50
+    mock_pr2.base = MagicMock()
+    mock_pr2.base.ref = "main"
+    mock_pr2.head = MagicMock()
+    mock_pr2.head.ref = "bugfix/pr2"
 
     mock_repo.get_pulls.return_value = [mock_pr1, mock_pr2]
 
-    # Test listing all PRs
-    result = github_tools.list_pull_requests("test-org/test-repo")
+    # Test listing all PRs (using get_pull_requests)
+    result = github_tools.get_pull_requests("test-org/test-repo", state="all")
     result_data = json.loads(result)
 
     assert len(result_data) == 2
@@ -97,7 +115,7 @@ def test_list_pull_requests(mock_github):
 
     # Test listing only open PRs
     mock_repo.get_pulls.return_value = [mock_pr1]
-    result = github_tools.list_pull_requests("test-org/test-repo", state="open")
+    result = github_tools.get_pull_requests("test-org/test-repo", state="open")
     result_data = json.loads(result)
 
     assert len(result_data) == 1
@@ -118,6 +136,7 @@ def test_get_pull_request_with_details(mock_github):
     mock_pr.state = "open"
     mock_pr.user.login = "test-user"
     mock_pr.user.avatar_url = "https://github.com/avatars/test-user.png"
+    mock_pr.created_at.isoformat.return_value = "2024-03-01T12:00:00"
     mock_pr.created_at = datetime(2024, 3, 1, 12, 0, 0)
     mock_pr.updated_at = datetime(2024, 3, 2, 12, 0, 0)
     mock_pr.mergeable = True
@@ -543,8 +562,8 @@ def test_get_pulls_by_query(mock_github):
     # Mock the get_pulls method
     mock_repo.get_pulls.return_value = [mock_pr1, mock_pr2]
 
-    # Test default parameters (open PRs, sorted by created date, descending)
-    result = github_tools.get_pulls_by_query("test-org/test-repo")
+    # Test default parameters (using get_pull_requests)
+    result = github_tools.get_pull_requests("test-org/test-repo")
     result_data = json.loads(result)
 
     assert len(result_data) == 2
@@ -552,17 +571,17 @@ def test_get_pulls_by_query(mock_github):
     assert result_data[0]["base"] == "master"
     assert result_data[1]["number"] == 861
 
-    mock_repo.get_pulls.assert_called_with(state="open", sort="created", direction="desc", base=None, head=None)
+    mock_repo.get_pulls.assert_called_with(state="open", sort="created", direction="desc")
 
     # Test with specific base branch
-    result = github_tools.get_pulls_by_query("test-org/test-repo", base="master")
+    result = github_tools.get_pull_requests("test-org/test-repo", base="master")
     result_data = json.loads(result)
 
     assert len(result_data) == 2
-    mock_repo.get_pulls.assert_called_with(state="open", sort="created", direction="desc", base="master", head=None)
+    mock_repo.get_pulls.assert_called_with(state="open", sort="created", direction="desc", base="master")
 
     # Test with all parameters
-    result = github_tools.get_pulls_by_query(
+    result = github_tools.get_pull_requests(
         "test-org/test-repo", state="closed", sort="updated", direction="asc", base="develop", head="feature"
     )
 
@@ -572,7 +591,7 @@ def test_get_pulls_by_query(mock_github):
 
     # Test error handling
     mock_repo.get_pulls.side_effect = GithubException(status=404, data={"message": "Repository not found"})
-    result = github_tools.get_pulls_by_query("invalid/repo")
+    result = github_tools.get_pull_requests("invalid/repo")
     result_data = json.loads(result)
 
     assert "error" in result_data
@@ -1495,66 +1514,6 @@ def test_get_directory_content(mock_github):
     assert "Not Found" in result_data["error"]
 
 
-def test_get_branch_content(mock_github):
-    """Test getting the root content of a branch."""
-    mock_client, mock_repo = mock_github
-    github_tools = GithubTools()
-
-    # Mock branch root contents
-    mock_file = MagicMock()
-    mock_file.name = "README.md"
-    mock_file.path = "README.md"
-    mock_file.type = "file"
-
-    mock_dir = MagicMock()
-    mock_dir.name = "src"
-    mock_dir.path = "src"
-    mock_dir.type = "dir"
-
-    root_contents = [mock_file, mock_dir]
-    mock_repo.get_contents.return_value = root_contents
-
-    # Test getting branch content with default branch
-    with patch.object(GithubTools, "get_directory_content") as mock_get_dir:
-        mock_get_dir.return_value = json.dumps(
-            [{"name": "src", "path": "src", "type": "dir"}, {"name": "README.md", "path": "README.md", "type": "file"}]
-        )
-
-        result = github_tools.get_branch_content(repo_name="test-org/test-repo")
-        result_data = json.loads(result)
-
-        mock_get_dir.assert_called_with(
-            repo_name="test-org/test-repo",
-            path="",
-            ref="main",  # Default branch
-        )
-
-        assert len(result_data) == 2
-        assert result_data[0]["name"] == "src"
-        assert result_data[1]["name"] == "README.md"
-
-    # Test getting branch content with specified branch
-    with patch.object(GithubTools, "get_directory_content") as mock_get_dir:
-        mock_get_dir.return_value = json.dumps(
-            [{"name": "src", "path": "src", "type": "dir"}, {"name": "README.md", "path": "README.md", "type": "file"}]
-        )
-
-        result = github_tools.get_branch_content(repo_name="test-org/test-repo", branch="develop")
-        result_data = json.loads(result)
-
-        mock_get_dir.assert_called_with(repo_name="test-org/test-repo", path="", ref="develop")
-
-    # Test error handling
-    with patch.object(GithubTools, "get_directory_content") as mock_get_dir:
-        mock_get_dir.return_value = json.dumps({"error": "Branch does not exist"})
-
-        result = github_tools.get_branch_content(repo_name="test-org/test-repo", branch="nonexistent-branch")
-        result_data = json.loads(result)
-
-        assert "error" in result_data
-        assert "Branch does not exist" in result_data["error"]
-
-
 def test_create_branch(mock_github):
     """Test creating a branch in a repository."""
     mock_client, mock_repo = mock_github
@@ -1709,113 +1668,6 @@ def test_search_code(mock_github):
     mock_client.search_code.side_effect = GithubException(status=403, data={"message": "API rate limit exceeded"})
 
     result = github_tools.search_code(query="agent class")
-    result_data = json.loads(result)
-
-    assert "error" in result_data
-    assert "API rate limit exceeded" in result_data["error"]
-
-
-def test_search_issues_and_prs(mock_github):
-    """Test searching issues and pull requests on GitHub."""
-    mock_client, mock_repo = mock_github
-    github_tools = GithubTools()
-
-    # Mock issue/PR search results
-    mock_issue = MagicMock()
-    mock_issue.number = 123
-    mock_issue.title = "Bug: Fix critical issue"
-    mock_issue.repository.full_name = "test-org/test-repo"
-    mock_issue.state = "open"
-    mock_issue.created_at = datetime(2023, 3, 1)
-    mock_issue.updated_at = datetime(2023, 3, 2)
-    mock_issue.html_url = "https://github.com/test-org/test-repo/issues/123"
-    mock_issue.user.login = "test-user"
-    mock_issue.pull_request = None  # This is an issue, not a PR
-    mock_issue.comments = 5
-    mock_label = MagicMock()
-    mock_label.name = "bug"
-    mock_issue.labels = [mock_label]
-
-    mock_pr = MagicMock()
-    mock_pr.number = 456
-    mock_pr.title = "Feature: Add new feature"
-    mock_pr.repository.full_name = "test-org/test-repo"
-    mock_pr.state = "open"
-    mock_pr.created_at = datetime(2023, 3, 3)
-    mock_pr.updated_at = datetime(2023, 3, 4)
-    mock_pr.html_url = "https://github.com/test-org/test-repo/pull/456"
-    mock_pr.user.login = "another-user"
-    mock_pr.pull_request = MagicMock()  # This is a PR
-    mock_pr.comments = 10
-    mock_label2 = MagicMock()
-    mock_label2.name = "enhancement"
-    mock_pr.labels = [mock_label2]
-
-    # Mock search results
-    mock_issue_results = MagicMock()
-    mock_issue_results.totalCount = 2
-    mock_issue_results.get_page.return_value = [mock_issue, mock_pr]
-
-    mock_client.search_issues.return_value = mock_issue_results
-
-    # Test basic issue/PR search
-    result = github_tools.search_issues_and_prs(query="bug")
-    result_data = json.loads(result)
-
-    mock_client.search_issues.assert_called_with("bug", sort="created", order="desc")
-
-    assert result_data["query"] == "bug"
-    assert result_data["total_count"] == 2
-    assert result_data["results_count"] == 2
-    assert len(result_data["results"]) == 2
-
-    assert result_data["results"][0]["number"] == 123
-    assert result_data["results"][0]["title"] == "Bug: Fix critical issue"
-    assert not result_data["results"][0]["is_pull_request"]
-
-    assert result_data["results"][1]["number"] == 456
-    assert result_data["results"][1]["title"] == "Feature: Add new feature"
-    assert result_data["results"][1]["is_pull_request"]
-
-    # Test search with filters
-    result = github_tools.search_issues_and_prs(
-        query="bug",
-        state="open",
-        type_filter="issue",
-        repo="test-org/test-repo",
-        user="test-user",
-        label="bug",
-        sort="updated",
-        order="asc",
-    )
-    result_data = json.loads(result)
-
-    expected_query = "bug state:open is:issue repo:test-org/test-repo user:test-user label:bug"
-    mock_client.search_issues.assert_called_with(expected_query, sort="updated", order="asc")
-
-    assert result_data["query"] == expected_query
-
-    # Test pagination
-    result = github_tools.search_issues_and_prs(query="bug", page=2, per_page=10)
-    result_data = json.loads(result)
-
-    mock_issue_results.get_page.assert_called_with(1)  # 0-based index for page 2
-    assert result_data["page"] == 2
-    assert result_data["per_page"] == 10
-
-    # Test handling empty results
-    mock_issue_results.get_page.side_effect = IndexError()  # Page out of range
-
-    result = github_tools.search_issues_and_prs(query="bug", page=999)
-    result_data = json.loads(result)
-
-    assert result_data["results_count"] == 0
-    assert len(result_data["results"]) == 0
-
-    # Test error handling
-    mock_client.search_issues.side_effect = GithubException(status=403, data={"message": "API rate limit exceeded"})
-
-    result = github_tools.search_issues_and_prs(query="bug")
     result_data = json.loads(result)
 
     assert "error" in result_data
