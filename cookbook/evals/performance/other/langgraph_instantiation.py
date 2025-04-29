@@ -2,11 +2,11 @@
 
 from typing import Literal
 
-from langchain_openai import ChatOpenAI
+from agno.eval.performance import PerformanceEval
 from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
-from agno.eval.perf import PerfEval
 
 @tool
 def get_weather(city: Literal["nyc", "sf"]):
@@ -18,12 +18,15 @@ def get_weather(city: Literal["nyc", "sf"]):
     else:
         raise AssertionError("Unknown city")
 
+
 tools = [get_weather]
+
 
 def instantiate_agent():
     return create_react_agent(model=ChatOpenAI(model="gpt-4o"), tools=tools)
 
-langgraph_instantiation = PerfEval(func=instantiate_agent, num_iterations=1000)
+
+langgraph_instantiation = PerformanceEval(func=instantiate_agent, num_iterations=1000)
 
 if __name__ == "__main__":
-    langgraph_instantiation.run(print_results=True)
+    langgraph_instantiation.run(print_results=True, print_summary=True)

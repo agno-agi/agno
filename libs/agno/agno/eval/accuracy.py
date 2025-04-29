@@ -330,7 +330,7 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
         # Print results if requested
         if self.print_results or print_results:
             self.result.print_results(console)
-        elif self.print_summary or print_summary:
+        if self.print_summary or print_summary:
             self.result.print_summary(console)
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
@@ -368,7 +368,7 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
             if self.print_results or print_results:
                 result.print_eval()
                 self.result.print_results()
-            elif self.print_summary or print_summary:
+            if self.print_summary or print_summary:
                 self.result.print_summary()
 
             # Save result to file if requested
