@@ -39,7 +39,7 @@ class PineconeDb(VectorDb):
         metric (Optional[str], optional): The metric used for similarity search. Defaults to "cosine".
         additional_headers (Optional[Dict[str, str]], optional): Additional headers to pass to the Pinecone client. Defaults to {}.
         pool_threads (Optional[int], optional): The number of threads to use for the Pinecone client. Defaults to 1.
-        namespace: (Optional[str], optional): The namespace to be used in index. Defaults to None.
+        namespace: (Optional[str], optional): The namespace partition within the index that will be used. Defaults to None.
         timeout (Optional[int], optional): The timeout for Pinecone operations. Defaults to None.
         index_api (Optional[Any], optional): The Index API object. Defaults to None.
         api_key (Optional[str], optional): The Pinecone API key. Defaults to None.

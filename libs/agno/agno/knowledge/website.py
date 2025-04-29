@@ -74,7 +74,6 @@ class WebsiteKnowledgeBase(AgentKnowledge):
         self.vector_db.create()
 
         log_info("Loading knowledge base")
-        num_documents = 0
 
         # Given that the crawler needs to parse the URL before existence can be checked
         # We check if the website url exists in the vector db if recreate is False
@@ -86,6 +85,7 @@ class WebsiteKnowledgeBase(AgentKnowledge):
                     log_debug(f"Skipping {url} as it exists in the vector db")
                     urls_to_read.remove(url)
 
+        num_documents = 0
         for url in urls_to_read:
             if document_list := self.reader.read(url=url):
                 # Filter out documents which already exist in the vector db
