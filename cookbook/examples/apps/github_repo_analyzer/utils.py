@@ -50,18 +50,17 @@ def sidebar_widget() -> None:
             st.rerun()
 
         st.markdown("---")
-        st.markdown("### Example Queries")
 
         st.markdown("#### 🏆 Sample Queries")
-        if st.button("📋 Summarize 'agno-agi/agno' repo"):
+        if st.button("📋 Summarize 'agno-agi/agno'"):
             # Run this query in the current session
             add_message("user", "Summarize 'agno-agi/agno' repo")
-        if st.button("🥇 List all my repositories"):
-            add_message("user", "List all my repositories")
-        if st.button("🏆 List all issues in 'agno-agi/agno' repo"):
-            add_message("user", "List all issues in 'agno-agi/agno' repo")
-        if st.button("🥇 List all PRs in 'agno-agi/agno' repo"):
-            add_message("user", "List all PRs in 'agno-agi/agno' repo")
+        if st.button("🥇 List my recent repositories"):
+            add_message("user", "List my recent repositories")
+        if st.button("🏆 List latest issues in 'agno-agi/agno' "):
+            add_message("user", "List latest issues in 'agno-agi/agno'")
+        if st.button("🥇 List recent PRs in 'agno-agi/agno'"):
+            add_message("user", "List recent PRs in 'agno-agi/agno' repo")
         # Chat controls
         st.header("Chat")
         if st.button("🆕 New Chat"):

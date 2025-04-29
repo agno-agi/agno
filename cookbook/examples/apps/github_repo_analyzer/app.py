@@ -41,7 +41,7 @@ def main() -> None:
         "github_agent" not in st.session_state
         or st.session_state["github_agent"] is None
     ):
-        logger.info("---*--- Creating new SQL agent ---*---")
+        logger.info("---*--- Creating new Github agent ---*---")
         github_agent = get_github_agent("agno-agi/agno")
         st.session_state["github_agent"] = github_agent
         st.session_state["messages"] = []

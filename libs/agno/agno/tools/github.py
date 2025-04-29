@@ -750,7 +750,7 @@ class GithubTools(Toolkit):
         direction: str = "desc",
         base: Optional[str] = None,
         head: Optional[str] = None,
-        limit: int = 20,
+        limit: int = 50,
     ) -> str:
         """Get pull requests matching query parameters.
 
@@ -769,7 +769,18 @@ class GithubTools(Toolkit):
         log_debug(f"Getting pull requests for repository: {repo_name} with state: {state}, sort: {sort}, base: {base}")
         try:
             repo = self.g.get_repo(repo_name)
-            pulls = repo.get_pulls(state=state, sort=sort, direction=direction, base=base, head=head)
+            # Conditionally build arguments for get_pulls
+            pulls_args = {
+                "state": state,
+                "sort": sort,
+                "direction": direction,
+            }
+            if base is not None:
+                pulls_args["base"] = base
+            if head is not None:
+                pulls_args["head"] = head
+
+            pulls = repo.get_pulls(**pulls_args)
 
             pr_list = []
             for pr in pulls[:limit]:
