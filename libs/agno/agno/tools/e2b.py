@@ -1,14 +1,16 @@
 import base64
 import json
+import re
 import tempfile
 import time
 from os import fdopen, getenv
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import ImageArtifact
+from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
@@ -113,6 +115,14 @@ class E2BTools(Toolkit):
         """
         try:
             # Execute the code in the sandbox using the correct method name for Python SDK
+            # Fix common Python keywords that require capitalized first letters
+            # This is necessary because users or LLMs sometimes use lowercase versions
+            # of Python keywords that should be capitalized (True, False, None)
+            python_keywords = {"true": "True", "false": "False", "none": "None"}
+
+            for lowercase, capitalized in python_keywords.items():
+                code = re.sub(rf"\b({lowercase})\b", capitalized, code)
+
             execution = self.sandbox.run_code(code)
             self.last_execution = execution
 
@@ -171,7 +181,9 @@ class E2BTools(Toolkit):
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error uploading file: {str(e)}"})
 
-    def download_png_result(self, agent: Agent, result_index: int = 0, output_path: Optional[str] = None) -> str:
+    def download_png_result(
+        self, agent: Union[Agent, Team], result_index: int = 0, output_path: Optional[str] = None
+    ) -> str:
         """
         Add a PNG image result from the last code execution as an ImageArtifact to the agent.
 

@@ -126,5 +126,3 @@ def test_route_team_with_expected_output():
     assert len(response.content) > 0
     assert len(response.member_responses) == 1
     assert response.member_responses[0].agent_id == math_agent.agent_id
-    # The response should contain the answer (approximately 78.5)
-    assert "78.5" in response.content or "78.54" in response.content

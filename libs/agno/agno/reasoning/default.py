@@ -75,7 +75,8 @@ def get_default_reasoning_agent(
             - **Insightful**: Offer innovative and unique perspectives where applicable.
         - Always explicitly handle errors and mistakes by resetting or revising steps immediately.
         - Adhere strictly to a minimum of {min_steps} and maximum of {max_steps} steps to ensure effective task resolution.
-        - Execute necessary tools proactively and without hesitation, clearly documenting tool usage.\
+        - Execute necessary tools proactively and without hesitation, clearly documenting tool usage.
+        - Only create a single instance of ReasoningSteps for your response.\
         """),
         tools=tools,
         show_tool_calls=False,

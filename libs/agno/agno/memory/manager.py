@@ -61,7 +61,7 @@ class MemoryManager(BaseModel):
                     func = Function.from_callable(tool)  # type: ignore
                     self._functions_for_model[func.name] = func
                     self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                    log_debug(f"Included function {func.name}")
+                    log_debug(f"Added function {func.name}")
             except Exception as e:
                 logger.warning(f"Could not add function {tool}: {e}")
         # Set tools on the model

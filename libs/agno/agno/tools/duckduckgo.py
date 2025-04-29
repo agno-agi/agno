@@ -38,8 +38,6 @@ class DuckDuckGoTools(Toolkit):
         verify_ssl: bool = True,
         **kwargs,
     ):
-        super().__init__(name="duckduckgo", **kwargs)
-
         self.headers: Optional[Any] = headers
         self.proxy: Optional[str] = proxy
         self.proxies: Optional[Any] = proxies
@@ -48,10 +46,13 @@ class DuckDuckGoTools(Toolkit):
         self.modifier: Optional[str] = modifier
         self.verify_ssl: bool = verify_ssl
 
+        tools = []
         if search:
-            self.register(self.duckduckgo_search)
+            tools.append(self.duckduckgo_search)
         if news:
-            self.register(self.duckduckgo_news)
+            tools.append(self.duckduckgo_news)
+
+        super().__init__(name="duckduckgo", tools=tools, **kwargs)
 
     def duckduckgo_search(self, query: str, max_results: int = 5) -> str:
         """Use this function to search DuckDuckGo for a query.

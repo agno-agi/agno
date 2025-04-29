@@ -155,6 +155,16 @@ class Model(ABC):
         if len(functions) > 0:
             self._functions = functions
 
+    def get_functions(self) -> Dict[str, Function]:
+        return self._functions or {}
+
+    def get_tools(self) -> List[Dict]:
+        return self._tools or []
+
+    def reset_tools_and_functions(self) -> None:
+        self._tools = None
+        self._functions = None
+
     def response(self, messages: List[Message]) -> ModelResponse:
         """
         Generate a response from the model.
@@ -869,20 +879,21 @@ class Model(ABC):
             function_call_timer.stop()
 
             # Process function call output
-            function_call_output: Optional[Union[List[Any], str]] = ""
+            function_call_output: str = ""
+
             if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
                 for item in fc.result:
-                    function_call_output += item
+                    function_call_output += str(item)
                     if fc.function.show_result:
-                        yield ModelResponse(content=item)
+                        yield ModelResponse(content=str(item))
             else:
-                function_call_output = fc.result
+                function_call_output = str(fc.result)
                 if fc.function.show_result:
                     yield ModelResponse(content=function_call_output)
 
             # Create and yield function call result
             function_call_result = self._create_function_call_result(
-                fc, function_call_success, function_call_output, function_call_timer
+                fc, success=function_call_success, output=function_call_output, timer=function_call_timer
             )
             yield ModelResponse(
                 content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
@@ -913,11 +924,17 @@ class Model(ABC):
         function_call_timer = Timer()
         function_call_timer.start()
         success: Union[bool, AgentRunException] = False
+
         try:
             if (
                 iscoroutinefunction(function_call.function.entrypoint)
                 or isasyncgenfunction(function_call.function.entrypoint)
                 or iscoroutine(function_call.function.entrypoint)
+            ):
+                success = await function_call.aexecute()
+            # If any of the hooks are async, we need to run the function call asynchronously
+            elif function_call.function.tool_hooks is not None and any(
+                iscoroutinefunction(f) for f in function_call.function.tool_hooks
             ):
                 success = await function_call.aexecute()
             else:
@@ -976,25 +993,25 @@ class Model(ABC):
                 function_call_success = False
 
             # Process function call output
-            function_call_output: Optional[Union[List[Any], str]] = ""
+            function_call_output: str = ""
             if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
                 for item in fc.result:
-                    function_call_output += item
+                    function_call_output += str(item)
                     if fc.function.show_result:
-                        yield ModelResponse(content=item)
+                        yield ModelResponse(content=str(item))
             elif isinstance(fc.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
                 async for item in fc.result:
-                    function_call_output += item
+                    function_call_output += str(item)
                     if fc.function.show_result:
-                        yield ModelResponse(content=item)
+                        yield ModelResponse(content=str(item))
             else:
-                function_call_output = fc.result
+                function_call_output = str(fc.result)
                 if fc.function.show_result:
                     yield ModelResponse(content=function_call_output)
 
             # Create and yield function call result
             function_call_result = self._create_function_call_result(
-                fc, function_call_success, function_call_output, function_call_timer
+                fc, success=function_call_success, output=function_call_output, timer=function_call_timer
             )
             yield ModelResponse(
                 content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
@@ -1069,6 +1086,8 @@ class Model(ABC):
                 assistant_message.metrics.output_tokens = response_usage.get("completion_tokens", 0)
             if "total_tokens" in response_usage:
                 assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
+            if "cached_tokens" in response_usage:
+                assistant_message.metrics.cached_tokens = response_usage.get("cached_tokens", 0)
             else:
                 assistant_message.metrics.total_tokens = (
                     assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
@@ -1086,6 +1105,8 @@ class Model(ABC):
                 assistant_message.metrics.completion_tokens = response_usage.completion_tokens
             if hasattr(response_usage, "total_tokens") and response_usage.total_tokens is not None:
                 assistant_message.metrics.total_tokens = response_usage.total_tokens
+            if hasattr(response_usage, "cached_tokens") and response_usage.cached_tokens is not None:
+                assistant_message.metrics.cached_tokens = response_usage.cached_tokens
             else:
                 assistant_message.metrics.total_tokens = (
                     assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
@@ -1099,18 +1120,70 @@ class Model(ABC):
         if hasattr(response_usage, "prompt_tokens_details"):
             if isinstance(response_usage.prompt_tokens_details, dict):
                 assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details
+                if (
+                    "audio_tokens" in response_usage.prompt_tokens_details
+                    and response_usage.prompt_tokens_details["audio_tokens"] is not None
+                ):
+                    assistant_message.metrics.input_audio_tokens = response_usage.prompt_tokens_details["audio_tokens"]
+                if (
+                    "cached_tokens" in response_usage.prompt_tokens_details
+                    and response_usage.prompt_tokens_details["cached_tokens"] is not None
+                ):
+                    assistant_message.metrics.cached_tokens = response_usage.prompt_tokens_details["cached_tokens"]
             elif hasattr(response_usage.prompt_tokens_details, "model_dump"):
                 assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details.model_dump(
                     exclude_none=True
                 )
+                if (
+                    hasattr(response_usage.prompt_tokens_details, "audio_tokens")
+                    and response_usage.prompt_tokens_details.audio_tokens is not None
+                ):
+                    assistant_message.metrics.input_audio_tokens = response_usage.prompt_tokens_details.audio_tokens
+                if (
+                    hasattr(response_usage.prompt_tokens_details, "cached_tokens")
+                    and response_usage.prompt_tokens_details.cached_tokens is not None
+                ):
+                    assistant_message.metrics.cached_tokens = response_usage.prompt_tokens_details.cached_tokens
 
         if hasattr(response_usage, "completion_tokens_details"):
             if isinstance(response_usage.completion_tokens_details, dict):
                 assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details
+                if (
+                    "audio_tokens" in response_usage.completion_tokens_details
+                    and response_usage.completion_tokens_details["audio_tokens"] is not None
+                ):
+                    assistant_message.metrics.output_audio_tokens = response_usage.completion_tokens_details[
+                        "audio_tokens"
+                    ]
+                if (
+                    "reasoning_tokens" in response_usage.completion_tokens_details
+                    and response_usage.completion_tokens_details["reasoning_tokens"] is not None
+                ):
+                    assistant_message.metrics.reasoning_tokens = response_usage.completion_tokens_details[
+                        "reasoning_tokens"
+                    ]
             elif hasattr(response_usage.completion_tokens_details, "model_dump"):
                 assistant_message.metrics.completion_tokens_details = (
                     response_usage.completion_tokens_details.model_dump(exclude_none=True)
                 )
+                if (
+                    hasattr(response_usage.completion_tokens_details, "audio_tokens")
+                    and response_usage.completion_tokens_details.audio_tokens is not None
+                ):
+                    assistant_message.metrics.output_audio_tokens = (
+                        response_usage.completion_tokens_details.audio_tokens
+                    )
+                if (
+                    hasattr(response_usage.completion_tokens_details, "reasoning_tokens")
+                    and response_usage.completion_tokens_details.reasoning_tokens is not None
+                ):
+                    assistant_message.metrics.reasoning_tokens = (
+                        response_usage.completion_tokens_details.reasoning_tokens
+                    )
+
+        assistant_message.metrics.audio_tokens = (
+            assistant_message.metrics.input_audio_tokens + assistant_message.metrics.output_audio_tokens
+        )
 
     def _log_messages(self, messages: List[Message]) -> None:
         """
@@ -1142,7 +1215,7 @@ class Model(ABC):
         Returns:
             Model: A new Model instance with deeply copied attributes.
         """
-        from copy import deepcopy
+        from copy import copy, deepcopy
 
         # Create a new instance without calling __init__
         cls = self.__class__
@@ -1151,9 +1224,15 @@ class Model(ABC):
 
         # Deep copy all attributes
         for k, v in self.__dict__.items():
-            if k in {"response_format", "tools", "_functions", "_function_call_stack"}:
+            if k in {"response_format", "_tools", "_functions", "_function_call_stack"}:
                 continue
-            setattr(new_model, k, deepcopy(v, memo))
+            try:
+                setattr(new_model, k, deepcopy(v, memo))
+            except Exception:
+                try:
+                    setattr(new_model, k, copy(v))
+                except Exception:
+                    setattr(new_model, k, v)
 
         # Clear the new model to remove any references to the old model
         new_model.clear()

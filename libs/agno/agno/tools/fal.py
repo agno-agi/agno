@@ -3,11 +3,12 @@ pip install fal-client
 """
 
 from os import getenv
-from typing import Optional
+from typing import Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import ImageArtifact, VideoArtifact
+from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
 
@@ -41,7 +42,7 @@ class FalTools(Toolkit):
                     log_info(message)
                     self.seen_logs.add(message)
 
-    def generate_media(self, agent: Agent, prompt: str) -> str:
+    def generate_media(self, agent: Union[Agent, Team], prompt: str) -> str:
         """
         Use this function to run a model with a given prompt.
 
@@ -87,7 +88,7 @@ class FalTools(Toolkit):
             logger.error(f"Failed to run model: {e}")
             return f"Error: {e}"
 
-    def image_to_image(self, agent: Agent, prompt: str, image_url: Optional[str] = None) -> str:
+    def image_to_image(self, agent: Union[Agent, Team], prompt: str, image_url: Optional[str] = None) -> str:
         """
         Use this function to transform an input image based on a text prompt using the Fal AI image-to-image model.
         The model takes an existing image and generates a new version modified according to your prompt.

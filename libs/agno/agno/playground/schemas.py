@@ -1,9 +1,14 @@
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Union
+from uuid import uuid4
 
 from fastapi import UploadFile
 from pydantic import BaseModel
 
 from agno.agent import Agent
+from agno.memory.agent import AgentMemory
+from agno.memory.team import TeamMemory
+from agno.memory.v2 import Memory
 from agno.playground.operator import format_tools
 from agno.team import Team
 
@@ -28,6 +33,26 @@ class AgentGetResponse(BaseModel):
 
     @classmethod
     def from_agent(self, agent: Agent) -> "AgentGetResponse":
+        if agent.memory:
+            memory_dict: Optional[Dict[str, Any]] = {}
+            if isinstance(agent.memory, AgentMemory) and agent.memory.db:
+                memory_dict = {"name": agent.memory.db.__class__.__name__}
+            elif isinstance(agent.memory, Memory) and agent.memory.db:
+                memory_dict = {"name": "Memory"}
+                if agent.memory.model is not None:
+                    memory_dict["model"] = AgentModel(
+                        name=agent.memory.model.name,
+                        model=agent.memory.model.id,
+                        provider=agent.memory.model.provider,
+                    )
+                if agent.memory.db is not None:
+                    memory_dict["db"] = agent.memory.db.__dict__()  # type: ignore
+
+            else:
+                memory_dict = None
+        else:
+            memory_dict = None
+        tools = agent.get_tools(session_id=str(uuid4()))
         return AgentGetResponse(
             agent_id=agent.agent_id,
             name=agent.name,
@@ -37,8 +62,8 @@ class AgentGetResponse(BaseModel):
                 provider=agent.model.provider or agent.model.__class__.__name__ if agent.model else None,
             ),
             add_context=agent.add_context,
-            tools=format_tools(agent.get_tools()) if agent.get_tools() else None,
-            memory={"name": agent.memory.db.__class__.__name__} if agent.memory and agent.memory.db else None,
+            tools=format_tools(tools) if tools else None,
+            memory=memory_dict,
             storage={"name": agent.storage.__class__.__name__} if agent.storage else None,
             knowledge={"name": agent.knowledge.__class__.__name__} if agent.knowledge else None,
             description=agent.description,
@@ -66,6 +91,12 @@ class AgentSessionsResponse(BaseModel):
     session_id: Optional[str] = None
     session_name: Optional[str] = None
     created_at: Optional[int] = None
+
+
+class MemoryResponse(BaseModel):
+    memory: str
+    topics: Optional[List[str]] = None
+    last_updated: Optional[datetime] = None
 
 
 class WorkflowRenameRequest(BaseModel):
@@ -123,6 +154,24 @@ class TeamGetResponse(BaseModel):
 
     @classmethod
     def from_team(self, team: Team) -> "TeamGetResponse":
+        import json
+
+        memory_dict: Optional[Dict[str, Any]] = {}
+        if isinstance(team.memory, Memory):
+            memory_dict = {"name": "Memory"}
+            if team.memory.model is not None:
+                memory_dict["model"] = AgentModel(
+                    name=team.memory.model.name,
+                    model=team.memory.model.id,
+                    provider=team.memory.model.provider,
+                )
+            if team.memory.db is not None:
+                memory_dict["db"] = team.memory.db.__dict__()  # type: ignore
+        elif isinstance(team.memory, TeamMemory):
+            memory_dict = {"name": team.memory.db.__class__.__name__}
+        else:
+            memory_dict = None
+
         return TeamGetResponse(
             team_id=team.team_id,
             name=team.name,
@@ -135,12 +184,12 @@ class TeamGetResponse(BaseModel):
             instructions=team.instructions,
             description=team.description,
             expected_output=team.expected_output,
-            context=team.context,
+            context=json.dumps(team.context) if isinstance(team.context, dict) else team.context,
             enable_agentic_context=team.enable_agentic_context,
             response_model=team.response_model,
             mode=team.mode,
             storage={"name": team.storage.__class__.__name__} if team.storage else None,
-            memory={"name": team.memory.__class__.__name__} if team.memory else None,
+            memory=memory_dict,
             members=[
                 AgentGetResponse.from_agent(member)
                 if isinstance(member, Agent)

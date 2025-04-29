@@ -55,7 +55,7 @@ class PerfResult:
             std = statistics.stdev(data_sorted) if len(data_sorted) > 1 else 0
             med = statistics.median(data_sorted)
             # For 95th percentile, use statistics.quantiles
-            p95 = statistics.quantiles(data_sorted, n=100)[94]  # 0-based index: 95th percentile
+            p95 = statistics.quantiles(data_sorted, n=100)[94] if len(data_sorted) > 1 else 0
             return avg, mn, mx, std, med, p95
 
         # Populate runtime stats
@@ -227,7 +227,7 @@ class PerfEval:
         tracemalloc.stop()
 
         # Convert to MiB and subtract baseline
-        peak_mib = peak / (1024 * 1024)
+        peak_mib = peak / 1024 / 1024
         adjusted_usage = max(0, peak_mib - baseline)
 
         if self.debug_mode:
@@ -251,7 +251,7 @@ class PerfEval:
             empty_func()
             _, peak = tracemalloc.get_traced_memory()
             tracemalloc.stop()
-            results.append(peak / (1024 * 1024))
+            results.append(peak / 1024 / 1024)
 
         return sum(results) / len(results) if results else 0
 

@@ -1,64 +1,40 @@
 """
-This recipe shows how to store agent sessions in a sqlite database.
-Steps:
-1. Run: `pip install openai sqlalchemy agno` to install dependencies
-2. Run: `python cookbook/memory/02_persistent_memory.py` to run the agent
+This example shows how to use the Memory class to create a persistent memory.
+
+Every time you run this, the `Memory` object will be re-initialized from the DB.
 """
 
-import json
+from typing import List
 
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.storage.agent.sqlite import SqliteAgentStorage
-from rich.console import Console
-from rich.json import JSON
-from rich.panel import Panel
+from agno.memory.v2.db.schema import MemoryRow
+from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.memory.v2.memory import Memory
+from agno.memory.v2.schema import UserMemory
+from rich.pretty import pprint
 
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    # Store agent sessions in a database
-    storage=SqliteAgentStorage(
-        table_name="agent_sessions", db_file="tmp/agent_storage.db"
-    ),
-    # Set add_history_to_messages=true to add the previous chat history to the messages sent to the Model.
-    add_history_to_messages=True,
-    # Number of historical responses to add to the messages.
-    num_history_responses=3,
-    # The session_id is used to identify the session in the database
-    # You can resume any session by providing a session_id
-    # session_id="xxxx-xxxx-xxxx-xxxx",
-    # Description creates a system prompt for the agent
-    description="You are a helpful assistant that always responds in a polite, upbeat and positive manner.",
+memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
+
+# Clear the DB
+memory_db.clear()
+
+memory = Memory(db=memory_db)
+
+john_doe_id = "john_doe@example.com"
+
+# Run 1
+memory.add_user_memory(
+    memory=UserMemory(memory="The user's name is John Doe", topics=["name"]),
+    user_id=john_doe_id,
 )
 
-console = Console()
+# Run this the 2nd time
+memory.add_user_memory(
+    memory=UserMemory(
+        memory="The user works at a software company called Agno", topics=["work"]
+    ),
+    user_id=john_doe_id,
+)
 
-
-def print_chat_history(agent):
-    # -*- Print history
-    console.print(
-        Panel(
-            JSON(
-                json.dumps(
-                    [
-                        m.model_dump(include={"role", "content"})
-                        for m in agent.memory.messages
-                    ]
-                ),
-                indent=4,
-            ),
-            title=f"Chat History for session_id: {agent.session_id}",
-            expand=True,
-        )
-    )
-
-
-# -*- Create a run
-agent.print_response("Share a 2 sentence horror story", stream=True)
-# -*- Print the chat history
-print_chat_history(agent)
-
-# -*- Ask a follow up question that continues the conversation
-agent.print_response("What was my first message?", stream=True)
-# -*- Print the chat history
-print_chat_history(agent)
+memories: List[MemoryRow] = memory_db.read_memories()
+print("All memories:")
+pprint(memories)

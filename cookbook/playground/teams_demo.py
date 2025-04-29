@@ -1,6 +1,8 @@
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.memory.v2 import Memory
+from agno.memory.v2.db.postgres import PostgresMemoryDb
 from agno.models.anthropic import Claude
 from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
@@ -13,6 +15,11 @@ from agno.tools.yfinance import YFinanceTools
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
+memory_db = PostgresMemoryDb(table_name="memory", db_url=db_url)
+
+# No need to set the model, it gets set by the agent to the agent's model
+memory = Memory(db=memory_db)
+
 
 file_agent = Agent(
     name="File Upload Agent",
@@ -22,6 +29,8 @@ file_agent = Agent(
     storage=PostgresStorage(
         table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
     ),
+    memory=memory,
+    enable_user_memories=True,
     instructions=[
         "You are an AI agent that can analyze files.",
         "You are given a file and you need to answer questions about the file.",
@@ -38,6 +47,8 @@ video_agent = Agent(
     storage=PostgresStorage(
         table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
     ),
+    memory=memory,
+    enable_user_memories=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     show_tool_calls=True,
@@ -52,6 +63,8 @@ audio_agent = Agent(
     storage=PostgresStorage(
         table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
     ),
+    memory=memory,
+    enable_user_memories=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
     show_tool_calls=True,
@@ -67,6 +80,8 @@ web_agent = Agent(
     instructions=[
         "You are an experienced web researcher and news analyst! 🔍",
     ],
+    memory=memory,
+    enable_user_memories=True,
     show_tool_calls=True,
     markdown=True,
     storage=PostgresStorage(
@@ -90,6 +105,8 @@ finance_agent = Agent(
         "Include key metrics: P/E ratio, market cap, 52-week range",
         "Analyze trading patterns and volume trends",
     ],
+    memory=memory,
+    enable_user_memories=True,
     show_tool_calls=True,
     markdown=True,
 )
@@ -99,6 +116,8 @@ simple_agent = Agent(
     role="Simple agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a simple agent"],
+    memory=memory,
+    enable_user_memories=True,
 )
 
 research_agent = Agent(
@@ -108,6 +127,8 @@ research_agent = Agent(
     instructions=["You are a research agent"],
     tools=[DuckDuckGoTools(), ExaTools()],
     agent_id="research_agent",
+    memory=memory,
+    enable_user_memories=True,
 )
 
 research_team = Team(
@@ -123,6 +144,8 @@ research_team = Team(
     instructions=[
         "You are the lead researcher of a research team! 🔍",
     ],
+    memory=memory,
+    enable_user_memories=True,
     add_datetime_to_instructions=True,
     show_tool_calls=True,
     markdown=True,
@@ -148,6 +171,8 @@ multimodal_team = Team(
     instructions=[
         "You are the lead editor of a prestigious financial news desk! 📰",
     ],
+    memory=memory,
+    enable_user_memories=True,
     storage=PostgresStorage(
         table_name="multimodal_team",
         db_url=db_url,
@@ -155,7 +180,7 @@ multimodal_team = Team(
         auto_upgrade_schema=True,
     ),
 )
-agent_team = Team(
+financial_news_team = Team(
     name="Financial News Team",
     description="A team of agents that search the web for financial news and analyze it.",
     members=[
@@ -169,33 +194,32 @@ agent_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     mode="route",
     team_id="financial_news_team",
-    success_criteria=dedent("""\
-        A comprehensive financial news report with clear sections and data-driven insights.
-    """),
     instructions=[
         "You are the lead editor of a prestigious financial news desk! 📰",
         "If you are given a file send it to the file agent.",
         "If you are given an audio file send it to the audio agent.",
         "If you are given a video file send it to the video agent.",
+        "Use USD as currency.",
+        "If the user is just being conversational, you should respond directly WITHOUT forwarding a task to a member.",
     ],
     add_datetime_to_instructions=True,
     show_tool_calls=True,
     markdown=True,
     enable_agentic_context=True,
     show_members_responses=True,
-    debug_mode=True,
     storage=PostgresStorage(
         table_name="financial_news_team",
         db_url=db_url,
         mode="team",
         auto_upgrade_schema=True,
     ),
+    memory=memory,
+    enable_user_memories=True,
     expected_output="A good financial news report.",
-    context="use USD as currency",
 )
 
 app = Playground(
-    teams=[agent_team, research_team, multimodal_team],
+    teams=[research_team, financial_news_team, multimodal_team],
     agents=[web_agent, finance_agent, research_agent, simple_agent],
 ).get_app()
 

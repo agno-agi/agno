@@ -1,11 +1,12 @@
 import os
 from os import getenv
-from typing import Optional
+from typing import Optional, Union
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import ImageArtifact, VideoArtifact
+from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
@@ -30,7 +31,7 @@ class ReplicateTools(Toolkit):
         self.model = model
         self.register(self.generate_media)
 
-    def generate_media(self, agent: Agent, prompt: str) -> str:
+    def generate_media(self, agent: Union[Agent, Team], prompt: str) -> str:
         """
         Use this function to generate an image or a video using a replicate model.
         Args:

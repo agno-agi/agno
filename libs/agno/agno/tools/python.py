@@ -18,6 +18,7 @@ class PythonTools(Toolkit):
         base_dir: Optional[Path] = None,
         save_and_run: bool = True,
         pip_install: bool = False,
+        uv_pip_install: bool = False,
         run_code: bool = False,
         list_files: bool = False,
         run_files: bool = False,
@@ -40,6 +41,8 @@ class PythonTools(Toolkit):
             self.register(self.save_to_file_and_run, sanitize_arguments=False)
         if pip_install:
             self.register(self.pip_install_package)
+        if uv_pip_install:
+            self.register(self.uv_pip_install_package)
         if run_files:
             self.register(self.run_python_file_return_variable)
         if read_files:
@@ -187,6 +190,27 @@ class PythonTools(Toolkit):
             import sys
 
             subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+            return f"successfully installed package {package_name}"
+        except Exception as e:
+            logger.error(f"Error installing package {package_name}: {e}")
+            return f"Error installing package {package_name}: {e}"
+
+    def uv_pip_install_package(self, package_name: str) -> str:
+        """This function installs a package using uv and pip in the current environment.
+        If successful, returns a success message.
+        If failed, returns an error message.
+
+        :param package_name: The name of the package to install.
+        :return: success message if successful, otherwise returns an error message.
+        """
+        try:
+            warn()
+
+            log_debug(f"Installing package {package_name}")
+            import subprocess
+            import sys
+
+            subprocess.check_call([sys.executable, "-m", "uv", "pip", "install", package_name])
             return f"successfully installed package {package_name}"
         except Exception as e:
             logger.error(f"Error installing package {package_name}: {e}")

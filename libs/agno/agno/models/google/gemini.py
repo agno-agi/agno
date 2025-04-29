@@ -1,6 +1,5 @@
 import json
 import time
-import traceback
 from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
@@ -10,10 +9,11 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.media import Audio, File, Image, ImageArtifact, Video
+from agno.media import Audio, File, ImageArtifact, Video
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, UrlCitation
 from agno.models.response import ModelResponse
+from agno.utils.gemini import format_function_definitions, format_image_for_message
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
@@ -23,14 +23,12 @@ try:
     from google.genai.types import (
         Content,
         DynamicRetrievalConfig,
-        FunctionDeclaration,
         GenerateContentConfig,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         GoogleSearch,
         GoogleSearchRetrieval,
         Part,
-        Schema,
         Tool,
     )
     from google.genai.types import (
@@ -38,120 +36,6 @@ try:
     )
 except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
-
-
-def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
-    # Case 1: Image is a URL
-    # Download the image from the URL and add it as base64 encoded data
-    if image.url is not None:
-        content_bytes = image.image_url_content
-        if content_bytes is not None:
-            try:
-                import base64
-
-                image_data = {
-                    "mime_type": "image/jpeg",
-                    "data": base64.b64encode(content_bytes).decode("utf-8"),
-                }
-                return image_data
-            except Exception as e:
-                log_warning(f"Failed to download image from {image}: {e}")
-                return None
-        else:
-            log_warning(f"Unsupported image format: {image}")
-            return None
-
-    # Case 2: Image is a local path
-    elif image.filepath is not None:
-        try:
-            image_path = Path(image.filepath)
-            if image_path.exists() and image_path.is_file():
-                with open(image_path, "rb") as f:
-                    content_bytes = f.read()
-            else:
-                log_error(f"Image file {image_path} does not exist.")
-                raise
-            return {
-                "mime_type": "image/jpeg",
-                "data": content_bytes,
-            }
-        except Exception as e:
-            log_warning(f"Failed to load image from {image.filepath}: {e}")
-            return None
-
-    # Case 3: Image is a bytes object
-    # Add it as base64 encoded data
-    elif image.content is not None and isinstance(image.content, bytes):
-        import base64
-
-        image_data = {"mime_type": "image/jpeg", "data": base64.b64encode(image.content).decode("utf-8")}
-        return image_data
-    else:
-        log_warning(f"Unknown image type: {type(image)}")
-        return None
-
-
-def _convert_schema(schema_dict) -> Optional[Schema]:
-    """
-    Recursively convert a JSON-like schema dictionary to a types.Schema object.
-
-    Parameters:
-        schema_dict (dict): The JSON schema dictionary with keys like "type", "description",
-                            "properties", and "required".
-
-    Returns:
-        types.Schema: The converted schema.
-    """
-    schema_type = schema_dict.get("type", "")
-    if isinstance(schema_type, list):
-        schema_type = schema_type[0]
-    schema_type = schema_type.upper()
-    description = schema_dict.get("description", "")
-
-    if schema_type == "OBJECT" and "properties" in schema_dict:
-        properties = {key: _convert_schema(prop_def) for key, prop_def in schema_dict["properties"].items()}
-        required = schema_dict.get("required", [])
-
-        if properties:
-            return Schema(
-                type=schema_type,
-                properties=properties,
-                required=required,
-                description=description,
-            )
-        else:
-            return None
-
-    if schema_type == "ARRAY" and "items" in schema_dict:
-        items = _convert_schema(schema_dict["items"])
-        return Schema(type=schema_type, description=description, items=items)
-    else:
-        return Schema(type=schema_type, description=description)
-
-
-def _format_function_definitions(tools_list):
-    function_declarations = []
-
-    for tool in tools_list:
-        if tool.get("type") == "function":
-            func_info = tool.get("function", {})
-            name = func_info.get("name")
-            description = func_info.get("description", "")
-            parameters_dict = func_info.get("parameters", {})
-
-            parameters_schema = _convert_schema(parameters_dict)
-            # Create a FunctionDeclaration instance
-            function_decl = FunctionDeclaration(
-                name=name,
-                description=description,
-                parameters=parameters_schema,
-            )
-
-            function_declarations.append(function_decl)
-    if function_declarations:
-        return Tool(function_declarations=function_declarations)
-    else:
-        return None
 
 
 @dataclass
@@ -194,6 +78,7 @@ class Gemini(Model):
     seed: Optional[int] = None
     response_modalities: Optional[list[str]] = None  # "Text" and/or "Image"
     speech_config: Optional[dict[str, Any]] = None
+    cached_content: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -283,6 +168,7 @@ class Gemini(Model):
                 "seed": self.seed,
                 "response_modalities": self.response_modalities,
                 "speech_config": self.speech_config,
+                "cached_content": self.cached_content,
             }
         )
 
@@ -318,7 +204,7 @@ class Gemini(Model):
             config["tools"] = [Tool(google_search=GoogleSearch())]
 
         elif self._tools:
-            config["tools"] = [_format_function_definitions(self._tools)]
+            config["tools"] = [format_function_definitions(self._tools)]
 
         config = {k: v for k, v in config.items() if v is not None}
 
@@ -328,6 +214,7 @@ class Gemini(Model):
         # Filter out None values
         if self.request_params:
             request_params.update(self.request_params)
+
         return request_params
 
     def invoke(self, messages: List[Message]):
@@ -441,6 +328,7 @@ class Gemini(Model):
             messages (List[Message]): The list of messages to convert.
         """
         formatted_messages: List = []
+        file_content: Union[GeminiFile, Part] = None
         system_message = None
         for message in messages:
             role = message.role
@@ -486,7 +374,7 @@ class Gemini(Model):
                             # Google recommends that if using a single image, place the text prompt after the image.
                             message_parts.insert(0, image.content)
                         else:
-                            image_content = _format_image_for_message(image)
+                            image_content = format_image_for_message(image)
                             if image_content:
                                 message_parts.append(Part.from_bytes(**image_content))
 
@@ -508,7 +396,6 @@ class Gemini(Model):
                                 if video_file is not None:
                                     message_parts.insert(0, video_file)  # type: ignore
                     except Exception as e:
-                        traceback.print_exc()
                         log_warning(f"Failed to load video from {message.videos}: {e}")
                         continue
 
@@ -536,11 +423,15 @@ class Gemini(Model):
                 if message.files is not None:
                     for file in message.files:
                         file_content = self._format_file_for_message(file)
-                        if file_content:
-                            message_parts.append(file_content)
+                        if isinstance(file_content, Part):
+                            formatted_messages.append(file_content)
 
             final_message = Content(role=role, parts=message_parts)
             formatted_messages.append(final_message)
+
+            if isinstance(file_content, GeminiFile):
+                formatted_messages.insert(0, file_content)
+
         return formatted_messages, system_message
 
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:
@@ -680,19 +571,35 @@ class Gemini(Model):
                             mime_type=mimetypes.guess_type(file_path)[0], data=file_path.read_bytes()
                         )
                 else:
-                    file_upload = self.get_client().files.upload(
-                        file=file_path,
-                    )
-                    # Check whether the file is ready to be used.
-                    while file_upload.state.name == "PROCESSING":
-                        time.sleep(2)
-                        file_upload = self.get_client().files.get(name=file_upload.name)
-                    if file_upload.state.name == "FAILED":
-                        raise ValueError(file_upload.state.name)
-                    return Part.from_uri(file_uri=file_upload.uri, mime_type=file_upload.mime_type)
+                    clean_file_name = f"files/{file_path.stem.lower().replace('_', '')}"
+                    remote_file = None
+                    try:
+                        remote_file = self.get_client().files.get(name=clean_file_name)
+                    except Exception as e:
+                        log_warning(f"Error getting file {clean_file_name}: {e}")
+
+                    if remote_file is not None:
+                        return Part.from_uri(file_uri=remote_file.uri, mime_type=remote_file.mime_type)
+                    else:
+                        file_upload = self.get_client().files.upload(
+                            file=file_path,
+                            config=dict(
+                                name=clean_file_name,
+                            ),
+                        )
+                        # Check whether the file is ready to be used.
+                        while file_upload.state.name == "PROCESSING":
+                            time.sleep(2)
+                            file_upload = self.get_client().files.get(name=file_upload.name)
+                        if file_upload.state.name == "FAILED":
+                            raise ValueError(file_upload.state.name)
+                        return Part.from_uri(file_uri=file_upload.uri, mime_type=file_upload.mime_type)
             else:
                 log_error(f"File {file_path} does not exist.")
 
+        # Case 4: File is a Gemini File object
+        elif isinstance(file.external, GeminiFile):
+            return file.external
         return None
 
     def format_function_call_results(
@@ -769,16 +676,12 @@ class Gemini(Model):
                 citations.raw = grounding_metadata
 
                 # Extract url and title
-                chunks = grounding_metadata.pop("grounding_chunks", [])
-                citation_pairs = (
-                    [
-                        (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
-                        for chunk in chunks
-                        if chunk.get("web", {}).get("uri")
-                    ]
-                    if chunks
-                    else []
-                )
+                chunks = grounding_metadata.pop("grounding_chunks", None) or []
+                citation_pairs = [
+                    (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
+                    for chunk in chunks
+                    if chunk.get("web", {}).get("uri")
+                ]
 
                 # Create citation objects from filtered pairs
                 citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
@@ -792,6 +695,7 @@ class Gemini(Model):
                 "input_tokens": usage.prompt_token_count or 0,
                 "output_tokens": usage.candidates_token_count or 0,
                 "total_tokens": usage.total_token_count or 0,
+                "cached_tokens": usage.cached_content_token_count or 0,
             }
 
         return model_response
@@ -836,7 +740,7 @@ class Gemini(Model):
             citations.raw = grounding_metadata
 
             # Extract url and title
-            chunks = grounding_metadata.pop("grounding_chunks", [])
+            chunks = grounding_metadata.pop("grounding_chunks", None) or []
             citation_pairs = [
                 (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
                 for chunk in chunks
@@ -855,6 +759,49 @@ class Gemini(Model):
                 "input_tokens": usage.prompt_token_count or 0,
                 "output_tokens": usage.candidates_token_count or 0,
                 "total_tokens": usage.total_token_count or 0,
+                "cached_tokens": usage.cached_content_token_count or 0,
             }
 
         return model_response
+
+    def __deepcopy__(self, memo):
+        """
+        Creates a deep copy of the Gemini model instance but sets the client to None.
+
+        This is useful when we need to copy the model configuration without duplicating
+        the client connection.
+
+        This overrides the base class implementation.
+        """
+        from copy import copy, deepcopy
+
+        # Create a new instance without calling __init__
+        cls = self.__class__
+        new_instance = cls.__new__(cls)
+
+        # Update memo with the new instance to avoid circular references
+        memo[id(self)] = new_instance
+
+        # Deep copy all attributes except client and unpickleable attributes
+        for key, value in self.__dict__.items():
+            # Skip client and other unpickleable attributes
+            if key in {"client", "response_format", "_tools", "_functions", "_function_call_stack"}:
+                continue
+
+            # Try deep copy first, fall back to shallow copy, then direct assignment
+            try:
+                setattr(new_instance, key, deepcopy(value, memo))
+            except Exception:
+                try:
+                    setattr(new_instance, key, copy(value))
+                except Exception:
+                    setattr(new_instance, key, value)
+
+        # Explicitly set client to None
+        setattr(new_instance, "client", None)
+
+        # Clear the new model to remove any references to the old model
+        if hasattr(new_instance, "clear"):
+            new_instance.clear()
+
+        return new_instance

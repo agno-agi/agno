@@ -15,81 +15,55 @@
 
 ## Introduction
 
-[Agno](https://docs.agno.com) is a lightweight library for building Multimodal Agents. It exposes LLMs as a unified API and gives them superpowers like memory, knowledge, tools and reasoning.
+[Agno](https://docs.agno.com) is a lightweight library for building Agents with memory, knowledge, tools and reasoning.
 
-- Build lightning-fast Agents that can generate text, image, audio and video.
-- Add memory, knowledge, tools and reasoning as needed.
-- Run anywhere, Agno is open-source.
+Developers use Agno to build Reasoning Agents, Multimodal Agents, Teams of Agents and Agentic Workflows. Agno also provides a beautiful UI to chat with your Agents, pre-built FastAPI routes to serve your Agents and tools to monitor and evaluate their performance.
 
-Here's an Agent that can search the web:
+Here's an Agent that writes a report on a stock, reasoning through each step:
 
-```python websearch_agent.py
+```python reasoning_finance_agent.py
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
-    markdown=True
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    tools=[
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True, company_news=True),
+    ],
+    instructions=[
+        "Use tables to display data",
+        "Only output the report, no other text",
+    ],
+    markdown=True,
 )
-agent.print_response("What's happening in New York?", stream=True)
+agent.print_response("Write a report on NVDA", stream=True, show_full_reasoning=True, stream_intermediate_steps=True)
 ```
 
-## 🚨 Open Source AI Agent Hackathon! 🚨
-
-We're launching a Global AI Agent Hackathon in collaboration with AI Agent ecosystem partners — open to all developers, builders, and startups working on agents, RAG, tool use, or multi-agent systems.
-
-### 💰 Win up to $20,000 in cash by building Agents
-
-- 🏅 10 winners: $300 each
-- 🥉 10 winners: $500 each
-- 🥈 5 winners: $1,000 each
-- 🥇 1 winner: $2,000
-- 🏆 GRAND PRIZE: $5,000 🏆
-
-### 🎁 Bonus
-- Top 5 projects will be featured in the top trending [Awesome LLM Apps](https://github.com/Shubhamsaboo/awesome-llm-apps) repo.
-
-### 🤝 Partners
-
-[Agno](https://www.agno.com), [Unwind AI](https://www.theunwindai.com) and more Agent ecosystem companies joining soon.
-
-### 📅 Here's the timeline:
-
-- April 3rd - Final dates revealed
-- April 10th - Prize and success criteria announced
-- April 15th (tentative) - Hackathon starts
-- May 30th (tentative) - Hackathon ends
-
-Join us for a month of building Agents!
-
-> Prizes will be distributed on an ongoing basis and continue till all prizes are awarded.
-
-⭐ Star this repo and follow along to stay updated.
-
-### 🤝 Want to join us as a partner or judge?
-
-If you're a company in the AI agent ecosystem or would like to judge the hackathon, reach out to [Shubham Saboo](https://x.com/Saboo_Shubham_) or [Ashpreet Bedi](https://x.com/ashpreetbedi) on X to partner. Let’s make this the biggest open source AI Agent hackathon.
+https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
 
 ## Key features
 
-Agno is simple, fast and model agnostic. Here are some key features:
+Agno is simple, fast and model-agnostic. Here are some key features:
 
-- **Lightning Fast**: Agent creation is 10,000x faster than LangGraph (see [performance](#performance)).
-- **Model Agnostic**: Use any model, any provider, no lock-in.
-- **Multi Modal**: Native support for text, image, audio and video.
-- **Multi Agent**: Build teams of specialized agents.
-- **Memory Management**: Store agent sessions and state in a database.
-- **Knowledge Stores**: Use vector databases for RAG or dynamic few-shot learning.
-- **Structured Outputs**: Make Agents respond in a structured format.
-- **Monitoring**: Track agent sessions and performance in real-time on [agno.com](https://app.agno.com).
+- **Model Agnostic**: Agno Agents can connect to 23+ model providers, no lock-in.
+- **Lightning Fast**: - **Lightning Fast**: Agents instantiate in **~3μs** and use **~5Kib** memory on average (see [performance](#performance) for more details).
+- **Reasoning is a first class citizen**: Make your Agents "think" and "analyze" using Reasoning Models, `ReasoningTools` or our custom `chain-of-thought` approach.
+- **Natively Multi Modal**: Agno Agents are natively multi modal, they can take in text, image, audio and video and generate text, image, audio and video as output.
+- **Advanced Multi Agent Architecture**: Agno provides an industry leading multi-agent architecture (**Agent Teams**) with 3 different modes: `route`, `collaborate` and `coordinate`.
+- **Agentic Search built-in**: Give your Agents the ability to search for information at runtime using one of 20+ vector databases. Get access to state-of-the-art Agentic RAG that uses hybrid search with re-ranking. **Fully async and highly performant.**
+- **Long-term Memory & Session Storage**: Agno provides plug-n-play `Storage` & `Memory` drivers that give your Agents long-term memory and session storage.
+- **Pre-built FastAPI Routes**: Agno provides pre-built FastAPI routes to serve your Agents, Teams and Workflows.
+- **Structured Outputs**: Agno Agents can return fully-typed responses using model provided structured outputs or `json_mode`.
+- **Monitoring**: Monitor agent sessions and performance in real-time on [agno.com](https://app.agno.com).
 
-## Getting Started
+## Building Agents with Agno
 
-- Start by [building your first Agent](https://docs.agno.com/introduction/agents)
-- Check out the [examples](https://docs.agno.com/examples/introduction)
-- Read the [documentation](https://docs.agno.com)
+If you're new to Agno, start by building your [first Agent](https://docs.agno.com/introduction/agents), chat with it on the [playground](https://docs.agno.com/introduction/playground) and finally, monitor it on [agno.com](https://docs.agno.com/introduction/monitoring).
+
+After that, checkout the [Examples Gallery](https://docs.agno.com/examples) and build real-world applications with Agno.
 
 ## Installation
 
@@ -99,15 +73,70 @@ pip install -U agno
 
 ## What are Agents?
 
-**Agents** are intelligent programs that solve problems autonomously.
+**Agents** are AI programs that operate autonomously.
 
-Agents have memory, domain knowledge and the ability to use tools (like searching the web, querying a database, making API calls). Unlike traditional programs that follow a predefined execution path, Agents dynamically adapt their approach based on the context and tool results.
+- The core of an Agent is a model, tools and instructions.
+- Agents also have **memory**, **knowledge**, **storage** and the ability to **reason**.
 
-Instead of a rigid binary definition, let's think of Agents in terms of agency and autonomy.
-- **Level 0**: Agents with no tools (basic inference tasks).
-- **Level 1**: Agents with tools for autonomous task execution.
-- **Level 2**: Agents with knowledge, combining memory and reasoning.
-- **Level 3**: Teams of specialized agents collaborating on complex workflows.
+Read more about each of these in the [docs](https://docs.agno.com/introduction/agents#what-are-agents%3F).
+
+> Let's build a few Agents to see how they work.
+
+## Example - Reasoning Agent
+
+Let's start with a Reasoning Agent so we get a sense of Agno's capabilities.
+
+Save this code to a file: `reasoning_agent.py`.
+
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
+
+agent = Agent(
+    model=Claude(id="claude-3-7-sonnet-latest"),
+    tools=[
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(
+            stock_price=True,
+            analyst_recommendations=True,
+            company_info=True,
+            company_news=True,
+        ),
+    ],
+    instructions=[
+        "Use tables to display data",
+        "Only output the report, no other text",
+    ],
+    markdown=True,
+)
+agent.print_response(
+    "Write a report on NVDA",
+    stream=True,
+    show_full_reasoning=True,
+    stream_intermediate_steps=True,
+)
+```
+
+Then create a virtual environment, install dependencies, export your `ANTHROPIC_API_KEY` and run the agent.
+
+```shell
+uv venv --python 3.12
+source .venv/bin/activate
+
+uv pip install agno anthropic yfinance
+
+export ANTHROPIC_API_KEY=sk-ant-api03-xxxx
+
+python reasoning_agent.py
+```
+
+We can see the Agent is reasoning through the task, using the `ReasoningTools` and `YFinanceTools` to gather information. This is how the output looks like:
+
+https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
+
+> Now let's walk through the simple -> tools -> knowledge -> teams of agents flow.
 
 ## Example - Basic Agent
 
@@ -276,12 +305,34 @@ python agent_team.py
 
 [View this example in the cookbook](./cookbook/getting_started/05_agent_team.py)
 
+## 🚨 Global Agent Hackathon! 🚨
+
+We're thrilled to announce a month long, open source AI Agent Hackathon — open to all builders and dreamers working on agents, RAG, tool use, and multi-agent systems.
+
+### 💰 Build something extordinary, win up to $20,000 in cash
+
+We're giving away $20,000 in prizes for the most ambitious Agent projects
+
+- 🏅 10 winners: $300 each
+- 🥉 10 winners: $500 each
+- 🥈 5 winners: $1,000 each
+- 🥇 1 winner: $2,000
+- 🏆 GRAND PRIZE: $5,000 🏆
+
+> Follow this [post](https://www.agno.com/blog/agent-hackathon-april-2025) for more details and updates
+
+### 🤝 Want to partner or judge?
+
+If you're building in the AI Agent space, or want to help shape the next generation of Agent builders - we'd love to work with you.
+
+Reach out to support@agno.com to get involved.
+
 ## Performance
 
 At Agno, we're obsessed with performance. Why? because even simple AI workflows can spawn thousands of Agents to achieve their goals. Scale that to a modest number of users and performance becomes a bottleneck. Agno is designed to power high performance agentic systems:
 
-- Agent instantiation: ~2μs on average (~10,000x faster than LangGraph).
-- Memory footprint: ~3.75Kib on average (~50x less memory than LangGraph).
+- Agent instantiation: ~3μs on average
+- Memory footprint: ~6.5Kib on average
 
 > Tested on an Apple M4 Mackbook Pro.
 
@@ -315,33 +366,17 @@ Agno is on the left, notice how it finishes before LangGraph gets 1/2 way throug
 
 https://github.com/user-attachments/assets/ba466d45-75dd-45ac-917b-0a56c5742e23
 
-Dividing the average time of a Langgraph Agent by the average time of an Agno Agent:
-
-```
-0.020526s / 0.000002s ~ 10,263
-```
-
-In this particular run, **Agno Agents startup is roughly 10,000 times faster than Langgraph Agents**. The numbers continue to favor Agno as the number of tools grow, and we add memory and knowledge stores.
-
 ### Memory usage
 
 To measure memory usage, we use the `tracemalloc` library. We first calculate a baseline memory usage by running an empty function, then run the Agent 1000x times and calculate the difference. This gives a (reasonably) isolated measurement of the memory usage of the Agent.
 
 We recommend running the evaluation yourself on your own machine, and digging into the code to see how it works. If we've made a mistake, please let us know.
 
-Dividing the average memory usage of a Langgraph Agent by the average memory usage of an Agno Agent:
-
-```
-0.137273/0.002528 ~ 54.3
-```
-
-**Langgraph Agents use ~50x more memory than Agno Agents**. In our opinion, memory usage is a much more important metric than instantiation time. As we start running thousands of Agents in production, these numbers directly start affecting the cost of running the Agents.
-
 ### Conclusion
 
 Agno agents are designed for performance and while we do share some benchmarks against other frameworks, we should be mindful that accuracy and reliability are more important than speed.
 
-We'll be publishing accuracy and reliability benchmarks running on Github actions in the coming weeks. Given that each framework is different and we won't be able to tune their performance like we do with Agno, for future benchmarks we'll only be comparing against ourselves.
+We'll be publishing accuracy and reliability benchmarks running on Github actions in the future. Given that each framework is different and we won't be able to tune their performance like we do with Agno, for future benchmarks we'll only be comparing against ourselves.
 
 ## Cursor Setup
 

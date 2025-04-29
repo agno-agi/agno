@@ -22,6 +22,7 @@ class DynamoDbStorage(Storage):
     def __init__(
         self,
         table_name: str,
+        profile_name: Optional[str] = None,
         region_name: Optional[str] = None,
         aws_access_key_id: Optional[str] = None,
         aws_secret_access_key: Optional[str] = None,
@@ -35,6 +36,7 @@ class DynamoDbStorage(Storage):
         Args:
             table_name (str): The name of the DynamoDB table.
             region_name (Optional[str]): AWS region name.
+            profile_name (Optional[str]): AWS profile name to use for credentials.
             aws_access_key_id (Optional[str]): AWS access key ID.
             aws_secret_access_key (Optional[str]): AWS secret access key.
             endpoint_url (Optional[str]): The complete URL to use for the constructed client.
@@ -43,20 +45,30 @@ class DynamoDbStorage(Storage):
         """
         super().__init__(mode)
         self.table_name = table_name
+        self.profile_name = profile_name
         self.region_name = region_name
         self.endpoint_url = endpoint_url
         self.aws_access_key_id = aws_access_key_id
         self.aws_secret_access_key = aws_secret_access_key
         self.create_table_if_not_exists = create_table_if_not_exists
 
-        # Initialize DynamoDB resource
-        self.dynamodb = boto3.resource(
-            "dynamodb",
-            region_name=self.region_name,
-            aws_access_key_id=self.aws_access_key_id,
-            aws_secret_access_key=self.aws_secret_access_key,
-            endpoint_url=self.endpoint_url,
-        )
+        # Create session using profile name if provided
+        if self.profile_name:
+            session = boto3.Session(profile_name=self.profile_name)
+            self.dynamodb = session.resource(
+                "dynamodb",
+                region_name=self.region_name,
+                endpoint_url=self.endpoint_url,
+            )
+        else:
+            # Initialize DynamoDB resource with default credentials
+            self.dynamodb = boto3.resource(
+                "dynamodb",
+                aws_access_key_id=self.aws_access_key_id,
+                aws_secret_access_key=self.aws_secret_access_key,
+                region_name=self.region_name,
+                endpoint_url=self.endpoint_url,
+            )
 
         # Initialize table
         self.table = self.dynamodb.Table(self.table_name)
@@ -97,7 +109,6 @@ class DynamoDbStorage(Storage):
                         {"AttributeName": "session_id", "AttributeType": "S"},
                         {"AttributeName": "user_id", "AttributeType": "S"},
                         {"AttributeName": "agent_id", "AttributeType": "S"},
-                        {"AttributeName": "team_session_id", "AttributeType": "S"},
                         {"AttributeName": "created_at", "AttributeType": "N"},
                     ]
                 elif self.mode == "team":
@@ -105,7 +116,6 @@ class DynamoDbStorage(Storage):
                         {"AttributeName": "session_id", "AttributeType": "S"},
                         {"AttributeName": "user_id", "AttributeType": "S"},
                         {"AttributeName": "team_id", "AttributeType": "S"},
-                        {"AttributeName": "team_session_id", "AttributeType": "S"},
                         {"AttributeName": "created_at", "AttributeType": "N"},
                     ]
                 elif self.mode == "workflow":

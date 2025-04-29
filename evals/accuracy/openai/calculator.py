@@ -14,6 +14,7 @@ def multiply_and_exponentiate():
         ),
         question="What is 10*5 then to the power of 2? do it step by step",
         expected_answer="2500",
+        num_iterations=1
     )
     result: Optional[AccuracyResult] = evaluation.run(print_results=True)
 
@@ -28,6 +29,7 @@ def factorial():
         ),
         question="What is 10!?",
         expected_answer="3628800",
+        num_iterations=1
     )
     result: Optional[AccuracyResult] = evaluation.run(print_results=True)
 

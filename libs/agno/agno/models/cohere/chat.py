@@ -86,6 +86,15 @@ def _format_messages(messages: List[Message]) -> List[Dict[str, Any]]:
                 if len(message_content_with_image) > 1:
                     message_dict["content"] = message_content_with_image
 
+        if message.videos is not None and len(message.videos) > 0:
+            log_warning("Video input is currently unsupported.")
+
+        if message.audio is not None and len(message.audio) > 0:
+            log_warning("Audio input is currently unsupported.")
+
+        if message.files is not None and len(message.files) > 0:
+            log_warning("File input is currently unsupported.")
+
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
         formatted_messages.append(message_dict)
     return formatted_messages

@@ -44,17 +44,6 @@ cwd = Path(__file__).parent
 tmp_dir = cwd.joinpath("tmp")
 tmp_dir.mkdir(parents=True, exist_ok=True)
 
-# Initialize knowledge base
-agent_knowledge = UrlKnowledge(
-    urls=["https://docs.agno.com/llms-full.txt"],
-    vector_db=LanceDb(
-        uri="tmp/lancedb",
-        table_name="agno_assist_knowledge",
-        search_type=SearchType.hybrid,
-        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-    ),
-)
-
 _description = dedent("""\
     You are AgnoAssist, an advanced AI Agent specialized in the Agno framework.
     Your goal is to help developers understand and effectively use Agno by providing
@@ -130,6 +119,16 @@ _instructions = dedent("""\
     - Model support and configuration
     - Best practices and common patterns""")
 
+# Initialize knowledge base
+agent_knowledge = UrlKnowledge(
+    urls=["https://docs.agno.com/llms-full.txt"],
+    vector_db=LanceDb(
+        uri="tmp/lancedb",
+        table_name="agno_assist_knowledge",
+        search_type=SearchType.hybrid,
+        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    ),
+)
 
 # Create the agent
 agno_support = Agent(

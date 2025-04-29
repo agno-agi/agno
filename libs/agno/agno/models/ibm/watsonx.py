@@ -168,6 +168,16 @@ class WatsonX(Model):
         """
         if message.images is not None and isinstance(message.content, str):
             message = _format_images_for_message(message=message, images=message.images)
+
+        if message.audio is not None and len(message.audio) > 0:
+            log_warning("Audio input is currently unsupported.")
+
+        if message.files is not None and len(message.files) > 0:
+            log_warning("File input is currently unsupported.")
+
+        if message.videos is not None and len(message.videos) > 0:
+            log_warning("Video input is currently unsupported.")
+
         return message.to_dict()
 
     def invoke(self, messages: List[Message]) -> Any:

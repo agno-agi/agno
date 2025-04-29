@@ -37,6 +37,7 @@ multi_language_team = Team(
         "For unsupported languages like Italian, respond in English with the above message.",
     ],
     show_members_responses=True,
+    enable_team_history=True,
 )
 
 
@@ -46,3 +47,6 @@ if __name__ == "__main__":
     multi_language_team.print_response("How are you?", stream=True)  # English
     multi_language_team.print_response("你好吗？", stream=True)  # Chinese
     multi_language_team.print_response("Come stai?", stream=True)  # Italian
+
+    multi_language_team.print_response("What are you capable of?", stream=True)
+    multi_language_team.print_response("Tell me about the history of AI?", stream=True)

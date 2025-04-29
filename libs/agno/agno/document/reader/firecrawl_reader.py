@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional
 
@@ -51,6 +52,21 @@ class FirecrawlReader(Reader):
             documents.append(Document(name=url, id=url, content=content))
         return documents
 
+    async def async_scrape(self, url: str) -> List[Document]:
+        """
+        Asynchronously scrapes a website and returns a list of documents.
+
+        Args:
+            url: The URL of the website to scrape
+
+        Returns:
+            A list of documents
+        """
+        log_debug(f"Async scraping: {url}")
+
+        # Use asyncio.to_thread to run the synchronous scrape in a thread
+        return await asyncio.to_thread(self.scrape, url)
+
     def crawl(self, url: str) -> List[Document]:
         """
         Crawls a website and returns a list of documents.
@@ -81,19 +97,51 @@ class FirecrawlReader(Reader):
 
         return documents
 
-    def read(self, url: str) -> List[Document]:
+    async def async_crawl(self, url: str) -> List[Document]:
         """
+        Asynchronously crawls a website and returns a list of documents.
 
         Args:
-            url: The URL of the website to scrape
+            url: The URL of the website to crawl
 
         Returns:
             A list of documents
         """
+        log_debug(f"Async crawling: {url}")
 
+        # Use asyncio.to_thread to run the synchronous crawl in a thread
+        return await asyncio.to_thread(self.crawl, url)
+
+    def read(self, url: str) -> List[Document]:
+        """
+        Reads from a URL based on the mode setting.
+
+        Args:
+            url: The URL of the website to process
+
+        Returns:
+            A list of documents
+        """
         if self.mode == "scrape":
             return self.scrape(url)
         elif self.mode == "crawl":
             return self.crawl(url)
+        else:
+            raise NotImplementedError(f"Mode {self.mode} not implemented")
+
+    async def async_read(self, url: str) -> List[Document]:
+        """
+        Asynchronously reads from a URL based on the mode setting.
+
+        Args:
+            url: The URL of the website to process
+
+        Returns:
+            A list of documents
+        """
+        if self.mode == "scrape":
+            return await self.async_scrape(url)
+        elif self.mode == "crawl":
+            return await self.async_crawl(url)
         else:
             raise NotImplementedError(f"Mode {self.mode} not implemented")

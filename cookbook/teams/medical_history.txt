@@ -1,0 +1,81 @@
+# Medical History Report – Thandiwe Mokoena
+
+**Age:** 28  
+**Sex:** Female  
+**Ethnicity:** Black South African  
+**Occupation:** Primary School Teacher  
+**Location:** Cape Town, South Africa  
+
+---
+
+## 🩺 Chief Complaint
+
+Persistent abdominal pain and diarrhea over the past three months.
+
+---
+
+## 📖 History of Present Illness
+
+Thandiwe reports a three-month history of intermittent crampy abdominal pain, predominantly in the right lower quadrant. She experiences 4–6 loose, non-bloody stools daily, often accompanied by urgency. Over the past month, she has noticed increased fatigue and an unintended weight loss of approximately 5 kg. She denies any recent travel, antibiotic use, or dietary changes.
+
+---
+
+## 🧾 Past Medical History
+
+- No prior chronic illnesses  
+- Appendectomy at age 12  
+- No known drug allergies  
+
+---
+
+## 👨‍👩‍👧 Family History
+
+- **Mother:** Hypertension  
+- **Father:** Type 2 Diabetes Mellitus  
+- No family history of gastrointestinal diseases  
+
+---
+
+## 🌍 Social History
+
+- Non-smoker  
+- Occasional alcohol consumption  
+- Engages in regular physical activity  
+
+---
+
+## ✅ Review of Systems
+
+- **General:** Reports fatigue and weight loss  
+- **Gastrointestinal:** Abdominal pain, diarrhea, occasional nausea  
+- **Other systems:** No fevers, skin rashes, or joint pains reported  
+
+---
+
+## 🧑‍⚕️ Physical Examination
+
+- **Vital Signs:**
+  - BP: 118/76 mmHg
+  - HR: 82 bpm
+  - Temp: 37.2°C
+  - RR: 16 breaths/min
+- **General:** Alert and oriented; appears mildly fatigued  
+- **Abdomen:** Soft with tenderness in the right lower quadrant; no rebound tenderness or guarding; no palpable masses  
+- **Perianal Examination:** Normal; no fissures or fistulas observed  
+
+---
+
+## 🧪 Laboratory Investigations
+
+- **CBC:**
+  - Hemoglobin: 10.5 g/dL (mild anemia)
+  - WBC: 9.8 x10⁹/L  
+- **CRP:** Elevated at 25 mg/L  
+- **ESR:** Elevated at 40 mm/hr  
+- **Stool Studies:** Negative for pathogens; fecal calprotectin elevated  
+
+---
+
+## 🖥 Imaging and Endoscopy
+
+- **Colonoscopy:** Patchy areas of inflammation with ulcerations in the terminal ileum; cobblestone appearance noted  

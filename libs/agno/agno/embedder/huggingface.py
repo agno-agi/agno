@@ -19,6 +19,7 @@ class HuggingfaceCustomEmbedder(Embedder):
 
     id: str = "jinaai/jina-embeddings-v2-base-code"
     api_key: Optional[str] = getenv("HUGGINGFACE_API_KEY")
+    task: str = "feature-extraction"
     client_params: Optional[Dict[str, Any]] = None
     huggingface_client: Optional[InferenceClient] = None
 
@@ -35,7 +36,7 @@ class HuggingfaceCustomEmbedder(Embedder):
         return self.huggingface_client
 
     def _response(self, text: str):
-        return self.client.post(json={"inputs": text}, model=self.id)
+        return self.client.post(json={"inputs": text}, model=self.id, task=self.task)
 
     def get_embedding(self, text: str) -> List[float]:
         response = self._response(text=text)

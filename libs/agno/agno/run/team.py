@@ -37,6 +37,8 @@ class TeamRunResponse:
 
     response_audio: Optional[AudioResponse] = None  # Model audio response
 
+    reasoning_content: Optional[str] = None
+
     citations: Optional[Citations] = None
 
     extra_data: Optional[RunResponseExtraData] = None
@@ -46,7 +48,8 @@ class TeamRunResponse:
         _dict = {
             k: v
             for k, v in asdict(self).items()
-            if v is not None and k not in ["messages", "extra_data", "images", "videos", "audio", "response_audio"]
+            if v is not None
+            and k not in ["messages", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
         }
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
@@ -68,6 +71,9 @@ class TeamRunResponse:
 
         if self.member_responses:
             _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
+
+        if self.citations is not None:
+            _dict["citations"] = self.citations.model_dump(exclude_none=True)
 
         if isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
