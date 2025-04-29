@@ -5,8 +5,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
-from bs4 import BeautifulSoup, Tag
-
 from agno.document.base import Document
 from agno.document.reader.base import Reader
 from agno.utils.log import log_debug, logger
