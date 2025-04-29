@@ -369,23 +369,9 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params()
-            # Check if the last assistant message has a previous_response_id to continue from
-            if self.id.startswith(("o3", "o4-mini")):
-                request_params["store"] = True
-                previous_response_id = None
-                for msg in reversed(messages):
-                    if (
-                        msg.role == "assistant"
-                        and hasattr(msg, "provider_data")
-                        and msg.provider_data
-                        and "response_id" in msg.provider_data
-                    ):
-                        previous_response_id = msg.provider_data["response_id"]
-                        log_debug(f"Using previous_response_id: {previous_response_id}")
-                        break
 
-                if previous_response_id:
-                    request_params["previous_response_id"] = previous_response_id
+            # Handle reasoning tools for o3 and o4-mini models
+            request_params = self._handle_parameters_for_reasoning_models(messages, request_params)
 
             if self._tools:
                 request_params["tools"] = self._format_tool_params(messages=messages)
@@ -442,23 +428,8 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params()
-            # Check if the last assistant message has a previous_response_id to continue from
-            if self.id.startswith(("o3", "o4-mini")):
-                request_params["store"] = True
-                previous_response_id = None
-                for msg in reversed(messages):
-                    if (
-                        msg.role == "assistant"
-                        and hasattr(msg, "provider_data")
-                        and msg.provider_data
-                        and "response_id" in msg.provider_data
-                    ):
-                        previous_response_id = msg.provider_data["response_id"]
-                        log_debug(f"Using previous_response_id: {previous_response_id}")
-                        break
-
-                if previous_response_id:
-                    request_params["previous_response_id"] = previous_response_id
+            # Handle reasoning tools for o3 and o4-mini models
+            request_params = self._handle_parameters_for_reasoning_models(messages, request_params)
 
             if self._tools:
                 request_params["tools"] = self._format_tool_params(messages=messages)
@@ -828,3 +799,37 @@ class OpenAIResponses(Model):
 
     def parse_provider_response_delta(self, response: Any) -> ModelResponse:  # type: ignore
         pass
+
+    def _handle_parameters_for_reasoning_models(
+        self, messages: List[Message], request_params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Handle specific parameters needed for models that support reasoning tools (o3, o4-mini)
+
+        Args:
+            messages: List of messages in the conversation
+            request_params: Current request parameters
+
+        Returns:
+            Updated request parameters dict
+        """
+        if self.id.startswith(("o3", "o4-mini")):
+            request_params["store"] = True
+
+            # Check if the last assistant message has a previous_response_id to continue from
+            previous_response_id = None
+            for msg in reversed(messages):
+                if (
+                    msg.role == "assistant"
+                    and hasattr(msg, "provider_data")
+                    and msg.provider_data
+                    and "response_id" in msg.provider_data
+                ):
+                    previous_response_id = msg.provider_data["response_id"]
+                    log_debug(f"Using previous_response_id: {previous_response_id}")
+                    break
+
+            if previous_response_id:
+                request_params["previous_response_id"] = previous_response_id
+
+        return request_params
