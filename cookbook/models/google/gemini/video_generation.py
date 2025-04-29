@@ -1,4 +1,3 @@
-# hello
 """🔧 Example: Using the GeminiTools Toolkit for Video Generation
 
 An Agent using the Gemini video generation tool.
