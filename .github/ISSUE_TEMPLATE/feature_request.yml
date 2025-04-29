@@ -52,17 +52,17 @@ body:
     validations:
       required: false
 
-  - type: checkboxes
+  - type: checkbox
     id: work-on-this
     attributes:
       label: Would you like to work on this?
       description: We welcome contributions! Let us know if you'd like to help implement this feature.
       options:
         - label: "Yes, I’d love to work on it!"
-          value: "yes"
+          checked: false
         - label: "I’m open to collaborating but need guidance."
-          value: "guidance"
+          checked: false
         - label: "No, I’m just sharing the idea."
-          value: "no"
+          checked: false
     validations:
       required: false
