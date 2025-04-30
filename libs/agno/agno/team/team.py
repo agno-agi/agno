@@ -6346,8 +6346,8 @@ class Team:
             "members": [
                 {
                     **(member.get_agent_config_dict() if isinstance(member, Agent) else member.to_platform_dict() if isinstance(member, Team) else {}),
-                    "agent_id": member.agent_id if hasattr(member, "agent_id") else None,
-                    "team_id": member.team_id if hasattr(member, "team_id") else None
+                    "agent_id": member.agent_id if isinstance(member, Agent) and member.agent_id is not None else str(uuid4()),
+                    "team_id": member.team_id if isinstance(member, Agent) and member.team_id is not None else str(uuid4())
                 } 
                 for member in self.members if member is not None
             ],
