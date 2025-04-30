@@ -13,7 +13,7 @@ from agno.utils.log import log_warning
 @dataclass
 class LlamaOpenAI(OpenAILike):
     """
-    Class for interacting with the Llama API.
+    Class for interacting with the Llama API via OpenAI-like interface.
 
     Attributes:
         id (str): The ID of the language model.

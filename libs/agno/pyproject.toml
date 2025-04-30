@@ -60,6 +60,7 @@ ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
 lmstudio = ["lmstudio"]
 litellm = ["litellm"]
+meta = ["llama-api-client"]
 
 # Dependencies for Tools
 cartesia = ["cartesia"]
@@ -132,7 +133,8 @@ models = [
   "agno[ollama]",
   "agno[openai]",
   "agno[ibm]",
-  "agno[litellm]"
+  "agno[litellm]",
+  "agno[meta]"
 ]
 
 # All tools

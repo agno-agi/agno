@@ -29,13 +29,14 @@ except (ImportError, ModuleNotFoundError):
 @dataclass
 class Llama(Model):
     """
-    A class for interacting with Llama models using the Llama API.
+    A class for interacting with Llama models using the Llama API using the Llama SDK.
     """
 
     id: str = "Llama-4-Maverick-17B-128E-Instruct-FP8"
     name: str = "Llama"
     provider: str = "Llama"
     supports_native_structured_outputs: bool = False
+    supports_json_schema_outputs: bool = True
 
     # Request parameters
     max_completion_tokens: Optional[int] = None
@@ -61,18 +62,6 @@ class Llama(Model):
     # OpenAI clients
     client: Optional[LlamaAPIClient] = None
     async_client: Optional[AsyncLlamaAPIClient] = None
-
-    # Internal parameters. Not used for API requests
-    # Whether to use the structured outputs with this Model.
-    structured_outputs: bool = False
-
-    # The role to map the message role to.
-    role_map = {
-        "system": "system",
-        "user": "user",
-        "assistant": "assistant",
-        "tool": "tool",
-    }
 
     def _get_client_params(self) -> Dict[str, Any]:
         # Fetch API key from env if not already set
@@ -163,18 +152,13 @@ class Llama(Model):
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
 
-        # Support for structured outputs/response_model, see reference here- https://github.com/meta-llama/llama-api-python/blob/main/examples/structured.py
-        if self.response_format is not None and self.structured_outputs:
-            if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
-                schema = self.response_format.model_json_schema()
-                request_params["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {"name": self.response_format.__name__, "schema": schema},
-                }
+        if self.response_format is not None:
+            request_params["response_format"] = self.response_format
 
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
         return request_params
 
     def to_dict(self) -> Dict[str, Any]:
@@ -200,10 +184,6 @@ class Llama(Model):
         )
         if self._tools is not None:
             model_dict["tools"] = self._tools
-            if self.tool_choice is not None:
-                model_dict["tool_choice"] = self.tool_choice
-            else:
-                model_dict["tool_choice"] = "auto"
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
@@ -218,7 +198,7 @@ class Llama(Model):
             Dict[str, Any]: The formatted message.
         """
         message_dict: Dict[str, Any] = {
-            "role": self.role_map[message.role],
+            "role": message.role,
             "content": message.content,
             "name": message.name,
             "tool_call_id": message.tool_call_id,
@@ -458,7 +438,7 @@ class Llama(Model):
                 log_warning(f"Error processing tool calls: {e}")
 
         # Add metrics from the metrics list
-        if hasattr(response, "metrics") and response.metrics:
+        if hasattr(response, "metrics") and response.metrics is not None:
             usage_data = {}
             for metric in response.metrics:
                 if metric.metric == "num_prompt_tokens":
@@ -491,7 +471,7 @@ class Llama(Model):
             delta = response_delta.event
 
             # Handle metrics event - this comes as a separate event type at the end of the stream
-            if delta.event_type == "metrics" and delta.metrics:
+            if delta.event_type == "metrics" and delta.metrics is not None:
                 usage_data = {}
                 prompt_tokens = 0
                 completion_tokens = 0

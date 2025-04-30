@@ -30,7 +30,6 @@ structured_output_agent = Agent(
     model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
     description="You write movie scripts.",
     response_model=MovieScript,
-    debug_mode=True,
 )
 
 structured_output_agent.print_response("New York")

@@ -1,3 +1,5 @@
+"""Run `pip llama-api-client` to install dependencies."""
+
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.meta import Llama
 
