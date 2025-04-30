@@ -223,8 +223,9 @@ financial_news_team = Team(
 playground = Playground(
     teams=[research_team, financial_news_team, multimodal_team],
     agents=[web_agent, finance_agent, research_agent, simple_agent],
-    name="Financial Teams Demo",
-    app_id="financial-teams-demo",
+    name="Playground Demo app",
+    description="This is a demo app for the Playground.",
+    app_id="playground-demo-app",
     monitoring=True,
 )
 

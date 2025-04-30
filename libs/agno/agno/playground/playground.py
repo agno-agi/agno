@@ -36,6 +36,7 @@ class Playground:
         router: Optional[APIRouter] = None,
         app_id: Optional[str] = None,
         name: Optional[str] = None,
+        description: Optional[str] = None,
         monitoring: bool = False,
     ):
         if not agents and not workflows and not teams:
@@ -51,7 +52,7 @@ class Playground:
         self.app_id: Optional[str] = app_id
         self.name: Optional[str] = name
         self.monitoring = monitoring
-
+        self.description = description
         if self.agents:
             for agent in self.agents:
                 if not agent.agent_id:
@@ -260,7 +261,8 @@ class Playground:
                 } for team in self.teams
             ] if self.teams else [],
             "endpoint": self.endpoints_created,
-            "type": "playground"
+            "type": "playground",
+            "description": self.description
         }
         print(payload, "this is payload")
         return payload
