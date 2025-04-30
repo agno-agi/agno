@@ -5,10 +5,9 @@ from typing import Any, Dict, Optional
 import httpx
 from openai import AsyncOpenAI as AsyncOpenAIClient
 
-from agno.exceptions import ModelProviderError
 from agno.models.meta.llama import Message
 from agno.models.openai.like import OpenAILike
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_warning
 
 
 @dataclass
