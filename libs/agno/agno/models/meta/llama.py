@@ -4,6 +4,7 @@ from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Union
 
 import httpx
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
@@ -161,6 +162,15 @@ class Llama(Model):
         # Add tools
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
+
+        # Support for structured outputs/response_model
+        if self.response_format is not None and self.structured_outputs:
+            if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+                schema = self.response_format.model_json_schema()
+                request_params["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {"name": self.response_format.__name__, "schema": schema},
+                }
 
         # Add additional request params if provided
         if self.request_params:
@@ -400,6 +410,19 @@ class Llama(Model):
 
         # Get response message
         response_message = response.completion_message
+
+        # Parse structured outputs if enabled
+        try:
+            if (
+                self.response_format is not None
+                and self.structured_outputs
+                and issubclass(self.response_format, BaseModel)
+            ):
+                parsed_object = response_message.content  # type: ignore
+                if parsed_object is not None:
+                    model_response.parsed = parsed_object
+        except Exception as e:
+            log_warning(f"Error retrieving structured outputs: {e}")
 
         # Add role
         if response_message.role is not None:
