@@ -526,6 +526,7 @@ def test_get_repository_stars(mock_github):
     assert "error" in result_data
     assert "Repository not found" in result_data["error"]
 
+
 def test_get_pull_request_comments(mock_github):
     """Test getting comments on a pull request."""
     mock_client, mock_repo = mock_github
@@ -698,6 +699,7 @@ def test_edit_pull_request_comment(mock_github):
         result_data = json.loads(result)
         assert "error" in result_data
         assert "Permission denied" in result_data["error"]
+
 
 def test_create_repository(mock_github):
     """Test creating a new repository."""
