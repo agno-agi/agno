@@ -163,7 +163,7 @@ class Llama(Model):
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
 
-        # Support for structured outputs/response_model
+        # Support for structured outputs/response_model, see reference here- https://github.com/meta-llama/llama-api-python/blob/main/examples/structured.py
         if self.response_format is not None and self.structured_outputs:
             if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
                 schema = self.response_format.model_json_schema()
