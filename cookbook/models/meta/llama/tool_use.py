@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search` to install dependencies."""
+"""Run `pip install agno llama-api-client duckduckgo-search` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.meta import Llama
