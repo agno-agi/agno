@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.4.2"
+version = "1.4.3"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -294,6 +294,7 @@ module = [
   "langchain.*",
   "litellm.*",
   "llama_index.*",
+  "llama_api_client.*",
   "litellm.*",
   "mem0.*",
   "mcp.*",
