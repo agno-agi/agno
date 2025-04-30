@@ -510,7 +510,6 @@ class Llama(Model):
 
                 if usage_data:
                     model_response.response_usage = usage_data
-                    return model_response  # Return early with just the metrics
 
             if isinstance(delta.delta, EventDeltaTextDelta):
                 model_response.content = delta.delta.text
