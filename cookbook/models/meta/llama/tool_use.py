@@ -7,6 +7,5 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 agent = Agent(
     model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
     tools=[DuckDuckGoTools()],
-    markdown=True,
 )
-agent.print_response("Tell me about Llama API")
+agent.print_response("Tell me the latest news about Llama API")
