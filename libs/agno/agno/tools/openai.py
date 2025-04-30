@@ -27,6 +27,7 @@ class OpenAITools(Toolkit):
         enable_transcription: bool = True,
         enable_image_generation: bool = True,
         enable_speech_generation: bool = True,
+        transcription_model: str = "whisper-1",
         text_to_speech_voice: OpenAIVoice = "alloy",
         text_to_speech_model: OpenAITTSModel = "tts-1",
         text_to_speech_format: OpenAITTSFormat = "mp3",
@@ -39,6 +40,7 @@ class OpenAITools(Toolkit):
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
 
+        self.transcription_model = transcription_model
         # Store TTS defaults
         self.tts_voice = text_to_speech_voice
         self.tts_model = text_to_speech_model
@@ -61,10 +63,13 @@ class OpenAITools(Toolkit):
         """
         log_debug(f"Transcribing audio from {audio_path}")
         try:
-            with open(audio_path, "rb") as audio_file:
-                transcript = OpenAIClient().audio.transcriptions.create(
-                    model="whisper-1", file=audio_file, response_format="srt"
-                )
+            audio_file = open(audio_path, "rb")
+
+            transcript = OpenAIClient().audio.transcriptions.create(
+                model=self.transcription_model,
+                file=audio_file,
+                response_format="text",
+            )
         except Exception as e:  # type: ignore[return]
             log_error(f"Failed to transcribe audio: {str(e)}")
             return f"Failed to transcribe audio: {str(e)}"
