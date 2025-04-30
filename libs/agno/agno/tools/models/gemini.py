@@ -7,10 +7,11 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.media import ImageArtifact, VideoArtifact
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_info
 
 try:
     from google.genai import Client
+    from google.genai.types import GenerateImagesResponse, GenerateVideosOperation
 except (ModuleNotFoundError, ImportError):
     raise ImportError("`google-genai` not installed. Please install using `pip install google-genai`")
 
@@ -44,12 +45,12 @@ class GeminiTools(Toolkit):
         # Prepare client parameters
         client_params: dict[str, Any] = {}
         if self.vertexai:
-            log_debug("Using Vertex AI API")
+            log_info("Using Vertex AI API")
             client_params["vertexai"] = True
             client_params["project"] = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
             client_params["location"] = self.location or getenv("GOOGLE_CLOUD_LOCATION")
         else:
-            log_debug("Using Gemini API")
+            log_info("Using Gemini API")
             client_params["api_key"] = self.api_key
 
         try:
@@ -76,7 +77,7 @@ class GeminiTools(Toolkit):
         """
 
         try:
-            response: Any = self.client.models.generate_images(
+            response: GenerateImagesResponse = self.client.models.generate_images(
                 model=self.image_model,
                 prompt=prompt,
             )
@@ -129,7 +130,7 @@ class GeminiTools(Toolkit):
         from google.genai.types import GenerateVideosConfig
 
         try:
-            operation: Any = self.client.models.generate_videos(
+            operation: GenerateVideosOperation = self.client.models.generate_videos(
                 model=self.video_model,
                 prompt=prompt,
                 config=GenerateVideosConfig(
