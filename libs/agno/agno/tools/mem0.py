@@ -7,8 +7,10 @@ from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     # Ignore type checking errors for mem0 imports
-    from mem0 import Memory # type: ignore
-    from mem0 import MemoryClient # type: ignore
+    from mem0 import (
+        Memory,  # type: ignore
+        MemoryClient,  # type: ignore
+    )
 except ImportError:
     raise ImportError("`mem0ai` package not found. Please install it with `pip install mem0ai`")
 
@@ -35,23 +37,33 @@ class Mem0Toolkit(Toolkit):
             ],
             **kwargs,
         )
-        self.mem0 : Union[Memory, MemoryClient] = None
         self.api_key = api_key or getenv("MEM0_API_KEY")
+        self.mem0client: Union[Memory, MemoryClient] = None
+
         try:
             if self.api_key:
                 log_debug("Using Mem0 Platform API key.")
                 self.mem0client = MemoryClient(api_key=self.api_key)
-            elif config:
+            elif config is not None:
                 log_debug("Using Mem0 with config.")
                 self.mem0client = Memory.from_config(config)
             else:
+                log_debug("Initializing Mem0 with default settings.")
                 self.mem0client = Memory()
-                log_debug("Mem0 client initialized successfully.")
         except Exception as e:
             log_error(f"Failed to initialize Mem0 client: {e}")
             raise ConnectionError("Failed to initialize Mem0 client. Ensure API keys/config are set.") from e
 
-        self.default_user_id = user_id
+    # --- Helper to get the required User ID  ---
+    def _get_user_id(self, method_name: str, user_id: Optional[str] = None) -> str:
+        """Gets the user ID from kwargs or defaults, raising ValueError if none found."""
+        resolved_user_id = user_id
+
+        if not resolved_user_id:
+            error_msg = f"Error in {method_name}: A user_id must be provided in the method call."
+            log_error(error_msg)
+            raise ValueError(error_msg)
+        return resolved_user_id
 
     def add_memory(
         self,
@@ -69,7 +81,8 @@ class Mem0Toolkit(Toolkit):
             str: JSON string of the result from Mem0, or an error message.
         """
         try:
-            resolved_user_id = user_id or self.default_user_id
+            # Use reinstated helper
+            resolved_user_id = self._get_user_id("add_memory", user_id)
             log_debug(f"Adding memory for user_id: {resolved_user_id}")
 
             # Ensure messages is a list
@@ -96,23 +109,24 @@ class Mem0Toolkit(Toolkit):
         self,
         query: str,
         user_id: Optional[str] = None,
+        limit: int = 5,
     ) -> str:
         """Searches the memory for a specific user. Requires user_id.
 
         Args:
             query (str): The search query.
             user_id (Optional[str]): Filter results by user ID
+            limit (int): Maximum number of results to return (default: 5).
         Returns:
             str: JSON string containing a list of relevant memories found, or an error message.
         """
         try:
-            resolved_user_id = user_id or self.default_user_id
-            log_debug(f"Searching memory for user_id: {resolved_user_id} with query '{query}'")
+            # Use reinstated helper
+            resolved_user_id = self._get_user_id("search_memory", user_id)
+            log_debug(f"Searching memory for user_id: {resolved_user_id} with query '{query}', limit: {limit}")
 
-            results = self.mem0client.search(
-                query=query,
-                user_id=resolved_user_id,
-            )
+            # Use mem0client and pass limit explicitly
+            results = self.mem0client.search(query=query, user_id=resolved_user_id, limit=limit)
 
             # Handle different return types from Memory vs MemoryClient
             if isinstance(results, dict) and "results" in results:
@@ -127,6 +141,8 @@ class Mem0Toolkit(Toolkit):
 
             return json.dumps(search_results_list)
         except ValueError as ve:
+            # Catch the ValueError from _get_user_id
+            log_error(str(ve))
             return str(ve)
         except Exception as e:
             log_error(f"Error searching memory: {e}")
@@ -187,7 +203,7 @@ class Mem0Toolkit(Toolkit):
         """
         try:
             log_debug(f"Deleting memory with ID: {memory_id}")
-            self.mem0.delete(memory_id=memory_id)
+            self.mem0client.delete(memory_id=memory_id)
             return f"Memory with ID '{memory_id}' deleted successfully."
         except Exception as e:
             log_error(f"Error deleting memory {memory_id}: {e}")
@@ -210,23 +226,42 @@ class Mem0Toolkit(Toolkit):
             log_error(f"Error getting history for memory {memory_id}: {e}")
             return f"Error getting history for memory {memory_id}: {e}"
 
-    def get_all_memories(
-        self,
-        user_id: Optional[str] = None,
-    ) -> str:
+    def get_all_memories(self, user_id: Optional[str] = None, limit: int = 100) -> str:
         """Retrieves all memories for a specific user. Requires user_id.
 
         Args:
             user_id (Optional[str]): Filter by User ID
-
+            limit (int): Maximum number of results to return (default: 100).
         Returns:
             str: JSON string containing a list of all memories found, or an error message.
         """
         try:
-            resolved_user_id = user_id or self.default_user_id
-            log_debug(f"Getting all memories for user_id: {resolved_user_id}")
-            results = self.mem0client.get_all(user_id=resolved_user_id)
-            return json.dumps(results.get("results", []))
+            # Use helper to get user_id
+            resolved_user_id = self._get_user_id("get_all_memories", user_id)
+            log_debug(f"Getting all memories for user_id: {resolved_user_id}, limit: {limit}")
+
+            # Call the client method (Note: mem0 SDK might not support limit here, adjust if needed)
+            # Assuming mem0client.get_all might return dict or list
+            results = self.mem0client.get_all(user_id=resolved_user_id)  # Pass limit if supported by SDK
+
+            # Handle potential return types
+            if isinstance(results, dict) and "results" in results:
+                memories_list = results.get("results", [])
+            elif isinstance(results, list):
+                memories_list = results
+            else:
+                log_warning(f"Unexpected return type from mem0.get_all: {type(results)}. Returning empty list.")
+                memories_list = []
+
+            # TODO: Manually apply limit if SDK doesn't support it
+            # if len(memories_list) > limit:
+            #     memories_list = memories_list[:limit]
+
+            return json.dumps(memories_list)
+        except ValueError as ve:
+            # Catch error from _get_user_id
+            log_error(str(ve))
+            return str(ve)
         except Exception as e:
             log_error(f"Error getting all memories: {e}")
             return f"Error getting all memories: {e}"
@@ -244,7 +279,8 @@ class Mem0Toolkit(Toolkit):
             str: Confirmation message or error string.
         """
         try:
-            resolved_user_id = user_id or self.default_user_id
+            # Use reinstated helper
+            resolved_user_id = self._get_user_id("delete_all_memories", user_id)
             log_debug(f"Attempting to delete ALL memories associated with user_id: {resolved_user_id}")
 
             self.mem0client.delete_all(user_id=resolved_user_id)

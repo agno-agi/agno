@@ -232,16 +232,16 @@ agent.print_response("What do you know about me?")
 #     **Tool Usage Guidelines:**
 
 #     1.  **`add_memory`**: Call this after processing user messages with new info.
-#         - You MUST include `user_id='{USER_ID + "-api"}'`. 
+#         - You MUST include `user_id='{USER_ID + "-api"}'`.
 #         - The `messages` argument **MUST** be a LIST containing one or more dictionaries.
-#         - **EACH dictionary** in the list **MUST** strictly follow the format: `{{'role': 'user', 'content': '...'}}` or `{{'role': 'assistant', 'content': '...'}}`. 
+#         - **EACH dictionary** in the list **MUST** strictly follow the format: `{{'role': 'user', 'content': '...'}}` or `{{'role': 'assistant', 'content': '...'}}`.
 #         - Use `'user'` for the user's message and `'assistant'` for your previous responses if relevant.
 #         - **CRITICAL:** Do NOT invent other keys like 'hobby', 'name', 'event'. The ONLY allowed keys in the dictionary are `'role'` and `'content'`.
 #         - **Correct Example:** `add_memory(messages=[{{'role': 'user', 'content': 'My hobby is painting.'}}], user_id='{USER_ID + "-api"}')`
 #         - **Incorrect Example:** `add_memory(messages={{'hobby': 'painting'}}, user_id='{USER_ID + "-api"}')`
 
 #     2.  **`search_memory`**: Call this to find relevant past information.
-#         - You MUST include `user_id='{USER_ID + "-api"}'`. 
+#         - You MUST include `user_id='{USER_ID + "-api"}'`.
 #         - Example: `search_memory(query='user hobby', user_id='{USER_ID + "-api"}')`
 
 #     (Include descriptions for other tools: get_memory, update_memory, delete_memory, get_all_memories, delete_all_memories, get_memory_history as in the previous example, ensuring user_id is set to '{USER_ID + "-api"}')
