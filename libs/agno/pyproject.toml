@@ -294,7 +294,7 @@ module = [
   "langchain.*",
   "litellm.*",
   "llama_index.*",
-  "llama-api-client.*",
+  "llama_api_client.*",
   "litellm.*",
   "mem0.*",
   "mcp.*",
