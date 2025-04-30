@@ -7,6 +7,7 @@ from agno.agent.agent import Agent, RunResponse
 from agno.team.team import Team
 from .security import validate_webhook_signature
 from .wappreq import VERIFY_TOKEN
+from agno.tools.whatsapp import WhatsAppTools
 logger = logging.getLogger(__name__)
 def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
     router = APIRouter()
@@ -74,7 +75,7 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
 
                     # Generate and send response
                     response = agent.run(message_text,user_id=phone_number)
-                    agent.tools[0].send_text_message_sync(
+                    WhatsAppTools().send_text_message_sync(
                         recipient=phone_number, text=response.content
                     )
                     logger.info(f"Response:- \n {response.content}\n sent to {phone_number}")

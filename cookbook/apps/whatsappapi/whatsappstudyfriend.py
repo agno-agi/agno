@@ -37,7 +37,7 @@ StudyBuddy = Agent(
     storage=SqliteStorage(
         table_name="agent_sessions", db_file="tmp/persistent_memory.db"
     ),
-    tools=[WhatsAppTools(), DuckDuckGoTools(), YouTubeTools()],
+    tools=[DuckDuckGoTools(), YouTubeTools()],
     description=dedent("""\
         You are StudyBuddy, an expert educational mentor with deep expertise in personalized learning! 📚
 

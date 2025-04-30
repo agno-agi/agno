@@ -5,6 +5,7 @@ from fastapi.responses import PlainTextResponse
 
 from agno.agent.agent import Agent, RunResponse
 from agno.team.team import Team
+from agno.tools.whatsapp import WhatsAppTools
 
 from .security import validate_webhook_signature
 from .wappreq import VERIFY_TOKEN
@@ -75,8 +76,11 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                     logger.info(f"Processing message from {phone_number}: {message_text}")
 
                     # Generate and send response
-                    response = agent.run(message_text,user_id=phone_number)
-                    agent.tools[0].send_text_message_sync(
+                    if agent:
+                        response = agent.run(message_text,user_id=phone_number)
+                    elif team:
+                        response = team.run(message_text,user_id=phone_number)
+                    WhatsAppTools().send_text_message_sync(
                         recipient=phone_number, text=response.content
                     )
                     logger.info(f"Response \n {response.content} \n sent to {phone_number}")

@@ -8,7 +8,7 @@ from agno.tools.whatsapp import WhatsAppTools
 basic_agent = Agent(
     name="Basic Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[WhatsAppTools(), DuckDuckGoTools()],
+    tools=[DuckDuckGoTools()],
     add_history_to_messages=True,
     num_history_responses=3,
     add_datetime_to_instructions=True,
