@@ -490,6 +490,28 @@ class Llama(Model):
         if response_delta is not None:
             delta = response_delta.event
 
+            # Handle metrics event - this comes as a separate event type at the end of the stream
+            if delta.event_type == "metrics" and delta.metrics:
+                usage_data = {}
+                prompt_tokens = 0
+                completion_tokens = 0
+
+                for metric in delta.metrics:
+                    if metric.metric == "num_prompt_tokens":
+                        prompt_tokens = int(metric.value)
+                        usage_data["prompt_tokens"] = prompt_tokens
+                        usage_data["input_tokens"] = prompt_tokens
+                    elif metric.metric == "num_completion_tokens":
+                        completion_tokens = int(metric.value)
+                        usage_data["completion_tokens"] = completion_tokens
+                        usage_data["output_tokens"] = completion_tokens
+                    elif metric.metric == "num_total_tokens":
+                        usage_data["total_tokens"] = int(metric.value)
+
+                if usage_data:
+                    model_response.response_usage = usage_data
+                    return model_response  # Return early with just the metrics
+
             if isinstance(delta.delta, EventDeltaTextDelta):
                 model_response.content = delta.delta.text
 
