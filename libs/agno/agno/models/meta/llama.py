@@ -9,7 +9,7 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from llama_api_client import AsyncLlamaAPIClient, LlamaAPIClient
@@ -434,14 +434,30 @@ class Llama(Model):
             except Exception as e:
                 log_warning(f"Error processing tool calls: {e}")
 
+        # Add metrics from the metrics list
+        if hasattr(response, "metrics") and response.metrics:
+            usage_data = {}
+            for metric in response.metrics:
+                if metric.metric == "num_prompt_tokens":
+                    usage_data["prompt_tokens"] = int(metric.value)
+                    usage_data["input_tokens"] = int(metric.value)
+                elif metric.metric == "num_completion_tokens":
+                    usage_data["completion_tokens"] = int(metric.value)
+                    usage_data["output_tokens"] = int(metric.value)
+                elif metric.metric == "num_total_tokens":
+                    usage_data["total_tokens"] = int(metric.value)
+
+            if usage_data:
+                model_response.response_usage = usage_data
+
         return model_response
 
     def parse_provider_response_delta(self, response_delta: CreateChatCompletionResponseStreamChunk) -> ModelResponse:
         """
-        Parse the OpenAI streaming response into a ModelResponse.
+        Parse the Llama streaming response into a ModelResponse.
 
         Args:
-            response_delta: Raw response chunk from OpenAI
+            response_delta: Raw response chunk from the Llama API
 
         Returns:
             ModelResponse: Parsed response data
