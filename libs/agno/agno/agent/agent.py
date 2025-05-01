@@ -5566,14 +5566,14 @@ class Agent:
         filter_system_message = Message(
             role="system",
             content=(
-                "FOLLOW THIS PROMPT and give results accordingly-"
-                " The knowledge base contains documents with metadata that can be filtered by: {valid_filters_str}"
+                f"FOLLOW THIS PROMPT and give results accordingly-"
+                f" The knowledge base contains documents with metadata that can be filtered by: {valid_filters_str}."
                 " When users ask about specific entities (like 'Tell me about Jordan Mitchell' or 'Show me Asian recipes'),"
-                " you should intelligently determine relevant filters (like user_id='jordan_mitchell' or region='asia')"
+                " you should intelligently determine relevant filters (like user_id='<abc>' or region='asia')"
                 " Make 100 percent sure that you pick the right filters only from the valid metadata filters here: {self.knowledge.valid_metadata_filters}"
                 " to find the most relevant information."
                 " Give the filters in a fixed JSON format like this:\n"
-                '{"potential_filters": {"user_id": "jordan_mitchell", "region": "asia"}}'
+                '{"potential_filters": {"user_id": "abc", "document_type": "xyz"}}'
             ),
         )
         filter_user_message = Message(role="user", content=message)
