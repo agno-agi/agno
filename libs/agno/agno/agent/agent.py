@@ -1089,14 +1089,14 @@ class Agent:
         # For manual knowledge filters
         if self.knowledge_filters or knowledge_filters:
             # initialize metadata (specially required in case when load is commented out)
-            if not self.knowledge.filters_ready:
+            if not self.knowledge.filters_ready:  # type: ignore
                 self.knowledge.initialize_valid_filters()  # type: ignore
 
             self.effective_knowledge_filters = self._get_effective_filters(knowledge_filters)
 
         # For agentic knowledge filters
-        if self.enable_agentic_filters and self.knowledge.valid_metadata_filters:
-            potential_filters = self._get_potential_filters_response(message=message)
+        if self.enable_agentic_filters and self.knowledge.valid_metadata_filters:  # type: ignore
+            potential_filters = self._get_potential_filters_response(message=message)  # type: ignore
             parsed_potential_filters = self._parse_potential_filters(potential_filters)
 
             # Validate the filters given by agent
@@ -5562,7 +5562,7 @@ class Agent:
         """
         Helper to get the model's response for potential filters based on the user message.
         """
-        valid_filters_str = ", ".join(self.knowledge.valid_metadata_filters)
+        valid_filters_str = ", ".join(self.knowledge.valid_metadata_filters)  # type: ignore
         filter_system_message = Message(
             role="system",
             content=(
@@ -5578,7 +5578,7 @@ class Agent:
         )
         filter_user_message = Message(role="user", content=message)
         filter_messages = [filter_system_message, filter_user_message]
-        return self.model.response(messages=filter_messages)
+        return self.model.response(messages=filter_messages)  # type: ignore
 
     def _parse_potential_filters(self, model_filter_response) -> dict:
         """
