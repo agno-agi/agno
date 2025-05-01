@@ -895,13 +895,13 @@ class Agent:
 
         # Yield Updating Agent Memory event
         if self.stream_intermediate_steps:
-            run_resp:RunResponse = self.create_run_response(
+            run_resp: RunResponse = self.create_run_response(
                 content=self.run_response.content,
                 session_id=session_id,
                 event=RunEvent.updating_agent_memory,
             )
             yield run_resp
-            if run_resp.event==RunEvent.cancelled:
+            if run_resp.event == RunEvent.cancelled:
                 return
             if self.run_response.content != run_resp.content:
                 for m in reversed(self.run_response.messages):
@@ -1556,13 +1556,13 @@ class Agent:
 
         # Yield Updating Agent Memory event
         if self.stream_intermediate_steps:
-            run_resp:RunResponse = self.create_run_response(
+            run_resp: RunResponse = self.create_run_response(
                 content=self.run_response.content,
                 session_id=session_id,
                 event=RunEvent.updating_agent_memory,
             )
             yield run_resp
-            if run_resp.event==RunEvent.cancelled:
+            if run_resp.event == RunEvent.cancelled:
                 return
             if self.run_response.content != run_resp.content:
                 for m in reversed(self.run_response.messages):
