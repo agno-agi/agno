@@ -118,6 +118,9 @@ class Agent:
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Dict[str, Any]] = None
 
+    # Agent will decide and assign knowledge filters based on the context
+    enable_agentic_filters: Optional[bool] = False
+
     add_references: bool = False
     # Retrieval function to get references
     # This function, if provided, is used instead of the default search_knowledge function
@@ -300,6 +303,7 @@ class Agent:
         num_history_runs: int = 3,
         knowledge: Optional[AgentKnowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        enable_agentic_filters: Optional[bool] = False,
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
@@ -384,6 +388,7 @@ class Agent:
 
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
+        self.enable_agentic_filters = enable_agentic_filters
         self.add_references = add_references
         self.retriever = retriever
         self.references_format = references_format
@@ -1081,11 +1086,22 @@ class Agent:
 
         self.effective_knowledge_filters = None
 
+        # For manual knowledge filters
         if self.knowledge_filters or knowledge_filters:
             # initialize metadata (specially required in case when load is commented out)
-            self.knowledge.initialize_valid_filters()  # type: ignore
+            if not self.knowledge.filters_ready:
+                self.knowledge.initialize_valid_filters()  # type: ignore
 
             self.effective_knowledge_filters = self._get_effective_filters(knowledge_filters)
+
+        # For agentic knowledge filters
+        if self.enable_agentic_filters and self.knowledge.valid_metadata_filters:
+            potential_filters = self._get_potential_filters_response(message=message)
+            parsed_potential_filters = self._parse_potential_filters(potential_filters)
+
+            # Validate the filters given by agent
+            self.effective_knowledge_filters = self._get_effective_filters(parsed_potential_filters)
+            log_info(f"Filters used by Agent: {self.effective_knowledge_filters}")
 
         # If no retries are set, use the agent's default retries
         if retries is None:
@@ -5541,6 +5557,55 @@ class Agent:
             log_debug(f"Using knowledge filters: {effective_filters}")
 
         return effective_filters
+
+    def _get_potential_filters_response(self, message: str) -> ModelResponse:
+        """
+        Helper to get the model's response for potential filters based on the user message.
+        """
+        valid_filters_str = ", ".join(self.knowledge.valid_metadata_filters)
+        filter_system_message = Message(
+            role="system",
+            content=(
+                "FOLLOW THIS PROMPT and give results accordingly-"
+                " The knowledge base contains documents with metadata that can be filtered by: {valid_filters_str}"
+                " When users ask about specific entities (like 'Tell me about Jordan Mitchell' or 'Show me Asian recipes'),"
+                " you should intelligently determine relevant filters (like user_id='jordan_mitchell' or region='asia')"
+                " Make 100 percent sure that you pick the right filters only from the valid metadata filters here: {self.knowledge.valid_metadata_filters}"
+                " to find the most relevant information."
+                " Give the filters in a fixed JSON format like this:\n"
+                '{"potential_filters": {"user_id": "jordan_mitchell", "region": "asia"}}'
+            ),
+        )
+        filter_user_message = Message(role="user", content=message)
+        filter_messages = [filter_system_message, filter_user_message]
+        return self.model.response(messages=filter_messages)
+
+    def _parse_potential_filters(self, model_filter_response) -> dict:
+        """
+        Extracts the 'potential_filters' dict from the model's response content.
+        Returns an empty dict if not found or parsing fails.
+        """
+        import json
+        import re
+
+        # Step 1: Get the content string
+        content = getattr(model_filter_response, "content", None)
+        if not content:
+            content = str(model_filter_response)
+
+        # Step 2: Find the JSON block in the content
+        match = re.search(r'\{.*"potential_filters"\s*:\s*\{.*?\}\s*\}', content, re.DOTALL)
+        if not match:
+            return {}
+
+        json_str = match.group(0)
+
+        # Step 3: Parse the JSON
+        try:
+            data = json.loads(json_str)
+            return data.get("potential_filters", {})
+        except Exception:
+            return {}
 
     def cli_app(
         self,
