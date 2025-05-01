@@ -13,7 +13,7 @@ download_file(
 )
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4.1"),
     markdown=True,
     add_history_to_messages=True,
 )

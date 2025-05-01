@@ -11,8 +11,8 @@ from agno.media import AudioResponse
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning, log_debug
-from agno.utils.openai import audio_to_message, images_to_message, _format_file_for_message
+from agno.utils.log import log_error, log_warning
+from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 
 try:
     from openai import APIConnectionError, APIStatusError, RateLimitError
