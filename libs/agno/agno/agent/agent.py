@@ -5414,7 +5414,7 @@ class Agent:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
-                if isinstance(tool, Union[MCPTools, MultiMCPTools]):
+                if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if message:
