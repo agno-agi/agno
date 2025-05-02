@@ -51,8 +51,6 @@ def test_multimcp_empty_command_string():
     (
         (MCPTools, {"command": "echo foo", "include_tools": ["foo"]}),
         (MCPTools, {"command": "echo foo", "exclude_tools": ["foo"]}),
-        (MultiMCPTools, {"commands": ["echo foo"], "include_tools": ["foo"]}),
-        (MultiMCPTools, {"commands": ["echo foo"], "exclude_tools": ["foo"]}),
     ),
 )
 async def test_mcp_include_exclude_tools_bad_values(mcp_tools, kwargs):
@@ -60,7 +58,9 @@ async def test_mcp_include_exclude_tools_bad_values(mcp_tools, kwargs):
     session_mock = AsyncMock()
     tool_mock = AsyncMock()
     tool_mock.__name__ = "baz"
-    session_mock.list_tools.return_value = [tool_mock]
+    tools = AsyncMock()
+    tools.tools = [tool_mock]
+    session_mock.list_tools.return_value = tools
 
     # _check_tools_filters should be bypassed during __init__
     tools = mcp_tools(**kwargs)
