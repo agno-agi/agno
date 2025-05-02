@@ -376,7 +376,7 @@ class Memory:
 
         if memory_id not in self.memories[user_id]:  # type: ignore
             log_warning(f"Memory {memory_id} not found for user {user_id}")
-            return None    
+            return None
 
         del self.memories[user_id][memory_id]  # type: ignore
         if self.db:

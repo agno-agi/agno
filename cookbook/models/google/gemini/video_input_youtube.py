@@ -7,7 +7,10 @@ agent = Agent(
     markdown=True,
 )
 
-agent.print_response("Tell me about this video?", videos=[Video(url="https://www.youtube.com/watch?v=XinoY2LDdA0")])
+agent.print_response(
+    "Tell me about this video?",
+    videos=[Video(url="https://www.youtube.com/watch?v=XinoY2LDdA0")],
+)
 
 # Video upload via URL is also supported with Vertex AI
 
