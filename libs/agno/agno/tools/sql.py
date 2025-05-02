@@ -96,8 +96,8 @@ class SQLTools(Toolkit):
 
         try:
             log_debug(f"Describing table: {table_name}")
-            table_names = inspect(self.db_engine)
-            table_schema = table_names.get_columns(table_name, schema=self.schema)
+            inspector = inspect(self.db_engine)
+            table_schema = inspector.get_columns(table_name, schema=self.schema)
             return json.dumps(
                 [
                     {"name": column["name"], "type": str(column["type"]), "nullable": column["nullable"]}
