@@ -493,7 +493,6 @@ class Team:
         # Make sure for the team, we are using the team logger
         use_team_logger()
 
-
     @property
     def is_streamable(self) -> bool:
         return self.response_model is None
