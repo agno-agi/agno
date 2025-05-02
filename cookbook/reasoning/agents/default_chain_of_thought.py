@@ -10,8 +10,7 @@ from agno.models.openai import OpenAIChat
 reasoning_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     reasoning_model=OpenAIChat(
-        id="gpt-4o",
-        max_tokens=1200
+        id="gpt-4o", max_tokens=1200
     ),  # Should default to manual COT because it is not a native reasoning model
     markdown=True,
 )

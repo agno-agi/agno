@@ -13,3 +13,4 @@ agent = Agent(
 video_path = Path(__file__).parent.joinpath("sample_video.mp4")
 
 agent.print_response("Tell me about this video?", videos=[Video(filepath=video_path)])
+

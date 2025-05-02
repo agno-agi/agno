@@ -195,7 +195,7 @@ class OpenAIResponses(Model):
 
         if self._tools:
             request_params["tools"] = self._format_tool_params(messages=messages)
-            
+
         if self.tool_choice is not None:
             request_params["tool_choice"] = self.tool_choice
 
@@ -218,7 +218,7 @@ class OpenAIResponses(Model):
 
             if previous_response_id:
                 request_params["previous_response_id"] = previous_response_id
-                
+
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
@@ -498,7 +498,7 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params(messages=messages)
-                
+
             yield from self.get_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
@@ -791,7 +791,7 @@ class OpenAIResponses(Model):
                 stream_data=stream_data,
                 tool_use=tool_use,
             )
-            
+
             if model_response is not None:
                 yield model_response
 
