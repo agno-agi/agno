@@ -5404,10 +5404,13 @@ class Agent:
         """Run an interactive command-line interface to interact with the agent."""
 
         from rich.prompt import Prompt
+        from inspect import isawaitable
 
         # Ensuring the agent is not using our async MCP tools
         if self.tools is not None:
             for tool in self.tools:
+                if isawaitable(tool):
+                    raise NotImplementedError("Use `acli_app` to use async tools.")
                 if isinstance(tool, Union[MCPTools, MultiMCPTools]):
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
