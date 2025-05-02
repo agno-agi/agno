@@ -4,6 +4,7 @@ from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Union
 
 import httpx
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
@@ -28,13 +29,14 @@ except (ImportError, ModuleNotFoundError):
 @dataclass
 class Llama(Model):
     """
-    A class for interacting with Llama models using the Llama API.
+    A class for interacting with Llama models using the Llama API using the Llama SDK.
     """
 
     id: str = "Llama-4-Maverick-17B-128E-Instruct-FP8"
     name: str = "Llama"
     provider: str = "Llama"
     supports_native_structured_outputs: bool = False
+    supports_json_schema_outputs: bool = True
 
     # Request parameters
     max_completion_tokens: Optional[int] = None
@@ -60,18 +62,6 @@ class Llama(Model):
     # OpenAI clients
     client: Optional[LlamaAPIClient] = None
     async_client: Optional[AsyncLlamaAPIClient] = None
-
-    # Internal parameters. Not used for API requests
-    # Whether to use the structured outputs with this Model.
-    structured_outputs: bool = False
-
-    # The role to map the message role to.
-    role_map = {
-        "system": "system",
-        "user": "user",
-        "assistant": "assistant",
-        "tool": "tool",
-    }
 
     def _get_client_params(self) -> Dict[str, Any]:
         # Fetch API key from env if not already set
@@ -162,9 +152,13 @@ class Llama(Model):
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
 
+        if self.response_format is not None:
+            request_params["response_format"] = self.response_format
+
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
         return request_params
 
     def to_dict(self) -> Dict[str, Any]:
@@ -190,10 +184,6 @@ class Llama(Model):
         )
         if self._tools is not None:
             model_dict["tools"] = self._tools
-            if self.tool_choice is not None:
-                model_dict["tool_choice"] = self.tool_choice
-            else:
-                model_dict["tool_choice"] = "auto"
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
@@ -208,7 +198,7 @@ class Llama(Model):
             Dict[str, Any]: The formatted message.
         """
         message_dict: Dict[str, Any] = {
-            "role": self.role_map[message.role],
+            "role": message.role,
             "content": message.content,
             "name": message.name,
             "tool_call_id": message.tool_call_id,
@@ -401,6 +391,19 @@ class Llama(Model):
         # Get response message
         response_message = response.completion_message
 
+        # Parse structured outputs if enabled
+        try:
+            if (
+                self.response_format is not None
+                and self.structured_outputs
+                and issubclass(self.response_format, BaseModel)
+            ):
+                parsed_object = response_message.content  # type: ignore
+                if parsed_object is not None:
+                    model_response.parsed = parsed_object
+        except Exception as e:
+            log_warning(f"Error retrieving structured outputs: {e}")
+
         # Add role
         if response_message.role is not None:
             model_response.role = response_message.role
@@ -434,14 +437,30 @@ class Llama(Model):
             except Exception as e:
                 log_warning(f"Error processing tool calls: {e}")
 
+        # Add metrics from the metrics list
+        if hasattr(response, "metrics") and response.metrics is not None:
+            usage_data = {}
+            for metric in response.metrics:
+                if metric.metric == "num_prompt_tokens":
+                    usage_data["prompt_tokens"] = int(metric.value)
+                    usage_data["input_tokens"] = int(metric.value)
+                elif metric.metric == "num_completion_tokens":
+                    usage_data["completion_tokens"] = int(metric.value)
+                    usage_data["output_tokens"] = int(metric.value)
+                elif metric.metric == "num_total_tokens":
+                    usage_data["total_tokens"] = int(metric.value)
+
+            if usage_data:
+                model_response.response_usage = usage_data
+
         return model_response
 
     def parse_provider_response_delta(self, response_delta: CreateChatCompletionResponseStreamChunk) -> ModelResponse:
         """
-        Parse the OpenAI streaming response into a ModelResponse.
+        Parse the Llama streaming response into a ModelResponse.
 
         Args:
-            response_delta: Raw response chunk from OpenAI
+            response_delta: Raw response chunk from the Llama API
 
         Returns:
             ModelResponse: Parsed response data
@@ -450,6 +469,27 @@ class Llama(Model):
 
         if response_delta is not None:
             delta = response_delta.event
+
+            # Handle metrics event - this comes as a separate event type at the end of the stream
+            if delta.event_type == "metrics" and delta.metrics is not None:
+                usage_data = {}
+                prompt_tokens = 0
+                completion_tokens = 0
+
+                for metric in delta.metrics:
+                    if metric.metric == "num_prompt_tokens":
+                        prompt_tokens = int(metric.value)
+                        usage_data["prompt_tokens"] = prompt_tokens
+                        usage_data["input_tokens"] = prompt_tokens
+                    elif metric.metric == "num_completion_tokens":
+                        completion_tokens = int(metric.value)
+                        usage_data["completion_tokens"] = completion_tokens
+                        usage_data["output_tokens"] = completion_tokens
+                    elif metric.metric == "num_total_tokens":
+                        usage_data["total_tokens"] = int(metric.value)
+
+                if usage_data:
+                    model_response.response_usage = usage_data
 
             if isinstance(delta.delta, EventDeltaTextDelta):
                 model_response.content = delta.delta.text
