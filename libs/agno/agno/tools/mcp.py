@@ -184,9 +184,11 @@ class MCPTools(Toolkit):
             # Get the list of tools from the MCP server
             available_tools = await self.session.list_tools()
 
-            self._check_tools_filters(available_tools=[tool.name for tool in available_tools.tools],
-                                      include_tools=self.include_tools,
-                                      exclude_tools=self.exclude_tools)
+            self._check_tools_filters(
+                available_tools=[tool.name for tool in available_tools.tools],
+                include_tools=self.include_tools,
+                exclude_tools=self.exclude_tools,
+            )
 
             # Filter tools based on include/exclude lists
             filtered_tools = []

@@ -39,9 +39,9 @@ class Toolkit:
         self.instructions: Optional[str] = instructions
         self.add_instructions: bool = add_instructions
 
-        self._check_tools_filters(available_tools=[tool.__name__ for tool in tools],
-                                  include_tools=include_tools,
-                                  exclude_tools=exclude_tools)
+        self._check_tools_filters(
+            available_tools=[tool.__name__ for tool in tools], include_tools=include_tools, exclude_tools=exclude_tools
+        )
 
         self.include_tools = include_tools
         self.exclude_tools = exclude_tools
@@ -54,10 +54,12 @@ class Toolkit:
         if auto_register and self.tools:
             self._register_tools()
 
-    def _check_tools_filters(self,
-                             available_tools: List[str],
-                             include_tools: Optional[list[str]] = None,
-                             exclude_tools: Optional[list[str]] = None) -> None:
+    def _check_tools_filters(
+        self,
+        available_tools: List[str],
+        include_tools: Optional[list[str]] = None,
+        exclude_tools: Optional[list[str]] = None,
+    ) -> None:
         """Check if `include_tools` and `exclude_tools` are valid"""
         if include_tools or exclude_tools:
             if include_tools:
