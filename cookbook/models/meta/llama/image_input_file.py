@@ -3,14 +3,20 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.meta import Llama
+from agno.utils.media import download_image
 
 agent = Agent(
     model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
     markdown=True,
 )
 # Please download the image using
-# wget https://upload.wikimedia.org/wikipedia/commons/b/bf/Krakow_-_Kosciol_Mariacki.jpg
-image_path = Path(__file__).parents[4].joinpath("Krakow_-_Kosciol_Mariacki.jpg")
+
+image_path = Path(__file__).parent.joinpath("sample.jpg")
+
+download_image(
+    url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg",
+    output_path=str(image_path),
+)
 
 agent.print_response(
     "Tell me about this image?",
