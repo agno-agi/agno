@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import ChainMap, deque, defaultdict
+from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
 from textwrap import dedent
@@ -2577,9 +2577,13 @@ class Agent:
 
             # Add the JSON output prompt if response_model is provided and the model does not support native structured outputs or JSON schema outputs
             # or if use_json_mode is True
-            if self.model is not None and self.response_model is not None and not (
-                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
-                and (not self.use_json_mode or self.structured_outputs is True)
+            if (
+                self.model is not None
+                and self.response_model is not None
+                and not (
+                    (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
+                    and (not self.use_json_mode or self.structured_outputs is True)
+                )
             ):
                 sys_message_content += f"\n{get_json_output_prompt(self.response_model)}"  # type: ignore
 
