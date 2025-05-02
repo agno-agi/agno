@@ -3713,6 +3713,7 @@ class Agent:
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
             from copy import deepcopy
+
             reasoning_model = deepcopy(self.model)
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
@@ -3923,6 +3924,7 @@ class Agent:
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
             from copy import deepcopy
+
             reasoning_model = deepcopy(self.model)
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
@@ -5403,8 +5405,9 @@ class Agent:
     ) -> None:
         """Run an interactive command-line interface to interact with the agent."""
 
-        from rich.prompt import Prompt
         from inspect import isawaitable
+
+        from rich.prompt import Prompt
 
         # Ensuring the agent is not using our async MCP tools
         if self.tools is not None:
