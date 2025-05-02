@@ -966,7 +966,7 @@ class Agent:
             if self.session_metrics is None:
                 self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
             else:
-                self.session_metrics += self.calculate_session_metrics(session_id)  # Calculate metrics for the session
+                self.session_metrics += self.calculate_metrics(run_messages.messages)  # Calculate metrics for the session
 
         # Yield UpdatingMemory event
         if self.stream_intermediate_steps:
@@ -1610,7 +1610,7 @@ class Agent:
             if self.session_metrics is None:
                 self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
             else:
-                self.session_metrics += self.calculate_session_metrics(session_id)  # Calculate metrics for the session
+                self.session_metrics += self.calculate_metrics(run_messages.messages)  # Calculate metrics for the session
 
         # Yield UpdatingMemory event
         if self.stream_intermediate_steps:
@@ -3499,40 +3499,6 @@ class Agent:
             if m.role == assistant_message_role and m.metrics is not None:
                 session_metrics += m.metrics
         return session_metrics
-
-    def calculate_session_metrics(self, session_id: str) -> SessionMetrics:
-        self.memory = cast(Memory, self.memory)
-        runs = self.memory.get_runs(session_id=session_id)
-
-        metrics_list = []
-        for run in runs:
-            if run.metrics:
-                metrics_list.append(run.metrics)
-
-        merged_metrics = self._merge_metrics(metrics_list)
-
-        session_metrics = SessionMetrics(**merged_metrics)
-        return session_metrics
-
-    def _merge_metrics(self, metrics_list: list[dict]) -> dict[str, Any]:
-        merged: dict[str, Union[int, float, dict]] = defaultdict(int)
-
-        for metrics in metrics_list:
-            for key, value in metrics.items():
-                if isinstance(value, list):
-                    if value and isinstance(value[0], dict):
-                        # Merge list of dicts (e.g. prompt_tokens_details)
-                        for d in value:
-                            for k, v in d.items():
-                                if key not in merged:
-                                    merged[key] = {}
-                                merged[key][k] = merged[key].get(k, 0) + v
-                    elif value and isinstance(value[0], (int, float)):
-                        merged[key] += sum(value)
-                elif isinstance(value, (int, float)):
-                    merged[key] += value
-
-        return dict(merged)
 
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         """Rename the Agent and save to storage"""
