@@ -3483,9 +3483,7 @@ class Agent:
                     if k == "timer":
                         continue
                     if v is not None:
-                        if k not in aggregated_metrics:
-                            aggregated_metrics[k] = []
-                        aggregated_metrics[k].append(v)
+                        aggregated_metrics[k] = v
         return aggregated_metrics
 
     def calculate_metrics(self, messages: List[Message]) -> SessionMetrics:
