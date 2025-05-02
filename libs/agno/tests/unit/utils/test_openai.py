@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from agno.media import Audio, Image
-from agno.utils.openai import audio_to_message, images_to_message
+from agno.media import Audio, File, Image
+from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 
 
 # Helper function to create dummy file
@@ -324,3 +324,65 @@ def test_images_to_message_mixed(tmp_png_file, dummy_image_bytes):
     assert result[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     assert result[1]["image_url"]["url"].startswith("data:image/png;base64,")
     assert result[2]["image_url"]["url"] == "https://example.com/image.webp"
+
+
+# --- Tests for _format_file_for_message --- #
+def test_format_file_external():
+    f = File(external="file123")
+    msg = _format_file_for_message(f)
+    # External-file branch was removed, unsupported externals return None
+    assert msg is None
+
+
+def test_format_file_url_inline(mocker):
+    f = File(url="http://example.com/doc.pdf")
+    mock_data = (b"PDF_CONTENT", "application/pdf")
+    mocker.patch.object(File, "file_url_content", new_callable=mocker.PropertyMock, return_value=mock_data)
+    msg = _format_file_for_message(f)
+    assert msg["type"] == "file"
+    assert msg["file"]["filename"] == "doc.pdf"
+    data_url = msg["file"]["file_data"]
+    assert data_url.startswith("data:application/pdf;base64,")
+    assert base64.b64decode(data_url.split(",", 1)[1]) == mock_data[0]
+
+
+def test_format_file_path_inline(tmp_path):
+    content = b"HELLO"
+    p = tmp_path / "test.txt"
+    p.write_bytes(content)
+    f = File(filepath=str(p))
+    msg = _format_file_for_message(f)
+    assert msg["type"] == "file"
+    assert msg["file"]["filename"] == "test.txt"
+    data_url = msg["file"]["file_data"]
+    assert data_url.startswith("data:text/plain;base64,")
+    assert base64.b64decode(data_url.split(",", 1)[1]) == content
+
+
+def test_format_file_path_persistent(tmp_path):
+    # Large files are inlined under the same logic
+    content = b"PERSIST"
+    p = tmp_path / "big.bin"
+    p.write_bytes(content)
+    f = File(filepath=str(p))
+    msg = _format_file_for_message(f)
+    assert msg["type"] == "file"
+    assert msg["file"]["filename"] == "big.bin"
+    data_url = msg["file"]["file_data"]
+    # It should be a data URL with base64 payload
+    assert data_url.startswith("data:")
+    assert ";base64," in data_url
+    # The base64 payload should decode back to the original content
+    payload = data_url.split(",", 1)[1]
+    assert base64.b64decode(payload) == content
+
+
+def test_format_file_raw_bytes():
+    content = b"RAWBYTES"
+    f = File(content=content)
+    msg = _format_file_for_message(f)
+    assert msg["type"] == "file"
+    assert msg["file"]["filename"] == "file"
+    data_url = msg["file"]["file_data"]
+    assert data_url.startswith("data:application/pdf;base64,")
+    assert base64.b64decode(data_url.split(",", 1)[1]) == content

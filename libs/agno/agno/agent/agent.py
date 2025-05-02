@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import ChainMap, defaultdict, deque
+from collections import ChainMap, deque
 from dataclasses import asdict, dataclass
 from os import getenv
 from textwrap import dedent
@@ -40,6 +40,7 @@ from agno.run.team import TeamRunResponse
 from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
+from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import (
     log_debug,
@@ -955,12 +956,17 @@ class Agent:
                 self.memory.update_summary()
 
             # 10. Calculate session metrics
-            self.session_metrics = self.calculate_session_metrics(self.memory.messages)
+            self.session_metrics = self.calculate_metrics(self.memory.messages)
         elif isinstance(self.memory, Memory):
             # Add AgentRun to memory
             self.memory.add_run(session_id=session_id, run=self.run_response)
 
             self._make_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
+
+            if self.session_metrics is None:
+                self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
+            else:
+                self.session_metrics += self.calculate_session_metrics(session_id)  # Calculate metrics for the session
 
         # Yield UpdatingMemory event
         if self.stream_intermediate_steps:
@@ -1594,12 +1600,17 @@ class Agent:
             if self.memory.create_session_summary and self.memory.update_session_summary_after_run:
                 await self.memory.aupdate_summary()
 
-            self.session_metrics = self.calculate_session_metrics(self.memory.messages)
+            self.session_metrics = self.calculate_metrics(self.memory.messages)
         elif isinstance(self.memory, Memory):
             # Add AgentRun to memory
             self.memory.add_run(session_id=session_id, run=self.run_response)
 
             await self._amake_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
+
+            if self.session_metrics is None:
+                self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
+            else:
+                self.session_metrics += self.calculate_session_metrics(session_id)  # Calculate metrics for the session
 
         # Yield UpdatingMemory event
         if self.stream_intermediate_steps:
@@ -1875,9 +1886,6 @@ class Agent:
         if self.enable_session_summaries:
             self.memory.create_session_summary(session_id=session_id, user_id=user_id)
 
-        # Calculate session metrics
-        self.session_metrics = self.calculate_session_metrics(session_messages)
-
     async def _amake_memories_and_summaries(
         self,
         run_messages: RunMessages,
@@ -1919,9 +1927,6 @@ class Agent:
         # Update the session summary if needed
         if self.enable_session_summaries:
             await self.memory.acreate_session_summary(session_id=session_id, user_id=user_id)
-
-        # Calculate session metrics
-        self.session_metrics = self.calculate_session_metrics(session_messages)
 
     def get_tools(
         self, session_id: str, async_mode: bool = False, user_id: Optional[str] = None
@@ -2015,7 +2020,7 @@ class Agent:
                                     func.tool_hooks = self.tool_hooks
                                 _functions_for_model[name] = func
                                 _tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                log_debug(f"Added function {name} from {tool.name}")
+                                log_debug(f"Added tool {name} from {tool.name}")
 
                         # Add instructions from the toolkit
                         if tool.add_instructions and tool.instructions is not None:
@@ -2033,7 +2038,7 @@ class Agent:
                                 tool.tool_hooks = self.tool_hooks
                             _functions_for_model[tool.name] = tool
                             _tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                            log_debug(f"Added function {tool.name}")
+                            log_debug(f"Added tool {tool.name}")
 
                         # Add instructions from the Function
                         if tool.add_instructions and tool.instructions is not None:
@@ -2053,9 +2058,9 @@ class Agent:
                                     func.tool_hooks = self.tool_hooks
                                 _functions_for_model[func.name] = func
                                 _tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                log_debug(f"Added function {func.name}")
+                                log_debug(f"Added tool {func.name}")
                         except Exception as e:
-                            log_warning(f"Could not add function {tool}: {e}")
+                            log_warning(f"Could not add tool {tool}: {e}")
 
                 # Set tools on the model
                 model.set_tools(tools=_tools_for_model)
@@ -2079,7 +2084,9 @@ class Agent:
                     self.model.response_format = self.response_model
                     self.model.structured_outputs = True
                 else:
-                    log_debug("Model supports native structured outputs but not enabled. Using JSON mode instead.")
+                    log_debug(
+                        "Model supports native structured outputs but it is not enabled. Using JSON mode instead."
+                    )
                     self.model.response_format = json_response_format
                     self.model.structured_outputs = False
 
@@ -2101,8 +2108,6 @@ class Agent:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 self.model.response_format = json_response_format
                 self.model.structured_outputs = False
-
-            log_debug(f"Structured outputs: {self.model.structured_outputs}")
 
         # Add tools to the Model
         self.add_tools_to_model(model=self.model, session_id=session_id, async_mode=async_mode, user_id=user_id)
@@ -2570,14 +2575,11 @@ class Agent:
             if self.add_state_in_messages:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
 
-            # Add the JSON output prompt if response_model is provided and structured_outputs is False
-            if (
-                self.response_model is not None
-                and self.model
-                and (
-                    self.model.supports_native_structured_outputs
-                    and (self.use_json_mode or self.structured_outputs is False)
-                )
+            # Add the JSON output prompt if response_model is provided and the model does not support native structured outputs or JSON schema outputs
+            # or if use_json_mode is True
+            if self.model is not None and self.response_model is not None and not (
+                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
+                and (not self.use_json_mode or self.structured_outputs is True)
             ):
                 sys_message_content += f"\n{get_json_output_prompt(self.response_model)}"  # type: ignore
 
@@ -2777,14 +2779,15 @@ class Agent:
                         "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
                     )
 
-        # 3.3.12 Finally, add the system message from the Model
+        # 3.3.12 Add the system message from the Model
         system_message_from_model = self.model.get_system_message_for_model()
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
-        # Add the JSON output prompt if response_model is provided and structured_outputs is False (only applicable if the model supports structured outputs)
+        # 3.3.13 Add the JSON output prompt if response_model is provided and the model does not support native structured outputs or JSON schema outputs
+        # or if use_json_mode is True
         if self.response_model is not None and not (
-            self.model.supports_native_structured_outputs
+            (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
             and (not self.use_json_mode or self.structured_outputs is True)
         ):
             system_message_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
@@ -3323,7 +3326,7 @@ class Agent:
         from agno.document import Document
 
         if self.retriever is not None and callable(self.retriever):
-            from inspect import signature
+            from inspect import isawaitable, signature
 
             try:
                 sig = signature(self.retriever)
@@ -3331,7 +3334,12 @@ class Agent:
                 if "agent" in sig.parameters:
                     retriever_kwargs = {"agent": self}
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-                return self.retriever(**retriever_kwargs)
+                result = self.retriever(**retriever_kwargs)
+
+                if isawaitable(result):
+                    result = await result
+
+                return result
             except Exception as e:
                 log_warning(f"Retriever failed: {e}")
                 return None
@@ -3467,7 +3475,7 @@ class Agent:
             self.run_response.reasoning_content += reasoning_content
 
     def aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
-        aggregated_metrics: Dict[str, Any] = defaultdict(list)
+        aggregated_metrics: Dict[str, Any] = {}
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None:
@@ -3475,18 +3483,26 @@ class Agent:
                     if k == "timer":
                         continue
                     if v is not None:
-                        aggregated_metrics[k].append(v)
-        if aggregated_metrics is not None:
-            aggregated_metrics = dict(aggregated_metrics)
+                        aggregated_metrics[k] = v
         return aggregated_metrics
 
-    def calculate_session_metrics(self, messages: List[Message]) -> SessionMetrics:
+    def calculate_metrics(self, messages: List[Message]) -> SessionMetrics:
         session_metrics = SessionMetrics()
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None:
                 session_metrics += m.metrics
         return session_metrics
+
+    def calculate_session_metrics(self, session_id: str) -> SessionMetrics:
+        self.memory = cast(Memory, self.memory)
+        runs = self.memory.get_runs(session_id=session_id)
+        run_metrics = {}
+        for run in runs:
+            if run.metrics is not None:
+                run_metrics.update(run.metrics)
+
+        return SessionMetrics(**run_metrics)
 
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         """Rename the Agent and save to storage"""
@@ -3694,7 +3710,9 @@ class Agent:
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
-            reasoning_model = self.model.__class__(id=self.model.id)
+            from copy import deepcopy
+
+            reasoning_model = deepcopy(self.model)
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
@@ -3903,7 +3921,9 @@ class Agent:
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
-            reasoning_model = self.model.__class__(id=self.model.id)
+            from copy import deepcopy
+
+            reasoning_model = deepcopy(self.model)
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
@@ -5381,7 +5401,19 @@ class Agent:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        """Run an interactive command-line interface to interact with the agent."""
+
+        from inspect import isawaitable
+
         from rich.prompt import Prompt
+
+        # Ensuring the agent is not using our async MCP tools
+        if self.tools is not None:
+            for tool in self.tools:
+                if isawaitable(tool):
+                    raise NotImplementedError("Use `acli_app` to use async tools.")
+                if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                    raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if message:
             self.print_response(
@@ -5395,5 +5427,38 @@ class Agent:
                 break
 
             self.print_response(
+                message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+            )
+
+    async def acli_app(
+        self,
+        message: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        user: str = "User",
+        emoji: str = ":sunglasses:",
+        stream: bool = False,
+        markdown: bool = False,
+        exit_on: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Run an interactive command-line interface to interact with the agent.
+        Works with agent dependencies requiring async logic.
+        """
+        from rich.prompt import Prompt
+
+        if message:
+            await self.aprint_response(
+                message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+            )
+
+        _exit_on = exit_on or ["exit", "quit", "bye"]
+        while True:
+            message = Prompt.ask(f"[bold] {emoji} {user} [/bold]")
+            if message in _exit_on:
+                break
+
+            await self.aprint_response(
                 message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
