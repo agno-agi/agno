@@ -6,10 +6,9 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    # Ignore type checking errors for mem0 imports
     from mem0 import (
-        Memory,  # type: ignore
-        MemoryClient,  # type: ignore
+        Memory,
+        MemoryClient,
     )
 except ImportError:
     raise ImportError("`mem0ai` package not found. Please install it with `pip install mem0ai`")
@@ -38,6 +37,7 @@ class Mem0Toolkit(Toolkit):
             **kwargs,
         )
         self.api_key = api_key or getenv("MEM0_API_KEY")
+        self.user_id = user_id
         self.mem0client: Union[Memory, MemoryClient] = None
 
         try:
@@ -54,7 +54,7 @@ class Mem0Toolkit(Toolkit):
             log_error(f"Failed to initialize Mem0 client: {e}")
             raise ConnectionError("Failed to initialize Mem0 client. Ensure API keys/config are set.") from e
 
-    # --- Helper to get the required User ID  ---
+    # Helper to get the required User ID
     def _get_user_id(self, method_name: str, user_id: Optional[str] = None) -> str:
         """Gets the user ID from kwargs or defaults, raising ValueError if none found."""
         resolved_user_id = user_id
