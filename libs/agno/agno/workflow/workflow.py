@@ -364,7 +364,7 @@ class Workflow:
                 memory_dict = self.memory.to_dict()
                 # We only persist the runs for the current session ID (not all runs in memory)
                 memory_dict["runs"] = [
-                    agent_run.to_dict()
+                    agent_run.model_dump()
                     for agent_run in self.memory.runs
                     if agent_run.response is not None and agent_run.response.session_id == self.session_id
                 ]
