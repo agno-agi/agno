@@ -29,6 +29,8 @@ class AgentKnowledge(BaseModel):
 
     valid_metadata_filters: Set[str] = None  # type: ignore
 
+    filters_ready: bool = False
+
     @model_validator(mode="after")
     def update_reader(self) -> "AgentKnowledge":
         if self.reader is not None:
@@ -445,6 +447,8 @@ class AgentKnowledge(BaseModel):
             # Extract top-level keys to track as potential filter fields
             for key in metadata.keys():
                 self.valid_metadata_filters.add(key)
+
+            self.filters_ready = True
 
     def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
         if not filters:

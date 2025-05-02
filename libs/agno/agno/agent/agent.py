@@ -1083,7 +1083,8 @@ class Agent:
 
         if self.knowledge_filters or knowledge_filters:
             # initialize metadata (specially required in case when load is commented out)
-            self.knowledge.initialize_valid_filters()  # type: ignore
+            if not self.knowledge.filters_ready:  # type: ignore
+                self.knowledge.initialize_valid_filters()  # type: ignore
 
             self.effective_knowledge_filters = self._get_effective_filters(knowledge_filters)
 
@@ -1701,7 +1702,8 @@ class Agent:
 
         if self.knowledge_filters or knowledge_filters:
             # initialize metadata (specially required in case when aload is commented out)
-            self.knowledge.initialize_valid_filters()  # type: ignore
+            if not self.knowledge.filters_ready:  # type: ignore
+                self.knowledge.initialize_valid_filters()  # type: ignore
 
             self.effective_knowledge_filters = self._get_effective_filters(knowledge_filters)
 
