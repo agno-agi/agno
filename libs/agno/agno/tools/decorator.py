@@ -1,5 +1,5 @@
 from functools import update_wrapper, wraps
-from typing import Any, Callable, Dict, Optional, TypeVar, Union, overload
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, overload
 
 from agno.tools.function import Function
 from agno.utils.log import logger
@@ -26,6 +26,7 @@ def tool(
     stop_after_tool_call: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
+    tool_hooks: Optional[List[Callable]] = None,
     cache_results: bool = False,
     cache_dir: Optional[str] = None,
     cache_ttl: int = 3600,
@@ -48,8 +49,9 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         add_instructions: bool - If True, add instructions to the system message
         show_result: Optional[bool] - If True, shows the result after function call
         stop_after_tool_call: Optional[bool] - If True, the agent will stop after the function call.
-        pre_hook: Optional[Callable] - Hook that runs before the function is executed.
-        post_hook: Optional[Callable] - Hook that runs after the function is executed.
+        pre_hook: Optional[Callable] - Hook that runs before the function is executed (deprecated, use tool_execution_hook instead).
+        post_hook: Optional[Callable] - Hook that runs after the function is executed (deprecated, use tool_execution_hook instead).
+        tool_hooks: Optional[List[Callable]] - List of hooks that run before and after the function is executed.
         cache_results: bool - If True, enable caching of function results
         cache_dir: Optional[str] - Directory to store cache files
         cache_ttl: int - Time-to-live for cached results in seconds
@@ -83,6 +85,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "stop_after_tool_call",
             "pre_hook",
             "post_hook",
+            "tool_hooks",
             "cache_results",
             "cache_dir",
             "cache_ttl",
@@ -160,9 +163,9 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
                 not in [
                     "name",
                     "description",
-                    "cache_results",
                     "instructions",
                     "add_instructions",
+                    "cache_results",
                     "cache_dir",
                     "cache_ttl",
                 ]

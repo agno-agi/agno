@@ -208,7 +208,7 @@ class PDFUrlReader(BasePDFReader):
         log_info(f"Reading: {url}")
 
         client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             response = await async_fetch_with_retry(url, client=client)
 
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
@@ -332,7 +332,7 @@ class PDFUrlImageReader(BasePDFReader):
         log_info(f"Reading: {url}")
 
         client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             response = await client.get(url)
             response.raise_for_status()
 

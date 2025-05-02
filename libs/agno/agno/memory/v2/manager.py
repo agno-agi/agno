@@ -78,13 +78,13 @@ class MemoryManager:
         if self.system_message is not None:
             return Message(role="system", content=self.system_message)
 
-        memory_capture_instructions = self.memory_capture_instructions or dedent("""
-            "Memories should include details that could personalize ongoing interactions with the user, such as:",
-            "  - Personal facts: name, age, occupation, location, interests, preferences, etc.",
-            "  - Significant life events or experiences shared by the user",
-            "  - Important context about the user's current situation, challenges or goals",
-            "  - What the user likes or dislikes, their opinions, beliefs, values, etc.",
-            "  - Any other details that provide valuable insights into the user's personality, perspective or needs",
+        memory_capture_instructions = self.memory_capture_instructions or dedent("""\
+            Memories should include details that could personalize ongoing interactions with the user, such as:
+              - Personal facts: name, age, occupation, location, interests, preferences, etc.
+              - Significant life events or experiences shared by the user
+              - Important context about the user's current situation, challenges or goals
+              - What the user likes or dislikes, their opinions, beliefs, values, etc.
+              - Any other details that provide valuable insights into the user's personality, perspective or needs\
         """)
 
         # -*- Return a system message for the memory manager
@@ -162,9 +162,7 @@ class MemoryManager:
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
         else:
-            input_string = (
-                f"[{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}]"
-            )
+            input_string = f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -212,9 +210,7 @@ class MemoryManager:
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
         else:
-            input_string = (
-                f"[{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}]"
-            )
+            input_string = f"{', '.join([m.get_content_string() for m in messages if m.role == 'user' and m.content])}"
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -375,7 +371,7 @@ class MemoryManager:
                 return f"Error adding memory: {e}"
 
         def update_memory(memory_id: str, memory: str, topics: Optional[List[str]] = None) -> str:
-            """Use this function to update a memory in the database.
+            """Use this function to update an existing memory in the database.
             Args:
                 memory_id (str): The id of the memory to be updated.
                 memory (str): The updated memory.
@@ -406,7 +402,7 @@ class MemoryManager:
                 return f"Error adding memory: {e}"
 
         def delete_memory(memory_id: str) -> str:
-            """Use this function to delete a memory from the database.
+            """Use this function to delete a single memory from the database.
             Args:
                 memory_id (str): The id of the memory to be deleted.
             Returns:
@@ -421,7 +417,8 @@ class MemoryManager:
                 return f"Error deleting memory: {e}"
 
         def clear_memory() -> str:
-            """Use this function to clear all memories from the database.
+            """Use this function to remove all (or clear all) memories from the database.
+
             Returns:
                 str: A message indicating if the memory was cleared successfully or not.
             """

@@ -130,8 +130,7 @@ class AwsBedrock(Model):
             "stopSequences": self.stop_sequences,
         }
 
-        request_kwargs = {k: v for k, v in request_kwargs.items() if v is not None}
-        return request_kwargs
+        return {k: v for k, v in request_kwargs.items() if v is not None}
 
     def _format_messages(self, messages: List[Message]) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
         formatted_messages: List[Dict[str, Any]] = []
@@ -140,8 +139,7 @@ class AwsBedrock(Model):
             if message.role == "system":
                 system_message = [{"text": message.content}]
             else:
-                formatted_message: Dict[str, Any] = {"role": message.role}
-                formatted_message["content"] = []
+                formatted_message: Dict[str, Any] = {"role": message.role, "content": []}
                 # Handle tool results
                 if isinstance(message.content, list):
                     formatted_message["content"].extend(message.content)
@@ -163,56 +161,53 @@ class AwsBedrock(Model):
 
                 if message.images:
                     for image in message.images:
-                        # Only supported via bytes for now
-                        if image.content and image.format:
-                            if image.format not in ["png", "jpeg", "webp", "gif"]:
-                                raise ValueError(f"Unsupported image format: {image.format}")
-
-                            formatted_message["content"].append(
-                                {
-                                    "image": {
-                                        "format": image.format,
-                                        "source": {
-                                            "bytes": image.content,
-                                        },
-                                    }
-                                }
-                            )
-                        else:
+                        if not image.content or not image.format:
                             raise ValueError("Image content and format are required.")
 
+                        if image.format not in ["png", "jpeg", "webp", "gif"]:
+                            raise ValueError(f"Unsupported image format: {image.format}")
+
+                        formatted_message["content"].append(
+                            {
+                                "image": {
+                                    "format": image.format,
+                                    "source": {
+                                        "bytes": image.content,
+                                    },
+                                }
+                            }
+                        )
                 if message.audio:
                     log_warning("Audio input is currently unsupported.")
 
                 if message.videos:
                     for video in message.videos:
-                        if video.content and video.format:
-                            if video.format not in [
-                                "mp4",
-                                "mov",
-                                "mkv",
-                                "webm",
-                                "flv",
-                                "mpeg",
-                                "mpg",
-                                "wmv",
-                                "three_gp",
-                            ]:
-                                raise ValueError(f"Unsupported video format: {video.format}")
-
-                            formatted_message["content"].append(
-                                {
-                                    "video": {
-                                        "format": video.format,
-                                        "source": {
-                                            "bytes": video.content,
-                                        },
-                                    }
-                                }
-                            )
-                        else:
+                        if not video.content or not video.format:
                             raise ValueError("Video content and format are required.")
 
+                        if video.format not in [
+                            "mp4",
+                            "mov",
+                            "mkv",
+                            "webm",
+                            "flv",
+                            "mpeg",
+                            "mpg",
+                            "wmv",
+                            "three_gp",
+                        ]:
+                            raise ValueError(f"Unsupported video format: {video.format}")
+
+                        formatted_message["content"].append(
+                            {
+                                "video": {
+                                    "format": video.format,
+                                    "source": {
+                                        "bytes": video.content,
+                                    },
+                                }
+                            }
+                        )
                 if message.files is not None and len(message.files) > 0:
                     log_warning("File input is currently unsupported.")
 
@@ -232,7 +227,6 @@ class AwsBedrock(Model):
         """
         try:
             formatted_messages, system_message = self._format_messages(messages)
-            inference_config = self._get_inference_config()
 
             tool_config = None
             if self._functions is not None:
@@ -241,9 +235,12 @@ class AwsBedrock(Model):
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
-                "inferenceConfig": inference_config,
+                "inferenceConfig": self._get_inference_config(),
             }
             body = {k: v for k, v in body.items() if v is not None}
+
+            if self.request_params:
+                body.update(**self.request_params)
 
             return self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
         except ClientError as e:
@@ -265,7 +262,6 @@ class AwsBedrock(Model):
         """
         try:
             formatted_messages, system_message = self._format_messages(messages)
-            inference_config = self._get_inference_config()
 
             tool_config = None
             if self._functions is not None:
@@ -274,9 +270,12 @@ class AwsBedrock(Model):
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
-                "inferenceConfig": inference_config,
+                "inferenceConfig": self._get_inference_config(),
             }
             body = {k: v for k, v in body.items() if v is not None}
+
+            if self.request_params:
+                body.update(**self.request_params)
 
             return self.get_client().converse_stream(modelId=self.id, messages=formatted_messages, **body)["stream"]
         except ClientError as e:
@@ -298,7 +297,7 @@ class AwsBedrock(Model):
             function_call_results (List[Message]): The results of the function calls.
             tool_ids (List[str]): The tool ids.
         """
-        if len(function_call_results) > 0:
+        if function_call_results:
             tool_result_content: List = []
 
             for _fc_message_index, _fc_message in enumerate(function_call_results):

@@ -7,6 +7,7 @@ from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.google.gemini import Gemini
 from agno.tools.duckduckgo import DuckDuckGoTools
+from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
@@ -49,7 +50,5 @@ research_agent.print_response(
 )
 
 memories = memory.get_user_memories(user_id=john_doe_id)
-
-print("John Doe's memories:")
-for i, m in enumerate(memories):
-    print(f"{i}: {m.memory}")
+print("Memories about John Doe:")
+pprint(memories)

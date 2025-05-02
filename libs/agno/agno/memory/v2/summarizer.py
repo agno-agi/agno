@@ -56,6 +56,7 @@ class SessionSummarizer:
 
     def update_model(self, model: Model) -> None:
         model = cast(Model, model)
+        model.reset_tools_and_functions()
         if model.supports_native_structured_outputs:
             model.response_format = SessionSummaryResponse
             model.structured_outputs = True

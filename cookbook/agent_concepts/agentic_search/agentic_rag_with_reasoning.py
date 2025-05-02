@@ -36,7 +36,6 @@ agent = Agent(
     instructions=[
         "Include sources in your response.",
         "Always search your knowledge before answering the question.",
-        "Only include the output in your response. No other text.",
     ],
     markdown=True,
 )
