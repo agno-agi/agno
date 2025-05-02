@@ -2083,7 +2083,9 @@ class Agent:
                     self.model.response_format = self.response_model
                     self.model.structured_outputs = True
                 else:
-                    log_debug("Model supports native structured outputs but not enabled. Using JSON mode instead.")
+                    log_debug(
+                        "Model supports native structured outputs but it is not enabled. Using JSON mode instead."
+                    )
                     self.model.response_format = json_response_format
                     self.model.structured_outputs = False
 
@@ -2105,8 +2107,6 @@ class Agent:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 self.model.response_format = json_response_format
                 self.model.structured_outputs = False
-
-            log_debug(f"Structured outputs: {self.model.structured_outputs}")
 
         # Add tools to the Model
         self.add_tools_to_model(model=self.model, session_id=session_id, async_mode=async_mode, user_id=user_id)
@@ -2574,20 +2574,6 @@ class Agent:
             if self.add_state_in_messages:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
 
-            # Add the JSON output prompt if response_model is provided and structured_outputs is False
-            if (
-                self.response_model is not None
-                and self.model
-                and (
-                    self.model.supports_native_structured_outputs
-                    and (self.use_json_mode or self.structured_outputs is False)
-                )
-            ):
-                sys_message_content += f"\n{get_json_output_prompt(self.response_model)}"  # type: ignore
-
-            # type: ignore
-            return Message(role=self.system_message_role, content=sys_message_content)
-
         # 2. If create_default_system_message is False, return None.
         if not self.create_default_system_message:
             return None
@@ -2781,14 +2767,14 @@ class Agent:
                         "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
                     )
 
-        # 3.3.12 Finally, add the system message from the Model
+        # 3.3.12 Add the system message from the Model
         system_message_from_model = self.model.get_system_message_for_model()
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
-        # Add the JSON output prompt if response_model is provided and structured_outputs is False (only applicable if the model supports structured outputs)
+        # 3.3.13 Add the JSON output prompt if response_model is provided and structured_outputs is False.
         if self.response_model is not None and not (
-            self.model.supports_native_structured_outputs
+            (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
             and (not self.use_json_mode or self.structured_outputs is True)
         ):
             system_message_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore

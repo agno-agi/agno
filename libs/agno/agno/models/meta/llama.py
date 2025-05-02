@@ -199,7 +199,7 @@ class Llama(Model):
         """
         message_dict: Dict[str, Any] = {
             "role": message.role,
-            "content": message.content,
+            "content": [{"type": "text", "text": message.content or " "}],
             "name": message.name,
             "tool_call_id": message.tool_call_id,
             "tool_calls": message.tool_calls,
@@ -207,7 +207,51 @@ class Llama(Model):
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
         if message.images is not None and len(message.images) > 0:
-            log_warning("Image input is currently unsupported.")
+            for image in message.images:
+                if image.url:
+                    message_dict["content"].append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image.url,
+                            },
+                        }
+                    )
+                elif image.filepath:
+                    import base64
+                    from pathlib import Path
+
+                    image_format = image.format or "png"
+                    image_bytes = None
+                    if isinstance(image.filepath, Path):
+                        image_bytes = image.filepath.read_bytes()
+                    elif isinstance(image.filepath, str):
+                        image_bytes = Path(image.filepath).read_bytes()
+
+                    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+
+                    message_dict["content"].append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/{image_format};base64,{image_base64}",
+                            },
+                        }
+                    )
+                elif image.content:
+                    import base64
+
+                    image_format = image.format or "png"
+                    image_base64 = base64.b64encode(image.content).decode("utf-8")
+
+                    message_dict["content"].append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/{image_format};base64,{image_base64}",
+                            },
+                        }
+                    )
 
         if message.videos is not None and len(message.videos) > 0:
             log_warning("Video input is currently unsupported.")
@@ -215,13 +259,9 @@ class Llama(Model):
         if message.audio is not None and len(message.audio) > 0:
             log_warning("Audio input is currently unsupported.")
 
-        # OpenAI expects the tool_calls to be None if empty, not an empty list
+        # Llama expects the tool_calls to be None if empty, not an empty list
         if message.tool_calls is not None and len(message.tool_calls) == 0:
             message_dict["tool_calls"] = None
-
-        # Manually add the content field even if it is None
-        if message.content is None:
-            message_dict["content"] = " "
 
         if message.role == "tool":
             message_dict = {
@@ -234,7 +274,7 @@ class Llama(Model):
             message_dict = {
                 "content": {
                     "type": "text",
-                    "text": message.content if message.content is not None else " ",
+                    "text": message.content or " ",
                 },
                 "role": "assistant",
                 "tool_calls": message.tool_calls,
@@ -440,18 +480,21 @@ class Llama(Model):
         # Add metrics from the metrics list
         if hasattr(response, "metrics") and response.metrics is not None:
             usage_data = {}
-            for metric in response.metrics:
-                if metric.metric == "num_prompt_tokens":
-                    usage_data["prompt_tokens"] = int(metric.value)
-                    usage_data["input_tokens"] = int(metric.value)
-                elif metric.metric == "num_completion_tokens":
-                    usage_data["completion_tokens"] = int(metric.value)
-                    usage_data["output_tokens"] = int(metric.value)
-                elif metric.metric == "num_total_tokens":
-                    usage_data["total_tokens"] = int(metric.value)
+            metric_map = {
+                "num_prompt_tokens": ["prompt_tokens", "input_tokens"],
+                "num_completion_tokens": ["completion_tokens", "output_tokens"],
+                "num_total_tokens": ["total_tokens"],
+            }
 
-            if usage_data:
-                model_response.response_usage = usage_data
+            for metric in response.metrics:
+                keys = metric_map.get(metric.metric)
+                if keys:
+                    value = int(metric.value)
+                    for key in keys:
+                        usage_data[key] = value
+
+                if usage_data:
+                    model_response.response_usage = usage_data
 
         return model_response
 
@@ -470,23 +513,21 @@ class Llama(Model):
         if response_delta is not None:
             delta = response_delta.event
 
-            # Handle metrics event - this comes as a separate event type at the end of the stream
+            # Capture metrics event
             if delta.event_type == "metrics" and delta.metrics is not None:
                 usage_data = {}
-                prompt_tokens = 0
-                completion_tokens = 0
+                metric_map = {
+                    "num_prompt_tokens": ["prompt_tokens", "input_tokens"],
+                    "num_completion_tokens": ["completion_tokens", "output_tokens"],
+                    "num_total_tokens": ["total_tokens"],
+                }
 
                 for metric in delta.metrics:
-                    if metric.metric == "num_prompt_tokens":
-                        prompt_tokens = int(metric.value)
-                        usage_data["prompt_tokens"] = prompt_tokens
-                        usage_data["input_tokens"] = prompt_tokens
-                    elif metric.metric == "num_completion_tokens":
-                        completion_tokens = int(metric.value)
-                        usage_data["completion_tokens"] = completion_tokens
-                        usage_data["output_tokens"] = completion_tokens
-                    elif metric.metric == "num_total_tokens":
-                        usage_data["total_tokens"] = int(metric.value)
+                    keys = metric_map.get(metric.metric)
+                    if keys:
+                        value = int(metric.value)
+                        for key in keys:
+                            usage_data[key] = value
 
                 if usage_data:
                     model_response.response_usage = usage_data

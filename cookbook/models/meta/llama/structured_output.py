@@ -25,12 +25,11 @@ class MovieScript(BaseModel):
     )
 
 
-# Agent that uses JSON mode
-structured_output_agent = Agent(
-    model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
-    description="You write movie scripts.",
+# Agent that uses a JSON schema output
+json_schema_output_agent = Agent(
+    model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8", temperature=0.1),
+    description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
     response_model=MovieScript,
-    use_json_mode=True,
 )
 
-structured_output_agent.print_response("New York")
+json_schema_output_agent.print_response("New York")
