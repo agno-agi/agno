@@ -69,7 +69,7 @@ class MCPTools(Toolkit):
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
             transport: The transport protocol to use, either "stdio" or "sse"
         """
-        super().__init__(name="MCPToolkit", **kwargs)
+        super().__init__(name="MCPTools", **kwargs)
 
         # Set these after `__init__` to bypass the `_check_tools_filters`
         # beacuse tools are not available until `initialize()` is called.
