@@ -11,4 +11,4 @@ agent = Agent(
     monitoring=False,
 )
 
-agent.print_response("What is the current price of TSLA?")
+agent.print_response("What is the current price of TSLA?", stream=True)
