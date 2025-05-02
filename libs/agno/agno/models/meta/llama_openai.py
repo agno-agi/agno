@@ -3,7 +3,11 @@ from os import getenv
 from typing import Any, Dict, Optional
 
 import httpx
-from openai import AsyncOpenAI as AsyncOpenAIClient
+
+try:
+    from openai import AsyncOpenAI as AsyncOpenAIClient
+except (ModuleNotFoundError, ImportError):
+    raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
 from agno.models.meta.llama import Message
 from agno.models.openai.like import OpenAILike

@@ -491,7 +491,7 @@ class Gemini(Model):
             log_warning(f"Unknown audio type: {type(audio.content)}")
             return None
 
-    def _format_video_for_message(self, video: Video) -> Optional[GeminiFile]:
+    def _format_video_for_message(self, video: Video) -> Optional[Part]:
         # Case 1: Video is a bytes object
         if video.content and isinstance(video.content, bytes):
             return Part.from_bytes(
@@ -537,6 +537,12 @@ class Gemini(Model):
 
             return Part.from_uri(
                 file_uri=video_file.uri, mime_type=f"video/{video.format}" if video.format else "video/mp4"
+            )
+        # Case 3: Video is a URL
+        elif video.url is not None:
+            return Part.from_uri(
+                file_uri=video.url,
+                mime_type=f"video/{video.format}" if video.format else "video/webm",
             )
         else:
             log_warning(f"Unknown video type: {type(video.content)}")
