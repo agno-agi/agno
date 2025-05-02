@@ -13,15 +13,12 @@ download_file(
 )
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4.1"),
+    model=OpenAIChat(id="gpt-4o"),
     markdown=True,
     add_history_to_messages=True,
 )
 
 agent.print_response(
-    "Use the attached file to answer questions. Only refer to the file",
+    "What is the recipe for Gaeng Som Phak Ruam? Also what are the health benefits. Refer to the attached file.",
     files=[File(filepath=pdf_path)],
-)
-agent.print_response(
-    "What is the recipe for Gaeng Som Phak Ruam? Also what are the health benefits"
 )
