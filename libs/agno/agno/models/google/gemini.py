@@ -661,7 +661,6 @@ class Gemini(Model):
                         call_id = part.function_call.id if part.function_call.id else str(uuid4())
                         tool_call = {
                             "id": call_id,
-                            "call_id": call_id,
                             "type": "function",
                             "function": {
                                 "name": part.function_call.name,
@@ -728,7 +727,6 @@ class Gemini(Model):
                     call_id = part.function_call.id if part.function_call.id else str(uuid4())
                     tool_call = {
                         "id": call_id,
-                        "call_id": call_id,
                         "type": "function",
                         "function": {
                             "name": part.function_call.name,
