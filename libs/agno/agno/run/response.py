@@ -152,12 +152,12 @@ class RunResponse:
 
         return _dict
 
-    def to_json(self) -> str:
+    def to_json(self, indent: int = 2, **kwargs) -> str:
         import json
 
         _dict = self.to_dict()
 
-        return json.dumps(_dict, indent=2)
+        return json.dumps(_dict, indent=indent, **kwargs)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
