@@ -3327,7 +3327,7 @@ class Agent:
         from agno.document import Document
 
         if self.retriever is not None and callable(self.retriever):
-            from inspect import signature
+            from inspect import isawaitable, signature
 
             try:
                 sig = signature(self.retriever)
@@ -3335,7 +3335,12 @@ class Agent:
                 if "agent" in sig.parameters:
                     retriever_kwargs = {"agent": self}
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-                return self.retriever(**retriever_kwargs)
+                result = self.retriever(**retriever_kwargs)
+
+                if isawaitable(result):
+                    result = await result
+
+                return result
             except Exception as e:
                 log_warning(f"Retriever failed: {e}")
                 return None
