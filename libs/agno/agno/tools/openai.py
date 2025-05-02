@@ -58,8 +58,6 @@ class OpenAITools(Toolkit):
         """Transcribe audio file using OpenAI's Whisper API
         Args:
             audio_path: Path to the audio file
-        Returns:
-            str: Transcribed text
         """
         log_debug(f"Transcribing audio from {audio_path}")
         try:
@@ -85,8 +83,6 @@ class OpenAITools(Toolkit):
         """Generate images based on a text prompt.
         Args:
             prompt (str): The text prompt to generate the image from.
-        Returns:
-            str: Return the result of the model.
         """
         try:
             response = OpenAIClient().images.generate(
@@ -102,8 +98,6 @@ class OpenAITools(Toolkit):
                     ImageArtifact(
                         id=media_id,
                         url=image_url,
-                        prompt=prompt,
-                        model=self.image_model,
                     )
                 )
                 return f"Image generated successfully: {image_url}"
@@ -123,8 +117,6 @@ class OpenAITools(Toolkit):
         """Generate speech from text using OpenAI's Text-to-Speech API.
         Args:
             text_input (str): The text to synthesize into speech.
-        Returns:
-            str: Return the result of the model.
         """
         try:
             import base64
@@ -148,9 +140,6 @@ class OpenAITools(Toolkit):
                 AudioArtifact(
                     id=media_id,
                     base64_audio=base64_encoded_audio,
-                    format=self.tts_format,
-                    model=self.tts_model,
-                    voice=self.tts_voice,
                 )
             )
             return f"Speech generated successfully with ID: {media_id}"
