@@ -5402,7 +5402,7 @@ class Agent:
         if self.tools is not None:
             for tool in self.tools:
                 if isinstance(tool, Union[MCPTools, MultiMCPTools]):
-                    raise NotImplementedError("Use the async version of this method for agents using the MCP tools.")
+                    raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if message:
             self.print_response(
