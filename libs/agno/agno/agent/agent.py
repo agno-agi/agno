@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 from collections import ChainMap, deque
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -3328,7 +3327,7 @@ class Agent:
         from agno.document import Document
 
         if self.retriever is not None and callable(self.retriever):
-            from inspect import signature
+            from inspect import isawaitable, signature
 
             try:
                 sig = signature(self.retriever)
@@ -3338,7 +3337,7 @@ class Agent:
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 result = self.retriever(**retriever_kwargs)
 
-                if inspect.isawaitable(result):
+                if isawaitable(result):
                     result = await result
 
                 return result
