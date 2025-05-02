@@ -65,8 +65,5 @@ async def test_mcp_include_exclude_tools_bad_values(mcp_tools, kwargs):
     # _check_tools_filters should be bypassed during __init__
     tools = mcp_tools(**kwargs)
     with pytest.raises(ValueError, match="not present in the toolkit"):
-        if mcp_tools is MCPTools:
-            tools.session = session_mock
-            await tools.initialize()
-        else:
-            await tools.initialize(session_mock)
+        tools.session = session_mock
+        await tools.initialize()
