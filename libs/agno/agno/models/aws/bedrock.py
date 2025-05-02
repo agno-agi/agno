@@ -222,7 +222,6 @@ class AwsBedrock(Model):
         """
         try:
             formatted_messages, system_message = self._format_messages(messages)
-            inference_config = self._get_inference_config()
 
             tool_config = None
             if self._functions is not None:
@@ -231,9 +230,12 @@ class AwsBedrock(Model):
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
-                "inferenceConfig": inference_config,
+                "inferenceConfig": self._get_inference_config(),
             }
             body = {k: v for k, v in body.items() if v is not None}
+
+            if self.request_params:
+                body.update(**self.request_params)
 
             return self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
         except ClientError as e:
@@ -255,7 +257,6 @@ class AwsBedrock(Model):
         """
         try:
             formatted_messages, system_message = self._format_messages(messages)
-            inference_config = self._get_inference_config()
 
             tool_config = None
             if self._functions is not None:
@@ -264,14 +265,12 @@ class AwsBedrock(Model):
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
-                "inferenceConfig": inference_config,
+                "inferenceConfig": self._get_inference_config(),
             }
+            body = {k: v for k, v in body.items() if v is not None}
 
-            # Customer is using request params, we need to include those in the Converse API request
             if self.request_params:
                 body.update(**self.request_params)
-
-            body = {k: v for k, v in body.items() if v is not None}
 
             return self.get_client().converse_stream(modelId=self.id, messages=formatted_messages, **body)["stream"]
         except ClientError as e:
