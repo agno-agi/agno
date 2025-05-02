@@ -2062,7 +2062,6 @@ class Agent:
                         except Exception as e:
                             log_warning(f"Could not add tool {tool}: {e}")
 
-                log_debug(f"Available tools: {list(_functions_for_model.keys())}")
                 # Set tools on the model
                 model.set_tools(tools=_tools_for_model)
                 # Set functions on the model
