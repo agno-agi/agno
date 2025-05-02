@@ -260,7 +260,7 @@ class MultiMCPTools(Toolkit):
             include_tools: Optional list of tool names to include (if None, includes all).
             exclude_tools: Optional list of tool names to exclude (if None, excludes none).
         """
-        super().__init__(name="MCPToolkit", **kwargs)
+        super().__init__(name="MultiMCPTools", **kwargs)
 
         # Set these after `__init__` to bypass the `_check_tools_filters`
         # beacuse tools are not available until `initialize()` is called.
