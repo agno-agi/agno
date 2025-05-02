@@ -2,12 +2,12 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import Image
-from agno.models.meta import Llama
+from agno.models.meta import LlamaOpenAI
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils.media import download_image
 
 agent = Agent(
-    model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+    model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )

@@ -11,6 +11,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
+from agno.utils.models.llama import format_message
 
 try:
     from llama_api_client import AsyncLlamaAPIClient, LlamaAPIClient
@@ -187,102 +188,6 @@ class Llama(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
-    def _format_message(self, message: Message) -> Dict[str, Any]:
-        """
-        Format a message into the format expected by Llama API.
-
-        Args:
-            message (Message): The message to format.
-
-        Returns:
-            Dict[str, Any]: The formatted message.
-        """
-        message_dict: Dict[str, Any] = {
-            "role": message.role,
-            "content": [{"type": "text", "text": message.content or " "}],
-            "name": message.name,
-            "tool_call_id": message.tool_call_id,
-            "tool_calls": message.tool_calls,
-        }
-        message_dict = {k: v for k, v in message_dict.items() if v is not None}
-
-        if message.images is not None and len(message.images) > 0:
-            for image in message.images:
-                if image.url:
-                    message_dict["content"].append(
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": image.url,
-                            },
-                        }
-                    )
-                elif image.filepath:
-                    import base64
-                    from pathlib import Path
-
-                    image_format = image.format or "png"
-                    image_bytes = None
-                    if isinstance(image.filepath, Path):
-                        image_bytes = image.filepath.read_bytes()
-                    elif isinstance(image.filepath, str):
-                        image_bytes = Path(image.filepath).read_bytes()
-
-                    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-
-                    message_dict["content"].append(
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/{image_format};base64,{image_base64}",
-                            },
-                        }
-                    )
-                elif image.content:
-                    import base64
-
-                    image_format = image.format or "png"
-                    image_base64 = base64.b64encode(image.content).decode("utf-8")
-
-                    message_dict["content"].append(
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/{image_format};base64,{image_base64}",
-                            },
-                        }
-                    )
-
-        if message.videos is not None and len(message.videos) > 0:
-            log_warning("Video input is currently unsupported.")
-
-        if message.audio is not None and len(message.audio) > 0:
-            log_warning("Audio input is currently unsupported.")
-
-        # Llama expects the tool_calls to be None if empty, not an empty list
-        if message.tool_calls is not None and len(message.tool_calls) == 0:
-            message_dict["tool_calls"] = None
-
-        if message.role == "tool":
-            message_dict = {
-                "role": "tool",
-                "tool_call_id": message.tool_call_id,
-                "content": message.content,
-            }
-
-        if message.role == "assistant" and message.tool_calls is not None and len(message.tool_calls) > 0:
-            message_dict = {
-                "content": {
-                    "type": "text",
-                    "text": message.content or " ",
-                },
-                "role": "assistant",
-                "tool_calls": message.tool_calls,
-                "stop_reason": "tool_calls",
-            }
-
-        return message_dict
-
     def invoke(self, messages: List[Message]) -> CreateChatCompletionResponse:
         """
         Send a chat completion request to the Llama API.
@@ -295,7 +200,7 @@ class Llama(Model):
         """
         return self.get_client().chat.completions.create(
             model=self.id,
-            messages=[self._format_message(m) for m in messages],  # type: ignore
+            messages=[format_message(m) for m in messages],  # type: ignore
             **self.request_kwargs,
         )
 
@@ -312,7 +217,7 @@ class Llama(Model):
 
         return await self.get_async_client().chat.completions.create(
             model=self.id,
-            messages=[self._format_message(m) for m in messages],  # type: ignore
+            messages=[format_message(m) for m in messages],  # type: ignore
             **self.request_kwargs,
         )
 
@@ -330,7 +235,7 @@ class Llama(Model):
         try:
             yield from self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )  # type: ignore
@@ -352,7 +257,7 @@ class Llama(Model):
         try:
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )
@@ -481,17 +386,16 @@ class Llama(Model):
         if hasattr(response, "metrics") and response.metrics is not None:
             usage_data = {}
             metric_map = {
-                "num_prompt_tokens": ["prompt_tokens", "input_tokens"],
-                "num_completion_tokens": ["completion_tokens", "output_tokens"],
-                "num_total_tokens": ["total_tokens"],
+                "num_prompt_tokens": "input_tokens",
+                "num_completion_tokens": "output_tokens",
+                "num_total_tokens": "total_tokens",
             }
 
             for metric in response.metrics:
-                keys = metric_map.get(metric.metric)
-                if keys:
+                key = metric_map.get(metric.metric)
+                if key:
                     value = int(metric.value)
-                    for key in keys:
-                        usage_data[key] = value
+                    usage_data[key] = value
 
                 if usage_data:
                     model_response.response_usage = usage_data
@@ -517,17 +421,15 @@ class Llama(Model):
             if delta.event_type == "metrics" and delta.metrics is not None:
                 usage_data = {}
                 metric_map = {
-                    "num_prompt_tokens": ["prompt_tokens", "input_tokens"],
-                    "num_completion_tokens": ["completion_tokens", "output_tokens"],
-                    "num_total_tokens": ["total_tokens"],
+                    "num_prompt_tokens": "input_tokens",
+                    "num_completion_tokens": "output_tokens",
+                    "num_total_tokens": "total_tokens",
                 }
 
                 for metric in delta.metrics:
-                    keys = metric_map.get(metric.metric)
-                    if keys:
-                        value = int(metric.value)
-                        for key in keys:
-                            usage_data[key] = value
+                    key = metric_map.get(metric.metric)
+                    if key:
+                        usage_data[key] = int(metric.value)
 
                 if usage_data:
                     model_response.response_usage = usage_data
