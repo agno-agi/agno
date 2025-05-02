@@ -1,10 +1,11 @@
+import asyncio
 from typing import Optional
 
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.qdrant import Qdrant
-from qdrant_client import QdrantClient
+from qdrant_client import AsyncQdrantClient
 
 # ---------------------------------------------------------
 # This section loads the knowledge base. Skip if your knowledge base was populated elsewhere.
@@ -19,18 +20,18 @@ knowledge_base = PDFUrlKnowledgeBase(
 )
 
 # Load the knowledge base
-knowledge_base.load(recreate=True)  # Comment out after first run
+# knowledge_base.load(recreate=True)  # Comment out after first run
 # Knowledge base is now loaded
 # ---------------------------------------------------------
 
 
-# Define the custom retriever
+# Define the custom async retriever
 # This is the function that the agent will use to retrieve documents
-def retriever(
+async def retriever(
     query: str, agent: Optional[Agent] = None, num_documents: int = 5, **kwargs
 ) -> Optional[list[dict]]:
     """
-    Custom retriever function to search the vector database for relevant documents.
+    Custom async retriever function to search the vector database for relevant documents.
 
     Args:
         query (str): The search query string
@@ -42,9 +43,9 @@ def retriever(
         Optional[list[dict]]: List of retrieved documents or None if search fails
     """
     try:
-        qdrant_client = QdrantClient(path="tmp/qdrant")
+        qdrant_client = AsyncQdrantClient(path="tmp/qdrant")
         query_embedding = embedder.get_embedding(query)
-        results = qdrant_client.query_points(
+        results = await qdrant_client.query_points(
             collection_name="thai-recipes",
             query=query_embedding,
             limit=num_documents,
@@ -59,8 +60,8 @@ def retriever(
         return None
 
 
-def main():
-    """Main function to demonstrate agent usage."""
+async def amain():
+    """Async main function to demonstrate agent usage."""
     # Initialize agent with custom retriever
     # Remember to set search_knowledge=True to use agentic_rag or add_reference=True for traditional RAG
     # search_knowledge=True is default when you add a knowledge base but is needed here
@@ -72,9 +73,17 @@ def main():
         show_tool_calls=True,
     )
 
+    # Load the knowledge base (uncomment for first run)
+    await knowledge_base.aload(recreate=True)
+
     # Example query
     query = "List down the ingredients to make Massaman Gai"
-    agent.print_response(query, markdown=True)
+    await agent.aprint_response(query, markdown=True)
+
+
+def main():
+    """Synchronous wrapper for main function"""
+    asyncio.run(amain())
 
 
 if __name__ == "__main__":
