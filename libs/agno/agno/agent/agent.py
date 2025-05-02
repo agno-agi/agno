@@ -2577,7 +2577,7 @@ class Agent:
 
             # Add the JSON output prompt if response_model is provided and the model does not support native structured outputs or JSON schema outputs
             # or if use_json_mode is True
-            if self.response_model is not None and not (
+            if self.model is not None and self.response_model is not None and not (
                 (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
                 and (not self.use_json_mode or self.structured_outputs is True)
             ):
