@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import ChainMap, deque
+from collections import ChainMap, deque, defaultdict
 from dataclasses import asdict, dataclass
 from os import getenv
 from textwrap import dedent
@@ -3475,7 +3475,7 @@ class Agent:
             self.run_response.reasoning_content += reasoning_content
 
     def aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
-        aggregated_metrics: Dict[str, Any] = {}
+        aggregated_metrics: Dict[str, Any] = defaultdict(list)
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None:
@@ -3483,7 +3483,9 @@ class Agent:
                     if k == "timer":
                         continue
                     if v is not None:
-                        aggregated_metrics[k] = v
+                        aggregated_metrics[k].append(v)
+        if aggregated_metrics is not None:
+            aggregated_metrics = dict(aggregated_metrics)
         return aggregated_metrics
 
     def calculate_metrics(self, messages: List[Message]) -> SessionMetrics:
@@ -3497,12 +3499,36 @@ class Agent:
     def calculate_session_metrics(self, session_id: str) -> SessionMetrics:
         self.memory = cast(Memory, self.memory)
         runs = self.memory.get_runs(session_id=session_id)
-        run_metrics = {}
-        for run in runs:
-            if run.metrics is not None:
-                run_metrics.update(run.metrics)
 
-        return SessionMetrics(**run_metrics)
+        metrics_list = []
+        for run in runs:
+            if run.metrics:
+                metrics_list.append(run.metrics)
+
+        merged_metrics = self._merge_metrics(metrics_list)
+
+        session_metrics = SessionMetrics(**merged_metrics)
+        return session_metrics
+
+    def _merge_metrics(self, metrics_list: list[dict]) -> dict[str, Any]:
+        merged: dict[str, Union[int, float, dict]] = defaultdict(int)
+
+        for metrics in metrics_list:
+            for key, value in metrics.items():
+                if isinstance(value, list):
+                    if value and isinstance(value[0], dict):
+                        # Merge list of dicts (e.g. prompt_tokens_details)
+                        for d in value:
+                            for k, v in d.items():
+                                if key not in merged:
+                                    merged[key] = {}
+                                merged[key][k] = merged[key].get(k, 0) + v
+                    elif value and isinstance(value[0], (int, float)):
+                        merged[key] += sum(value)
+                elif isinstance(value, (int, float)):
+                    merged[key] += value
+
+        return dict(merged)
 
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         """Rename the Agent and save to storage"""

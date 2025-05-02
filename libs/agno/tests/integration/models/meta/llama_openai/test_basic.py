@@ -11,10 +11,10 @@ def _assert_metrics(response: RunResponse):
     output_tokens = response.metrics.get("output_tokens", [])
     total_tokens = response.metrics.get("total_tokens", [])
 
-    assert input_tokens > 0
-    assert output_tokens > 0
-    assert total_tokens > 0
-    assert total_tokens == input_tokens + output_tokens
+    assert sum(input_tokens) > 0
+    assert sum(output_tokens) > 0
+    assert sum(total_tokens) > 0
+    assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
 
 
 def test_basic():

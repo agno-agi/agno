@@ -226,6 +226,12 @@ class Model(ABC):
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
 
+                # Log messages for the next call to the model
+                log_debug(f"{self.get_provider()} Response", center=True, symbol="-")
+                log_debug(f"Model: {self.id}", center=True, symbol="-")
+
+                self._log_messages(messages)
+
                 # Continue loop to get next response
                 continue
 
@@ -294,6 +300,12 @@ class Model(ABC):
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
+
+                # Log messages for the next call to the model
+                log_debug(f"{self.get_provider()} Response", center=True, symbol="-")
+                log_debug(f"Model: {self.id}", center=True, symbol="-")
+
+                self._log_messages(messages)
 
                 # Continue loop to get next response
                 continue
@@ -569,6 +581,12 @@ class Model(ABC):
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
 
+                # Log messages for the next call to the model
+                log_debug(f"{self.get_provider()} Response Stream", center=True, symbol="-")
+                log_debug(f"Model: {self.id}", center=True, symbol="-")
+
+                self._log_messages(messages)
+
                 # Continue loop to get next response
                 continue
 
@@ -662,6 +680,12 @@ class Model(ABC):
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
+
+                # Log messages for the next call to the model
+                log_debug(f"{self.get_provider()} Async Response Stream", center=True, symbol="-")
+                log_debug(f"Model: {self.id}", center=True, symbol="-")
+
+                self._log_messages(messages)
 
                 # Continue loop to get next response
                 continue
