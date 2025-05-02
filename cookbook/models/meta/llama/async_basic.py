@@ -1,4 +1,4 @@
-"""Run `pip llama-api-client` to install dependencies."""
+import asyncio
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.meta import Llama
@@ -10,8 +10,8 @@ agent = Agent(
 )
 
 # Get the response in a variable
-# run: RunResponse = agent.run("Share a 2 sentence horror story")
+# run: RunResponse = asyncio.run(agent.arun("Share a 2 sentence horror story"))
 # print(run.content)
 
 # Print the response in the terminal
-agent.print_response("Share a 2 sentence horror story")
+asyncio.run(agent.aprint_response("Share a 2 sentence horror story"))

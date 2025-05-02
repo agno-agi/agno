@@ -40,6 +40,7 @@ from agno.run.team import TeamRunResponse
 from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
+from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import (
     log_debug,
@@ -3327,7 +3328,7 @@ class Agent:
         from agno.document import Document
 
         if self.retriever is not None and callable(self.retriever):
-            from inspect import signature
+            from inspect import isawaitable, signature
 
             try:
                 sig = signature(self.retriever)
@@ -3335,7 +3336,12 @@ class Agent:
                 if "agent" in sig.parameters:
                     retriever_kwargs = {"agent": self}
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-                return self.retriever(**retriever_kwargs)
+                result = self.retriever(**retriever_kwargs)
+
+                if isawaitable(result):
+                    result = await result
+
+                return result
             except Exception as e:
                 log_warning(f"Retriever failed: {e}")
                 return None
@@ -3706,7 +3712,9 @@ class Agent:
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
-            reasoning_model = self.model.__class__(id=self.model.id)
+            from copy import deepcopy
+
+            reasoning_model = deepcopy(self.model)
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
@@ -3915,7 +3923,9 @@ class Agent:
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
-            reasoning_model = self.model.__class__(id=self.model.id)
+            from copy import deepcopy
+
+            reasoning_model = deepcopy(self.model)
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
@@ -5393,7 +5403,19 @@ class Agent:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        """Run an interactive command-line interface to interact with the agent."""
+
+        from inspect import isawaitable
+
         from rich.prompt import Prompt
+
+        # Ensuring the agent is not using our async MCP tools
+        if self.tools is not None:
+            for tool in self.tools:
+                if isawaitable(tool):
+                    raise NotImplementedError("Use `acli_app` to use async tools.")
+                if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                    raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if message:
             self.print_response(
@@ -5407,5 +5429,38 @@ class Agent:
                 break
 
             self.print_response(
+                message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+            )
+
+    async def acli_app(
+        self,
+        message: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        user: str = "User",
+        emoji: str = ":sunglasses:",
+        stream: bool = False,
+        markdown: bool = False,
+        exit_on: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Run an interactive command-line interface to interact with the agent.
+        Works with agent dependencies requiring async logic.
+        """
+        from rich.prompt import Prompt
+
+        if message:
+            await self.aprint_response(
+                message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+            )
+
+        _exit_on = exit_on or ["exit", "quit", "bye"]
+        while True:
+            message = Prompt.ask(f"[bold] {emoji} {user} [/bold]")
+            if message in _exit_on:
+                break
+
+            await self.aprint_response(
                 message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
