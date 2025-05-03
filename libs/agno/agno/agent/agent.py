@@ -1717,9 +1717,19 @@ class Agent:
 
         if self.knowledge_filters or knowledge_filters:
             # initialize metadata (specially required in case when aload is commented out)
-            self.knowledge.initialize_valid_filters()  # type: ignore
+            if not self.knowledge.filters_ready:  # type: ignore
+                self.knowledge.initialize_valid_filters()  # type: ignore
 
             self.effective_knowledge_filters = self._get_effective_filters(knowledge_filters)
+
+        # For agentic knowledge filters
+        if self.enable_agentic_filters and self.knowledge.valid_metadata_filters:  # type: ignore
+            potential_filters = self._get_potential_filters_response(message=message)  # type: ignore
+            parsed_potential_filters = self._parse_potential_filters(potential_filters)
+
+            # Validate the filters given by agent
+            self.effective_knowledge_filters = self._get_effective_filters(parsed_potential_filters)
+            log_info(f"Filters used by Agent: {self.effective_knowledge_filters}")
 
         # If no retries are set, use the agent's default retries
         if retries is None:
@@ -5570,16 +5580,46 @@ class Agent:
         valid_filters_str = ", ".join(self.knowledge.valid_metadata_filters)  # type: ignore
         filter_system_message = Message(
             role="system",
-            content=(
-                f"FOLLOW THIS PROMPT and give results accordingly-"
-                f" The knowledge base contains documents with metadata that can be filtered by: {valid_filters_str}."
-                " When users ask about specific entities (like 'Tell me about Jordan Mitchell' or 'Show me Asian recipes'),"
-                " you should intelligently determine relevant filters (like user_id='<abc>' or region='asia')"
-                " Make 100 percent sure that you pick the right filters only from the valid metadata filters here: {self.knowledge.valid_metadata_filters}"
-                " to find the most relevant information."
-                " Give the filters in a fixed JSON format like this:\n"
-                '{"potential_filters": {"user_id": "abc", "document_type": "xyz"}}'
-            ),
+            content=dedent(f"""
+                You are a strict filter extraction assistant for a knowledge base.
+
+                The knowledge base contains documents with metadata fields that can be filtered by: {valid_filters_str}.
+
+                Your job is to analyze the user's query and extract ONLY the correct filters from the above list.
+
+                RULES:
+                - Only use the valid metadata filters listed above as keys.
+                - If the query does not mention a value for a filter, do NOT guess or hallucinate.
+                - If no valid filters are present in the query, return an empty JSON object.
+                - Always return your answer as a single JSON object in the format: {{"potential_filters": {{...}}}}
+                - Do NOT include any explanation, just the JSON.
+                - Be case-insensitive when matching values, but use the filter keys exactly as listed.
+                - If the query refers to a person, convert their name to a suitable user_id (e.g., 'Jordan Mitchell' -> 'jordan_mitchell').
+                - If the query refers to a region, use the region value in lowercase (e.g., 'Asia' -> 'asia').
+                - If the query refers to a document type, use the value as is (e.g., 'resume' -> 'resume').
+
+                CORRECT EXAMPLES:
+                User: Tell me about Jordan Mitchell's experience with user_id as jordan_mitchell
+                Response: {{"potential_filters": {{"user_id": "jordan_mitchell"}}}}
+
+                User: Show me Asian recipes.
+                Response: {{"potential_filters": {{"region": "asia"}}}}
+
+                User: Find resumes for John Doe with user_id as john_doe
+                Response: {{"potential_filters": {{"user_id": "john_doe", "document_type": "resume"}}}}
+
+                User: List all documents.
+                Response: {{}}
+
+                INCORRECT EXAMPLES (DO NOT DO THIS): Do not assume
+                User: Tell me about Jordan Mitchell's experience.
+                Response: {{"potential_filters": {{"name": "Jordan Mitchell"}}}}  # 'name' is not a valid filter key.
+
+                ALWAYS return only the JSON object, nothing else.
+
+                Format:
+                {{"potential_filters": {{<key>: <value>, ...}}}}
+            """),
         )
         filter_user_message = Message(role="user", content=message)
         filter_messages = [filter_system_message, filter_user_message]
