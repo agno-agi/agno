@@ -1,7 +1,7 @@
 from typing import List
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.meta import Llama
+from agno.models.meta import LlamaOpenAI
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -27,7 +27,7 @@ class MovieScript(BaseModel):
 
 # Agent that uses a JSON schema output
 json_schema_output_agent = Agent(
-    model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8", temperature=0.1),
+    model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8", temperature=0.1),
     description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
     response_model=MovieScript,
 )
