@@ -3746,7 +3746,6 @@ class Team:
     def _calculate_full_team_session_metrics(self, messages: List[Message], session_id: str) -> SessionMetrics:
         current_session_metrics = self.session_metrics or self._calculate_session_metrics(messages)
         current_session_metrics = replace(current_session_metrics)
-
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
         # Get metrics of the team-agent's messages
