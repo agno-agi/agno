@@ -966,7 +966,9 @@ class Agent:
             if self.session_metrics is None:
                 self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
             else:
-                self.session_metrics += self.calculate_metrics(run_messages.messages)  # Calculate metrics for the session
+                self.session_metrics += self.calculate_metrics(
+                    run_messages.messages
+                )  # Calculate metrics for the session
 
         # Yield UpdatingMemory event
         if self.stream_intermediate_steps:
@@ -1610,7 +1612,9 @@ class Agent:
             if self.session_metrics is None:
                 self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
             else:
-                self.session_metrics += self.calculate_metrics(run_messages.messages)  # Calculate metrics for the session
+                self.session_metrics += self.calculate_metrics(
+                    run_messages.messages
+                )  # Calculate metrics for the session
 
         # Yield UpdatingMemory event
         if self.stream_intermediate_steps:

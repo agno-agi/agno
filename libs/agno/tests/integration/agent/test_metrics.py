@@ -1,14 +1,9 @@
-from typing import List, Optional
-
-from git import Union
-
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 
 def test_session_metrics():
-
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[DuckDuckGoTools(cache_results=True)],
