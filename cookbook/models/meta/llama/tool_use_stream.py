@@ -9,4 +9,4 @@ agent = Agent(
     tools=[DuckDuckGoTools()],
     show_tool_calls=True,
 )
-agent.print_response("Tell me about Llama API", stream=True)
+agent.print_response("Tell me the latest news about Llama API", stream=True)

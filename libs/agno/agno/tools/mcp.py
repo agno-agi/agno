@@ -69,7 +69,12 @@ class MCPTools(Toolkit):
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
             transport: The transport protocol to use, either "stdio" or "sse"
         """
-        super().__init__(name="MCPToolkit", include_tools=include_tools, exclude_tools=exclude_tools, **kwargs)
+        super().__init__(name="MCPTools", **kwargs)
+
+        # Set these after `__init__` to bypass the `_check_tools_filters`
+        # beacuse tools are not available until `initialize()` is called.
+        self.include_tools = include_tools
+        self.exclude_tools = exclude_tools
 
         if session is None and server_params is None:
             if transport == "sse" and url is None:
@@ -179,6 +184,12 @@ class MCPTools(Toolkit):
             # Get the list of tools from the MCP server
             available_tools = await self.session.list_tools()
 
+            self._check_tools_filters(
+                available_tools=[tool.name for tool in available_tools.tools],
+                include_tools=self.include_tools,
+                exclude_tools=self.exclude_tools,
+            )
+
             # Filter tools based on include/exclude lists
             filtered_tools = []
             for tool in available_tools.tools:
@@ -253,7 +264,12 @@ class MultiMCPTools(Toolkit):
             include_tools: Optional list of tool names to include (if None, includes all).
             exclude_tools: Optional list of tool names to exclude (if None, excludes none).
         """
-        super().__init__(name="MultiMCPToolkit", include_tools=include_tools, exclude_tools=exclude_tools, **kwargs)
+        super().__init__(name="MultiMCPTools", **kwargs)
+
+        # Set these after `__init__` to bypass the `_check_tools_filters`
+        # beacuse tools are not available until `initialize()` is called.
+        self.include_tools = include_tools
+        self.exclude_tools = exclude_tools
 
         if server_params_list is None and commands is None and urls is None:
             raise ValueError("Either server_params_list or commands or urls must be provided")

@@ -11,6 +11,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
+from agno.utils.models.llama import format_message
 
 try:
     from llama_api_client import AsyncLlamaAPIClient, LlamaAPIClient
@@ -187,62 +188,6 @@ class Llama(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
-    def _format_message(self, message: Message) -> Dict[str, Any]:
-        """
-        Format a message into the format expected by Llama API.
-
-        Args:
-            message (Message): The message to format.
-
-        Returns:
-            Dict[str, Any]: The formatted message.
-        """
-        message_dict: Dict[str, Any] = {
-            "role": message.role,
-            "content": message.content,
-            "name": message.name,
-            "tool_call_id": message.tool_call_id,
-            "tool_calls": message.tool_calls,
-        }
-        message_dict = {k: v for k, v in message_dict.items() if v is not None}
-
-        if message.images is not None and len(message.images) > 0:
-            log_warning("Image input is currently unsupported.")
-
-        if message.videos is not None and len(message.videos) > 0:
-            log_warning("Video input is currently unsupported.")
-
-        if message.audio is not None and len(message.audio) > 0:
-            log_warning("Audio input is currently unsupported.")
-
-        # OpenAI expects the tool_calls to be None if empty, not an empty list
-        if message.tool_calls is not None and len(message.tool_calls) == 0:
-            message_dict["tool_calls"] = None
-
-        # Manually add the content field even if it is None
-        if message.content is None:
-            message_dict["content"] = " "
-
-        if message.role == "tool":
-            message_dict = {
-                "role": "tool",
-                "tool_call_id": message.tool_call_id,
-                "content": message.content,
-            }
-
-        if message.role == "assistant" and message.tool_calls is not None and len(message.tool_calls) > 0:
-            message_dict = {
-                "content": {
-                    "type": "text",
-                    "text": message.content if message.content is not None else " ",
-                },
-                "role": "assistant",
-                "tool_calls": message.tool_calls,
-                "stop_reason": "tool_calls",
-            }
-
-        return message_dict
-
     def invoke(self, messages: List[Message]) -> CreateChatCompletionResponse:
         """
         Send a chat completion request to the Llama API.
@@ -255,7 +200,7 @@ class Llama(Model):
         """
         return self.get_client().chat.completions.create(
             model=self.id,
-            messages=[self._format_message(m) for m in messages],  # type: ignore
+            messages=[format_message(m) for m in messages],  # type: ignore
             **self.request_kwargs,
         )
 
@@ -272,7 +217,7 @@ class Llama(Model):
 
         return await self.get_async_client().chat.completions.create(
             model=self.id,
-            messages=[self._format_message(m) for m in messages],  # type: ignore
+            messages=[format_message(m) for m in messages],  # type: ignore
             **self.request_kwargs,
         )
 
@@ -290,7 +235,7 @@ class Llama(Model):
         try:
             yield from self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )  # type: ignore
@@ -312,7 +257,7 @@ class Llama(Model):
         try:
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )
@@ -440,18 +385,20 @@ class Llama(Model):
         # Add metrics from the metrics list
         if hasattr(response, "metrics") and response.metrics is not None:
             usage_data = {}
-            for metric in response.metrics:
-                if metric.metric == "num_prompt_tokens":
-                    usage_data["prompt_tokens"] = int(metric.value)
-                    usage_data["input_tokens"] = int(metric.value)
-                elif metric.metric == "num_completion_tokens":
-                    usage_data["completion_tokens"] = int(metric.value)
-                    usage_data["output_tokens"] = int(metric.value)
-                elif metric.metric == "num_total_tokens":
-                    usage_data["total_tokens"] = int(metric.value)
+            metric_map = {
+                "num_prompt_tokens": "input_tokens",
+                "num_completion_tokens": "output_tokens",
+                "num_total_tokens": "total_tokens",
+            }
 
-            if usage_data:
-                model_response.response_usage = usage_data
+            for metric in response.metrics:
+                key = metric_map.get(metric.metric)
+                if key:
+                    value = int(metric.value)
+                    usage_data[key] = value
+
+                if usage_data:
+                    model_response.response_usage = usage_data
 
         return model_response
 
@@ -470,23 +417,19 @@ class Llama(Model):
         if response_delta is not None:
             delta = response_delta.event
 
-            # Handle metrics event - this comes as a separate event type at the end of the stream
+            # Capture metrics event
             if delta.event_type == "metrics" and delta.metrics is not None:
                 usage_data = {}
-                prompt_tokens = 0
-                completion_tokens = 0
+                metric_map = {
+                    "num_prompt_tokens": "input_tokens",
+                    "num_completion_tokens": "output_tokens",
+                    "num_total_tokens": "total_tokens",
+                }
 
                 for metric in delta.metrics:
-                    if metric.metric == "num_prompt_tokens":
-                        prompt_tokens = int(metric.value)
-                        usage_data["prompt_tokens"] = prompt_tokens
-                        usage_data["input_tokens"] = prompt_tokens
-                    elif metric.metric == "num_completion_tokens":
-                        completion_tokens = int(metric.value)
-                        usage_data["completion_tokens"] = completion_tokens
-                        usage_data["output_tokens"] = completion_tokens
-                    elif metric.metric == "num_total_tokens":
-                        usage_data["total_tokens"] = int(metric.value)
+                    key = metric_map.get(metric.metric)
+                    if key:
+                        usage_data[key] = int(metric.value)
 
                 if usage_data:
                     model_response.response_usage = usage_data
