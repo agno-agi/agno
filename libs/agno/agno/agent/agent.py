@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import ChainMap, deque
+from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
 from textwrap import dedent
@@ -966,7 +966,9 @@ class Agent:
             if self.session_metrics is None:
                 self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
             else:
-                self.session_metrics += self.calculate_session_metrics(session_id)  # Calculate metrics for the session
+                self.session_metrics += self.calculate_metrics(
+                    run_messages.messages
+                )  # Calculate metrics for the session
 
         # Yield UpdatingMemory event
         if self.stream_intermediate_steps:
@@ -1610,7 +1612,9 @@ class Agent:
             if self.session_metrics is None:
                 self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
             else:
-                self.session_metrics += self.calculate_session_metrics(session_id)  # Calculate metrics for the session
+                self.session_metrics += self.calculate_metrics(
+                    run_messages.messages
+                )  # Calculate metrics for the session
 
         # Yield UpdatingMemory event
         if self.stream_intermediate_steps:
@@ -2577,9 +2581,13 @@ class Agent:
 
             # Add the JSON output prompt if response_model is provided and the model does not support native structured outputs or JSON schema outputs
             # or if use_json_mode is True
-            if self.model is not None and self.response_model is not None and not (
-                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
-                and (not self.use_json_mode or self.structured_outputs is True)
+            if (
+                self.model is not None
+                and self.response_model is not None
+                and not (
+                    (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
+                    and (not self.use_json_mode or self.structured_outputs is True)
+                )
             ):
                 sys_message_content += f"\n{get_json_output_prompt(self.response_model)}"  # type: ignore
 
@@ -3475,7 +3483,7 @@ class Agent:
             self.run_response.reasoning_content += reasoning_content
 
     def aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
-        aggregated_metrics: Dict[str, Any] = {}
+        aggregated_metrics: Dict[str, Any] = defaultdict(list)
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None:
@@ -3483,7 +3491,9 @@ class Agent:
                     if k == "timer":
                         continue
                     if v is not None:
-                        aggregated_metrics[k] = v
+                        aggregated_metrics[k].append(v)
+        if aggregated_metrics is not None:
+            aggregated_metrics = dict(aggregated_metrics)
         return aggregated_metrics
 
     def calculate_metrics(self, messages: List[Message]) -> SessionMetrics:
@@ -3493,16 +3503,6 @@ class Agent:
             if m.role == assistant_message_role and m.metrics is not None:
                 session_metrics += m.metrics
         return session_metrics
-
-    def calculate_session_metrics(self, session_id: str) -> SessionMetrics:
-        self.memory = cast(Memory, self.memory)
-        runs = self.memory.get_runs(session_id=session_id)
-        run_metrics = {}
-        for run in runs:
-            if run.metrics is not None:
-                run_metrics.update(run.metrics)
-
-        return SessionMetrics(**run_metrics)
 
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         """Rename the Agent and save to storage"""
