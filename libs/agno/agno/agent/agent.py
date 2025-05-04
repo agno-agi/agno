@@ -1963,7 +1963,7 @@ class Agent:
             if not async_mode and iscoroutinefunction(self.retriever):
                 log_warning(
                     "Async retriever function is being used with synchronous agent.run() or agent.print_response(). "
-                    "Consider using agent.arun() or agent.aprint_response() instead for proper async support."
+                    "It is recommended to use agent.arun() or agent.aprint_response() instead."
                 )
 
             if self.search_knowledge:
