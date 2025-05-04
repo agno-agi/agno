@@ -40,7 +40,6 @@ from agno.run.team import TeamRunResponse
 from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
-from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import (
     log_debug,
@@ -1860,6 +1859,7 @@ class Agent:
         session_messages: List[Message] = []
         self.memory = cast(Memory, self.memory)
         if self.enable_user_memories and run_messages.user_message is not None:
+            log_debug("Creating user memories.")
             self.memory.create_user_memories(message=run_messages.user_message.get_content_string(), user_id=user_id)
 
             # TODO: Possibly do both of these in one step
@@ -1888,6 +1888,7 @@ class Agent:
 
         # Update the session summary if needed
         if self.enable_session_summaries:
+            log_debug("Creating session summary.")
             self.memory.create_session_summary(session_id=session_id, user_id=user_id)
 
     async def _amake_memories_and_summaries(
@@ -1900,6 +1901,7 @@ class Agent:
         self.memory = cast(Memory, self.memory)
         session_messages: List[Message] = []
         if self.enable_user_memories and run_messages.user_message is not None:
+            log_debug("Creating user memories.")
             await self.memory.acreate_user_memories(
                 message=run_messages.user_message.get_content_string(), user_id=user_id
             )
@@ -1930,6 +1932,7 @@ class Agent:
 
         # Update the session summary if needed
         if self.enable_session_summaries:
+            log_debug("Creating session summary.")
             await self.memory.acreate_session_summary(session_id=session_id, user_id=user_id)
 
     def get_tools(
@@ -5413,7 +5416,7 @@ class Agent:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
-                if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if message:
