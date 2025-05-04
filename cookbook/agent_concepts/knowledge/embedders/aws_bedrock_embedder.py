@@ -3,7 +3,8 @@ from agno.embedder.aws_bedrock import AwsBedrockEmbedder
 from agno.vectordb.pgvector import PgVector
 
 embeddings = AwsBedrockEmbedder().get_embedding(
-    "The quick brown fox jumps over the lazy dog.")
+    "The quick brown fox jumps over the lazy dog."
+)
 # Print the embeddings and their dimensions
 print(f"Embeddings: {embeddings[:5]}")
 print(f"Dimensions: {len(embeddings)}")

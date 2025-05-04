@@ -1,8 +1,7 @@
-import base64
 import json
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 from agno.embedder.base import Embedder
 from agno.exceptions import AgnoError, ModelProviderError
