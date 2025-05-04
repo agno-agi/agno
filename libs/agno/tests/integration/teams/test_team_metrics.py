@@ -52,6 +52,7 @@ def test_team_metrics_basic():
     assert team.session_metrics.output_tokens is not None
     assert team.session_metrics.total_tokens is not None
 
+
 def test_team_metrics_streaming():
     """Test team metrics with streaming."""
 
