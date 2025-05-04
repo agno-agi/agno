@@ -62,7 +62,7 @@ def test_knowledge_tools_non_streaming(knowledge_base):
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
             Use step-by-step reasoning to solve the problem.
-            Make sure to use the knowledge tools to search for information.
+            Make sure to use the knowledge tools to think and search for information.
             \
         """),
     )
@@ -92,7 +92,7 @@ def test_knowledge_tools_streaming(knowledge_base):
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
             Use step-by-step reasoning to solve the problem.
-            Make sure to use the knowledge tools to search for information.
+            Make sure to use the knowledge tools to think and search for information.
             \
         """),
     )
