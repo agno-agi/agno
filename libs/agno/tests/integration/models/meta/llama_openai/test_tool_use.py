@@ -180,7 +180,6 @@ def test_tool_call_custom_tool_no_parameters():
     assert "Tokyo" in response.content
 
 
-@pytest.mark.skip("Llama models do not not accept optional parameters")
 def test_tool_call_custom_tool_optional_parameters():
     def get_the_weather(city: Optional[str] = None):
         """
