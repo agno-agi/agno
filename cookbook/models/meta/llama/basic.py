@@ -1,12 +1,9 @@
-"""Run `pip llama-api-client` to install dependencies."""
-
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.meta import Llama
 
 agent = Agent(
     model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
     markdown=True,
-    debug_mode=True,
 )
 
 # Get the response in a variable
