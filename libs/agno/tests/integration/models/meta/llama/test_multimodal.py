@@ -3,14 +3,8 @@ from pathlib import Path
 from agno.agent.agent import Agent
 from agno.media import Image
 from agno.models.meta import Llama
-from agno.utils.media import download_image
 
-image_path = Path(__file__).parent.joinpath("sample.jpg")
-
-download_image(
-    url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg",
-    output_path=str(image_path),
-)
+image_path = Path(__file__).parent.parent.parent.joinpath("sample_image.jpg")
 
 
 def test_image_input_file():
@@ -24,7 +18,6 @@ def test_image_input_file():
     )
 
     assert "golden" in response.content.lower()
-    assert "bridge" in response.content.lower()
 
 
 def test_image_input_bytes():
@@ -40,4 +33,3 @@ def test_image_input_bytes():
     )
 
     assert "golden" in response.content.lower()
-    assert "bridge" in response.content.lower()

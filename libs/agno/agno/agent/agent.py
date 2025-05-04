@@ -2047,6 +2047,8 @@ class Agent:
                     agent_tool_names.extend([f for f in tool.functions.keys()])
                 elif callable(tool):
                     agent_tool_names.append(tool.__name__)
+                else:
+                    agent_tool_names.append(str(tool))
 
         # Create new functions if we don't have any set on the model OR if the list of tool names is different than what is set on the model
         existing_model_functions = model.get_functions()
@@ -2066,7 +2068,6 @@ class Agent:
 
                 _tools_for_model = []
                 _functions_for_model = {}
-
                 for tool in agent_tools:
                     if isinstance(tool, Dict):
                         # If a dict is passed, it is a builtin tool
