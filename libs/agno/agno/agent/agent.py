@@ -1102,7 +1102,7 @@ class Agent:
             effective_filters = self._get_effective_filters(knowledge_filters)
 
         # Agentic filters are enabled
-        if self.enable_agentic_filters and not self.knowledge.valid_metadata_filters:
+        if self.enable_agentic_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
             # initialize metadata (specially required in case when load is commented out)
             self.knowledge.initialize_valid_filters()  # type: ignore
 
@@ -1736,7 +1736,7 @@ class Agent:
             effective_filters = self._get_effective_filters(knowledge_filters)
 
         # Agentic filters are enabled
-        if self.enable_agentic_filters and not self.knowledge.valid_metadata_filters:
+        if self.enable_agentic_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
             # initialize metadata (specially required in case when load is commented out)
             self.knowledge.initialize_valid_filters()  # type: ignore
 
