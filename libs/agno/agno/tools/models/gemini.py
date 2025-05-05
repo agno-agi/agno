@@ -86,23 +86,25 @@ class GeminiTools(Toolkit):
 
             # Extract image bytes
             image_bytes = response.generated_images[0].image.image_bytes  
-            if not image_bytes:
-                log_error("No valid image data extracted.")
-                return "Failed to generate image: No valid image data extracted."
-            base64_encoded_image_bytes = base64.b64encode(image_bytes)
-            actual_mime_type = "image/png"
+            for generated_image in response.generated_images:
+                image_bytes = generated_image.image.image_bytes
+                if not image_bytes:
+                    log_error("No valid image data extracted.")
+                    return "Failed to generate image: No valid image data extracted."
+                base64_encoded_image_bytes = base64.b64encode(image_bytes)
+                actual_mime_type = "image/png"
 
-            media_id = str(uuid4())
-            agent.add_image(
-                ImageArtifact(
-                    id=media_id,
-                    content=base64_encoded_image_bytes,
-                    original_prompt=prompt,
-                    mime_type=actual_mime_type,
+                media_id = str(uuid4())
+                agent.add_image(
+                    ImageArtifact(
+                        id=media_id,
+                        content=base64_encoded_image_bytes,
+                        original_prompt=prompt,
+                        mime_type=actual_mime_type,
+                    )
                 )
-            )
-            log_debug(f"Successfully generated image {media_id} with model {self.image_model}")
-            return f"Image generated successfully with ID: {media_id}"
+                log_debug(f"Successfully generated image {media_id} with model {self.image_model}")
+            return f"Image generated successfully"
 
         except Exception as e:
             log_error(f"Failed to generate image: Client or method not available ({e})")
@@ -157,7 +159,7 @@ class GeminiTools(Toolkit):
                     )
                 )
                 log_debug(f"Successfully generated video {media_id} with model {self.video_model}")
-            return f"Video generated successfully with ID: {media_id}"
+            return f"Video generated successfully"
         except Exception as e:
             log_error(f"Failed to generate video: {e}")
             return f"Failed to generate video: {e}"
