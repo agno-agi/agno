@@ -2018,7 +2018,10 @@ class Agent:
         if self.knowledge is not None or self.retriever is not None:
             if self.search_knowledge:
                 # Use async or sync search based on async_mode
-                agent_tools.append(self.search_knowledge_base_function(async_mode=async_mode))
+                if self.knowledge.valid_metadata_filters:
+                    agent_tools.append(self.search_knowledge_base_with_filters_function(async_mode=async_mode))
+                else:
+                    agent_tools.append(self.search_knowledge_base_function(async_mode=async_mode))
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
@@ -4386,7 +4389,6 @@ class Agent:
     def search_knowledge_base_function(self, async_mode: bool = False) -> Callable:
         """Factory function to create a search_knowledge_base function with filters."""
         # Determine which filters to use
-        effective_filters = self.effective_knowledge_filters
 
         def search_knowledge_base(query: str) -> str:
             """Use this function to search the knowledge base for information about a query.
@@ -4397,6 +4399,10 @@ class Agent:
             Returns:
                 str: A string containing the response from the knowledge base.
             """
+            if filters and not effective_filters:
+                use filters
+            if filters and effective_filters:
+                use effective_filters
 
             # Get the relevant documents from the knowledge base, passing filters
             self.run_response = cast(RunResponse, self.run_response)
