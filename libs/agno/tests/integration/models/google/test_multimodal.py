@@ -10,7 +10,7 @@ from agno.models.google import Gemini
 
 def test_image_input():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-2.0-flash-001"),
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
@@ -35,7 +35,7 @@ def test_audio_input_bytes():
 
     # Provide the agent with the audio file and get result as text
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-2.0-flash-001"),
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
@@ -49,7 +49,7 @@ def test_audio_input_bytes():
 
 def test_audio_input_url():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-2.0-flash-001"),
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
@@ -67,7 +67,7 @@ def test_audio_input_url():
 
 def test_video_input_bytes():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-2.0-flash-001"),
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,

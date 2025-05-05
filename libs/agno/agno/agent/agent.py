@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import ChainMap, deque
+from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
 from textwrap import dedent
@@ -40,7 +40,6 @@ from agno.run.team import TeamRunResponse
 from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
-from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import (
     log_debug,
@@ -966,7 +965,9 @@ class Agent:
             if self.session_metrics is None:
                 self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
             else:
-                self.session_metrics += self.calculate_session_metrics(session_id)  # Calculate metrics for the session
+                self.session_metrics += self.calculate_metrics(
+                    run_messages.messages
+                )  # Calculate metrics for the session
 
         # Yield UpdatingMemory event
         if self.stream_intermediate_steps:
@@ -1610,7 +1611,9 @@ class Agent:
             if self.session_metrics is None:
                 self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
             else:
-                self.session_metrics += self.calculate_session_metrics(session_id)  # Calculate metrics for the session
+                self.session_metrics += self.calculate_metrics(
+                    run_messages.messages
+                )  # Calculate metrics for the session
 
         # Yield UpdatingMemory event
         if self.stream_intermediate_steps:
@@ -1856,6 +1859,7 @@ class Agent:
         session_messages: List[Message] = []
         self.memory = cast(Memory, self.memory)
         if self.enable_user_memories and run_messages.user_message is not None:
+            log_debug("Creating user memories.")
             self.memory.create_user_memories(message=run_messages.user_message.get_content_string(), user_id=user_id)
 
             # TODO: Possibly do both of these in one step
@@ -1884,6 +1888,7 @@ class Agent:
 
         # Update the session summary if needed
         if self.enable_session_summaries:
+            log_debug("Creating session summary.")
             self.memory.create_session_summary(session_id=session_id, user_id=user_id)
 
     async def _amake_memories_and_summaries(
@@ -1896,6 +1901,7 @@ class Agent:
         self.memory = cast(Memory, self.memory)
         session_messages: List[Message] = []
         if self.enable_user_memories and run_messages.user_message is not None:
+            log_debug("Creating user memories.")
             await self.memory.acreate_user_memories(
                 message=run_messages.user_message.get_content_string(), user_id=user_id
             )
@@ -1926,6 +1932,7 @@ class Agent:
 
         # Update the session summary if needed
         if self.enable_session_summaries:
+            log_debug("Creating session summary.")
             await self.memory.acreate_session_summary(session_id=session_id, user_id=user_id)
 
     def get_tools(
@@ -1950,6 +1957,15 @@ class Agent:
 
         # Add tools for accessing knowledge
         if self.knowledge is not None or self.retriever is not None:
+            # Check if retriever is an async function but used in sync mode
+            from inspect import iscoroutinefunction
+
+            if not async_mode and iscoroutinefunction(self.retriever):
+                log_warning(
+                    "Async retriever function is being used with synchronous agent.run() or agent.print_response(). "
+                    "It is recommended to use agent.arun() or agent.aprint_response() instead."
+                )
+
             if self.search_knowledge:
                 # Use async or sync search based on async_mode
                 if async_mode:
@@ -1980,6 +1996,8 @@ class Agent:
                     agent_tool_names.extend([f for f in tool.functions.keys()])
                 elif callable(tool):
                     agent_tool_names.append(tool.__name__)
+                else:
+                    agent_tool_names.append(str(tool))
 
         # Create new functions if we don't have any set on the model OR if the list of tool names is different than what is set on the model
         existing_model_functions = model.get_functions()
@@ -1999,7 +2017,6 @@ class Agent:
 
                 _tools_for_model = []
                 _functions_for_model = {}
-
                 for tool in agent_tools:
                     if isinstance(tool, Dict):
                         # If a dict is passed, it is a builtin tool
@@ -2215,7 +2232,7 @@ class Agent:
             else:
                 self.memory = cast(Memory, self.memory)
                 # We fake the structure on storage, to maintain the interface with the legacy implementation
-                run_responses = self.memory.runs[session_id]  # type: ignore
+                run_responses = self.memory.runs.get(session_id, [])  # type: ignore
                 memory_dict = self.memory.to_dict()
                 memory_dict["runs"] = [rr.to_dict() for rr in run_responses]
         else:
@@ -2577,9 +2594,13 @@ class Agent:
 
             # Add the JSON output prompt if response_model is provided and the model does not support native structured outputs or JSON schema outputs
             # or if use_json_mode is True
-            if self.model is not None and self.response_model is not None and not (
-                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
-                and (not self.use_json_mode or self.structured_outputs is True)
+            if (
+                self.model is not None
+                and self.response_model is not None
+                and not (
+                    (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
+                    and (not self.use_json_mode or self.structured_outputs is True)
+                )
             ):
                 sys_message_content += f"\n{get_json_output_prompt(self.response_model)}"  # type: ignore
 
@@ -3475,7 +3496,7 @@ class Agent:
             self.run_response.reasoning_content += reasoning_content
 
     def aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
-        aggregated_metrics: Dict[str, Any] = {}
+        aggregated_metrics: Dict[str, Any] = defaultdict(list)
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None:
@@ -3483,7 +3504,9 @@ class Agent:
                     if k == "timer":
                         continue
                     if v is not None:
-                        aggregated_metrics[k] = v
+                        aggregated_metrics[k].append(v)
+        if aggregated_metrics is not None:
+            aggregated_metrics = dict(aggregated_metrics)
         return aggregated_metrics
 
     def calculate_metrics(self, messages: List[Message]) -> SessionMetrics:
@@ -3493,16 +3516,6 @@ class Agent:
             if m.role == assistant_message_role and m.metrics is not None:
                 session_metrics += m.metrics
         return session_metrics
-
-    def calculate_session_metrics(self, session_id: str) -> SessionMetrics:
-        self.memory = cast(Memory, self.memory)
-        runs = self.memory.get_runs(session_id=session_id)
-        run_metrics = {}
-        for run in runs:
-            if run.metrics is not None:
-                run_metrics.update(run.metrics)
-
-        return SessionMetrics(**run_metrics)
 
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         """Rename the Agent and save to storage"""
@@ -5412,7 +5425,7 @@ class Agent:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
-                if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if message:
