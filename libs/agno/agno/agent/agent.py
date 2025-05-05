@@ -118,6 +118,9 @@ class Agent:
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Dict[str, Any]] = None
 
+    # Let the agent choose the knowledge filters
+    enable_agentic_filters: Optional[bool] = False
+
     add_references: bool = False
     # Retrieval function to get references
     # This function, if provided, is used instead of the default search_knowledge function
@@ -300,6 +303,7 @@ class Agent:
         num_history_runs: int = 3,
         knowledge: Optional[AgentKnowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        enable_agentic_filters: Optional[bool] = None,
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
@@ -384,6 +388,7 @@ class Agent:
 
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
+        self.enable_agentic_filters = enable_agentic_filters
         self.add_references = add_references
         self.retriever = retriever
         self.references_format = references_format
@@ -1082,6 +1087,9 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent()
 
+        effective_filters = knowledge_filters
+
+        # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
             # initialize metadata (specially required in case when load is commented out)
             if not self.knowledge.filters_ready:  # type: ignore
@@ -1704,6 +1712,9 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent()
 
+        effective_filters = knowledge_filters
+
+        # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
             # initialize metadata (specially required in case when aload is commented out)
             if not self.knowledge.filters_ready:  # type: ignore
@@ -2716,6 +2727,16 @@ class Agent:
         # 3.2.3 Add agent name if provided
         if self.name is not None and self.add_name_to_instructions:
             additional_information.append(f"Your name is: {self.name}.")
+
+        # 3.2.4 Add information about agentic filters if enabled
+        if self.knowledge is not None and self.enable_agentic_filters:
+            valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
+            if valid_filters:
+                valid_filters_str = ", ".join(valid_filters)
+                additional_information.append(
+                    f"The knowledge base contains documents with these metadata filters: {valid_filters_str}. "
+                    f"When searching the knowledge base, you can use these filters to narrow down results."
+                )
 
         # 3.3 Build the default system message for the Agent.
         system_message_content: str = ""
