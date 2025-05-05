@@ -29,7 +29,7 @@ class AgentKnowledge(BaseModel):
 
     @model_validator(mode="after")
     def update_reader(self) -> "AgentKnowledge":
-        if self.reader is not None:
+        if self.reader is not None and self.reader.chunking_strategy is None:
             self.reader.chunking_strategy = self.chunking_strategy
         return self
 

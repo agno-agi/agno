@@ -11,12 +11,18 @@ try:
 except ImportError:
     raise ImportError("The `firecrawl` package is not installed. Please install it via `pip install firecrawl-py`.")
 
-
 @dataclass
 class FirecrawlReader(Reader):
     api_key: Optional[str] = None
     params: Optional[Dict] = None
     mode: Literal["scrape", "crawl"] = "scrape"
+    
+    def __init__(self, api_key: Optional[str] = None, params: Optional[Dict] = None, mode: Literal["scrape", "crawl"] = "scrape", *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.api_key = api_key
+        self.params = params
+        self.mode = mode
+
 
     def scrape(self, url: str) -> List[Document]:
         """
