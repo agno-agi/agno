@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Sequence
+from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional
 
 from pydantic import BaseModel
 
@@ -10,6 +10,7 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
 from agno.utils.models.watsonx import format_images_for_message
+
 try:
     from ibm_watsonx_ai import Credentials
     from ibm_watsonx_ai.foundation_models import ModelInference

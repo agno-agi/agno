@@ -52,6 +52,12 @@ class Claude(AnthropicClaude):
     client_params: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the model to a dictionary.
+
+        Returns:
+            Dict[str, Any]: The dictionary representation of the model.
+        """
         _dict = super().to_dict()
         _dict["max_tokens"] = self.max_tokens
         _dict["temperature"] = self.temperature
@@ -64,6 +70,12 @@ class Claude(AnthropicClaude):
     async_client: Optional[AsyncAnthropicBedrock] = None  # type: ignore
 
     def get_client(self):
+        """
+        Get the Bedrock client.
+
+        Returns:
+            AnthropicBedrock: The Bedrock client.
+        """
         if self.client is not None:
             return self.client
 
@@ -97,6 +109,12 @@ class Claude(AnthropicClaude):
         return self.client
 
     def get_async_client(self):
+        """
+        Get the Bedrock async client.
+
+        Returns:
+            AsyncAnthropicBedrock: The Bedrock async client.
+        """
         if self.async_client is not None:
             return self.async_client
 
@@ -129,6 +147,9 @@ class Claude(AnthropicClaude):
     def request_kwargs(self) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
+
+        Returns:
+            Dict[str, Any]: The keyword arguments for API requests.
         """
         _request_params: Dict[str, Any] = {}
         if self.max_tokens:
@@ -194,6 +215,11 @@ class Claude(AnthropicClaude):
 
         Returns:
             Any: The streamed response from the model.
+
+        Raises:
+            APIConnectionError: If there are network connectivity issues
+            RateLimitError: If the API rate limit is exceeded
+            APIStatusError: For other API-related errors
         """
 
         chat_messages, system_message = format_messages(messages)
@@ -273,6 +299,11 @@ class Claude(AnthropicClaude):
 
         Returns:
             Any: The streamed response from the model.
+
+        Raises:
+            APIConnectionError: If there are network connectivity issues
+            RateLimitError: If the API rate limit is exceeded
+            APIStatusError: For other API-related errors
         """
 
         try:

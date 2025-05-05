@@ -23,7 +23,7 @@ class DeepSeek(OpenAILike):
     name: str = "DeepSeek"
     provider: str = "DeepSeek"
 
-    api_key: Optional[str] = getenv("DEEPSEEK_API_KEY", None)
+    api_key: Optional[str] = getenv("DEEPSEEK_API_KEY")
     base_url: str = "https://api.deepseek.com"
 
     # Their support for structured outputs is currently broken

@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Sequence
 
-from agno.models.message import Message
 from agno.media import Image
+from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
 
 

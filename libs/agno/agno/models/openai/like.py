@@ -14,6 +14,7 @@ class OpenAILike(OpenAIChat):
         name (str): The name of the OpenAI model to use. Defaults to "OpenAILike".
         api_key (Optional[str]): The API key to use. Defaults to "not-provided".
     """
+
     id: str = "not-provided"
     name: str = "OpenAILike"
     api_key: Optional[str] = "not-provided"

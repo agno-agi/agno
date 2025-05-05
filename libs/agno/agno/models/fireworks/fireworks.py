@@ -22,5 +22,5 @@ class Fireworks(OpenAILike):
     name: str = "Fireworks"
     provider: str = "Fireworks"
 
-    api_key: Optional[str] = getenv("FIREWORKS_API_KEY", None)
+    api_key: Optional[str] = getenv("FIREWORKS_API_KEY")
     base_url: str = "https://api.fireworks.ai/inference/v1"

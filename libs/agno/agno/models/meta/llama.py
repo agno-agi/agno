@@ -36,6 +36,7 @@ class Llama(Model):
     id: str = "Llama-4-Maverick-17B-128E-Instruct-FP8"
     name: str = "Llama"
     provider: str = "Llama"
+
     supports_native_structured_outputs: bool = False
     supports_json_schema_outputs: bool = True
 
