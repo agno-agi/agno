@@ -6042,11 +6042,9 @@ class Team:
             if isinstance(self.memory, dict) and "create_user_memories" in self.memory:
                 # Convert dict to TeamMemory
                 self.memory = TeamMemory(**self.memory)
-            elif isinstance(self.memory, dict):
-                # Convert dict to Memory
-                self.memory = Memory(**self.memory)
             else:
-                raise TypeError(f"Expected memory to be a dict or TeamMemory, but got {type(self.memory)}")
+                # Default to base memory
+                self.memory = Memory()
 
         if session.memory is not None:
             if isinstance(self.memory, TeamMemory):

@@ -153,6 +153,13 @@ class Llama(Model):
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
 
+            # Fix optional parameters where the "type" is [<type>, null]
+            for tool in request_params["tools"]:  # type: ignore
+                if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
+                    for _, obj in tool["function"]["parameters"].get("properties", {}).items():  # type: ignore
+                        if isinstance(obj["type"], list):
+                            obj["type"] = obj["type"][0]
+
         if self.response_format is not None:
             request_params["response_format"] = self.response_format
 
@@ -267,7 +274,6 @@ class Llama(Model):
             log_error(f"Error from Llama API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    # Override base method
     @staticmethod
     def parse_tool_calls(tool_calls_data: List[EventDeltaToolCallDeltaFunction]) -> List[Dict[str, Any]]:
         """
