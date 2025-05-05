@@ -56,7 +56,7 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
                 name, value = cookie.strip().split('=', 1)
                 cookies[name] = value
 
-        auth_token = cookies.get('__agno_session')
+        auth_token = cookies.get(agno_cli_settings.auth_token_cookie)
         if not auth_token:
             self._redirect_with_status(redirect_uri, "error", "no_token")
             return
