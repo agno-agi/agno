@@ -1087,7 +1087,7 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent()
 
-        effective_filters = {}
+        effective_filters = knowledge_filters
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
@@ -1712,7 +1712,7 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent()
 
-        effective_filters = {}
+        effective_filters = knowledge_filters
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
