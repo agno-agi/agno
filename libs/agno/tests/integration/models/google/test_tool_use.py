@@ -114,7 +114,7 @@ def test_tool_use_with_native_structured_outputs():
         currency: str = Field(..., description="The currency of the stock")
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-2.0-flash-001"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
@@ -137,7 +137,7 @@ def test_tool_use_with_json_structured_outputs():
         currency: str = Field(..., description="The currency of the stock")
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-2.0-flash-001"),
         tools=[YFinanceTools(cache_results=True)],
         exponential_backoff=True,
         delay_between_retries=5,
@@ -206,7 +206,7 @@ def test_multiple_tool_calls():
 
 def test_grounding():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp", grounding=True),
+        model=Gemini(id="gemini-2.0-flash-001", grounding=True),
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
@@ -224,7 +224,7 @@ def test_grounding():
 
 def test_grounding_stream():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp", grounding=True),
+        model=Gemini(id="gemini-2.0-flash-001", grounding=True),
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
@@ -248,7 +248,7 @@ def test_grounding_stream():
 
 def test_search_stream():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp", search=True),
+        model=Gemini(id="gemini-2.0-flash-001", search=True),
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
