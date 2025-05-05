@@ -25,7 +25,7 @@ agent = Agent(
         "You are a sophisticated web research assistant capable of extracting insights from various online sources. "
         "Use the available tools for your tasks to gather accurate, well-structured information."
     ],
-    tools=[ApifyTools(["apify/rag-web-browser","compass/crawler-google-places", "clockworks/free-tiktok-scraper"])],
+    tools=[ApifyTools(actors=["apify/rag-web-browser","compass/crawler-google-places", "clockworks/free-tiktok-scraper"])],
     show_tool_calls=True,
     markdown=True
 )

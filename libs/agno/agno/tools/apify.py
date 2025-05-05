@@ -2,11 +2,8 @@ import json
 import os
 from typing import List, Optional, Union
 
-try:
-    from agno.tools import Toolkit
-    from agno.utils.log import log_debug, log_info, logger
-except ImportError:
-    raise ImportError("`agno` package not installed. Please install using `pip install agno`")
+from agno.tools import Toolkit
+from agno.utils.log import log_debug, log_info, logger
 
 try:
     from langchain_apify import ApifyActorsTool
