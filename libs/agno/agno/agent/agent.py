@@ -1957,6 +1957,15 @@ class Agent:
 
         # Add tools for accessing knowledge
         if self.knowledge is not None or self.retriever is not None:
+            # Check if retriever is an async function but used in sync mode
+            from inspect import iscoroutinefunction
+
+            if not async_mode and iscoroutinefunction(self.retriever):
+                log_warning(
+                    "Async retriever function is being used with synchronous agent.run() or agent.print_response(). "
+                    "It is recommended to use agent.arun() or agent.aprint_response() instead."
+                )
+
             if self.search_knowledge:
                 # Use async or sync search based on async_mode
                 if async_mode:
