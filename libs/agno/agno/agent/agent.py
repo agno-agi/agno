@@ -1091,11 +1091,20 @@ class Agent:
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-            # initialize metadata (specially required in case when load is commented out)
-            if not self.knowledge.filters_ready:  # type: ignore
+            """
+                initialize metadata (specially required in case when load is commented out)
+                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
+                so we need to call initialize_valid_filters to make sure the filters are initialized
+            """
+            if not self.knowledge.valid_metadata_filters:  # type: ignore
                 self.knowledge.initialize_valid_filters()  # type: ignore
 
             effective_filters = self._get_effective_filters(knowledge_filters)
+
+        # Agentic filters are enabled
+        if self.enable_agentic_filters and not self.knowledge.valid_metadata_filters:
+            # initialize metadata (specially required in case when load is commented out)
+            self.knowledge.initialize_valid_filters()  # type: ignore
 
         # If no retries are set, use the agent's default retries
         if retries is None:
@@ -1716,11 +1725,20 @@ class Agent:
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-            # initialize metadata (specially required in case when aload is commented out)
-            if not self.knowledge.filters_ready:  # type: ignore
+            """
+                initialize metadata (specially required in case when load is commented out)
+                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
+                so we need to call initialize_valid_filters to make sure the filters are initialized
+            """
+            if not self.knowledge.valid_metadata_filters:  # type: ignore
                 self.knowledge.initialize_valid_filters()  # type: ignore
 
             effective_filters = self._get_effective_filters(knowledge_filters)
+
+        # Agentic filters are enabled
+        if self.enable_agentic_filters and not self.knowledge.valid_metadata_filters:
+            # initialize metadata (specially required in case when load is commented out)
+            self.knowledge.initialize_valid_filters()  # type: ignore
 
         # If no retries are set, use the agent's default retries
         if retries is None:
@@ -2021,9 +2039,16 @@ class Agent:
 
             if self.search_knowledge:
                 # Use async or sync search based on async_mode
-                agent_tools.append(
-                    self.search_knowledge_base_function(async_mode=async_mode, knowledge_filters=knowledge_filters)
-                )
+                if self.enable_agentic_filters:
+                    agent_tools.append(
+                        self.search_knowledge_base_with_agentic_filters_function(
+                            async_mode=async_mode, knowledge_filters=knowledge_filters
+                        )
+                    )
+                else:
+                    agent_tools.append(
+                        self.search_knowledge_base_function(async_mode=async_mode, knowledge_filters=knowledge_filters)
+                    )
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
@@ -2734,8 +2759,24 @@ class Agent:
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)
                 additional_information.append(
-                    f"The knowledge base contains documents with these metadata filters: {valid_filters_str}. "
-                    f"When searching the knowledge base, you can use these filters to narrow down results."
+                    dedent(f"""
+                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
+                    When searching the knowledge base, you MUST use these filters to narrow down results.
+                    Always use filters when the user query indicates specific metadata.
+
+                    Examples:
+                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user id or something>': '<valid value based on the user query>'}}.
+                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
+                    4. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location if present in {valid_filters_str}>': 'New York'}}.
+
+                    General Guidelines:
+                    - Always analyze the user query to identify relevant metadata.
+                    - Use the most specific filter(s) possible to narrow down results.
+                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
+                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
+
+                    You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
+                """)
                 )
 
         # 3.3 Build the default system message for the Agent.
@@ -4477,6 +4518,109 @@ class Agent:
             return asearch_knowledge_base
         else:
             return search_knowledge_base
+
+    def search_knowledge_base_with_agentic_filters_function(
+        self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
+    ) -> Callable:
+        """Factory function to create a search_knowledge_base function with filters."""
+        # Determine which filters to use
+        effective_filters = knowledge_filters if knowledge_filters is not None else self.knowledge_filters
+
+        def search_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            search_filters = self._get_agentic_or_user_search_filters(filters, effective_filters)
+
+            # Get the relevant documents from the knowledge base, passing filters
+            self.run_response = cast(RunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                # Add the references to the run_response
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            from agno.utils.log import log_debug
+
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        async def asearch_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+            """Use this function to search the knowledge base for information about a query asynchronously.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            search_filters = self._get_agentic_or_user_search_filters(filters, effective_filters)
+
+            self.run_response = cast(RunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        if async_mode:
+            return asearch_knowledge_base
+        else:
+            return search_knowledge_base
+
+    def _get_agentic_or_user_search_filters(
+        self, filters: Optional[Dict[str, Any]], effective_filters: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Helper function to determine the final filters to use for the search.
+
+        Args:
+            filters: Filters passed by the agent.
+            effective_filters: Filters passed by user.
+
+        Returns:
+            Dict[str, Any]: The final filters to use for the search.
+        """
+        search_filters = {}
+
+        # If agentic filters exist and manual filters (passed by user) do not, use agentic filters
+        if filters and not effective_filters:
+            search_filters = filters
+
+        # If both agentic filters exist and manual filters (passed by user) exist, use manual filters (give priority to user and override)
+        if filters and effective_filters:
+            search_filters = effective_filters
+
+        log_info(f"Filters used by Agent: {search_filters}")
+        return search_filters
 
     def add_to_knowledge(self, query: str, result: str) -> str:
         """Use this function to add information to the knowledge base for future use.
