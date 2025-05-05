@@ -165,7 +165,9 @@ class Model(ABC):
         self._tools = None
         self._functions = None
 
-    def response(self, messages: List[Message]) -> ModelResponse:
+    def response(
+        self, messages: List[Message], user_id: Optional[str] = None, session_id: Optional[str] = None
+    ) -> ModelResponse:
         """
         Generate a response from the model.
 
@@ -201,7 +203,10 @@ class Model(ABC):
 
                 # Execute function calls
                 for function_call_response in self.run_function_calls(
-                    function_calls=function_calls_to_run, function_call_results=function_call_results
+                    function_calls=function_calls_to_run,
+                    function_call_results=function_call_results,
+                    user_id=user_id,
+                    session_id=session_id,
                 ):
                     if (
                         function_call_response.event == ModelResponseEvent.tool_call_completed.value
@@ -235,12 +240,16 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
         return model_response
 
-    async def aresponse(self, messages: List[Message]) -> ModelResponse:
+    async def aresponse(
+        self, messages: List[Message], user_id: Optional[str] = None, session_id: Optional[str] = None
+    ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
 
         Args:
             messages: List of messages in the conversation
+            user_id: Optional user ID
+            session_id: Optional session ID
 
         Returns:
             ModelResponse: The model's response
@@ -270,7 +279,10 @@ class Model(ABC):
 
                 # Execute function calls
                 async for function_call_response in self.arun_function_calls(
-                    function_calls=function_calls_to_run, function_call_results=function_call_results
+                    function_calls=function_calls_to_run,
+                    function_call_results=function_call_results,
+                    user_id=user_id,
+                    session_id=session_id,
                 ):
                     if (
                         function_call_response.event == ModelResponseEvent.tool_call_completed.value
@@ -495,7 +507,9 @@ class Model(ABC):
                 stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
             )
 
-    def response_stream(self, messages: List[Message]) -> Iterator[ModelResponse]:
+    def response_stream(
+        self, messages: List[Message], user_id: Optional[str] = None, session_id: Optional[str] = None
+    ) -> Iterator[ModelResponse]:
         """
         Generate a streaming response from the model.
 
@@ -550,7 +564,10 @@ class Model(ABC):
 
                 # Execute function calls
                 for function_call_response in self.run_function_calls(
-                    function_calls=function_calls_to_run, function_call_results=function_call_results
+                    function_calls=function_calls_to_run,
+                    function_call_results=function_call_results,
+                    user_id=user_id,
+                    session_id=session_id,
                 ):
                     yield function_call_response
 
@@ -590,7 +607,9 @@ class Model(ABC):
             ):
                 yield model_response
 
-    async def aresponse_stream(self, messages: List[Message]) -> AsyncIterator[ModelResponse]:
+    async def aresponse_stream(
+        self, messages: List[Message], user_id: Optional[str] = None, session_id: Optional[str] = None
+    ) -> AsyncIterator[ModelResponse]:
         """
         Generate an asynchronous streaming response from the model.
 
@@ -644,7 +663,10 @@ class Model(ABC):
 
                 # Execute function calls
                 async for function_call_response in self.arun_function_calls(
-                    function_calls=function_calls_to_run, function_call_results=function_call_results
+                    function_calls=function_calls_to_run,
+                    function_call_results=function_call_results,
+                    user_id=user_id,
+                    session_id=session_id,
                 ):
                     yield function_call_response
 
@@ -834,7 +856,11 @@ class Model(ABC):
         )
 
     def run_function_calls(
-        self, function_calls: List[FunctionCall], function_call_results: List[Message]
+        self,
+        function_calls: List[FunctionCall],
+        function_call_results: List[Message],
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> Iterator[ModelResponse]:
         if self._function_call_stack is None:
             self._function_call_stack = []
@@ -864,7 +890,7 @@ class Model(ABC):
             function_call_success = False
             # Run function calls sequentially
             try:
-                function_call_success = fc.execute()
+                function_call_success = fc.execute(user_id=user_id, session_id=session_id)
             except AgentRunException as a_exc:
                 # Update additional messages from function call
                 self._handle_agent_exception(a_exc, additional_messages)
@@ -916,7 +942,7 @@ class Model(ABC):
             function_call_results.extend(additional_messages)
 
     async def _arun_function_call(
-        self, function_call: FunctionCall
+        self, function_call: FunctionCall, user_id: Optional[str] = None, session_id: Optional[str] = None
     ) -> Tuple[Union[bool, AgentRunException], Timer, FunctionCall]:
         """Run a single function call and return its success status, timer, and the FunctionCall object."""
         from inspect import isasyncgenfunction, iscoroutine, iscoroutinefunction
@@ -931,12 +957,12 @@ class Model(ABC):
                 or isasyncgenfunction(function_call.function.entrypoint)
                 or iscoroutine(function_call.function.entrypoint)
             ):
-                success = await function_call.aexecute()
+                success = await function_call.aexecute(user_id=user_id, session_id=session_id)
             # If any of the hooks are async, we need to run the function call asynchronously
             elif function_call.function.tool_hooks is not None and any(
                 iscoroutinefunction(f) for f in function_call.function.tool_hooks
             ):
-                success = await function_call.aexecute()
+                success = await function_call.aexecute(user_id=user_id, session_id=session_id)
             else:
                 success = await asyncio.to_thread(function_call.execute)
         except AgentRunException as e:
@@ -949,7 +975,13 @@ class Model(ABC):
         function_call_timer.stop()
         return success, function_call_timer, function_call
 
-    async def arun_function_calls(self, function_calls: List[FunctionCall], function_call_results: List[Message]):
+    async def arun_function_calls(
+        self,
+        function_calls: List[FunctionCall],
+        function_call_results: List[Message],
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ):
         if self._function_call_stack is None:
             self._function_call_stack = []
 
@@ -972,7 +1004,10 @@ class Model(ABC):
             )
 
         # Create and run all function calls in parallel
-        results = await asyncio.gather(*(self._arun_function_call(fc) for fc in function_calls), return_exceptions=True)
+        results = await asyncio.gather(
+            *(self._arun_function_call(fc, user_id=user_id, session_id=session_id) for fc in function_calls),
+            return_exceptions=True,
+        )
 
         # Process results
         for result in results:

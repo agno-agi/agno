@@ -100,18 +100,22 @@ class Function(BaseModel):
             sig = signature(c)
             type_hints = get_type_hints(c)
 
-            # If function has an the agent argument, remove the agent parameter from the type hints
+            # If function has an the agent, team, user_id, or session_id argument, remove the argument from the type hints
             if "agent" in sig.parameters:
                 del type_hints["agent"]
             if "team" in sig.parameters:
                 del type_hints["team"]
+            if "user_id" in sig.parameters:
+                del type_hints["user_id"]
+            if "session_id" in sig.parameters:
+                del type_hints["session_id"]
             # log_info(f"Type hints for {function_name}: {type_hints}")
 
             # Filter out return type and only process parameters
             param_type_hints = {
                 name: type_hints.get(name)
                 for name in sig.parameters
-                if name != "return" and name not in ["agent", "team"]
+                if name != "return" and name not in ["agent", "team", "user_id", "session_id"]
             }
 
             # Parse docstring for parameters
@@ -190,13 +194,17 @@ class Function(BaseModel):
                 del type_hints["agent"]
             if "team" in sig.parameters:
                 del type_hints["team"]
+            if "user_id" in sig.parameters:
+                del type_hints["user_id"]
+            if "session_id" in sig.parameters:
+                del type_hints["session_id"]
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
             param_type_hints = {
                 name: type_hints.get(name)
                 for name in sig.parameters
-                if name != "return" and name not in ["agent", "team"]
+                if name != "return" and name not in ["agent", "team", "user_id", "session_id"]
             }
 
             # Parse docstring for parameters
@@ -222,27 +230,35 @@ class Function(BaseModel):
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team"]]
+                parameters["required"] = [
+                    name for name in parameters["properties"] if name not in ["agent", "team", "user_id", "session_id"]
+                ]
             else:
                 # Mark a field as required if it has no default value
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name not in ["agent", "team"]
+                    if param.default == param.empty
+                    and name != "self"
+                    and name not in ["agent", "team", "user_id", "session_id"]
                 ]
 
             if params_set_by_user:
                 self.parameters["additionalProperties"] = False
                 if strict:
                     self.parameters["required"] = [
-                        name for name in self.parameters["properties"] if name not in ["agent", "team"]
+                        name
+                        for name in self.parameters["properties"]
+                        if name not in ["agent", "team", "user_id", "session_id"]
                     ]
                 else:
                     # Mark a field as required if it has no default value
                     self.parameters["required"] = [
                         name
                         for name, param in sig.parameters.items()
-                        if param.default == param.empty and name != "self" and name not in ["agent", "team"]
+                        if param.default == param.empty
+                        and name != "self"
+                        and name not in ["agent", "team", "user_id", "session_id"]
                     ]
 
             # log_debug(f"JSON schema for {self.name}: {parameters}")
@@ -306,6 +322,11 @@ class Function(BaseModel):
             del copy_entrypoint_args["agent"]
         if "team" in copy_entrypoint_args:
             del copy_entrypoint_args["team"]
+        if "user_id" in copy_entrypoint_args:
+            del copy_entrypoint_args["user_id"]
+        if "session_id" in copy_entrypoint_args:
+            del copy_entrypoint_args["session_id"]
+
         args_str = str(copy_entrypoint_args)
 
         kwargs_str = str(sorted((call_args or {}).items()))
@@ -452,7 +473,7 @@ class FunctionCall(BaseModel):
                 log_warning(f"Error in post-hook callback: {e}")
                 log_exception(e)
 
-    def _build_entrypoint_args(self) -> Dict[str, Any]:
+    def _build_entrypoint_args(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
         """Builds the arguments for the entrypoint."""
         from inspect import signature
 
@@ -466,6 +487,20 @@ class FunctionCall(BaseModel):
         # Check if the entrypoint has an fc argument
         if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["fc"] = self
+        # Check if the entrypoint has an user_id argument;
+        if "user_id" in signature(self.function.entrypoint).parameters:  # type: ignore
+            # If user_id is provided, use it, otherwise use the agent's user_id
+            if user_id is not None:
+                entrypoint_args["user_id"] = user_id
+            else:
+                entrypoint_args["user_id"] = self.function._agent.user_id
+        # Check if the entrypoint has an session_id argument;
+        if "session_id" in signature(self.function.entrypoint).parameters:  # type: ignore
+            # If session_id is provided, use it, otherwise use the agent's session_id
+            if session_id is not None:
+                entrypoint_args["session_id"] = session_id
+            else:
+                entrypoint_args["session_id"] = self.function._agent.session_id
         return entrypoint_args
 
     def _build_nested_execution_chain(self, entrypoint_args: Dict[str, Any]):
@@ -514,7 +549,7 @@ class FunctionCall(BaseModel):
         chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
         return chain
 
-    def execute(self) -> bool:
+    def execute(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> bool:
         """Runs the function call."""
         from inspect import isgenerator
 
@@ -527,7 +562,7 @@ class FunctionCall(BaseModel):
         # Execute pre-hook if it exists
         self._handle_pre_hook()
 
-        entrypoint_args = self._build_entrypoint_args()
+        entrypoint_args = self._build_entrypoint_args(user_id=user_id, session_id=session_id)
 
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not isgenerator(self.function.entrypoint):
@@ -697,7 +732,7 @@ class FunctionCall(BaseModel):
 
         return chain
 
-    async def aexecute(self) -> bool:
+    async def aexecute(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> bool:
         """Runs the function call asynchronously."""
         from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
 
@@ -713,7 +748,7 @@ class FunctionCall(BaseModel):
         else:
             self._handle_pre_hook()
 
-        entrypoint_args = self._build_entrypoint_args()
+        entrypoint_args = self._build_entrypoint_args(user_id=user_id, session_id=session_id)
 
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not (

@@ -629,7 +629,7 @@ class Agent:
 
         # 5. Reason about the task if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self.reason(run_messages=run_messages, session_id=session_id)
+            reasoning_generator = self.reason(run_messages=run_messages, user_id=user_id, session_id=session_id)
 
             if self.stream:
                 yield from reasoning_generator
@@ -652,7 +652,7 @@ class Agent:
         reasoning_time_taken = 0.0
         if self.stream:
             model_response = ModelResponse()
-            for model_response_chunk in self.model.response_stream(messages=run_messages.messages):
+            for model_response_chunk in self.model.response_stream(messages=run_messages.messages, user_id=user_id, session_id=session_id):
                 # If the model response is an assistant_response, yield a RunResponse
                 if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
                     # Process content and thinking
@@ -808,7 +808,7 @@ class Agent:
                         )
         else:
             # Get the model response
-            model_response = self.model.response(messages=run_messages.messages)
+            model_response = self.model.response(messages=run_messages.messages, user_id=user_id, session_id=session_id)
             # Format tool calls if they exist
             if model_response.tool_calls:
                 self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
@@ -1303,7 +1303,11 @@ class Agent:
         self.model = cast(Model, self.model)
         if stream and self.is_streamable:
             model_response = ModelResponse(content="")
-            model_response_stream = self.model.aresponse_stream(messages=run_messages.messages)  # type: ignore
+            model_response_stream = self.model.aresponse_stream(
+                messages=run_messages.messages,
+                user_id=user_id,
+                session_id=session_id,
+            )  # type: ignore
             async for model_response_chunk in model_response_stream:  # type: ignore
                 # If the model response is an assistant_response, yield a RunResponse
                 if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
@@ -1456,7 +1460,11 @@ class Agent:
                         )
         else:
             # Get the model response
-            model_response = await self.model.aresponse(messages=run_messages.messages)
+            model_response = await self.model.aresponse(
+                user_id=user_id,
+                session_id=session_id,
+                messages=run_messages.messages
+            )
             # Format tool calls if they exist
             if model_response.tool_calls:
                 self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
