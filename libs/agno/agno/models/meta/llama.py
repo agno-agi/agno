@@ -274,7 +274,6 @@ class Llama(Model):
             log_error(f"Error from Llama API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    # Override base method
     @staticmethod
     def parse_tool_calls(tool_calls_data: List[EventDeltaToolCallDeltaFunction]) -> List[Dict[str, Any]]:
         """
