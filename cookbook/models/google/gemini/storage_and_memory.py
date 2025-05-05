@@ -18,7 +18,7 @@ knowledge_base = PDFUrlKnowledgeBase(
 knowledge_base.load(recreate=True)  # Comment out after first run
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-2.0-flash-001"),
     tools=[DuckDuckGoTools()],
     knowledge=knowledge_base,
     storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),

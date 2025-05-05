@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.4.3"
+version = "1.4.4"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -60,6 +60,7 @@ ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
 lmstudio = ["lmstudio"]
 litellm = ["litellm"]
+meta = ["llama-api-client"]
 
 # Dependencies for Tools
 cartesia = ["cartesia"]
@@ -132,7 +133,8 @@ models = [
   "agno[ollama]",
   "agno[openai]",
   "agno[ibm]",
-  "agno[litellm]"
+  "agno[litellm]",
+  "agno[meta]"
 ]
 
 # All tools

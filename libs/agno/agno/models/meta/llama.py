@@ -4,12 +4,14 @@ from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Union
 
 import httpx
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
+from agno.utils.models.llama import format_message
 
 try:
     from llama_api_client import AsyncLlamaAPIClient, LlamaAPIClient
@@ -28,13 +30,14 @@ except (ImportError, ModuleNotFoundError):
 @dataclass
 class Llama(Model):
     """
-    A class for interacting with Llama models using the Llama API.
+    A class for interacting with Llama models using the Llama API using the Llama SDK.
     """
 
     id: str = "Llama-4-Maverick-17B-128E-Instruct-FP8"
     name: str = "Llama"
     provider: str = "Llama"
     supports_native_structured_outputs: bool = False
+    supports_json_schema_outputs: bool = True
 
     # Request parameters
     max_completion_tokens: Optional[int] = None
@@ -60,18 +63,6 @@ class Llama(Model):
     # OpenAI clients
     client: Optional[LlamaAPIClient] = None
     async_client: Optional[AsyncLlamaAPIClient] = None
-
-    # Internal parameters. Not used for API requests
-    # Whether to use the structured outputs with this Model.
-    structured_outputs: bool = False
-
-    # The role to map the message role to.
-    role_map = {
-        "system": "system",
-        "user": "user",
-        "assistant": "assistant",
-        "tool": "tool",
-    }
 
     def _get_client_params(self) -> Dict[str, Any]:
         # Fetch API key from env if not already set
@@ -162,9 +153,13 @@ class Llama(Model):
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
 
+        if self.response_format is not None:
+            request_params["response_format"] = self.response_format
+
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
         return request_params
 
     def to_dict(self) -> Dict[str, Any]:
@@ -190,68 +185,8 @@ class Llama(Model):
         )
         if self._tools is not None:
             model_dict["tools"] = self._tools
-            if self.tool_choice is not None:
-                model_dict["tool_choice"] = self.tool_choice
-            else:
-                model_dict["tool_choice"] = "auto"
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
-
-    def _format_message(self, message: Message) -> Dict[str, Any]:
-        """
-        Format a message into the format expected by Llama API.
-
-        Args:
-            message (Message): The message to format.
-
-        Returns:
-            Dict[str, Any]: The formatted message.
-        """
-        message_dict: Dict[str, Any] = {
-            "role": self.role_map[message.role],
-            "content": message.content,
-            "name": message.name,
-            "tool_call_id": message.tool_call_id,
-            "tool_calls": message.tool_calls,
-        }
-        message_dict = {k: v for k, v in message_dict.items() if v is not None}
-
-        if message.images is not None and len(message.images) > 0:
-            log_warning("Image input is currently unsupported.")
-
-        if message.videos is not None and len(message.videos) > 0:
-            log_warning("Video input is currently unsupported.")
-
-        if message.audio is not None and len(message.audio) > 0:
-            log_warning("Audio input is currently unsupported.")
-
-        # OpenAI expects the tool_calls to be None if empty, not an empty list
-        if message.tool_calls is not None and len(message.tool_calls) == 0:
-            message_dict["tool_calls"] = None
-
-        # Manually add the content field even if it is None
-        if message.content is None:
-            message_dict["content"] = " "
-
-        if message.role == "tool":
-            message_dict = {
-                "role": "tool",
-                "tool_call_id": message.tool_call_id,
-                "content": message.content,
-            }
-
-        if message.role == "assistant" and message.tool_calls is not None and len(message.tool_calls) > 0:
-            message_dict = {
-                "content": {
-                    "type": "text",
-                    "text": message.content if message.content is not None else " ",
-                },
-                "role": "assistant",
-                "tool_calls": message.tool_calls,
-                "stop_reason": "tool_calls",
-            }
-
-        return message_dict
 
     def invoke(self, messages: List[Message]) -> CreateChatCompletionResponse:
         """
@@ -265,7 +200,7 @@ class Llama(Model):
         """
         return self.get_client().chat.completions.create(
             model=self.id,
-            messages=[self._format_message(m) for m in messages],  # type: ignore
+            messages=[format_message(m) for m in messages],  # type: ignore
             **self.request_kwargs,
         )
 
@@ -282,7 +217,7 @@ class Llama(Model):
 
         return await self.get_async_client().chat.completions.create(
             model=self.id,
-            messages=[self._format_message(m) for m in messages],  # type: ignore
+            messages=[format_message(m) for m in messages],  # type: ignore
             **self.request_kwargs,
         )
 
@@ -300,7 +235,7 @@ class Llama(Model):
         try:
             yield from self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )  # type: ignore
@@ -322,7 +257,7 @@ class Llama(Model):
         try:
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=[format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )
@@ -401,6 +336,19 @@ class Llama(Model):
         # Get response message
         response_message = response.completion_message
 
+        # Parse structured outputs if enabled
+        try:
+            if (
+                self.response_format is not None
+                and self.structured_outputs
+                and issubclass(self.response_format, BaseModel)
+            ):
+                parsed_object = response_message.content  # type: ignore
+                if parsed_object is not None:
+                    model_response.parsed = parsed_object
+        except Exception as e:
+            log_warning(f"Error retrieving structured outputs: {e}")
+
         # Add role
         if response_message.role is not None:
             model_response.role = response_message.role
@@ -434,14 +382,32 @@ class Llama(Model):
             except Exception as e:
                 log_warning(f"Error processing tool calls: {e}")
 
+        # Add metrics from the metrics list
+        if hasattr(response, "metrics") and response.metrics is not None:
+            usage_data = {}
+            metric_map = {
+                "num_prompt_tokens": "input_tokens",
+                "num_completion_tokens": "output_tokens",
+                "num_total_tokens": "total_tokens",
+            }
+
+            for metric in response.metrics:
+                key = metric_map.get(metric.metric)
+                if key:
+                    value = int(metric.value)
+                    usage_data[key] = value
+
+                if usage_data:
+                    model_response.response_usage = usage_data
+
         return model_response
 
     def parse_provider_response_delta(self, response_delta: CreateChatCompletionResponseStreamChunk) -> ModelResponse:
         """
-        Parse the OpenAI streaming response into a ModelResponse.
+        Parse the Llama streaming response into a ModelResponse.
 
         Args:
-            response_delta: Raw response chunk from OpenAI
+            response_delta: Raw response chunk from the Llama API
 
         Returns:
             ModelResponse: Parsed response data
@@ -450,6 +416,23 @@ class Llama(Model):
 
         if response_delta is not None:
             delta = response_delta.event
+
+            # Capture metrics event
+            if delta.event_type == "metrics" and delta.metrics is not None:
+                usage_data = {}
+                metric_map = {
+                    "num_prompt_tokens": "input_tokens",
+                    "num_completion_tokens": "output_tokens",
+                    "num_total_tokens": "total_tokens",
+                }
+
+                for metric in delta.metrics:
+                    key = metric_map.get(metric.metric)
+                    if key:
+                        usage_data[key] = int(metric.value)
+
+                if usage_data:
+                    model_response.response_usage = usage_data
 
             if isinstance(delta.delta, EventDeltaTextDelta):
                 model_response.content = delta.delta.text

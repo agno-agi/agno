@@ -1,7 +1,6 @@
 from functools import partial
 from uuid import uuid4
 
-from agno.agent import Agent
 from agno.utils.log import log_debug, log_exception
 
 try:
@@ -26,6 +25,7 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
     Returns:
         Callable: The entrypoint function for the tool
     """
+    from agno.agent import Agent
 
     async def call_tool(agent: Agent, tool_name: str, **kwargs) -> str:
         try:
@@ -63,4 +63,4 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
             log_exception(f"Failed to call MCP tool '{tool_name}': {e}")
             return f"Error: {e}"
 
-    return partial(call_tool, tool_name=tool.name, tool_description=tool.description)
+    return partial(call_tool, tool_name=tool.name)
