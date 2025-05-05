@@ -374,6 +374,10 @@ class Memory:
         if refresh_from_db:
             self.refresh_from_db(user_id=user_id)
 
+        if memory_id not in self.memories[user_id]:  # type: ignore
+            log_warning(f"Memory {memory_id} not found for user {user_id}")
+            return None
+
         del self.memories[user_id][memory_id]  # type: ignore
         if self.db:
             self._delete_db_memory(memory_id=memory_id)
@@ -536,7 +540,6 @@ class Memory:
 
     def update_memory_task(self, task: str, user_id: Optional[str] = None) -> str:
         """Updates the memory with a task"""
-        self.set_log_level()
         if not self.memory_manager:
             raise ValueError("Memory manager not initialized")
 

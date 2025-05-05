@@ -3,7 +3,7 @@ import mimetypes
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from agno.media import Audio, Image
+from agno.media import Audio, File, Image
 from agno.utils.log import log_error, log_warning
 
 # Ensure .webp is recognized
@@ -130,7 +130,7 @@ def _process_image_url(image_url: str) -> Dict[str, Any]:
         raise ValueError("Image URL must start with 'data:image' or 'http(s)://'.")
 
 
-def _process_image(image: Image) -> Optional[Dict[str, Any]]:
+def process_image(image: Image) -> Optional[Dict[str, Any]]:
     """Process an image based on the format."""
     image_payload: Optional[Dict[str, Any]] = None  # Initialize
     try:
@@ -185,7 +185,7 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
     # Add images to the message content
     for image in images:
         try:
-            image_data = _process_image(image)
+            image_data = process_image(image)
             if image_data:
                 image_messages.append(image_data)
         except Exception as e:
@@ -193,3 +193,50 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
             continue
 
     return image_messages
+
+
+def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
+    """
+    Add a document url, base64 encoded content or OpenAI file to a message.
+    """
+    import base64
+    import mimetypes
+    from pathlib import Path
+
+    # Case 1: Document is a URL
+    if file.url is not None:
+        from urllib.parse import urlparse
+
+        result = file.file_url_content
+        if not result:
+            log_error(f"Failed to fetch file from URL: {file.url}")
+            return None
+        content_bytes, mime_type = result
+        name = Path(urlparse(file.url).path).name or "file"
+        _mime = mime_type or file.mime_type or mimetypes.guess_type(name)[0] or "application/pdf"
+        _encoded = base64.b64encode(content_bytes).decode("utf-8")
+        _data_url = f"data:{_mime};base64,{_encoded}"
+        return {"type": "file", "file": {"filename": name, "file_data": _data_url}}
+
+    # Case 2: Document is a local file path
+    if file.filepath is not None:
+        path = Path(file.filepath)
+        if not path.is_file():
+            log_error(f"File not found: {path}")
+            return None
+        data = path.read_bytes()
+
+        _mime = file.mime_type or mimetypes.guess_type(path.name)[0] or "application/pdf"
+        _encoded = base64.b64encode(data).decode("utf-8")
+        _data_url = f"data:{_mime};base64,{_encoded}"
+        return {"type": "file", "file": {"filename": path.name, "file_data": _data_url}}
+
+    # Case 3: Document is bytes content
+    if file.content is not None:
+        name = getattr(file, "filename", "file")
+        _mime = file.mime_type or mimetypes.guess_type(name)[0] or "application/pdf"
+        _encoded = base64.b64encode(file.content).decode("utf-8")
+        _data_url = f"data:{_mime};base64,{_encoded}"
+        return {"type": "file", "file": {"filename": name, "file_data": _data_url}}
+
+    return None

@@ -13,7 +13,7 @@ except ImportError:
 try:
     from apify_client import ApifyClient
 except ImportError:
-    raise ImportError("`apify_client` not installed. Please install using `pip install apify-client`")
+    raise ImportError("`apify-client` not installed. Please install using `pip install apify-client`")
 
 class ApifyTools(Toolkit):
     def __init__(
