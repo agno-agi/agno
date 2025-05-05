@@ -85,7 +85,7 @@ class GeminiTools(Toolkit):
             log_debug("DEBUG: Raw Gemini API response")
 
             # Extract image bytes
-            image_bytes = response.generated_images[0].image.image_bytes  
+            image_bytes = response.generated_images[0].image.image_bytes
             for generated_image in response.generated_images:
                 image_bytes = generated_image.image.image_bytes
                 if not image_bytes:
@@ -104,7 +104,7 @@ class GeminiTools(Toolkit):
                     )
                 )
                 log_debug(f"Successfully generated image {media_id} with model {self.image_model}")
-            return f"Image generated successfully"
+            return "Image generated successfully"
 
         except Exception as e:
             log_error(f"Failed to generate image: Client or method not available ({e})")
@@ -149,7 +149,7 @@ class GeminiTools(Toolkit):
 
                 media_id = str(uuid4())
                 encoded_video = base64.b64encode(generated_video.video_bytes).decode("utf-8")
-    
+
                 agent.add_video(
                     VideoArtifact(
                         id=media_id,
@@ -159,7 +159,7 @@ class GeminiTools(Toolkit):
                     )
                 )
                 log_debug(f"Successfully generated video {media_id} with model {self.video_model}")
-            return f"Video generated successfully"
+            return "Video generated successfully"
         except Exception as e:
             log_error(f"Failed to generate video: {e}")
             return f"Failed to generate video: {e}"

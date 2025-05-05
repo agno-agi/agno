@@ -33,7 +33,7 @@ class LlamaOpenAI(OpenAILike):
 
     api_key: Optional[str] = getenv("LLAMA_API_KEY")
     base_url: Optional[str] = "https://api.llama.com/compat/v1/"
-    
+
     # Request parameters
     max_completion_tokens: Optional[int] = None
     repetition_penalty: Optional[float] = None
@@ -47,8 +47,7 @@ class LlamaOpenAI(OpenAILike):
 
     supports_native_structured_outputs: bool = False
     supports_json_schema_outputs: bool = True
-    
-    
+
     @property
     def request_kwargs(self) -> Dict[str, Any]:
         """
@@ -76,7 +75,7 @@ class LlamaOpenAI(OpenAILike):
         # Add tools
         if self._tools is not None and len(self._tools) > 0:
             request_params["tools"] = self._tools
-            
+
             # Fix optional parameters where the "type" is [<type>, null]
             for tool in request_params["tools"]:  # type: ignore
                 if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore

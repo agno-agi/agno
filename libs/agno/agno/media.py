@@ -16,7 +16,8 @@ class VideoArtifact(Media):
     mime_type: Optional[str] = None  # MIME type of the video content
     eta: Optional[str] = None
     length: Optional[str] = None
-    
+
+
 class ImageArtifact(Media):
     url: Optional[str] = None  # Remote location for file
     content: Optional[bytes] = None  # Actual image bytes content
