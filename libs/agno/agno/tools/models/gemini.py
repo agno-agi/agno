@@ -17,7 +17,7 @@ except (ModuleNotFoundError, ImportError):
 
 
 class GeminiTools(Toolkit):
-    """Tools for interacting with Google Gemini API (including Imagen for images)"""
+    """Tools for interacting with Google Gemini API"""
 
     def __init__(
         self,
@@ -113,7 +113,7 @@ class GeminiTools(Toolkit):
         agent: Agent,
         prompt: str,
     ) -> str:
-        """Generate a video based on a text prompt using Google Imagen.
+        """Generate a video based on a text prompt.
         Args:
             prompt (str): The text prompt to generate the video from.
         Returns:
@@ -142,20 +142,21 @@ class GeminiTools(Toolkit):
                 time.sleep(5)
                 operation = self.client.operations.get(operation=operation)
 
-            generated_video = operation.result.generated_videos[0].video
+            for video in operation.result.generated_videos:
+                generated_video = video.video
 
-            media_id = str(uuid4())
-            encoded_video = base64.b64encode(generated_video.video_bytes).decode("utf-8")
-
-            agent.add_video(
-                VideoArtifact(
-                    id=media_id,
-                    content=encoded_video,
-                    original_prompt=prompt,
-                    mime_type=generated_video.mime_type,
+                media_id = str(uuid4())
+                encoded_video = base64.b64encode(generated_video.video_bytes).decode("utf-8")
+    
+                agent.add_video(
+                    VideoArtifact(
+                        id=media_id,
+                        content=encoded_video,
+                        original_prompt=prompt,
+                        mime_type=generated_video.mime_type,
+                    )
                 )
-            )
-            log_debug(f"Successfully generated video {media_id} with model {self.video_model}")
+                log_debug(f"Successfully generated video {media_id} with model {self.video_model}")
             return f"Video generated successfully with ID: {media_id}"
         except Exception as e:
             log_error(f"Failed to generate video: {e}")

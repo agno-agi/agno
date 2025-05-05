@@ -29,4 +29,5 @@ agent.print_response(
 )
 response = agent.run_response
 if response.videos:
-    save_base64_data(response.videos[0].content, "tmp/cat_driving.mp4")
+    for video in response.videos:
+        save_base64_data(video.content, f"tmp/cat_driving_{video.id}.mp4")
