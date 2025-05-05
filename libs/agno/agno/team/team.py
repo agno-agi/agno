@@ -6043,7 +6043,7 @@ class Team:
                 # Convert dict to TeamMemory
                 self.memory = TeamMemory(**self.memory)
             else:
-                # default to base memory
+                # Default to base memory
                 self.memory = Memory()
 
         if session.memory is not None:
