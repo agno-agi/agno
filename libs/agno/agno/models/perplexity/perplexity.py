@@ -98,19 +98,6 @@ class Perplexity(OpenAILike):
         # Get response message
         response_message = response.choices[0].message
 
-        # Parse structured outputs if enabled
-        try:
-            if (
-                self.response_format is not None
-                and self.structured_outputs
-                and issubclass(self.response_format, BaseModel)
-            ):
-                parsed_object = response_message.parsed  # type: ignore
-                if parsed_object is not None:
-                    model_response.parsed = parsed_object
-        except Exception as e:
-            log_warning(f"Error retrieving structured outputs: {e}")
-
         # Add role
         if response_message.role is not None:
             model_response.role = response_message.role
