@@ -44,17 +44,19 @@ class AudioArtifact(Media):
 class Video(BaseModel):
     filepath: Optional[Union[Path, str]] = None  # Absolute local location for video
     content: Optional[Any] = None  # Actual video bytes content
+    url: Optional[str] = None  # Remote location for video
     format: Optional[str] = None  # E.g. `mp4`, `mov`, `avi`, `mkv`, `webm`, `flv`, `mpeg`, `mpg`, `wmv`, `three_gp`
 
     @model_validator(mode="before")
     def validate_data(cls, data: Any):
         """
-        Ensure that exactly one of `filepath`, or `content` is provided.
+        Ensure that exactly one of `filepath`, or `content` or `url` is provided.
         Also converts content to bytes if it's a string.
         """
         # Extract the values from the input data
         filepath = data.get("filepath")
         content = data.get("content")
+        url = data.get("url")
 
         # Convert and decompress content to bytes if it's a string
         if content and isinstance(content, str):
@@ -70,12 +72,12 @@ class Video(BaseModel):
         data["content"] = content
 
         # Count how many fields are set (not None)
-        count = len([field for field in [filepath, content] if field is not None])
+        count = len([field for field in [filepath, content, url] if field is not None])
 
         if count == 0:
-            raise ValueError("One of `filepath` or `content` must be provided.")
+            raise ValueError("One of `filepath` or `content` or `url` must be provided.")
         elif count > 1:
-            raise ValueError("Only one of `filepath` or `content` should be provided.")
+            raise ValueError("Only one of `filepath` or `content` or `url` should be provided.")
 
         return data
 

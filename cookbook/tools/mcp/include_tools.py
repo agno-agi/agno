@@ -5,11 +5,10 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.groq import Groq
 from agno.tools.mcp import MCPTools
-from mcp import StdioServerParameters
 
 
 async def run_agent(message: str) -> None:
-    file_path = str(Path(__file__).parent.parent.parent.parent)
+    file_path = str(Path(__file__).parents[3] / "libs/agno")
 
     # Initialize the MCP server
     async with (
