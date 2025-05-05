@@ -23,7 +23,7 @@ try:
         MessageStopEvent,
     )
     from anthropic.types import Message as AnthropicMessage
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
 
 

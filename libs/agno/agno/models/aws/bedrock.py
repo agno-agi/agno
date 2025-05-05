@@ -31,12 +31,6 @@ class AwsBedrock(Model):
     2. Or provide a boto3 Session object
 
     Not all Bedrock models support all features. See this documentation for more information: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html
-
-    Args:
-        aws_region (Optional[str]): The AWS region to use.
-        aws_access_key_id (Optional[str]): The AWS access key ID to use.
-        aws_secret_access_key (Optional[str]): The AWS secret access key to use.
-        session (Optional[Session]): A boto3 Session object to use for authentication.
     """
 
     id: str = "mistral.mistral-small-2402-v1:0"

@@ -8,6 +8,7 @@ from agno.models.openai.like import OpenAILike
 class LiteLLMOpenAI(OpenAILike):
     """
     A class for interacting with LiteLLM.
+    
     Attributes:
         id (str): The id of the LiteLLM model. Default is "gpt-4o".
         name (str): The name of this chat model instance. Default is "LiteLLM".

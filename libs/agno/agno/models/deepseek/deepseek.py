@@ -11,7 +11,12 @@ class DeepSeek(OpenAILike):
     """
     A class for interacting with DeepSeek models.
 
-    For more information, see: https://api-docs.deepseek.com/
+    Attributes:
+        id (str): The model id. Defaults to "deepseek-chat".
+        name (str): The model name. Defaults to "DeepSeek".
+        provider (str): The provider name. Defaults to "DeepSeek".
+        api_key (Optional[str]): The API key.
+        base_url (str): The base URL. Defaults to "https://api.deepseek.com".
     """
 
     id: str = "deepseek-chat"

@@ -15,7 +15,7 @@ try:
     from cohere import ClientV2 as CohereClient
     from cohere.types.chat_response import ChatResponse
     from cohere.types.streamed_chat_response_v2 import StreamedChatResponseV2
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     raise ImportError("`cohere` not installed. Please install using `pip install cohere`")
 
 
@@ -102,6 +102,12 @@ def _format_messages(messages: List[Message]) -> List[Dict[str, Any]]:
 
 @dataclass
 class Cohere(Model):
+    """
+    A class representing the Cohere model.
+
+    For more information, see: https://docs.cohere.com/docs/chat-api
+    """
+
     id: str = "command-r-plus"
     name: str = "cohere"
     provider: str = "Cohere"

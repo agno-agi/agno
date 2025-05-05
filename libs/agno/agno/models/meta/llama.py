@@ -23,7 +23,7 @@ try:
         EventDeltaToolCallDeltaFunction,
     )
     from llama_api_client.types.message_text_content_item import MessageTextContentItem
-except (ImportError, ModuleNotFoundError):
+except ImportError:
     raise ImportError("`llama-api-client` not installed. Please install using `pip install llama-api-client`")
 
 
