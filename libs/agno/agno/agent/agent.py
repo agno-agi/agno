@@ -613,6 +613,7 @@ class Agent:
             async_mode=False,
             user_id=user_id,
             session_id=session_id,
+            knowledge_filters=knowledge_filters,
         )
         self.run_response.model = self.model.id if self.model is not None else None
         if self.context is not None and self.resolve_context:
@@ -1081,14 +1082,12 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent()
 
-        self.effective_knowledge_filters = None
-
         if self.knowledge_filters or knowledge_filters:
             # initialize metadata (specially required in case when load is commented out)
             if not self.knowledge.filters_ready:  # type: ignore
                 self.knowledge.initialize_valid_filters()  # type: ignore
 
-            self.effective_knowledge_filters = self._get_effective_filters(knowledge_filters)
+            effective_filters = self._get_effective_filters(knowledge_filters)
 
         # If no retries are set, use the agent's default retries
         if retries is None:
@@ -1137,6 +1136,7 @@ class Agent:
                             files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            knowledge_filters=effective_filters,
                             **kwargs,
                         )
                     )
@@ -1177,6 +1177,7 @@ class Agent:
                             files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            knowledge_filters=effective_filters,
                             **kwargs,
                         )
                         return resp
@@ -1192,6 +1193,7 @@ class Agent:
                             files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            knowledge_filters=effective_filters,
                             **kwargs,
                         )
                         return next(resp)
@@ -1276,7 +1278,7 @@ class Agent:
         log_debug(f"Async Agent Run Start: {self.run_response.run_id}", center=True, symbol="*")
 
         # 2. Update the Model and resolve context
-        self.update_model(async_mode=True, user_id=user_id, session_id=session_id)
+        self.update_model(async_mode=True, user_id=user_id, session_id=session_id, knowledge_filters=knowledge_filters)
         self.run_response.model = self.model.id if self.model is not None else None
         if self.context is not None and self.resolve_context:
             await self.aresolve_run_context()
@@ -1702,14 +1704,12 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent()
 
-        self.effective_knowledge_filters = None
-
         if self.knowledge_filters or knowledge_filters:
             # initialize metadata (specially required in case when aload is commented out)
             if not self.knowledge.filters_ready:  # type: ignore
                 self.knowledge.initialize_valid_filters()  # type: ignore
 
-            self.effective_knowledge_filters = self._get_effective_filters(knowledge_filters)
+            effective_filters = self._get_effective_filters(knowledge_filters)
 
         # If no retries are set, use the agent's default retries
         if retries is None:
@@ -1756,6 +1756,7 @@ class Agent:
                         files=files,
                         messages=messages,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        knowledge_filters=effective_filters,
                         **kwargs,
                     ).__anext__()
 
@@ -1795,6 +1796,7 @@ class Agent:
                             files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            knowledge_filters=effective_filters,
                             **kwargs,
                         )
                         return resp
@@ -1810,6 +1812,7 @@ class Agent:
                             files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            knowledge_filters=effective_filters,
                             **kwargs,
                         )
                         return await resp.__anext__()
@@ -1975,6 +1978,7 @@ class Agent:
         session_id: str,
         async_mode: bool = False,
         user_id: Optional[str] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
@@ -2006,7 +2010,9 @@ class Agent:
 
             if self.search_knowledge:
                 # Use async or sync search based on async_mode
-                agent_tools.append(self.search_knowledge_base_function(async_mode=async_mode))
+                agent_tools.append(
+                    self.search_knowledge_base_function(async_mode=async_mode, knowledge_filters=knowledge_filters)
+                )
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
@@ -2023,8 +2029,11 @@ class Agent:
         session_id: str,
         async_mode: bool = False,
         user_id: Optional[str] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> None:
-        agent_tools = self.get_tools(session_id=session_id, async_mode=async_mode, user_id=user_id)
+        agent_tools = self.get_tools(
+            session_id=session_id, async_mode=async_mode, user_id=user_id, knowledge_filters=knowledge_filters
+        )
         agent_tool_names = []
         # Get all the tool names
         if agent_tools is not None:
@@ -2128,6 +2137,7 @@ class Agent:
         session_id: str,
         async_mode: bool = False,
         user_id: Optional[str] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.set_default_model()
 
@@ -2176,6 +2186,7 @@ class Agent:
             session_id=session_id,
             async_mode=async_mode,
             user_id=user_id,
+            knowledge_filters=knowledge_filters,
         )
 
         # Set show_tool_calls on the Model
@@ -4371,10 +4382,12 @@ class Agent:
 
         return get_tool_call_history
 
-    def search_knowledge_base_function(self, async_mode: bool = False) -> Callable:
+    def search_knowledge_base_function(
+        self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
+    ) -> Callable:
         """Factory function to create a search_knowledge_base function with filters."""
         # Determine which filters to use
-        effective_filters = self.effective_knowledge_filters
+        effective_filters = knowledge_filters if knowledge_filters is not None else self.knowledge_filters
 
         def search_knowledge_base(query: str) -> str:
             """Use this function to search the knowledge base for information about a query.
