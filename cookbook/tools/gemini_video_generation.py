@@ -2,7 +2,9 @@
 
 An Agent using the Gemini video generation tool.
 
-Make sure you have set the GOOGLE_API_KEY (or use Vertex AI credentials).
+Video generation only works with Vertex AI.
+Make sure you have set the GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION environment variables.
+
 Example prompts to try:
 - "Generate a 5-second video of a kitten playing a piano"
 - "Create a short looping animation of a neon city skyline at dusk"
@@ -17,7 +19,7 @@ from agno.utils.media import save_base64_data
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GeminiTools(vertexai=True)],
+    tools=[GeminiTools(vertexai=True)],  # Video Generation only works on VertexAI mode
     show_tool_calls=True,
     debug_mode=True,
 )
