@@ -19,7 +19,7 @@ except ImportError:
 @dataclass
 class AwsBedrockEmbedder(Embedder):
     """
-    AWS Bedrock embedder for Cohere models.
+    AWS Bedrock embedder.
 
     To use this embedder, you need to either:
     1. Set the following environment variables:
@@ -41,7 +41,7 @@ class AwsBedrockEmbedder(Embedder):
         aws_access_key_id (Optional[str]): The AWS access key ID to use.
         aws_secret_access_key (Optional[str]): The AWS secret access key to use.
         session (Optional[Session]): A boto3 Session object to use for authentication.
-        request_params (Optional[Dict[str, Any]]): Additional parameters to pass to the API request.
+        request_params (Optional[Dict[str, Any]]): Additional parameters to pass to the API requests.
         client_params (Optional[Dict[str, Any]]): Additional parameters to pass to the boto3 client.
     """
 

@@ -1,5 +1,6 @@
-from agno.agent import AgentKnowledge
+from agno.document.reader.pdf_reader import PDFUrlReader
 from agno.embedder.aws_bedrock import AwsBedrockEmbedder
+from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.pgvector import PgVector
 
 embeddings = AwsBedrockEmbedder().get_embedding(
@@ -10,11 +11,9 @@ print(f"Embeddings: {embeddings[:5]}")
 print(f"Dimensions: {len(embeddings)}")
 
 # Example usage:
-knowledge_base = AgentKnowledge(
-    vector_db=PgVector(
-        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-        table_name="cohere_multilingual_embeddings",
-        embedder=AwsBedrockEmbedder(),
-    ),
-    num_documents=2,
+knowledge_base = PDFUrlKnowledgeBase(
+    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+    reader=PDFUrlReader(chunk_size=2048),  # Required because cohere has a fixed size of 2048
+    vector_db=PgVector(table_name="recipes", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", embedder=AwsBedrockEmbedder()),
 )
+knowledge_base.load(recreate=False)
