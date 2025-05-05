@@ -2,14 +2,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from typing import Optional
 from agno.cli.settings import agno_cli_settings
-from agno.cli.popup import (
-    get_success_page,
-    get_no_cookies_error_page,
-    get_no_auth_token_error_page,
-    get_loading_page
-
-)
-
+from urllib.parse import urlparse, parse_qs, quote
 
 class CliAuthRequestHandler(BaseHTTPRequestHandler):
     """Request Handler to accept the CLI auth token after the web based auth flow.
@@ -34,7 +27,7 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-type", "text/html")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
         self.send_header("Access-Control-Allow-Credentials", "true")
         self.end_headers()
         self.wfile.write(html_content.encode("utf-8"))
@@ -43,58 +36,59 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
     
     def do_GET(self):
         """Handle the redirect from the browser with auth cookies."""
-        
-        # If path contains success or error parameters, show appropriate page
-        if "?result=success" in self.path:
-            self._set_html_response(get_success_page(), status_code=200)
-            # Shutdown server after showing success
-            self.server.running = False
+        parsed_url = urlparse(self.path)
+        query_params = parse_qs(parsed_url.query)
+        redirect_uri = query_params.get("redirect_uri", [""])[0]
+
+        if not redirect_uri:
+            self._set_html_response("<h2>Missing redirect_uri</h2>", status_code=400)
             return
-        elif "?result=error" in self.path:
-            error_type = self.path.split("error_type=")[1].split("&")[0] if "error_type=" in self.path else ""
-            if error_type == "no_cookies":
-                self._set_html_response(get_no_cookies_error_page(), status_code=400)
-            else:
-                self._set_html_response(get_no_auth_token_error_page(), status_code=400)
-            return
-        
-        # Extract cookies from the request when processing
+
+        # Check for auth cookies
         cookies_header = self.headers.get('Cookie')
-        
-        # If no cookies, redirect to error page
         if not cookies_header:
-            # First show loading page
-            self._show_loading_with_redirect("?result=error&error_type=no_cookies")
+            self._redirect_with_status(redirect_uri, "error", "no_cookies")
             return
-            
-        # Parse cookies - find the session or auth cookie
+
         cookies = {}
         for cookie in cookies_header.split(';'):
             if '=' in cookie:
                 name, value = cookie.strip().split('=', 1)
                 cookies[name] = value
-        
-        # Find your specific session cookie
+
         auth_token = cookies.get('__agno_session')
-        
         if not auth_token:
-            # First show loading page
-            self._show_loading_with_redirect("?result=error&error_type=no_token")
+            self._redirect_with_status(redirect_uri, "error", "no_token")
             return
-        
-        # Save the auth token
+
+        # Save the token
         agno_cli_settings.tmp_token_path.parent.mkdir(parents=True, exist_ok=True)
         agno_cli_settings.tmp_token_path.touch(exist_ok=True)
         agno_cli_settings.tmp_token_path.write_text(json.dumps({"AuthToken": auth_token}))
-        
-        # Show loading page first, then redirect to success page
-        self._show_loading_with_redirect("?result=success")
-    
-    def _show_loading_with_redirect(self, redirect_params):
-        """Show loading page with auto-redirect after delay."""
-        html=get_loading_page(redirect_params)
 
-        self._set_html_response(html, status_code=200) 
+        self._redirect_with_status(redirect_uri, "success")
+
+    def _redirect_with_status(self, redirect_uri, result: str, error_type: str = ""):
+        """Render a simple HTML page with 'Authenticating...' and redirect."""
+        redirect_url = f"{redirect_uri}?cli_auth={result}"
+        if result == "error" and error_type:
+            redirect_url += f"&type={quote(error_type)}"
+
+        html = f"""
+        <html>
+        <head>
+            <title>Agno Workspace</title>
+            <meta http-equiv="refresh" content="1;url={redirect_url}" />
+        </head>
+        <body>
+            <p style="font-family:sans-serif;text-align:center;margin-top:30px;">
+            Authenticating your workspace... You will be redirected to Agno App shortly.
+            </p>
+        </body>
+        </html>
+        """
+        self._set_html_response(html, status_code=200)
+        self.server.running = False
 
     def do_OPTIONS(self):
         # logger.debug(
