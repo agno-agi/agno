@@ -45,19 +45,16 @@ def format_message(message: Message, openai_like: bool = False) -> Dict[str, Any
         }
 
     if message.role == "assistant":
+        text_content = {"type": "text", "text": message.content or " "}
+
         if message.tool_calls is not None and len(message.tool_calls) > 0:
             message_dict = {
-                "content": {
-                    "type": "text",
-                    "text": message.content or " ",
-                },
+                "content": [text_content] if openai_like else text_content,
                 "role": "assistant",
                 "tool_calls": message.tool_calls,
                 "stop_reason": "tool_calls",
             }
         else:
-            text_content = {"type": "text", "text": message.content or " "}
-
             message_dict = {
                 "role": "assistant",
                 "content": [text_content] if openai_like else text_content,

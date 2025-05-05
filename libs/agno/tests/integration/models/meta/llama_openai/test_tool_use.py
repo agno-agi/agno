@@ -3,14 +3,14 @@ from typing import Optional
 import pytest
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.meta import Llama
+from agno.models.meta import LlamaOpenAI
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 
 
 def test_tool_use():
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         telemetry=False,
@@ -27,7 +27,7 @@ def test_tool_use():
 
 def test_tool_use_stream():
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         telemetry=False,
@@ -54,7 +54,7 @@ def test_tool_use_stream():
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         telemetry=False,
@@ -72,7 +72,7 @@ async def test_async_tool_use():
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         telemetry=False,
@@ -98,7 +98,7 @@ async def test_async_tool_use_stream():
 
 def test_tool_use_with_content():
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         telemetry=False,
@@ -116,7 +116,7 @@ def test_tool_use_with_content():
 
 def test_parallel_tool_calls():
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         telemetry=False,
@@ -137,7 +137,7 @@ def test_parallel_tool_calls():
 
 def test_multiple_tool_calls():
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         show_tool_calls=True,
         telemetry=False,
@@ -165,7 +165,7 @@ def test_tool_call_custom_tool_no_parameters():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[get_the_weather_in_tokyo],
         show_tool_calls=True,
         telemetry=False,
@@ -194,7 +194,7 @@ def test_tool_call_custom_tool_optional_parameters():
             return f"It is currently 70 degrees and cloudy in {city}"
 
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
+        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[get_the_weather],
         show_tool_calls=True,
         telemetry=False,
