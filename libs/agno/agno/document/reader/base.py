@@ -12,11 +12,11 @@ class Reader:
     """Base class for reading documents"""
 
     chunk: bool = True
-    chunk_size: int = 3000
+    chunk_size: int = 5000
     separators: List[str] = field(default_factory=lambda: ["\n", "\n\n", "\r", "\r\n", "\n\r", "\t", " ", "  "])
     chunking_strategy: Optional[ChunkingStrategy] = None
 
-    def __init__(self, chunk_size: int = 3000, chunking_strategy: Optional[ChunkingStrategy] = None) -> None:
+    def __init__(self, chunk_size: int = 5000, chunking_strategy: Optional[ChunkingStrategy] = None) -> None:
         self.chunk_size = chunk_size
         self.chunking_strategy = chunking_strategy or FixedSizeChunking(chunk_size=self.chunk_size)
 
@@ -27,7 +27,7 @@ class Reader:
         raise NotImplementedError
 
     def chunk_document(self, document: Document) -> List[Document]:
-        return self.chunking_strategy.chunk(document)
+        return self.chunking_strategy.chunk(document)  # type: ignore
 
     async def chunk_documents_async(self, documents: List[Document]) -> List[Document]:
         """
