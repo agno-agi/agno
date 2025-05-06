@@ -96,9 +96,11 @@ class PDFReader(BasePDFReader):
     def read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
         try:
             if isinstance(pdf, str):
-                doc_name = pdf.split("/")[-1].split(".")[0].replace(" ", "_")
+                # Use the full path to ensure uniqueness
+                doc_name = pdf.replace("/", "_").replace(" ", "_")
             else:
-                doc_name = pdf.name.split(".")[0]
+                # Use the full path for file objects as well
+                doc_name = pdf.name.replace("/", "_").replace(" ", "_")
         except Exception:
             doc_name = "pdf"
 
@@ -127,9 +129,11 @@ class PDFReader(BasePDFReader):
     async def async_read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
         try:
             if isinstance(pdf, str):
-                doc_name = pdf.split("/")[-1].split(".")[0].replace(" ", "_")
+                # Use the full path to ensure uniqueness
+                doc_name = pdf.replace("/", "_").replace(" ", "_")
             else:
-                doc_name = pdf.name.split(".")[0]
+                # Use the full path for file objects as well
+                doc_name = pdf.name.replace("/", "_").replace(" ", "_")
         except Exception:
             doc_name = "pdf"
 
