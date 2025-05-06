@@ -18,13 +18,14 @@ You can pass filters in the following ways:
 
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.vectordb.qdrant import Qdrant
+from agno.vectordb.lancedb import LanceDb
 
-# Set a unique collection name to avoid conflicts with other examples
-COLLECTION_NAME = "recipes-pdf-url"
-
-# Initialize the vector database
-vector_db = Qdrant(collection=COLLECTION_NAME, url="http://localhost:6333")
+# Initialize LanceDB
+# By default, it stores data in /tmp/lancedb
+vector_db = LanceDb(
+    table_name="recipes",
+    uri="tmp/lancedb",  # You can change this path to store data elsewhere
+)
 
 # Step 1: Initialize knowledge base with URLs and metadata
 # ------------------------------------------------------------------------------
@@ -34,22 +35,20 @@ vector_db = Qdrant(collection=COLLECTION_NAME, url="http://localhost:6333")
 knowledge_base = PDFUrlKnowledgeBase(
     urls=[
         {
-            "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf": {
-                "metadata": {
-                    "cuisine": "Thai",
-                    "source": "Thai Cookbook",
-                    "region": "Southeast Asia",
-                }
-            }
+            "url": "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
+            "metadata": {
+                "cuisine": "Thai",
+                "source": "Thai Cookbook",
+                "region": "Southeast Asia",
+            },
         },
         {
-            "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf": {
-                "metadata": {
-                    "cuisine": "Cape",
-                    "source": "Cape Cookbook",
-                    "region": "South Africa",
-                }
-            }
+            "url": "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
+            "metadata": {
+                "cuisine": "Cape",
+                "source": "Cape Cookbook",
+                "region": "South Africa",
+            },
         },
     ],
     vector_db=vector_db,
@@ -66,9 +65,8 @@ knowledge_base.load(recreate=True)
 agent = Agent(
     knowledge=knowledge_base,
     search_knowledge=True,
-    knowledge_filters={
-        "cuisine": "Thai"
-    },  # This will only return information from documents with Thai cuisine
+    # This will only return information from documents with Thai cuisine
+    knowledge_filters={"cuisine": "Thai"},
 )
 
 # Query for Thai recipes

@@ -2,13 +2,14 @@ import asyncio
 
 from agno.agent import Agent
 from agno.knowledge.pdf import PDFKnowledgeBase
-from agno.vectordb.qdrant import Qdrant
+from agno.vectordb.lancedb import LanceDb
 
-# Set a unique collection name to avoid conflicts with other examples
-COLLECTION_NAME = "resume-pdf-test"
-
-# Initialize the vector database
-vector_db = Qdrant(collection=COLLECTION_NAME, url="http://localhost:6333")
+# Initialize LanceDB
+# By default, it stores data in /tmp/lancedb
+vector_db = LanceDb(
+    table_name="recipes",
+    uri="tmp/lancedb",  # You can change this path to store data elsewhere
+)
 
 # Step 1: Initialize knowledge base with documents and metadata
 # ------------------------------------------------------------------------------
@@ -18,49 +19,44 @@ vector_db = Qdrant(collection=COLLECTION_NAME, url="http://localhost:6333")
 knowledge_base = PDFKnowledgeBase(
     path=[
         {
-            "cookbook/agent_concepts/knowledge/filters/data/cv_1.pdf": {
-                "metadata": {
-                    "user_id": "jordan_mitchell",
-                    "document_type": "cv",
-                    "year": 2025,
-                }
-            }
+            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_1.pdf",
+            "metadata": {
+                "user_id": "jordan_mitchell",
+                "document_type": "cv",
+                "year": 2025,
+            },
         },
         {
-            "cookbook/agent_concepts/knowledge/filters/data/cv_2.pdf": {
-                "metadata": {
-                    "user_id": "taylor_brooks",
-                    "document_type": "cv",
-                    "year": 2025,
-                }
-            }
+            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_2.pdf",
+            "metadata": {
+                "user_id": "taylor_brooks",
+                "document_type": "cv",
+                "year": 2025,
+            },
         },
         {
-            "cookbook/agent_concepts/knowledge/filters/data/cv_3.pdf": {
-                "metadata": {
-                    "user_id": "morgan_lee",
-                    "document_type": "cv",
-                    "year": 2025,
-                }
-            }
+            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_3.pdf",
+            "metadata": {
+                "user_id": "morgan_lee",
+                "document_type": "cv",
+                "year": 2025,
+            },
         },
         {
-            "cookbook/agent_concepts/knowledge/filters/data/cv_4.pdf": {
-                "metadata": {
-                    "user_id": "casey_jordan",
-                    "document_type": "cv",
-                    "year": 2025,
-                }
-            }
+            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_4.pdf",
+            "metadata": {
+                "user_id": "casey_jordan",
+                "document_type": "cv",
+                "year": 2025,
+            },
         },
         {
-            "cookbook/agent_concepts/knowledge/filters/data/cv_5.pdf": {
-                "metadata": {
-                    "user_id": "alex_rivera",
-                    "document_type": "cv",
-                    "year": 2025,
-                }
-            }
+            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_5.pdf",
+            "metadata": {
+                "user_id": "alex_rivera",
+                "document_type": "cv",
+                "year": 2025,
+            },
         },
     ],
     vector_db=vector_db,
