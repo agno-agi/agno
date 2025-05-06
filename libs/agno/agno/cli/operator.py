@@ -39,7 +39,9 @@ def authenticate_user() -> None:
 
     auth_server_port = get_port_for_auth_server()
     redirect_uri = "http%3A%2F%2Flocalhost%3A{}%2Fauth".format(auth_server_port)
-    auth_url = "{}?source=cli&action=signin&redirection_supported=true&redirecturi={}".format(agno_cli_settings.signin_url, redirect_uri)
+    auth_url = "{}?source=cli&action=signin&redirection_supported=true&redirecturi={}".format(
+        agno_cli_settings.app_url, redirect_uri
+    )
     print_info("\nYour browser will be opened to visit:\n{}".format(auth_url))
     typer_launch(auth_url)
     print_info("\nWaiting for a response from the browser...\n")
