@@ -1,8 +1,9 @@
 import json
 import os
 import string
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import requests
-from typing import List, Optional, Union, Dict, Any, Tuple
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
@@ -12,12 +13,9 @@ try:
 except ImportError:
     raise ImportError("`apify-client` not installed. Please install using `pip install apify-client`")
 
+
 class ApifyTools(Toolkit):
-    def __init__(
-        self,
-        actors: Union[str, List[str]] = None,
-        apify_api_token: Optional[str] = None
-    ):
+    def __init__(self, actors: Union[str, List[str]] = None, apify_api_token: Optional[str] = None):
         """Initialize ApifyTools with specific Actors.
 
         Args:
@@ -71,7 +69,7 @@ class ApifyTools(Toolkit):
         super().__init__(name="ApifyTools")
 
         # Get API token from args or environment
-        self.apify_api_token = apify_api_token or os.getenv('APIFY_API_TOKEN')
+        self.apify_api_token = apify_api_token or os.getenv("APIFY_API_TOKEN")
         if not self.apify_api_token:
             raise ValueError("APIFY_API_TOKEN environment variable or apify_api_token parameter must be set")
 
@@ -95,14 +93,14 @@ class ApifyTools(Toolkit):
             tool_name = actor_id_to_tool_name(actor_id)
 
             # Get actor description
-            actor_description = build.get('actorDefinition', {}).get('description', '')
+            actor_description = build.get("actorDefinition", {}).get("description", "")
             if len(actor_description) > MAX_DESCRIPTION_LEN:
-                actor_description = actor_description[:MAX_DESCRIPTION_LEN] + '...(TRUNCATED, TOO LONG)'
+                actor_description = actor_description[:MAX_DESCRIPTION_LEN] + "...(TRUNCATED, TOO LONG)"
 
             # Get input schema
-            actor_input = build.get('actorDefinition', {}).get('input')
+            actor_input = build.get("actorDefinition", {}).get("input")
             if not actor_input:
-                raise ValueError(f'Input schema not found in the Actor build for Actor: {actor_id}')
+                raise ValueError(f"Input schema not found in the Actor build for Actor: {actor_id}")
 
             properties, required = prune_actor_input_schema(actor_input)
 
@@ -119,12 +117,14 @@ class ApifyTools(Toolkit):
                     # Run the Actor directly with the client
                     details = self.client.actor(actor_id=actor_id).call(run_input=kwargs)
                     if details is None:
-                        error_msg = f'Actor: {actor_id} was not started properly and details about the run were not returned'
+                        error_msg = (
+                            f"Actor: {actor_id} was not started properly and details about the run were not returned"
+                        )
                         raise ValueError(error_msg)
 
-                    run_id = details.get('id')
+                    run_id = details.get("id")
                     if run_id is None:
-                        error_msg = f'Run ID not found in the run details for Actor: {actor_id}'
+                        error_msg = f"Run ID not found in the run details for Actor: {actor_id}"
                         raise ValueError(error_msg)
 
                     # Get the results
@@ -165,19 +165,15 @@ Returns:
             logger.error(f"Failed to register Apify Actor '{actor_id}': {str(e)}")
 
 
-
 # Constants
 MAX_DESCRIPTION_LEN = 350
 REQUESTS_TIMEOUT_SECS = 300
-APIFY_API_ENDPOINT_GET_DEFAULT_BUILD = 'https://api.apify.com/v2/acts/{actor_id}/builds/default'
+APIFY_API_ENDPOINT_GET_DEFAULT_BUILD = "https://api.apify.com/v2/acts/{actor_id}/builds/default"
+
 
 # Utility functions
 def props_to_json_schema(input_dict, required_fields=None):
-    schema = {
-        "type": "object",
-        "properties": {},
-        "required": required_fields or []
-    }
+    schema = {"type": "object", "properties": {}, "required": required_fields or []}
 
     def infer_array_item_type(prop):
         type_map = {
@@ -187,7 +183,7 @@ def props_to_json_schema(input_dict, required_fields=None):
             "dict": "object",
             "list": "array",
             "bool": "boolean",
-            "none": "null"
+            "none": "null",
         }
         if prop.get("items", {}).get("type"):
             return prop["items"]["type"]
@@ -221,7 +217,7 @@ def props_to_json_schema(input_dict, required_fields=None):
                     "type": "boolean",
                     "description": "Whether to use Apify Proxy - ALWAYS SET TO TRUE.",
                     "default": True,
-                    "examples": [True]
+                    "examples": [True],
                 }
             }
             prop_schema["required"] = ["useApifyProxy"]
@@ -235,12 +231,8 @@ def props_to_json_schema(input_dict, required_fields=None):
                 "title": "Request list source",
                 "description": "Request list source",
                 "properties": {
-                    "url": {
-                        "title": "URL",
-                        "type": "string",
-                        "description": "URL of the request list source"
-                    }
-                }
+                    "url": {"title": "URL", "type": "string", "description": "URL of the request list source"}
+                },
             }
 
         elif prop_type == "array":
@@ -248,7 +240,7 @@ def props_to_json_schema(input_dict, required_fields=None):
             prop_schema["items"] = {
                 "type": infer_array_item_type(value),
                 "title": value.get("title", "Item"),
-                "description": "Item"
+                "description": "Item",
             }
 
         elif prop_type == "object":
@@ -269,6 +261,7 @@ def props_to_json_schema(input_dict, required_fields=None):
 
     return schema
 
+
 def create_apify_client(token: str) -> ApifyClient:
     """Create an Apify client instance with a custom user-agent.
 
@@ -282,12 +275,13 @@ def create_apify_client(token: str) -> ApifyClient:
         ValueError: If the API token is not provided
     """
     if not token:
-        raise ValueError('API token is required to create an Apify client.')
+        raise ValueError("API token is required to create an Apify client.")
 
     client = ApifyClient(token)
-    if http_client := getattr(client.http_client, 'httpx_client', None):
-        http_client.headers['user-agent'] += '; Origin/agno'
+    if http_client := getattr(client.http_client, "httpx_client", None):
+        http_client.headers["user-agent"] += "; Origin/agno"
     return client
+
 
 def actor_id_to_tool_name(actor_id: str) -> str:
     """Turn actor_id into a valid tool name.
@@ -298,8 +292,9 @@ def actor_id_to_tool_name(actor_id: str) -> str:
     Returns:
         str: A valid tool name
     """
-    valid_chars = string.ascii_letters + string.digits + '_-'
-    return 'apify_actor_' + ''.join(char if char in valid_chars else '_' for char in actor_id)
+    valid_chars = string.ascii_letters + string.digits + "_-"
+    return "apify_actor_" + "".join(char if char in valid_chars else "_" for char in actor_id)
+
 
 def get_actor_latest_build(apify_client: ApifyClient, actor_id: str) -> Dict[str, Any]:
     """Get the latest build of an Actor from the default build tag.
@@ -316,22 +311,23 @@ def get_actor_latest_build(apify_client: ApifyClient, actor_id: str) -> Dict[str
         TypeError: If the build is not a dictionary
     """
     if not (actor := apify_client.actor(actor_id).get()):
-        raise ValueError(f'Actor {actor_id} not found.')
+        raise ValueError(f"Actor {actor_id} not found.")
 
-    if not (actor_obj_id := actor.get('id')):
-        raise ValueError(f'Failed to get the Actor object ID for {actor_id}.')
+    if not (actor_obj_id := actor.get("id")):
+        raise ValueError(f"Failed to get the Actor object ID for {actor_id}.")
 
     url = APIFY_API_ENDPOINT_GET_DEFAULT_BUILD.format(actor_id=actor_obj_id)
-    response = requests.request('GET', url, timeout=REQUESTS_TIMEOUT_SECS)
+    response = requests.request("GET", url, timeout=REQUESTS_TIMEOUT_SECS)
 
     build = response.json()
     if not isinstance(build, dict):
-        raise TypeError(f'Failed to get the latest build of the Actor {actor_id}.')
+        raise TypeError(f"Failed to get the latest build of the Actor {actor_id}.")
 
-    if (data := build.get('data')) is None:
-        raise ValueError(f'Failed to get the latest build data of the Actor {actor_id}.')
+    if (data := build.get("data")) is None:
+        raise ValueError(f"Failed to get the latest build data of the Actor {actor_id}.")
 
     return data
+
 
 def prune_actor_input_schema(input_schema: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     """Get the input schema from the Actor build and trim descriptions.
@@ -342,17 +338,17 @@ def prune_actor_input_schema(input_schema: Dict[str, Any]) -> Tuple[Dict[str, An
     Returns:
         Tuple[Dict[str, Any], List[str]]: A tuple containing the pruned properties and required fields
     """
-    properties = input_schema.get('properties', {})
-    required = input_schema.get('required', [])
+    properties = input_schema.get("properties", {})
+    required = input_schema.get("required", [])
 
     properties_out: Dict[str, Any] = {}
     for item, meta in properties.items():
         properties_out[item] = {}
-        if desc := meta.get('description'):
-            properties_out[item]['description'] = (
-                desc[:MAX_DESCRIPTION_LEN] + '...' if len(desc) > MAX_DESCRIPTION_LEN else desc
+        if desc := meta.get("description"):
+            properties_out[item]["description"] = (
+                desc[:MAX_DESCRIPTION_LEN] + "..." if len(desc) > MAX_DESCRIPTION_LEN else desc
             )
-        for key_name in ('type', 'default', 'prefill', 'enum'):
+        for key_name in ("type", "default", "prefill", "enum"):
             if value := meta.get(key_name):
                 properties_out[item][key_name] = value
 

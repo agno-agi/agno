@@ -25,10 +25,19 @@ agent = Agent(
         "You are a sophisticated web research assistant capable of extracting insights from various online sources. "
         "Use the available tools for your tasks to gather accurate, well-structured information."
     ],
-    tools=[ApifyTools(actors=["apify/rag-web-browser","compass/crawler-google-places", "clockworks/free-tiktok-scraper"])],
+    tools=[
+        ApifyTools(
+            actors=[
+                "apify/rag-web-browser",
+                "compass/crawler-google-places",
+                "clockworks/free-tiktok-scraper",
+            ]
+        )
+    ],
     show_tool_calls=True,
-    markdown=True
+    markdown=True,
 )
+
 
 def demonstrate_tools():
     print("Apify Tools Exploration 🔍")
@@ -37,11 +46,11 @@ def demonstrate_tools():
     print("\n1.1 🕵️ RAG Web Search Scenarios:")
     prompt = "Research the latest AI ethics guidelines from top tech companies. Compile a summary from at least 3 different sources comparing their approaches using RAG Web Browser."
     agent.print_response(prompt, show_full_reasoning=True)
-    
+
     print("\n1.2 🕵️ RAG Web Search Scenarios:")
-    prompt = "Carefully extract the key introduction details from https://docs.agno.com/introduction" #  Extract content from specific website
+    prompt = "Carefully extract the key introduction details from https://docs.agno.com/introduction"  #  Extract content from specific website
     agent.print_response(prompt)
-    
+
     # Google Places Demonstration
     print("\n2. Google Places Crawler:")
     prompt = "Find the top 5 highest-rated coffee shops in San Francisco with detailed information about each location"
@@ -52,9 +61,10 @@ def demonstrate_tools():
     prompt = "Analyze two profiles on Tiktok that lately added #AI (hashtag AI), extracting their statistics and recent content trends"
     agent.print_response(prompt)
 
+
 if __name__ == "__main__":
     demonstrate_tools()
-    
+
 """
 Want to add a new tool? It's easy!
 - Browse Apify Store
