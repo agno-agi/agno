@@ -19,13 +19,13 @@ knowledge_base = PDFUrlKnowledgeBase(
     vector_db=vector_db,
 )
 
-knowledge_base.load_url(
+knowledge_base.load_document(
     url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
     metadata={"cuisine": "Thai", "source": "Thai Cookbook"},
     recreate=False,  # only use at the first run, True/False
 )
 
-knowledge_base.load_url(
+knowledge_base.load_document(
     url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
     metadata={"cuisine": "Cape", "source": "Cape Cookbook"},
 )

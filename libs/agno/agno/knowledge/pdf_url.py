@@ -64,7 +64,7 @@ class PDFUrlKnowledgeBase(AgentKnowledge):
                 if self._is_valid_url(item):  # type: ignore
                     yield await self.reader.async_read(url=item)  # type: ignore
 
-    def load_url(
+    def load_document(
         self,
         url: str,
         metadata: Optional[Dict[str, Any]] = None,
@@ -106,7 +106,7 @@ class PDFUrlKnowledgeBase(AgentKnowledge):
             source_info=str(url),
         )
 
-    async def aload_url(
+    async def aload_document(
         self,
         url: str,
         metadata: Optional[Dict[str, Any]] = None,
