@@ -28,171 +28,167 @@ def get_filtered_data_dir():
     return Path(__file__).parent / "data" / "filters"
 
 
-# def test_text_knowledge_base_directory(setup_vector_db):
-#     """Test loading a directory of text files into the knowledge base."""
-#     text_dir = get_test_data_dir()
+def test_text_knowledge_base_directory(setup_vector_db):
+    """Test loading a directory of text files into the knowledge base."""
+    text_dir = get_test_data_dir()
 
-#     kb = TextKnowledgeBase(
-#         path=text_dir,
-#         formats=[".txt"],
-#         vector_db=setup_vector_db,
-#     )
-#     kb.load(recreate=True)
+    kb = TextKnowledgeBase(
+        path=text_dir,
+        formats=[".txt"],
+        vector_db=setup_vector_db,
+    )
+    kb.load(recreate=True)
 
-#     assert setup_vector_db.exists()
-#     # pg_essay.txt is split into 9 documents
-#     assert setup_vector_db.get_count() == 9
+    assert setup_vector_db.exists()
+    # pg_essay.txt is split into 9 documents
+    assert setup_vector_db.get_count() == 9
 
-#     agent = Agent(knowledge=kb)
-#     response = agent.run("What are the key factors in doing great work?", markdown=True)
+    agent = Agent(knowledge=kb)
+    response = agent.run("What are the key factors in doing great work?", markdown=True)
 
-#     tool_calls = []
-#     for msg in response.messages:
-#         if msg.tool_calls:
-#             tool_calls.extend(msg.tool_calls)
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
 
-#     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-#     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
-
-
-# def test_text_knowledge_base_single_file(setup_vector_db):
-#     """Test loading a single text file into the knowledge base."""
-#     text_file = get_test_data_dir() / "pg_essay.txt"
-
-#     kb = TextKnowledgeBase(path=text_file, formats=[".txt"], vector_db=setup_vector_db)
-#     kb.load(recreate=True)
-
-#     assert setup_vector_db.exists()
-#     # pg_essay.txt is split into 4 documents
-#     assert setup_vector_db.get_count() == 4
-
-#     agent = Agent(knowledge=kb)
-#     response = agent.run("What does Paul Graham say about curiosity?", markdown=True)
-
-#     tool_calls = []
-#     for msg in response.messages:
-#         if msg.tool_calls:
-#             tool_calls.extend(msg.tool_calls)
-
-#     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-#     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    function_calls = [call for call in tool_calls if call.get("type") == "function"]
+    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
-# @pytest.mark.asyncio
-# async def test_text_knowledge_base_async_directory(setup_vector_db):
-#     """Test asynchronously loading a directory of text files into the knowledge base."""
-#     text_dir = get_test_data_dir()
+def test_text_knowledge_base_single_file(setup_vector_db):
+    """Test loading a single text file into the knowledge base."""
+    text_file = get_test_data_dir() / "pg_essay.txt"
 
-#     kb = TextKnowledgeBase(path=text_dir, formats=[".txt"], vector_db=setup_vector_db)
-#     await kb.aload(recreate=True)
+    kb = TextKnowledgeBase(path=text_file, formats=[".txt"], vector_db=setup_vector_db)
+    kb.load(recreate=True)
 
-#     assert await setup_vector_db.async_exists()
-#     # pg_essay.txt is split into 9 documents
-#     assert await setup_vector_db.async_get_count() == 9
+    assert setup_vector_db.exists()
+    # pg_essay.txt is split into 4 documents
+    assert setup_vector_db.get_count() == 4
 
-#     agent = Agent(knowledge=kb)
-#     response = await agent.arun("What does Paul Graham say about great work?", markdown=True)
+    agent = Agent(knowledge=kb)
+    response = agent.run("What does Paul Graham say about curiosity?", markdown=True)
 
-#     tool_calls = []
-#     for msg in response.messages:
-#         if msg.tool_calls:
-#             tool_calls.extend(msg.tool_calls)
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
 
-#     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-#     assert any(call["function"]["name"] == "asearch_knowledge_base" for call in function_calls)
-
-
-# @pytest.mark.asyncio
-# async def test_text_knowledge_base_async_single_file(setup_vector_db):
-#     """Test asynchronously loading a single text file into the knowledge base."""
-#     text_file = get_test_data_dir() / "pg_essay.txt"  # Changed to use pg_essay.txt
-
-#     kb = TextKnowledgeBase(path=text_file, formats=[".txt"], vector_db=setup_vector_db)
-#     await kb.aload(recreate=True)
-
-#     assert await setup_vector_db.async_exists()
-#     # pg_essay.txt is split into 4 documents
-#     assert await setup_vector_db.async_get_count() == 4
-
-#     agent = Agent(knowledge=kb)
-#     response = await agent.arun("What are the advantages of youth in doing great work?", markdown=True)
-
-#     tool_calls = []
-#     for msg in response.messages:
-#         if msg.tool_calls:
-#             tool_calls.extend(msg.tool_calls)
-
-#     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-#     assert any(call["function"]["name"] == "asearch_knowledge_base" for call in function_calls)
+    function_calls = [call for call in tool_calls if call.get("type") == "function"]
+    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
-# # for the one with new knowledge filter DX
-# def test_text_knowledge_base_with_metadata_path(setup_vector_db):
-#     """Test loading text files with metadata using the new path structure."""
-#     kb = TextKnowledgeBase(
-#         path=[
-#             {
-#                 str(get_filtered_data_dir() / "cv_1.txt"): {
-#                     "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"}
-#                 }
-#             },
-#             {
-#                 str(get_filtered_data_dir() / "cv_2.txt"): {
-#                     "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"}
-#                 }
-#             },
-#         ],
-#         vector_db=setup_vector_db,
-#     )
+@pytest.mark.asyncio
+async def test_text_knowledge_base_async_directory(setup_vector_db):
+    """Test asynchronously loading a directory of text files into the knowledge base."""
+    text_dir = get_test_data_dir()
 
-#     kb.load(recreate=True)
+    kb = TextKnowledgeBase(path=text_dir, formats=[".txt"], vector_db=setup_vector_db)
+    await kb.aload(recreate=True)
 
-#     # Verify documents were loaded with metadata
-#     agent = Agent(knowledge=kb)
-#     response = agent.run(
-#         "Tell me about Jordan Mitchell's experience?", knowledge_filters={"user_id": "jordan_mitchell"}, markdown=True
-#     )
+    assert await setup_vector_db.async_exists()
+    # pg_essay.txt is split into 9 documents
+    assert await setup_vector_db.async_get_count() == 9
 
-#     assert (
-#         "entry" in response.content.lower()
-#         or "junior" in response.content.lower()
-#         or "Jordan" in response.content.lower()
-#     )
-#     assert "senior developer" not in response.content.lower()
+    agent = Agent(knowledge=kb)
+    response = await agent.arun("What does Paul Graham say about great work?", markdown=True)
+
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+
+    function_calls = [call for call in tool_calls if call.get("type") == "function"]
+    assert any(call["function"]["name"] == "asearch_knowledge_base" for call in function_calls)
 
 
-# @pytest.mark.asyncio
-# async def test_async_text_knowledge_base_with_metadata_path(setup_vector_db):
-#     """Test async loading of text files with metadata using the new path structure."""
-#     kb = TextKnowledgeBase(
-#         path=[
-#             {
-#                 str(get_filtered_data_dir() / "cv_1.txt"): {
-#                     "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"}
-#                 }
-#             },
-#             {
-#                 str(get_filtered_data_dir() / "cv_2.txt"): {
-#                     "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"}
-#                 }
-#             },
-#         ],
-#         vector_db=setup_vector_db,
-#     )
+@pytest.mark.asyncio
+async def test_text_knowledge_base_async_single_file(setup_vector_db):
+    """Test asynchronously loading a single text file into the knowledge base."""
+    text_file = get_test_data_dir() / "pg_essay.txt"  # Changed to use pg_essay.txt
 
-#     await kb.aload(recreate=True)
+    kb = TextKnowledgeBase(path=text_file, formats=[".txt"], vector_db=setup_vector_db)
+    await kb.aload(recreate=True)
 
-#     agent = Agent(knowledge=kb)
-#     response = await agent.arun(
-#         "Tell me about Jordan Mitchell's experience?", knowledge_filters={"user_id": "jordan_mitchell"}, markdown=True
-#     )
+    assert await setup_vector_db.async_exists()
+    # pg_essay.txt is split into 4 documents
+    assert await setup_vector_db.async_get_count() == 4
 
-#     assert (
-#         "entry" in response.content.lower()
-#         or "junior" in response.content.lower()
-#         or "Jordan" in response.content.lower()
-#     )
-#     assert "senior developer" not in response.content.lower()
+    agent = Agent(knowledge=kb)
+    response = await agent.arun("What are the advantages of youth in doing great work?", markdown=True)
+
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+
+    function_calls = [call for call in tool_calls if call.get("type") == "function"]
+    assert any(call["function"]["name"] == "asearch_knowledge_base" for call in function_calls)
+
+
+# for the one with new knowledge filter DX
+def test_text_knowledge_base_with_metadata_path(setup_vector_db):
+    """Test loading text files with metadata using the new path structure."""
+    kb = TextKnowledgeBase(
+        path=[
+            {
+                "path": str(get_filtered_data_dir() / "cv_1.txt"),
+                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
+            },
+            {
+                "path": str(get_filtered_data_dir() / "cv_2.txt"),
+                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
+            },
+        ],
+        vector_db=setup_vector_db,
+    )
+
+    kb.load(recreate=True)
+
+    # Verify documents were loaded with metadata
+    agent = Agent(knowledge=kb)
+    response = agent.run(
+        "Tell me about Jordan Mitchell's experience?", knowledge_filters={"user_id": "jordan_mitchell"}, markdown=True
+    )
+
+    assert (
+        "entry" in response.content.lower()
+        or "junior" in response.content.lower()
+        or "Jordan" in response.content.lower()
+    )
+    assert "senior developer" not in response.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_async_text_knowledge_base_with_metadata_path(setup_vector_db):
+    """Test async loading of text files with metadata using the new path structure."""
+    kb = TextKnowledgeBase(
+        path=[
+            {
+                "path": str(get_filtered_data_dir() / "cv_1.txt"),
+                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
+            },
+            {
+                "path": str(get_filtered_data_dir() / "cv_2.txt"),
+                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
+            },
+        ],
+        vector_db=setup_vector_db,
+    )
+
+    await kb.aload(recreate=True)
+
+    agent = Agent(knowledge=kb)
+    response = await agent.arun(
+        "Tell me about Jordan Mitchell's experience?", knowledge_filters={"user_id": "jordan_mitchell"}, markdown=True
+    )
+
+    assert (
+        "entry" in response.content.lower()
+        or "junior" in response.content.lower()
+        or "Jordan" in response.content.lower()
+    )
+    assert "senior developer" not in response.content.lower()
 
 
 def test_docx_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
@@ -200,14 +196,12 @@ def test_docx_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
     kb = TextKnowledgeBase(
         path=[
             {
-                str(get_filtered_data_dir() / "cv_1.txt"): {
-                    "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"}
-                }
+                "path": str(get_filtered_data_dir() / "cv_1.txt"),
+                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
             },
             {
-                str(get_filtered_data_dir() / "cv_2.txt"): {
-                    "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"}
-                }
+                "path": str(get_filtered_data_dir() / "cv_2.txt"),
+                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
             },
         ],
         vector_db=setup_vector_db,
@@ -266,14 +260,12 @@ async def test_async_docx_knowledge_base_with_metadata_path_invalid_filter(setup
     kb = TextKnowledgeBase(
         path=[
             {
-                str(get_filtered_data_dir() / "cv_1.txt"): {
-                    "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"}
-                }
+                "path": str(get_filtered_data_dir() / "cv_1.txt"),
+                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
             },
             {
-                str(get_filtered_data_dir() / "cv_2.txt"): {
-                    "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"}
-                }
+                "path": str(get_filtered_data_dir() / "cv_2.txt"),
+                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
             },
         ],
         vector_db=setup_vector_db,

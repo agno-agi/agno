@@ -150,14 +150,12 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
     kb = JSONKnowledgeBase(
         path=[
             {
-                str(get_filtered_data_dir() / "cv_1.json"): {
-                    "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"}
-                }
+                "path": str(get_filtered_data_dir() / "cv_1.json"),
+                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
             },
             {
-                str(get_filtered_data_dir() / "cv_2.json"): {
-                    "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"}
-                }
+                "path": str(get_filtered_data_dir() / "cv_2.json"),
+                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
             },
         ],
         vector_db=setup_vector_db,
@@ -185,14 +183,12 @@ async def test_async_text_knowledge_base_with_metadata_path(setup_vector_db):
     kb = JSONKnowledgeBase(
         path=[
             {
-                str(get_filtered_data_dir() / "cv_1.json"): {
-                    "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"}
-                }
+                "path": str(get_filtered_data_dir() / "cv_1.json"),
+                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
             },
             {
-                str(get_filtered_data_dir() / "cv_2.json"): {
-                    "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"}
-                }
+                "path": str(get_filtered_data_dir() / "cv_2.json"),
+                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
             },
         ],
         vector_db=setup_vector_db,
@@ -218,14 +214,12 @@ def test_docx_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
     kb = JSONKnowledgeBase(
         path=[
             {
-                str(get_filtered_data_dir() / "cv_1.json"): {
-                    "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"}
-                }
+                "path": str(get_filtered_data_dir() / "cv_1.json"),
+                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
             },
             {
-                str(get_filtered_data_dir() / "cv_2.json"): {
-                    "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"}
-                }
+                "path": str(get_filtered_data_dir() / "cv_2.json"),
+                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
             },
         ],
         vector_db=setup_vector_db,
@@ -247,6 +241,7 @@ def test_docx_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
         "please clarify",
         "need more information",
         "be more specific",
+        "provide the name",
     ]
     candidates_mentioned = any(name in response_content for name in ["jordan", "mitchell", "taylor", "brooks"])
     valid_response = any(phrase in response_content for phrase in clarification_phrases) or candidates_mentioned
@@ -284,14 +279,12 @@ async def test_async_docx_knowledge_base_with_metadata_path_invalid_filter(setup
     kb = JSONKnowledgeBase(
         path=[
             {
-                str(get_filtered_data_dir() / "cv_1.json"): {
-                    "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"}
-                }
+                "path": str(get_filtered_data_dir() / "cv_1.json"),
+                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
             },
             {
-                str(get_filtered_data_dir() / "cv_2.json"): {
-                    "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"}
-                }
+                "path": str(get_filtered_data_dir() / "cv_2.json"),
+                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
             },
         ],
         vector_db=setup_vector_db,
