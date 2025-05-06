@@ -114,7 +114,7 @@ def team_chat_response_streamer(
 
 
 def get_sync_playground_router(
-    agents: Optional[List[Agent]] = None, workflows: Optional[List[Workflow]] = None, teams: Optional[List[Team]] = None, running_app_id: Optional[str] = None
+    agents: Optional[List[Agent]] = None, workflows: Optional[List[Workflow]] = None, teams: Optional[List[Team]] = None, active_app_id: Optional[str] = None
 ) -> APIRouter:
     playground_router = APIRouter(prefix="/playground", tags=["Playground"])
     if agents is None and workflows is None and teams is None:
@@ -139,7 +139,7 @@ def get_sync_playground_router(
         if app_id is None:
             return {"playground": "available"}
         else:
-            if running_app_id == app_id:
+            if active_app_id == app_id:
                 return {"playground": "available"}
             else:
                 return {"playground": "unavailable"}
