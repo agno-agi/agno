@@ -1,8 +1,10 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Optional
+from urllib.parse import parse_qs, quote, urlparse
+
 from agno.cli.settings import agno_cli_settings
-from urllib.parse import urlparse, parse_qs, quote
+
 
 class CliAuthRequestHandler(BaseHTTPRequestHandler):
     """Request Handler to accept the CLI auth token after the web based auth flow.
@@ -14,59 +16,23 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
         * Fix the header and limit to only localhost or agno.com
     """
 
-    def _set_response(self):
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST")
-        self.end_headers()
-    
-    def _set_html_response(self, html_content: str, status_code: int = 200):
-        """Set the response headers and content type to HTML."""
-        self.send_response(status_code)
-        self.send_header("Content-type", "text/html")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Credentials", "true")
-        self.end_headers()
-        self.wfile.write(html_content.encode("utf-8"))
-
-    
-    
-    def do_GET(self):
-        """Handle the redirect from the browser with auth cookies."""
-        parsed_url = urlparse(self.path)
-        query_params = parse_qs(parsed_url.query)
-        redirect_uri = query_params.get("redirect_uri", [""])[0]
-
-        if not redirect_uri:
-            self._set_html_response("<h2>Missing redirect_uri</h2>", status_code=400)
-            return
-
-        # Check for auth cookies
-        cookies_header = self.headers.get('Cookie')
+    def _get_token_from_cookies(self) -> Optional[str]:
+        """Get the auth token from the cookies."""
+        cookies_header = self.headers.get("Cookie")
         if not cookies_header:
-            self._redirect_with_status(redirect_uri, "error", "no_cookies")
             return
 
         cookies = {}
-        for cookie in cookies_header.split(';'):
-            if '=' in cookie:
-                name, value = cookie.strip().split('=', 1)
+        for cookie in cookies_header.split(";"):
+            if "=" in cookie:
+                name, value = cookie.strip().split("=", 1)
                 cookies[name] = value
 
         auth_token = cookies.get(agno_cli_settings.auth_token_cookie)
         if not auth_token:
-            self._redirect_with_status(redirect_uri, "error", "no_token")
             return
 
-        # Save the token
-        agno_cli_settings.tmp_token_path.parent.mkdir(parents=True, exist_ok=True)
-        agno_cli_settings.tmp_token_path.touch(exist_ok=True)
-        agno_cli_settings.tmp_token_path.write_text(json.dumps({"AuthToken": auth_token}))
-
-        self._redirect_with_status(redirect_uri, "success")
+        return auth_token
 
     def _redirect_with_status(self, redirect_uri, result: str, error_type: str = ""):
         """Render a simple HTML page with 'Authenticating...' and redirect."""
@@ -89,6 +55,48 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
         """
         self._set_html_response(html, status_code=200)
         self.server.running = False
+
+    def _set_response(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST")
+        self.end_headers()
+
+    def _set_html_response(self, html_content: str, status_code: int = 200):
+        """Set the response headers and content type to HTML."""
+        self.send_response(status_code)
+        self.send_header("Content-type", "text/html")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Credentials", "true")
+        self.end_headers()
+        self.wfile.write(html_content.encode("utf-8"))
+
+    def _store_token(self, auth_token: str):
+        """Store the given token in a temporary file."""
+        agno_cli_settings.tmp_token_path.parent.mkdir(parents=True, exist_ok=True)
+        agno_cli_settings.tmp_token_path.touch(exist_ok=True)
+        agno_cli_settings.tmp_token_path.write_text(json.dumps({"AuthToken": auth_token}))
+
+    def do_GET(self):
+        """Redirect to the provided redirect_uri after storing the auth token."""
+        parsed_url = urlparse(self.path)
+        query_params = parse_qs(parsed_url.query)
+        redirect_uri = query_params.get("redirect_uri", [""])[0]
+
+        if not redirect_uri:
+            self._set_html_response("<h2>Missing redirect_uri</h2>", status_code=400)
+            return
+
+        auth_token = self._get_token_from_cookies()
+        if not auth_token:
+            self._redirect_with_status(redirect_uri, "error", "no_token")
+            return
+
+        self._store_token(auth_token)
+        self._redirect_with_status(redirect_uri, "success")
 
     def do_OPTIONS(self):
         # logger.debug(
@@ -169,7 +177,6 @@ def get_auth_token_from_web_flow(port: int) -> Optional[str]:
     GET request: curl http://localhost:9191
     POST request: curl -d "foo=bar&bin=baz" http://localhost:9191
     """
-    import json
 
     server = CliAuthServer(port)
     server.run()
