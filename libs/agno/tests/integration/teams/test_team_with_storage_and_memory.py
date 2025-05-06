@@ -69,6 +69,7 @@ def route_team(team_storage, memory):
         name="Route Team",
         mode="route",
         model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
         storage=team_storage,
         memory=memory,
         enable_user_memories=True,
@@ -96,7 +97,7 @@ async def test_run_history_persistence(route_team, team_storage, memory):
 
     assert len(conversation_messages) == num_turns
 
-    for i, msg in enumerate(conversation_messages):
+    for msg in conversation_messages:
         await route_team.arun(msg, user_id=user_id, session_id=session_id)
 
     # Verify the stored session data after all turns
