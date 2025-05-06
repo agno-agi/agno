@@ -117,26 +117,40 @@ def session_selector_widget(agent: Agent, model_id: str) -> None:
             display_name = session_name if session_name else session_id
             session_options.append({"id": session_id, "display": display_name})
 
-        # Display session selector
-        selected_session = st.sidebar.selectbox(
-            "Session",
-            options=[s["display"] for s in session_options],
-            key="session_selector",
-        )
-        # Find the selected session ID
-        selected_session_id = next(
-            s["id"] for s in session_options if s["display"] == selected_session
-        )
+        # Only show selector if we have sessions
+        if session_options:
+            # Display session selector
+            selected_session = st.sidebar.selectbox(
+                "Session",
+                options=[s["display"] for s in session_options],
+                key="session_selector",
+            )
+            # Find the selected session ID
+            selected_session_id = next(
+                s["id"] for s in session_options if s["display"] == selected_session
+            )
 
-        if st.session_state["agentic_rag_agent_session_id"] != selected_session_id:
-            logger.info(
-                f"---*--- Loading {model_id} run: {selected_session_id} ---*---"
-            )
-            st.session_state["agentic_rag_agent"] = get_agentic_rag_agent(
-                model_id=model_id,
-                session_id=selected_session_id,
-            )
-            st.rerun()
+            # Check if we're switching to a different session
+            if st.session_state.get("agentic_rag_agent_session_id") != selected_session_id:
+                logger.info(
+                    f"---*--- Loading {model_id} run: {selected_session_id} ---*---"
+                )
+                try:
+                    # Create new agent with the selected session ID
+                    new_agent = get_agentic_rag_agent(
+                        model_id=model_id,
+                        session_id=selected_session_id,
+                    )
+                    # Update the agent in session state
+                    st.session_state["agentic_rag_agent"] = new_agent
+                    st.session_state["agentic_rag_agent_session_id"] = selected_session_id
+                    # Clear messages to reload from the new session
+                    st.session_state["messages"] = []
+                    st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"Error loading session: {str(e)}")
+        else:
+            st.sidebar.info("No saved sessions available.")
 
 
 def about_widget() -> None:
