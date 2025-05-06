@@ -96,10 +96,11 @@ class Playground:
             self.monitoring = monitor_env.lower() == "true"
 
     def get_router(self) -> APIRouter:
-        return get_sync_playground_router(self.agents, self.workflows, self.teams)
+        return get_sync_playground_router(self.agents, self.workflows, self.teams, self.app_id)
 
     def get_async_router(self) -> APIRouter:
-        return get_async_playground_router(self.agents, self.workflows, self.teams)
+        print(f"app_id: {self.app_id}")
+        return get_async_playground_router(self.agents, self.workflows, self.teams, self.app_id)
 
     def get_app(self, use_async: bool = True, prefix: str = "/v1") -> FastAPI:
         if not self.api_app:
