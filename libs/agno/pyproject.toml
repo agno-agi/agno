@@ -63,6 +63,7 @@ litellm = ["litellm"]
 meta = ["llama-api-client"]
 
 # Dependencies for Tools
+apify = ["apify-client"]
 cartesia = ["cartesia"]
 exa = ["exa_py"]
 yfinance = ["yfinance"]
@@ -139,6 +140,7 @@ models = [
 
 # All tools
 tools = [
+  "agno[apify]",
   "agno[exa]",
   "agno[cartesia]",
   "agno[ddg]",
