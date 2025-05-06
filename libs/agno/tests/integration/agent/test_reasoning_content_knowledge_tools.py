@@ -108,7 +108,7 @@ def test_knowledge_tools_streaming(knowledge_base):
     )
 
     think_called = False
-    for tool_call in response.formatted_tool_calls:
+    for tool_call in agent.run_response.formatted_tool_calls:
         if "think" in tool_call:
             think_called = True
     if think_called:
