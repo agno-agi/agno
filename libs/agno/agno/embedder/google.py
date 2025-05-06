@@ -77,7 +77,7 @@ class GeminiEmbedder(Embedder):
             log_error(f"Error extracting embeddings: {e}")
             return []
 
-    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any] | None]:
+    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         response = self._response(text=text)
         usage = None
         if response.metadata and hasattr(response.metadata, "billable_character_count"):

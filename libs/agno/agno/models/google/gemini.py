@@ -598,7 +598,8 @@ class Gemini(Model):
                         if mime_type_guess is not None:
                             file_content = file_path.read_bytes()
                             if file_content:
-                                return Part.from_bytes(mime_type=mime_type_guess, data=file_content)
+                                mime_type_str: str = str(mime_type_guess)
+                                return Part.from_bytes(mime_type=mime_type_str, data=file_content)
                     return None
                 else:
                     clean_file_name = f"files/{file_path.stem.lower().replace('_', '')}"
@@ -678,7 +679,7 @@ class Gemini(Model):
             for part in response_message.parts:
                 # Extract text if present
                 if hasattr(part, "text") and part.text is not None:
-                    text_content: str | None = getattr(part, "text")
+                    text_content: Optional[str] = getattr(part, "text")
                     if isinstance(text_content, str):
                         model_response.content = text_content
                     else:
@@ -740,10 +741,9 @@ class Gemini(Model):
 
         if response_delta.candidates and len(response_delta.candidates) > 0:
             candidate_content = response_delta.candidates[0].content
+            response_message: Content = Content(role="model", parts=[])
             if candidate_content is not None:
                 response_message = candidate_content
-            else:
-                response_message = Content(role="model", parts=[])
 
             # Add role
             if response_message.role is not None:
