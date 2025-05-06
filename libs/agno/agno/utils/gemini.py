@@ -120,12 +120,18 @@ def convert_schema(schema_dict: Dict[str, Any]) -> Optional[Schema]:
 
     elif schema_type == "" and "anyOf" in schema_dict:
         # Convert all sub-schemas and filter out None values
-        any_of = [schema for schema in (convert_schema(sub_schema) for sub_schema in schema_dict["anyOf"]) if schema is not None]
-        is_nullable = any(schema is None for schema in (convert_schema(sub_schema) for sub_schema in schema_dict["anyOf"]))
+        any_of = [
+            schema
+            for schema in (convert_schema(sub_schema) for sub_schema in schema_dict["anyOf"])
+            if schema is not None
+        ]
+        is_nullable = any(
+            schema is None for schema in (convert_schema(sub_schema) for sub_schema in schema_dict["anyOf"])
+        )
 
         if len(any_of) == 1:
             schema = any_of[0]
-            if hasattr(schema, 'nullable'):
+            if hasattr(schema, "nullable"):
                 schema.nullable = is_nullable
             return schema
         else:

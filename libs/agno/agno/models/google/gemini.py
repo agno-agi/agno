@@ -237,12 +237,12 @@ class Gemini(Model):
             )
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
-            error_message = str(e.response) if hasattr(e, 'response') else str(e)
+            error_message = str(e.response) if hasattr(e, "response") else str(e)
             raise ModelProviderError(
                 message=error_message,
-                status_code=e.code if hasattr(e, 'code') and e.code is not None else 502,
+                status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
-                model_id=self.id
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
@@ -270,10 +270,10 @@ class Gemini(Model):
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
-                message=str(e.response) if hasattr(e, 'response') else str(e),
-                status_code=e.code if hasattr(e, 'code') and e.code is not None else 502,
+                message=str(e.response) if hasattr(e, "response") else str(e),
+                status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
-                model_id=self.id
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
@@ -296,10 +296,10 @@ class Gemini(Model):
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
-                message=str(e.response) if hasattr(e, 'response') else str(e),
-                status_code=e.code if hasattr(e, 'code') and e.code is not None else 502,
+                message=str(e.response) if hasattr(e, "response") else str(e),
+                status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
-                model_id=self.id
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
@@ -324,10 +324,10 @@ class Gemini(Model):
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
-                message=str(e.response) if hasattr(e, 'response') else str(e),
-                status_code=e.code if hasattr(e, 'code') and e.code is not None else 502,
+                message=str(e.response) if hasattr(e, "response") else str(e),
+                status_code=e.code if hasattr(e, "code") and e.code is not None else 502,
                 model_name=self.name,
-                model_id=self.id
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unknown error from Gemini API: {e}")
@@ -422,7 +422,7 @@ class Gemini(Model):
                                         0,
                                         Part.from_uri(
                                             file_uri=audio_snippet.content.uri,
-                                            mime_type=audio_snippet.content.mime_type
+                                            mime_type=audio_snippet.content.mime_type,
                                         ),
                                     )
                             else:
@@ -452,18 +452,12 @@ class Gemini(Model):
         # Case 1: Audio is a bytes object
         if audio.content and isinstance(audio.content, bytes):
             mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
-            return Part.from_bytes(
-                mime_type=mime_type,
-                data=audio.content
-            )
+            return Part.from_bytes(mime_type=mime_type, data=audio.content)
 
         # Case 2: Audio is an url
         elif audio.url is not None and audio.audio_url_content is not None:
             mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
-            return Part.from_bytes(
-                mime_type=mime_type,
-                data=audio.audio_url_content
-            )
+            return Part.from_bytes(mime_type=mime_type, data=audio.audio_url_content)
 
         # Case 3: Audio is a local file path
         elif audio.filepath is not None:
@@ -517,10 +511,7 @@ class Gemini(Model):
         # Case 1: Video is a bytes object
         if video.content and isinstance(video.content, bytes):
             mime_type = f"video/{video.format}" if video.format else "video/mp4"
-            return Part.from_bytes(
-                mime_type=mime_type,
-                data=video.content
-            )
+            return Part.from_bytes(mime_type=mime_type, data=video.content)
         # Case 2: Video is stored locally
         elif video.filepath is not None:
             video_path = video.filepath if isinstance(video.filepath, Path) else Path(video.filepath)
@@ -602,6 +593,7 @@ class Gemini(Model):
                             return Part.from_bytes(mime_type=file.mime_type, data=file_content)
                     else:
                         import mimetypes
+
                         mime_type_guess = mimetypes.guess_type(file_path)[0]
                         if mime_type_guess is not None:
                             file_content = file_path.read_bytes()
@@ -617,7 +609,13 @@ class Gemini(Model):
                     except Exception as e:
                         log_warning(f"Error getting file {clean_file_name}: {e}")
 
-                    if remote_file and remote_file.state and remote_file.state.name == "SUCCESS" and remote_file.uri and remote_file.mime_type:
+                    if (
+                        remote_file
+                        and remote_file.state
+                        and remote_file.state.name == "SUCCESS"
+                        and remote_file.uri
+                        and remote_file.mime_type
+                    ):
                         file_uri: str = remote_file.uri
                         file_mime_type: str = remote_file.mime_type
                         return Part.from_uri(file_uri=file_uri, mime_type=file_mime_type)

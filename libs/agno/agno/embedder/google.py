@@ -80,9 +80,9 @@ class GeminiEmbedder(Embedder):
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any] | None]:
         response = self._response(text=text)
         usage = None
-        if response.metadata and hasattr(response.metadata, 'billable_character_count'):
+        if response.metadata and hasattr(response.metadata, "billable_character_count"):
             usage = {"billable_character_count": response.metadata.billable_character_count}
-        
+
         try:
             if response.embeddings and len(response.embeddings) > 0:
                 values = response.embeddings[0].values
