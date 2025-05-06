@@ -119,7 +119,7 @@ def test_scrape_with_chunking(mock_scrape_response):
         # Create reader with chunking enabled
         reader = FirecrawlReader()
         reader.chunk = True
-        reader.chunk_size = 10  # Small chunk size to ensure multiple chunks
+        reader.chunking_strategy.chunk_size = 10  # Small chunk size to ensure multiple chunks
 
         # Create a patch for chunk_document
         def mock_chunk_document(doc):
@@ -209,7 +209,7 @@ def test_crawl_with_chunking(mock_crawl_response):
         # Create reader with chunking enabled
         reader = FirecrawlReader(mode="crawl")
         reader.chunk = True
-        reader.chunk_size = 10  # Small chunk size to ensure multiple chunks
+        reader.chunking_strategy.chunk_size = 10  # Small chunk size to ensure multiple chunks
 
         def mock_chunk_document(doc):
             # Simple mock that splits into 2 chunks
