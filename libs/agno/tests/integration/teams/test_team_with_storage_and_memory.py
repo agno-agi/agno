@@ -97,7 +97,6 @@ async def test_run_history_persistence(route_team, team_storage, memory):
     assert len(conversation_messages) == num_turns
 
     for i, msg in enumerate(conversation_messages):
-        print(f"Turn {i + 1}: {msg}")
         await route_team.arun(msg, user_id=user_id, session_id=session_id)
 
     # Verify the stored session data after all turns
