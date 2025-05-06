@@ -8,7 +8,7 @@ from agno.utils.log import log_info
 
 
 class JSONKnowledgeBase(AgentKnowledge):
-    path: Optional[Union[str, Path, List[Union[str, Path, Dict[str, Dict[str, Any]]]]]] = None
+    path: Optional[Union[str, Path, List[Dict[str, Union[str, Dict[str, Any]]]]]] = None
     reader: JSONReader = JSONReader()
     formats: List[str] = [".json"]
 
@@ -20,22 +20,18 @@ class JSONKnowledgeBase(AgentKnowledge):
 
         if isinstance(self.path, list):
             for item in self.path:
-                if isinstance(item, dict):
+                if isinstance(item, dict) and "path" in item:
                     # Handle path with metadata
-                    for file_path, config in item.items():
-                        _file_path = Path(file_path)
-                        if self._is_valid_json(_file_path):
-                            documents = self.reader.read(path=_file_path)
-                            if config.get("metadata"):
-                                for doc in documents:
-                                    log_info(f"Adding metadata {config.get('metadata')} to document: {doc.name}")
-                                    doc.meta_data.update(config["metadata"])
-                            yield documents
-                else:
-                    # Handle simple path
-                    _file_path = Path(item)
+                    file_path = item["path"]
+                    config = item.get("metadata", {})
+                    _file_path = Path(file_path)  # type: ignore
                     if self._is_valid_json(_file_path):
-                        yield self.reader.read(path=_file_path)
+                        documents = self.reader.read(path=_file_path)
+                        if config:
+                            for doc in documents:
+                                log_info(f"Adding metadata {config} to document: {doc.name}")
+                                doc.meta_data.update(config)  # type: ignore
+                        yield documents
         else:
             # Handle single path
             _file_path = Path(self.path)
@@ -58,22 +54,18 @@ class JSONKnowledgeBase(AgentKnowledge):
 
         if isinstance(self.path, list):
             for item in self.path:
-                if isinstance(item, dict):
+                if isinstance(item, dict) and "path" in item:
                     # Handle path with metadata
-                    for file_path, config in item.items():
-                        _file_path = Path(file_path)
-                        if self._is_valid_json(_file_path):
-                            documents = await self.reader.async_read(path=_file_path)
-                            if config.get("metadata"):
-                                for doc in documents:
-                                    log_info(f"Adding metadata {config.get('metadata')} to document: {doc.name}")
-                                    doc.meta_data.update(config["metadata"])
-                            yield documents
-                else:
-                    # Handle simple path
-                    _file_path = Path(item)
+                    file_path = item["path"]
+                    config = item.get("metadata", {})
+                    _file_path = Path(file_path)  # type: ignore
                     if self._is_valid_json(_file_path):
-                        yield await self.reader.async_read(path=_file_path)
+                        documents = await self.reader.async_read(path=_file_path)
+                        if config:
+                            for doc in documents:
+                                log_info(f"Adding metadata {config} to document: {doc.name}")
+                                doc.meta_data.update(config)  # type: ignore
+                        yield documents
         else:
             # Handle single path
             _file_path = Path(self.path)
