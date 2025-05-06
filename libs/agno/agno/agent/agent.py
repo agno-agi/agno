@@ -2232,7 +2232,7 @@ class Agent:
             else:
                 self.memory = cast(Memory, self.memory)
                 # We fake the structure on storage, to maintain the interface with the legacy implementation
-                run_responses = self.memory.runs[session_id]  # type: ignore
+                run_responses = self.memory.runs.get(session_id, [])  # type: ignore
                 memory_dict = self.memory.to_dict()
                 memory_dict["runs"] = [rr.to_dict() for rr in run_responses]
         else:
