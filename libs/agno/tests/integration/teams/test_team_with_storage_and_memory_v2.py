@@ -61,8 +61,6 @@ def memory(memory_db):
     return Memory(db=memory_db)
 
 
-
-
 @pytest.fixture
 def route_team(team_storage, memory):
     """Create a route team with storage and memory for testing."""
@@ -101,7 +99,7 @@ async def test_run_history_persistence(route_team, team_storage, memory):
     assert len(conversation_messages) == num_turns
 
     for i, msg in enumerate(conversation_messages):
-        print(f"Turn {i+1}: {msg}")
+        print(f"Turn {i + 1}: {msg}")
         await route_team.arun(msg, user_id=user_id, session_id=session_id)
         # Optional: Check memory state in RAM after each turn if needed for debugging
         # print(f"Runs in memory after turn {i+1}: {len(memory.runs.get(session_id, []))}")
@@ -109,13 +107,11 @@ async def test_run_history_persistence(route_team, team_storage, memory):
     # Verify the stored session data after all turns
     team_session = team_storage.read(session_id=session_id)
 
-
     stored_memory_data = team_session.memory
     assert stored_memory_data is not None, "Memory data not found in stored session."
     print(f"Stored memory data: {stored_memory_data}")
     stored_runs = stored_memory_data["runs"]
     assert isinstance(stored_runs, list), "Stored runs data is not a list."
 
-
-    first_user_message_content = stored_runs[0]['messages'][1]['content']
+    first_user_message_content = stored_runs[0]["messages"][1]["content"]
     assert first_user_message_content == conversation_messages[0]
