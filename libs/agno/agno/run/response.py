@@ -104,7 +104,8 @@ class RunResponse:
         _dict = {
             k: v
             for k, v in asdict(self).items()
-            if v is not None and k not in ["messages", "extra_data", "images", "videos", "audio", "response_audio"]
+            if v is not None
+            and k not in ["messages", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
         }
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
@@ -145,6 +146,9 @@ class RunResponse:
 
         if isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
+
+        if self.citations is not None:
+            _dict["citations"] = self.citations.model_dump(exclude_none=True)
 
         return _dict
 

@@ -159,3 +159,18 @@ agent.print_response("List open pull requests", markdown=True)
 
 # # Example usage: Edit a pull request comment
 # agent.print_response("Update comment #1057297855 in the agno-agi/agno repository to say 'Updated: This looks good now'", markdown=True)
+
+# # Example usage: Get repository stars
+# agent.print_response("How many stars does the agno-agi/agno repository have?", markdown=True)
+
+# # Example usage: Get pull requests by query parameters
+# agent.print_response("Get open pull requests from the agno-agi/agno repository on the main branch sorted by creation date", markdown=True)
+
+# # Example usage: Get pull request comments
+# agent.print_response("Show me all review comments on pull request #100 in the agno-agi/agno repository", markdown=True)
+
+# # Example usage: Create a pull request comment
+# agent.print_response("Add a comment 'Nice work!' to line 10 of file.py in the latest commit of PR #100 in the agno-agi/agno repository", markdown=True)
+
+# # Example usage: Edit a pull request comment
+# agent.print_response("Update comment #1057297855 in the agno-agi/agno repository to say 'Updated: This looks good now'", markdown=True)

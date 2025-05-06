@@ -11,7 +11,7 @@ from agno.tools.yfinance import YFinanceTools
 
 def test_tool_use():
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
@@ -29,7 +29,7 @@ def test_tool_use():
 
 def test_tool_use_stream():
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
@@ -60,7 +60,7 @@ def test_tool_use_stream():
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
@@ -79,7 +79,7 @@ async def test_async_tool_use():
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
@@ -143,7 +143,7 @@ def test_tool_call_custom_tool_no_parameters():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[get_the_weather_in_tokyo],
         show_tool_calls=True,
         markdown=True,
@@ -173,7 +173,7 @@ def test_tool_call_custom_tool_optional_parameters():
             return f"It is currently 70 degrees and cloudy in {city}"
 
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[get_the_weather],
         show_tool_calls=True,
         markdown=True,
@@ -191,7 +191,7 @@ def test_tool_call_custom_tool_optional_parameters():
 
 def test_tool_call_list_parameters():
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
         show_tool_calls=True,
