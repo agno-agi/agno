@@ -6086,7 +6086,8 @@ class Team:
                             self.memory.runs = {}
                         for run in session.memory["runs"]:
                             session_id = run["session_id"]
-                            self.memory.runs[session_id] = []
+                            if session_id not in self.memory.runs:
+                                self.memory.runs[session_id] = []
                             if "team_id" in run:
                                 self.memory.runs[session_id].append(TeamRunResponse.from_dict(run))
                             else:
