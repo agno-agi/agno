@@ -114,7 +114,7 @@ def convert_schema(schema_dict: Dict[str, Any]) -> Optional[Schema]:
         else:
             return Schema(type=Type.OBJECT, description=description, default=default)
 
-    elif schema_type == "array" and "items" in schema_dict:
+    elif schema_type == "list" and "items" in schema_dict:
         items = convert_schema(schema_dict["items"])
         return Schema(type=Type.ARRAY, description=description, items=items)
 
