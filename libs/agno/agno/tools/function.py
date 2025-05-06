@@ -167,6 +167,7 @@ class Function(BaseModel):
         from inspect import getdoc, isasyncgenfunction, signature
 
         from agno.utils.json_schema import get_json_schema
+
         if self.skip_entrypoint_processing:
             if strict:
                 self.process_schema_for_strict()
@@ -263,9 +264,7 @@ class Function(BaseModel):
 
     def process_schema_for_strict(self):
         self.parameters["additionalProperties"] = False
-        self.parameters["required"] = [
-            name for name in self.parameters["properties"] if name not in ["agent", "team"]
-        ]
+        self.parameters["required"] = [name for name in self.parameters["properties"] if name not in ["agent", "team"]]
 
     def get_type_name(self, t: Type[T]):
         name = str(t)

@@ -4,7 +4,6 @@ import uuid
 
 import pytest
 
-from agno.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.anthropic.claude import Claude
@@ -75,6 +74,7 @@ def route_team(team_storage, memory):
         enable_user_memories=True,
     )
 
+
 @pytest.mark.asyncio
 async def test_run_history_persistence(route_team, team_storage, memory):
     """Test that all runs within a session are persisted in storage."""
@@ -104,13 +104,14 @@ async def test_run_history_persistence(route_team, team_storage, memory):
 
     stored_memory_data = team_session.memory
     assert stored_memory_data is not None, "Memory data not found in stored session."
-    
+
     stored_runs = stored_memory_data["runs"]
     assert isinstance(stored_runs, list), "Stored runs data is not a list."
 
     first_user_message_content = stored_runs[0]["messages"][1]["content"]
     assert first_user_message_content == conversation_messages[0]
-    
+
+
 @pytest.mark.asyncio
 async def test_multi_user_multi_session_route_team(route_team, team_storage, memory):
     """Test multi-user multi-session route team with storage and memory."""
