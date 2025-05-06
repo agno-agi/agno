@@ -99,7 +99,6 @@ class Playground:
         return get_sync_playground_router(self.agents, self.workflows, self.teams, self.app_id)
 
     def get_async_router(self) -> APIRouter:
-        print(f"app_id: {self.app_id}")
         return get_async_playground_router(self.agents, self.workflows, self.teams, self.app_id)
 
     def get_app(self, use_async: bool = True, prefix: str = "/v1") -> FastAPI:
