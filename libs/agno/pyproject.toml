@@ -137,7 +137,7 @@ models = [
   "agno[ibm]",
   "agno[litellm]",
   "agno[meta]",
-  "agno[cerebras]",
+  "agno[cerebras]"
 ]
 
 # All tools
@@ -266,6 +266,7 @@ module = [
   "bson.*",
   "browserbase.*",
   "cassio.*",
+  "cerebras-cloud-sdk.*",
   "chonkie.*",
   "chromadb.*",
   "clickhouse_connect.*",
@@ -298,7 +299,6 @@ module = [
   "lancedb.*",
   "langchain_core.*",
   "langchain.*",
-  "litellm.*",
   "llama_index.*",
   "llama_api_client.*",
   "litellm.*",
