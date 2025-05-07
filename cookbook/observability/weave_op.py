@@ -3,9 +3,13 @@ This example shows how to use weave to log model calls.
 
 Steps to get started with weave:
 1. Install weave: pip install weave
-2. Go to https://wandb.ai and copy your API key from https://wandb.ai/authorize
-3. Add weave.init('project-name') and weave.op() decorators to your functions
-4. Enter your API key in terminal when prompted
+2. Add weave.init('project-name') and weave.op() decorators to your functions
+3. Authentication:
+ - Go to https://wandb.ai and copy your API key from https://wandb.ai/authorize
+ - Enter your API key in terminal when prompted
+ Or 
+ - Export your API key as an environment variable:
+    - export WANDB_API_KEY=<your-api-key>
 """
 
 import weave
