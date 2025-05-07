@@ -136,7 +136,8 @@ models = [
   "agno[openai]",
   "agno[ibm]",
   "agno[litellm]",
-  "agno[meta]"
+  "agno[meta]",
+  "agno[cerebras]",
 ]
 
 # All tools
