@@ -18,6 +18,19 @@ class FirecrawlReader(Reader):
     params: Optional[Dict] = None
     mode: Literal["scrape", "crawl"] = "scrape"
 
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        params: Optional[Dict] = None,
+        mode: Literal["scrape", "crawl"] = "scrape",
+        *args,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.api_key = api_key
+        self.params = params
+        self.mode = mode
+
     def scrape(self, url: str) -> List[Document]:
         """
         Scrapes a website and returns a list of documents.
