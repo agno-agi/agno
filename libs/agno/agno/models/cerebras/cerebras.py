@@ -159,6 +159,16 @@ class Cerebras(Model):
             # Cerebras requires parallel_tool_calls=False for llama-4-scout-17b-16e-instruct
             request_params["parallel_tool_calls"] = False
 
+        # Handle response format for structured outputs
+        if self.response_format["type"] == "json_schema" and "json_schema" in self.response_format:
+            # Ensure json_schema has strict=True as required by Cerebras API-- Reference: https://arc.net/l/quote/tkifovqh
+            schema = self.response_format["json_schema"]
+            if isinstance(schema, dict) and "schema" in schema:
+                if "strict" not in schema:
+                    schema["strict"] = True
+
+        request_params["response_format"] = self.response_format
+
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
