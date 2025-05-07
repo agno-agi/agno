@@ -160,10 +160,16 @@ class Cerebras(Model):
             request_params["parallel_tool_calls"] = False
 
         # Handle response format for structured outputs
-        if self.response_format["type"] == "json_schema" and "json_schema" in self.response_format:
+        if (
+            isinstance(self.response_format, dict)
+            and "type" in self.response_format
+            and self.response_format["type"] == "json_schema"
+            and "json_schema" in self.response_format
+            and isinstance(self.response_format["json_schema"], dict)
+        ):
             # Ensure json_schema has strict=True as required by Cerebras API-- Reference: https://arc.net/l/quote/tkifovqh
             schema = self.response_format["json_schema"]
-            if isinstance(schema, dict) and "schema" in schema:
+            if "schema" in schema:
                 if "strict" not in schema:
                     schema["strict"] = True
 
