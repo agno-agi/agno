@@ -2,6 +2,7 @@ import asyncio
 import csv
 import io
 import os
+import uuid
 from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 from urllib.parse import urlparse
@@ -43,7 +44,7 @@ class CSVReader(Reader):
             documents = [
                 Document(
                     name=csv_name,
-                    id=csv_name,
+                    id=f"{csv_name}_{uuid.uuid4()}",
                     content=csv_content,
                 )
             ]
@@ -97,7 +98,7 @@ class CSVReader(Reader):
                 documents = [
                     Document(
                         name=csv_name,
-                        id=csv_name,
+                        id=f"{csv_name}_{uuid.uuid4()}",
                         content=csv_content,
                     )
                 ]

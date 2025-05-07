@@ -1,5 +1,6 @@
 import asyncio
 import json
+import uuid
 from io import BytesIO
 from pathlib import Path
 from typing import IO, Any, List, Union
@@ -38,7 +39,7 @@ class JSONReader(Reader):
             documents = [
                 Document(
                     name=json_name,
-                    id=f"{json_name}_{page_number}",
+                    id=f"{json_name}_{page_number}_{uuid.uuid4()}",
                     meta_data={"page": page_number},
                     content=json.dumps(content),
                 )

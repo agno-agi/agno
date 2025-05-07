@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 
@@ -96,11 +97,9 @@ class PDFReader(BasePDFReader):
     def read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
         try:
             if isinstance(pdf, str):
-                # Use the full path to ensure uniqueness
-                doc_name = pdf.replace("/", "_").replace(" ", "_")
+                doc_name = pdf.split("/")[-1].split(".")[0].replace(" ", "_")
             else:
-                # Use the full path for file objects as well
-                doc_name = pdf.name.replace("/", "_").replace(" ", "_")
+                doc_name = pdf.name.split(".")[0]
         except Exception:
             doc_name = "pdf"
 
@@ -117,7 +116,7 @@ class PDFReader(BasePDFReader):
             documents.append(
                 Document(
                     name=doc_name,
-                    id=f"{doc_name}_{page_number}",
+                    id=f"{doc_name}_{page_number}_{uuid.uuid4()}",
                     meta_data={"page": page_number},
                     content=page.extract_text(),
                 )
@@ -129,11 +128,9 @@ class PDFReader(BasePDFReader):
     async def async_read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
         try:
             if isinstance(pdf, str):
-                # Use the full path to ensure uniqueness
-                doc_name = pdf.replace("/", "_").replace(" ", "_")
+                doc_name = pdf.split("/")[-1].split(".")[0].replace(" ", "_")
             else:
-                # Use the full path for file objects as well
-                doc_name = pdf.name.replace("/", "_").replace(" ", "_")
+                doc_name = pdf.name.split(".")[0]
         except Exception:
             doc_name = "pdf"
 
@@ -148,7 +145,7 @@ class PDFReader(BasePDFReader):
         async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
             return Document(
                 name=doc_name,
-                id=f"{doc_name}_{page_number}",
+                id=f"{doc_name}_{page_number}_{uuid.uuid4()}",
                 meta_data={"page": page_number},
                 content=page.extract_text(),
             )

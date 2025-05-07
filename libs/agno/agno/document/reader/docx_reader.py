@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from pathlib import Path
 from typing import IO, Any, List, Union
 
@@ -34,7 +35,7 @@ class DocxReader(Reader):
             documents = [
                 Document(
                     name=doc_name,
-                    id=doc_name,
+                    id=f"{doc_name}_{uuid.uuid4()}",
                     content=doc_content,
                 )
             ]
