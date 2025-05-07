@@ -35,7 +35,7 @@ class DocxReader(Reader):
             documents = [
                 Document(
                     name=doc_name,
-                    id=f"{doc_name}_{uuid.uuid4()}",
+                    id=str({uuid.uuid4()}),
                     content=doc_content,
                 )
             ]

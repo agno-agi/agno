@@ -151,7 +151,6 @@ def test_large_json():
 
     assert len(documents) == 1000
     assert all(doc.name == "large" for doc in documents)
-    assert all(doc.id.startswith("large_") for doc in documents)
 
 
 @pytest.mark.asyncio
@@ -266,4 +265,3 @@ async def test_async_large_json():
 
     assert len(documents) == 1000
     assert all(doc.name == "large" for doc in documents)
-    assert all(doc.id.startswith("large_") for doc in documents)

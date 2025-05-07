@@ -44,7 +44,7 @@ class CSVReader(Reader):
             documents = [
                 Document(
                     name=csv_name,
-                    id=f"{csv_name}_{uuid.uuid4()}",
+                    id=str({uuid.uuid4()}),
                     content=csv_content,
                 )
             ]
@@ -98,7 +98,7 @@ class CSVReader(Reader):
                 documents = [
                     Document(
                         name=csv_name,
-                        id=f"{csv_name}_{uuid.uuid4()}",
+                        id=str({uuid.uuid4()}),
                         content=csv_content,
                     )
                 ]

@@ -116,7 +116,7 @@ class PDFReader(BasePDFReader):
             documents.append(
                 Document(
                     name=doc_name,
-                    id=f"{doc_name}_{page_number}_{uuid.uuid4()}",
+                    id=str({uuid.uuid4()}),
                     meta_data={"page": page_number},
                     content=page.extract_text(),
                 )
@@ -145,7 +145,7 @@ class PDFReader(BasePDFReader):
         async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
             return Document(
                 name=doc_name,
-                id=f"{doc_name}_{page_number}_{uuid.uuid4()}",
+                id=str({uuid.uuid4()}),
                 meta_data={"page": page_number},
                 content=page.extract_text(),
             )
