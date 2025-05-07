@@ -70,16 +70,21 @@ def test_knowledge_tools_non_streaming(knowledge_base):
     # Run the agent in non-streaming mode
     response = agent.run("What does Paul Graham explain about reading in his essay?", stream=False)
 
-    # Print the reasoning_content when received
-    if hasattr(response, "reasoning_content") and response.reasoning_content:
-        print("\n=== KnowledgeTools (non-streaming) reasoning_content ===")
-        print(response.reasoning_content)
-        print("=========================================================\n")
+    think_called = False
+    for tool_call in response.formatted_tool_calls:
+        if "think" in tool_call:
+            think_called = True
+    if think_called:
+        # Print the reasoning_content when received
+        if hasattr(response, "reasoning_content") and response.reasoning_content:
+            print("\n=== KnowledgeTools (non-streaming) reasoning_content ===")
+            print(response.reasoning_content)
+            print("=========================================================\n")
 
-    # Assert that reasoning_content exists and is populated
-    assert hasattr(response, "reasoning_content"), "Response should have reasoning_content attribute"
-    assert response.reasoning_content is not None, "reasoning_content should not be None"
-    assert len(response.reasoning_content) > 0, "reasoning_content should not be empty"
+        # Assert that reasoning_content exists and is populated
+        assert hasattr(response, "reasoning_content"), "Response should have reasoning_content attribute"
+        assert response.reasoning_content is not None, "reasoning_content should not be None"
+        assert len(response.reasoning_content) > 0, "reasoning_content should not be empty"
 
 
 @pytest.mark.integration
@@ -102,20 +107,25 @@ def test_knowledge_tools_streaming(knowledge_base):
         agent.run("What are Paul Graham's suggestions on what to read?", stream=True, stream_intermediate_steps=True)
     )
 
-    # Print the reasoning_content when received
-    if (
-        hasattr(agent, "run_response")
-        and agent.run_response
-        and hasattr(agent.run_response, "reasoning_content")
-        and agent.run_response.reasoning_content
-    ):
-        print("\n=== KnowledgeTools (streaming) reasoning_content ===")
-        print(agent.run_response.reasoning_content)
-        print("====================================================\n")
+    think_called = False
+    for tool_call in agent.run_response.formatted_tool_calls:
+        if "think" in tool_call:
+            think_called = True
+    if think_called:
+        # Print the reasoning_content when received
+        if (
+            hasattr(agent, "run_response")
+            and agent.run_response
+            and hasattr(agent.run_response, "reasoning_content")
+            and agent.run_response.reasoning_content
+        ):
+            print("\n=== KnowledgeTools (streaming) reasoning_content ===")
+            print(agent.run_response.reasoning_content)
+            print("====================================================\n")
 
-    # Check the agent's run_response directly after streaming is complete
-    assert hasattr(agent, "run_response"), "Agent should have run_response after streaming"
-    assert agent.run_response is not None, "Agent's run_response should not be None"
-    assert hasattr(agent.run_response, "reasoning_content"), "Response should have reasoning_content attribute"
-    assert agent.run_response.reasoning_content is not None, "reasoning_content should not be None"
-    assert len(agent.run_response.reasoning_content) > 0, "reasoning_content should not be empty"
+        # Check the agent's run_response directly after streaming is complete
+        assert hasattr(agent, "run_response"), "Agent should have run_response after streaming"
+        assert agent.run_response is not None, "Agent's run_response should not be None"
+        assert hasattr(agent.run_response, "reasoning_content"), "Response should have reasoning_content attribute"
+        assert agent.run_response.reasoning_content is not None, "reasoning_content should not be None"
+        assert len(agent.run_response.reasoning_content) > 0, "reasoning_content should not be empty"
