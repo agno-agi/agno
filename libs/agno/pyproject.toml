@@ -61,6 +61,7 @@ ibm = ["ibm-watsonx-ai"]
 lmstudio = ["lmstudio"]
 litellm = ["litellm"]
 meta = ["llama-api-client"]
+cerebras = ["cerebras_cloud_sdk"]
 
 # Dependencies for Tools
 apify = ["apify-client"]
