@@ -379,7 +379,7 @@ class Claude(Model):
                     else:
                         model_response.content += block.text
 
-                    if block.citations:
+                    if hasattr(block, 'citations') and block.citations:
                         model_response.citations = Citations(raw=block.citations, documents=[])
                         for citation in block.citations:
                             model_response.citations.documents.append(  # type: ignore
