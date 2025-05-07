@@ -308,7 +308,7 @@ class Cerebras(Model):
             model_response.content = message.content
 
         # Add tool calls
-        print('delta.tool_calls', message.tool_calls)
+        print("delta.tool_calls", message.tool_calls)
         if message.tool_calls:
             try:
                 model_response.tool_calls = [
@@ -316,8 +316,8 @@ class Cerebras(Model):
                         "id": tool_call.id,
                         "type": tool_call.type,
                         "function": {
-                            "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments,
+                            "name": tool_call.function.name,  # type: ignore
+                            "arguments": tool_call.function.arguments,  # type: ignore
                         },
                     }
                     for tool_call in message.tool_calls
@@ -362,11 +362,19 @@ class Cerebras(Model):
                     "id": tool_call.id,
                     "type": tool_call.type,
                     "function": {
-                        "name": tool_call.function.name,
-                        "arguments": tool_call.function.arguments,
+                        "name": tool_call.function.name,  # type: ignore
+                        "arguments": tool_call.function.arguments,  # type: ignore
                     },
                 }
                 for tool_call in delta.tool_calls
             ]
+
+        # Add usage metrics
+        if response_delta.usage:
+            model_response.response_usage = {
+                "input_tokens": response_delta.usage.prompt_tokens,
+                "output_tokens": response_delta.usage.completion_tokens,
+                "total_tokens": response_delta.usage.total_tokens,
+            }
 
         return model_response
