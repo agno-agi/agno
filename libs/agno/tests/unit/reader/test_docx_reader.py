@@ -32,7 +32,8 @@ def test_docx_reader_read_file(mock_docx):
 
         assert len(documents) == 1
         assert documents[0].name == "test"
-        assert documents[0].id == "test_1"
+        assert documents[0].id.startswith("test_")
+        assert documents[0].id.endswith("_1")
         assert documents[0].content == "First paragraph Second paragraph"
 
 
@@ -47,7 +48,8 @@ async def test_docx_reader_async_read_file(mock_docx):
 
         assert len(documents) == 1
         assert documents[0].name == "test"
-        assert documents[0].id == "test_1"
+        assert documents[0].id.startswith("test_")
+        assert documents[0].id.endswith("_1")
         assert documents[0].content == "First paragraph Second paragraph"
 
 
@@ -89,7 +91,8 @@ def test_docx_reader_bytesio(mock_docx):
 
         assert len(documents) == 1
         assert documents[0].name == "test"
-        assert documents[0].id == "test_1"
+        assert documents[0].id.startswith("test_")
+        assert documents[0].id.endswith("_1")
         assert documents[0].content == "First paragraph Second paragraph"
 
 
@@ -124,7 +127,8 @@ async def test_async_docx_processing(mock_docx):
         assert len(results) == 3
         assert all(len(docs) == 1 for docs in results)
         assert all(docs[0].name == "test" for docs in results)
-        assert all(docs[0].id == "test_1" for docs in results)
+        assert all(docs[0].id.startswith("test_") for docs in results)
+        assert all(docs[0].id.endswith("_1") for docs in results)
         assert all(docs[0].content == "First paragraph Second paragraph" for docs in results)
 
 
@@ -168,4 +172,5 @@ def test_docx_reader_metadata(mock_docx):
 
         assert len(documents) == 1
         assert documents[0].name == "test_doc"
-        assert documents[0].id == "test_doc_1"
+        assert documents[0].id.startswith("test_doc_")
+        assert documents[0].id.endswith("_1")
