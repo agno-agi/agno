@@ -475,9 +475,6 @@ class Team:
         # Set debug mode
         self._set_debug()
 
-        # Make sure for the team, we are using the team logger
-        use_team_logger()
-
         # Set monitoring and telemetry
         self._set_monitoring()
 
@@ -492,6 +489,9 @@ class Team:
 
         for member in self.members:
             self._initialize_member(member, session_id=session_id)
+
+        # Make sure for the team, we are using the team logger
+        use_team_logger()
 
     @property
     def is_streamable(self) -> bool:
@@ -898,7 +898,7 @@ class Team:
             self._make_memories_and_summaries(run_messages, session_id, user_id)
 
             session_messages: List[Message] = []
-            for run in self.memory.runs[session_id]:  # type: ignore
+            for run in self.memory.runs.get(session_id, []):  # type: ignore
                 if run.messages is not None:
                     for m in run.messages:
                         session_messages.append(m)
@@ -1219,7 +1219,7 @@ class Team:
             self._make_memories_and_summaries(run_messages, session_id, user_id)
 
             session_messages: List[Message] = []
-            for run in self.memory.runs[session_id]:  # type: ignore
+            for run in self.memory.runs.get(session_id, []):  # type: ignore
                 if run.messages is not None:
                     for m in run.messages:
                         session_messages.append(m)
@@ -1638,7 +1638,7 @@ class Team:
             await self._amake_memories_and_summaries(run_messages, session_id, user_id)
 
             session_messages: List[Message] = []
-            for run in self.memory.runs[session_id]:
+            for run in self.memory.runs.get(session_id, []):
                 for m in run.messages:
                     session_messages.append(m)
 
@@ -1966,7 +1966,7 @@ class Team:
             await self._amake_memories_and_summaries(run_messages, session_id, user_id)
 
             session_messages: List[Message] = []
-            for run in self.memory.runs[session_id]:  # type: ignore
+            for run in self.memory.runs.get(session_id, []):  # type: ignore
                 if run.messages is not None:
                     for m in run.messages:
                         session_messages.append(m)
@@ -3746,7 +3746,6 @@ class Team:
     def _calculate_full_team_session_metrics(self, messages: List[Message], session_id: str) -> SessionMetrics:
         current_session_metrics = self.session_metrics or self._calculate_session_metrics(messages)
         current_session_metrics = replace(current_session_metrics)
-
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
         # Get metrics of the team-agent's messages
@@ -3822,7 +3821,9 @@ class Team:
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
-            reasoning_model = self.model.__class__(id=self.model.id)  # type: ignore
+            from copy import deepcopy
+
+            reasoning_model = deepcopy(self.model)
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
@@ -4001,7 +4002,9 @@ class Team:
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
-            reasoning_model = self.model.__class__(id=self.model.id)  # type: ignore
+            from copy import deepcopy
+
+            reasoning_model = deepcopy(self.model)
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
@@ -4336,7 +4339,7 @@ class Team:
                                 func.tool_hooks = self.tool_hooks
                             _functions_for_model[name] = func
                             _tools_for_model.append({"type": "function", "function": func.to_dict()})
-                            log_debug(f"Added function {name} from {tool.name}")
+                            log_debug(f"Added tool {name} from {tool.name}")
 
                     # Add instructions from the toolkit
                     if tool.add_instructions and tool.instructions is not None:
@@ -4355,7 +4358,7 @@ class Team:
                             tool.tool_hooks = self.tool_hooks
                         _functions_for_model[tool.name] = tool
                         _tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                        log_debug(f"Added function {tool.name}")
+                        log_debug(f"Added tool {tool.name}")
 
                     # Add instructions from the Function
                     if tool.add_instructions and tool.instructions is not None:
@@ -4375,9 +4378,9 @@ class Team:
                             func.tool_hooks = self.tool_hooks
                         _functions_for_model[func.name] = func
                         _tools_for_model.append({"type": "function", "function": func.to_dict()})
-                        log_debug(f"Added function {func.name}")
+                        log_debug(f"Added tool {func.name}")
                     except Exception as e:
-                        log_warning(f"Could not add function {tool}: {e}")
+                        log_warning(f"Could not add tool {tool}: {e}")
 
             # Set tools on the model
             model.set_tools(tools=_tools_for_model)
@@ -6039,11 +6042,9 @@ class Team:
             if isinstance(self.memory, dict) and "create_user_memories" in self.memory:
                 # Convert dict to TeamMemory
                 self.memory = TeamMemory(**self.memory)
-            elif isinstance(self.memory, dict):
-                # Convert dict to Memory
-                self.memory = Memory(**self.memory)
             else:
-                raise TypeError(f"Expected memory to be a dict or TeamMemory, but got {type(self.memory)}")
+                # Default to base memory
+                self.memory = Memory()
 
         if session.memory is not None:
             if isinstance(self.memory, TeamMemory):
@@ -6083,13 +6084,13 @@ class Team:
                     try:
                         if self.memory.runs is None:
                             self.memory.runs = {}
+                        self.memory.runs[session.session_id] = []
                         for run in session.memory["runs"]:
-                            session_id = run["session_id"]
-                            self.memory.runs[session_id] = []
+                            run_session_id = run["session_id"]
                             if "team_id" in run:
-                                self.memory.runs[session_id].append(TeamRunResponse.from_dict(run))
+                                self.memory.runs[run_session_id].append(TeamRunResponse.from_dict(run))
                             else:
-                                self.memory.runs[session_id].append(RunResponse.from_dict(run))
+                                self.memory.runs[run_session_id].append(RunResponse.from_dict(run))
                     except Exception as e:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "team_context" in session.memory:

@@ -10,7 +10,7 @@ from agno.media import File
 from agno.models.base import MessageData, Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message, sanitize_response_schema
 
 try:
@@ -151,7 +151,7 @@ class OpenAIResponses(Model):
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
 
-    def get_request_params(self) -> Dict[str, Any]:
+    def get_request_params(self, messages: List[Message]) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -193,8 +193,31 @@ class OpenAIResponses(Model):
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
 
+        if self._tools:
+            request_params["tools"] = self._format_tool_params(messages=messages)
+
         if self.tool_choice is not None:
             request_params["tool_choice"] = self.tool_choice
+
+        # Handle reasoning tools for o3 and o4-mini models
+        if self.id.startswith("o3") or self.id.startswith("o4-mini"):
+            request_params["store"] = True
+
+            # Check if the last assistant message has a previous_response_id to continue from
+            previous_response_id = None
+            for msg in reversed(messages):
+                if (
+                    msg.role == "assistant"
+                    and hasattr(msg, "provider_data")
+                    and msg.provider_data
+                    and "response_id" in msg.provider_data
+                ):
+                    previous_response_id = msg.provider_data["response_id"]
+                    log_debug(f"Using previous_response_id: {previous_response_id}")
+                    break
+
+            if previous_response_id:
+                request_params["previous_response_id"] = previous_response_id
 
         # Add additional request params if provided
         if self.request_params:
@@ -329,6 +352,13 @@ class OpenAIResponses(Model):
 
                 formatted_messages.append(message_dict)
 
+            if self.id.startswith(("o3", "o4-mini")):
+                if message.role == "tool":
+                    if message.tool_call_id and message.content is not None:
+                        formatted_messages.append(
+                            {"type": "function_call_output", "call_id": message.tool_call_id, "output": message.content}
+                        )
+
             else:
                 # OpenAI expects the tool_calls to be None if empty, not an empty list
                 if message.tool_calls is not None and len(message.tool_calls) > 0:
@@ -361,9 +391,7 @@ class OpenAIResponses(Model):
             Response: The response from the API.
         """
         try:
-            request_params = self.get_request_params()
-            if self._tools:
-                request_params["tools"] = self._format_tool_params(messages=messages)
+            request_params = self.get_request_params(messages=messages)
 
             return self.get_client().responses.create(
                 model=self.id,
@@ -416,9 +444,8 @@ class OpenAIResponses(Model):
             Response: The response from the API.
         """
         try:
-            request_params = self.get_request_params()
-            if self._tools:
-                request_params["tools"] = self._format_tool_params(messages=messages)
+            request_params = self.get_request_params(messages=messages)
+
             return await self.get_async_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
@@ -470,9 +497,8 @@ class OpenAIResponses(Model):
             Iterator[ResponseStreamEvent]: An iterator of response stream events.
         """
         try:
-            request_params = self.get_request_params()
-            if self._tools:
-                request_params["tools"] = self._format_tool_params(messages=messages)
+            request_params = self.get_request_params(messages=messages)
+
             yield from self.get_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
@@ -525,9 +551,7 @@ class OpenAIResponses(Model):
             Any: An asynchronous iterator of chat completion chunks.
         """
         try:
-            request_params = self.get_request_params()
-            if self._tools:
-                request_params["tools"] = self._format_tool_params(messages=messages)
+            request_params = self.get_request_params(messages=messages)
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
@@ -606,6 +630,12 @@ class OpenAIResponses(Model):
                 model_id=self.id,
             )
 
+        # Store the response ID for continuity
+        if response.id:
+            if model_response.provider_data is None:
+                model_response.provider_data = {}
+            model_response.provider_data["response_id"] = response.id
+
         # Add role
         model_response.role = "assistant"
         for output in response.output:
@@ -673,6 +703,12 @@ class OpenAIResponses(Model):
         model_response = None
 
         if stream_event.type == "response.created":
+            model_response = ModelResponse()
+            # Store the response ID for continuity
+            if stream_event.response.id:
+                if stream_data.response_provider_data is None:
+                    stream_data.response_provider_data = {}
+                stream_data.response_provider_data["response_id"] = stream_event.response.id
             # Update metrics
             if not assistant_message.metrics.time_to_first_token:
                 assistant_message.metrics.set_time_to_first_token()
@@ -755,6 +791,7 @@ class OpenAIResponses(Model):
                 stream_data=stream_data,
                 tool_use=tool_use,
             )
+
             if model_response is not None:
                 yield model_response
 

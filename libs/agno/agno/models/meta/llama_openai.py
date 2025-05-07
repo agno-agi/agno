@@ -2,15 +2,22 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Optional
 
-from agno.models.openai.like import OpenAILike
+import httpx
+
+try:
+    from openai import AsyncOpenAI as AsyncOpenAIClient
+except (ModuleNotFoundError, ImportError):
+    raise ImportError("`openai` not installed. Please install using `pip install openai`")
+
 from agno.models.meta.llama import Message
-from agno.utils.log import log_warning
+from agno.models.openai.like import OpenAILike
+from agno.utils.models.llama import format_message
 
 
 @dataclass
 class LlamaOpenAI(OpenAILike):
     """
-    Class for interacting with the Llama API.
+    Class for interacting with the Llama API via OpenAI-like interface.
 
     Attributes:
         id (str): The ID of the language model.
@@ -27,6 +34,64 @@ class LlamaOpenAI(OpenAILike):
     api_key: Optional[str] = getenv("LLAMA_API_KEY")
     base_url: Optional[str] = "https://api.llama.com/compat/v1/"
 
+    # Request parameters
+    max_completion_tokens: Optional[int] = None
+    repetition_penalty: Optional[float] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    extra_headers: Optional[Any] = None
+    extra_query: Optional[Any] = None
+    extra_body: Optional[Any] = None
+    request_params: Optional[Dict[str, Any]] = None
+
+    supports_native_structured_outputs: bool = False
+    supports_json_schema_outputs: bool = True
+
+    @property
+    def request_kwargs(self) -> Dict[str, Any]:
+        """
+        Returns keyword arguments for API requests.
+
+        Returns:
+            Dict[str, Any]: A dictionary of keyword arguments for API requests.
+        """
+        # Define base request parameters
+        base_params = {
+            "max_completion_tokens": self.max_completion_tokens,
+            "repetition_penalty": self.repetition_penalty,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "extra_headers": self.extra_headers,
+            "extra_query": self.extra_query,
+            "extra_body": self.extra_body,
+            "request_params": self.request_params,
+        }
+
+        # Filter out None values
+        request_params = {k: v for k, v in base_params.items() if v is not None}
+
+        # Add tools
+        if self._tools is not None and len(self._tools) > 0:
+            request_params["tools"] = self._tools
+
+            # Fix optional parameters where the "type" is [<type>, null]
+            for tool in request_params["tools"]:  # type: ignore
+                if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
+                    for _, obj in tool["function"]["parameters"].get("properties", {}).items():  # type: ignore
+                        if isinstance(obj["type"], list):
+                            obj["type"] = obj["type"][0]
+
+        if self.response_format is not None:
+            request_params["response_format"] = self.response_format
+
+        # Add additional request params if provided
+        if self.request_params:
+            request_params.update(self.request_params)
+
+        return request_params
+
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """
         Format a message into the format expected by Llama API.
@@ -37,30 +102,21 @@ class LlamaOpenAI(OpenAILike):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        message_dict: Dict[str, Any] = {
-            "role": self.role_map[message.role],
-            "content": message.content,
-            "name": message.name,
-            "tool_call_id": message.tool_call_id,
-            "tool_calls": message.tool_calls,
-        }
-        message_dict = {k: v for k, v in message_dict.items() if v is not None}
+        return format_message(message, openai_like=True)
 
-        if message.images is not None and len(message.images) > 0:
-            log_warning("Image input is currently unsupported.")
+    def get_async_client(self):
+        """Override to provide custom httpx client that properly handles redirects"""
+        if self.async_client:
+            return self.async_client
 
-        if message.videos is not None and len(message.videos) > 0:
-            log_warning("Video input is currently unsupported.")
+        client_params = self._get_client_params()
 
-        if message.audio is not None and len(message.audio) > 0:
-            log_warning("Audio input is currently unsupported.")
+        # Llama gives a 307 redirect error, so we need to set up a custom client to allow redirects
+        client_params["http_client"] = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100),
+            follow_redirects=True,
+            timeout=httpx.Timeout(30.0),
+        )
 
-        # OpenAI expects the tool_calls to be None if empty, not an empty list
-        if message.tool_calls is not None and len(message.tool_calls) == 0:
-            message_dict["tool_calls"] = None
-
-        # Manually add the content field even if it is None
-        if message.content is None:
-            message_dict["content"] = " "
-
-        return message_dict
+        self.async_client = AsyncOpenAIClient(**client_params)
+        return self.async_client

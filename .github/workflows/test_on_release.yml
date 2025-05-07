@@ -580,7 +580,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Run remaining integration tests
+      - name: Run agent integration tests
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -609,7 +609,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Run remaining integration tests
+      - name: Run teams integration tests
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -638,7 +638,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Run remaining integration tests
+      - name: Run knowledge integration tests
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -672,4 +672,4 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agents --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams ./libs/agno/tests/integration

@@ -19,7 +19,7 @@ knowledge_base = PDFUrlKnowledgeBase(
 )
 
 # Load the knowledge base
-# knowledge_base.load(recreate=True)  # Comment out after first run
+knowledge_base.load(recreate=True)  # Comment out after first run
 # Knowledge base is now loaded
 # ---------------------------------------------------------
 
@@ -66,6 +66,7 @@ def main():
     # search_knowledge=True is default when you add a knowledge base but is needed here
     agent = Agent(
         retriever=retriever,
+        knowledge=knowledge_base,
         search_knowledge=True,
         instructions="Search the knowledge base for information",
         show_tool_calls=True,

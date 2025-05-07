@@ -21,6 +21,12 @@ export LLAMA_API_KEY=***
 pip install -U agno llama-api-client
 ```
 
+If using LlamaOpenAI, install the following:
+
+```shell
+pip install -U agno openai
+```
+
 ### 4. Run a basic Agent
 
 - Streaming on
@@ -38,6 +44,14 @@ python cookbook/models/meta/llama/basic.py
 ### 5. Run an Agent with Tools
 
 > Run `pip install duckduckgo-search` to install dependencies.
+
+- Streaming on
+
+```shell
+python cookbook/models/meta/llama/tool_use_stream.py
+```
+
+- Streaming off
 
 ```shell
 python cookbook/models/meta/llama/tool_use.py

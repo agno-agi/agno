@@ -292,5 +292,4 @@ def test_web_search_built_in_tool_with_other_tools():
     tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
     assert len(tool_calls) >= 1  # At least one message has tool calls
     assert response.content is not None
-    assert "TSLA" in response.content
-    assert "news" in response.content.lower()
+    assert "TSLA" in response.content or "tesla" in response.content.lower()

@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import ImageArtifact, VideoArtifact
 from agno.tools.models.gemini import GeminiTools
 
 
@@ -122,7 +122,7 @@ def test_generate_image_success(mock_gemini_tools, mock_agent, mock_successful_r
         result = mock_gemini_tools.generate_image(mock_agent, prompt)
 
         expected_media_id = "12345678-1234-5678-1234-567812345678"
-        assert result == f"Image generated successfully with ID: {expected_media_id}"
+        assert result == "Image generated successfully"
         mock_gemini_tools.client.models.generate_images.assert_called_once_with(model=image_model, prompt=prompt)
 
         # Verify agent.add_image was called with the correct ImageArtifact
@@ -173,3 +173,63 @@ def test_generate_image_no_image_bytes(mock_gemini_tools, mock_agent, mock_faile
         prompt=prompt,
     )
     mock_agent.add_image.assert_not_called()
+
+
+# Tests for generate_video method
+def test_generate_video_requires_vertexai(mock_gemini_tools, mock_agent):
+    """Test video generation when vertexai mode is disabled."""
+    prompt = "A sample video prompt"
+    result = mock_gemini_tools.generate_video(mock_agent, prompt)
+    expected = (
+        "Video generation requires Vertex AI mode. "
+        "Please set `vertexai=True` or environment variable `GOOGLE_GENAI_USE_VERTEXAI=true`."
+    )
+    assert result == expected
+    mock_agent.add_video.assert_not_called()
+
+
+@pytest.fixture
+def mock_video_operation():
+    """Fixture for a completed video generation operation."""
+    op = MagicMock()
+    op.done = True
+    video = MagicMock()
+    video.video_bytes = b"fake_video_bytes"
+    video.mime_type = "video/mp4"
+    op.result = MagicMock(generated_videos=[MagicMock(video=video)])
+    return op
+
+
+def test_generate_video_success(mock_gemini_tools, mock_agent, mock_video_operation):
+    """Test successful video generation."""
+    mock_gemini_tools.vertexai = True
+    mock_gemini_tools.client.models.generate_videos.return_value = mock_video_operation
+    prompt = "A sample video prompt"
+    with patch("agno.tools.models.gemini.uuid4", return_value=UUID("87654321-4321-8765-4321-876543214321")):
+        result = mock_gemini_tools.generate_video(mock_agent, prompt)
+        expected_id = "87654321-4321-8765-4321-876543214321"
+        assert result == "Video generated successfully"
+        assert mock_gemini_tools.client.models.generate_videos.called
+        call_args = mock_gemini_tools.client.models.generate_videos.call_args
+        assert call_args.kwargs["model"] == mock_gemini_tools.video_model
+        assert call_args.kwargs["prompt"] == prompt
+        mock_agent.add_video.assert_called_once()
+        added = mock_agent.add_video.call_args[0][0]
+        assert isinstance(added, VideoArtifact)
+        assert added.id == expected_id
+        assert added.original_prompt == prompt
+        assert added.mime_type == "video/mp4"
+        import base64
+
+        expected_content = base64.b64encode(b"fake_video_bytes").decode("utf-8")
+        assert added.content == expected_content
+
+
+def test_generate_video_exception(mock_gemini_tools, mock_agent):
+    """Test video generation when API raises exception."""
+    mock_gemini_tools.vertexai = True
+    mock_gemini_tools.client.models.generate_videos.side_effect = Exception("API error")
+    prompt = "A sample video prompt"
+    result = mock_gemini_tools.generate_video(mock_agent, prompt)
+    assert result == "Failed to generate video: API error"
+    mock_agent.add_video.assert_not_called()
