@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -265,6 +264,9 @@ class Agent:
 
     # Optional app ID. Indicates this agent is part of an app.
     app_id: Optional[str] = None
+
+    # Optional workflow ID. Indicates this agent is part of a workflow.
+    workflow_id: Optional[str] = None
 
     # Optional team session state. Set by the team leader agent.
     team_session_state: Optional[Dict[str, Any]] = None
@@ -4432,6 +4434,7 @@ class Agent:
         return run_data
 
     def _register_agent(self) -> None:
+        """Register this agent with Agno's platform."""
         self.set_monitoring()
         if not self.monitoring:
             return
@@ -4439,19 +4442,24 @@ class Agent:
         from agno.api.agent import AgentCreate, create_agent
 
         try:
-            log_debug(f"Creating Agent on Platform: {self.name}, {self.agent_id}, {self.team_id},")
+            # Ensure we have a valid session_id
+            if not self.session_id:
+                self.session_id = str(uuid4())
+
+            log_debug(f"Creating Agent on Platform: {self.name}, {self.agent_id}, {self.team_id}, {self.workflow_id}")
             create_agent(
                 agent=AgentCreate(
                     name=self.name,
                     agent_id=self.agent_id,
+                    workflow_id=self.workflow_id,
                     team_id=self.team_id,
                     app_id=self.app_id,
                     config=self.get_agent_config_dict(),
                 )
             )
+            log_debug(f"Agent created: {self.name}, {self.agent_id}, {self.team_id}, {self.workflow_id}")
         except Exception as e:
-            log_debug(f"Could not create Agent app: {e}")
-        log_debug(f"Agent app created: {self.name}, {self.agent_id}, {self.team_id},")
+            log_warning(f"Could not create Agent: {e}")
 
     async def _aregister_agent(self) -> None:
         self.set_monitoring()
@@ -4466,6 +4474,7 @@ class Agent:
                 agent=AgentCreate(
                     name=self.name,
                     agent_id=self.agent_id,
+                    workflow_id=self.workflow_id,
                     team_id=self.team_id,
                     app_id=self.app_id,
                     config=self.get_agent_config_dict(),
@@ -5503,7 +5512,6 @@ class Agent:
                 message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id**kwargs
             )
 
-
     def get_agent_config_dict(self) -> Dict[str, Any]:
         tools = []
         if self.tools is not None:
@@ -5578,4 +5586,3 @@ class Agent:
             await self.aprint_response(
                 message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
-

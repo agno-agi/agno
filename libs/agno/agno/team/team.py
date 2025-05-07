@@ -89,6 +89,8 @@ class Team:
     team_id: Optional[str] = None
     # If this team is part of a team itself, this is the role of the team
     parent_team_id: Optional[str] = None
+    # The workflow this team belongs to
+    workflow_id: Optional[str] = None
     role: Optional[str] = None
 
     # --- User settings ---
@@ -6719,6 +6721,7 @@ class Team:
 
         from agno.api.team import TeamCreate, create_team
 
+        print(f"Registering team**********************************************************, {self.workflow_id}")
         try:
             create_team(
                 team=TeamCreate(
@@ -6727,6 +6730,7 @@ class Team:
                     config=self.to_platform_dict(),
                     parent_team_id=self.parent_team_id,
                     app_id=self.app_id,
+                    workflow_id=self.workflow_id,
                 ),
             )
 
@@ -6749,6 +6753,7 @@ class Team:
                     config=self.to_platform_dict(),
                     parent_team_id=self.parent_team_id,
                     app_id=self.app_id,
+                    workflow_id=self.workflow_id,
                 ),
             )
         except Exception as e:

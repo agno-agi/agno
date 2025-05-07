@@ -53,6 +53,7 @@ class Playground:
         self.name: Optional[str] = name
         self.monitoring = monitoring
         self.description = description
+        self.set_app_id()
         if self.agents:
             for agent in self.agents:
                 if not agent.app_id:
@@ -76,6 +77,8 @@ class Playground:
 
         if self.workflows:
             for workflow in self.workflows:
+                if not workflow.app_id:
+                    workflow.app_id = self.app_id
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
 
@@ -167,11 +170,12 @@ class Playground:
     ):
         import uvicorn
 
-
         logger.info(f"Starting playground on {scheme}://{host}:{port}")
         # Encode the full endpoint (host:port)
         encoded_endpoint = quote(f"{host}:{port}")
-        self.endpoints_created = PlaygroundEndpointCreate(endpoint=f"{scheme}://{host}:{port}", playground_data={"prefix": prefix})
+        self.endpoints_created = PlaygroundEndpointCreate(
+            endpoint=f"{scheme}://{host}:{port}", playground_data={"prefix": prefix}
+        )
 
         # Create a panel with the playground URL
         url = f"{agno_cli_settings.playground_url}?endpoint={encoded_endpoint}"
@@ -190,10 +194,13 @@ class Playground:
         self.register_app_on_platform()
         if self.agents:
             for agent in self.agents:
-                agent._register_agent() 
+                agent._register_agent()
         if self.teams:
             for team in self.teams:
                 team._register_team()
+        if self.workflows:
+            for workflow in self.workflows:
+                workflow._register_workflow()
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
 
     def register_app_on_platform(self) -> None:
@@ -220,6 +227,11 @@ class Playground:
             else [],
             "teams": [{**team.to_platform_dict(), "team_id": team.team_id} for team in self.teams]
             if self.teams
+            else [],
+            "workflows": [
+                {**workflow.to_config_dict(), "workflow_id": workflow.workflow_id} for workflow in self.workflows
+            ]
+            if self.workflows
             else [],
             "endpointData": self.endpoints_created,
             "type": "playground",

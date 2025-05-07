@@ -26,5 +26,6 @@ class AgentCreate(BaseModel):
     agent_id: str
     team_id: Optional[str] = None
     app_id: Optional[str] = None
+    workflow_id: Optional[str] = None
     name: Optional[str] = None
     config: Dict[str, Any]

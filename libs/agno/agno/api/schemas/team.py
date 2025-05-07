@@ -26,5 +26,6 @@ class TeamCreate(BaseModel):
     team_id: str
     parent_team_id: Optional[str] = None
     app_id: Optional[str] = None
+    workflow_id: Optional[str] = None
     name: Optional[str] = None
     config: Dict[str, Any]

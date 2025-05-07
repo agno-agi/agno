@@ -31,6 +31,8 @@ class ApiRoutes:
     TEAM_SESSION_CREATE: str = "/v1/team-sessions"
     TEAM_CREATE: str = "/v2/teams"
 
+    # Workflow paths
+    WORKFLOW_CREATE: str = "/v2/workflows"
     # Telemetry paths
     # TODO: Update to use the new telemetry paths
     AGENT_TELEMETRY_SESSION_CREATE: str = "/v1/telemetry/agent/session/create"
