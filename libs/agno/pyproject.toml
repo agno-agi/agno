@@ -265,6 +265,7 @@ module = [
   "bson.*",
   "browserbase.*",
   "cassio.*",
+  "cerebras_cloud_sdk.*",
   "chonkie.*",
   "chromadb.*",
   "clickhouse_connect.*",
