@@ -2031,7 +2031,7 @@ class Agent:
                             if name not in _functions_for_model:
                                 func._agent = self
                                 func.process_entrypoint(strict=strict)
-                                if strict:
+                                if strict and func.strict is None:
                                     func.strict = True
                                 if self.tool_hooks is not None:
                                     func.tool_hooks = self.tool_hooks
