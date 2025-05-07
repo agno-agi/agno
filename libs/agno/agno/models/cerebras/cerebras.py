@@ -1,0 +1,372 @@
+import json
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from os import getenv
+from typing import Any, Dict, Iterator, List, Optional
+
+import httpx
+
+from agno.models.base import Model
+from agno.models.message import Message
+from agno.models.response import ModelResponse
+from agno.utils.log import log_error, log_warning
+
+try:
+    from openai import AsyncOpenAI as AsyncOpenAIClient
+    from openai import OpenAI as OpenAIClient
+    from openai.types.chat import ChatCompletion
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+except (ImportError, ModuleNotFoundError):
+    raise ImportError("`openai` not installed. Please install using `pip install openai`")
+
+
+@dataclass
+class Cerebras(Model):
+    """
+    A class for interacting with Cerebras models using the Cerebras API.
+    """
+
+    id: str = "llama-4-scout-17b-16e-instruct"
+    name: str = "Cerebras"
+    provider: str = "Cerebras"
+    supports_native_structured_outputs: bool = False
+    supports_json_schema_outputs: bool = True
+
+    # Request parameters
+    max_completion_tokens: Optional[int] = None
+    repetition_penalty: Optional[float] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    extra_headers: Optional[Any] = None
+    extra_query: Optional[Any] = None
+    extra_body: Optional[Any] = None
+    request_params: Optional[Dict[str, Any]] = None
+
+    # Client parameters
+    api_key: Optional[str] = None
+    base_url: Optional[str] = "https://api.cerebras.ai/v1"
+    timeout: Optional[float] = None
+    max_retries: Optional[int] = None
+    default_headers: Optional[Any] = None
+    default_query: Optional[Any] = None
+    http_client: Optional[httpx.Client] = None
+    client_params: Optional[Dict[str, Any]] = None
+
+    # OpenAI clients
+    client: Optional[OpenAIClient] = None
+    async_client: Optional[AsyncOpenAIClient] = None
+
+    def _get_client_params(self) -> Dict[str, Any]:
+        # Fetch API key from env if not already set
+        if not self.api_key:
+            self.api_key = getenv("CEREBRAS_API_KEY")
+            if not self.api_key:
+                log_error("CEREBRAS_API_KEY not set. Please set the CEREBRAS_API_KEY environment variable.")
+
+        # Define base client params
+        base_params = {
+            "api_key": self.api_key,
+            "base_url": self.base_url,
+            "timeout": self.timeout,
+            "max_retries": self.max_retries,
+            "default_headers": self.default_headers,
+            "default_query": self.default_query,
+        }
+
+        # Create client_params dict with non-None values
+        client_params = {k: v for k, v in base_params.items() if v is not None}
+
+        # Add additional client params if provided
+        if self.client_params:
+            client_params.update(self.client_params)
+        return client_params
+
+    def get_client(self) -> OpenAIClient:
+        """
+        Returns a Cerebras client.
+
+        Returns:
+            OpenAIClient: An instance of the Cerebras client.
+        """
+        if self.client:
+            return self.client
+
+        client_params: Dict[str, Any] = self._get_client_params()
+        if self.http_client is not None:
+            client_params["http_client"] = self.http_client
+        self.client = OpenAIClient(**client_params)
+        return self.client
+
+    def get_async_client(self) -> AsyncOpenAIClient:
+        """
+        Returns an asynchronous Cerebras client.
+
+        Returns:
+            AsyncOpenAIClient: An instance of the asynchronous Cerebras client.
+        """
+        if self.async_client:
+            return self.async_client
+
+        client_params: Dict[str, Any] = self._get_client_params()
+        if self.http_client:
+            client_params["http_client"] = self.http_client
+        else:
+            # Create a new async HTTP client with custom limits
+            client_params["http_client"] = httpx.AsyncClient(
+                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
+            )
+        return AsyncOpenAIClient(**client_params)
+
+    @property
+    def request_kwargs(self) -> Dict[str, Any]:
+        """
+        Returns keyword arguments for API requests.
+
+        Returns:
+            Dict[str, Any]: A dictionary of keyword arguments for API requests.
+        """
+        # Define base request parameters
+        base_params = {
+            "max_completion_tokens": self.max_completion_tokens,
+            "repetition_penalty": self.repetition_penalty,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "extra_headers": self.extra_headers,
+            "extra_query": self.extra_query,
+            "extra_body": self.extra_body,
+            "request_params": self.request_params,
+        }
+
+        # Filter out None values
+        request_params = {k: v for k, v in base_params.items() if v is not None}
+
+        # Add tools
+        if self._tools is not None and len(self._tools) > 0:
+            request_params["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool["function"]["name"],
+                        "strict": True,  # Ensure strict adherence to expected outputs
+                        "description": tool["function"]["description"],
+                        "parameters": tool["function"]["parameters"],
+                    },
+                }
+                for tool in self._tools
+            ]
+            # Cerebras requires parallel_tool_calls=False for llama-4-scout-17b-16e-instruct
+            request_params["parallel_tool_calls"] = False
+
+        # Add additional request params if provided
+        if self.request_params:
+            request_params.update(self.request_params)
+
+        return request_params
+
+    def invoke(self, messages: List[Message]) -> ChatCompletion:
+        """
+        Send a chat completion request to the Cerebras API.
+
+        Args:
+            messages (List[Message]): A list of messages to send to the model.
+
+        Returns:
+            ChatCompletion: The chat completion response from the API.
+        """
+        return self.get_client().chat.completions.create(
+            model=self.id,
+            messages=[self._format_message(m) for m in messages],  # type: ignore
+            **self.request_kwargs,
+        )
+
+    async def ainvoke(self, messages: List[Message]) -> ChatCompletion:
+        """
+        Sends an asynchronous chat completion request to the Cerebras API.
+
+        Args:
+            messages (List[Message]): A list of messages to send to the model.
+
+        Returns:
+            ChatCompletion: The chat completion response from the API.
+        """
+        return await self.get_async_client().chat.completions.create(
+            model=self.id,
+            messages=[self._format_message(m) for m in messages],  # type: ignore
+            **self.request_kwargs,
+        )
+
+    def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
+        """
+        Send a streaming chat completion request to the Cerebras API.
+
+        Args:
+            messages (List[Message]): A list of messages to send to the model.
+
+        Returns:
+            Iterator[ChatCompletionChunk]: An iterator of chat completion chunks.
+        """
+        yield from self.get_client().chat.completions.create(
+            model=self.id,
+            messages=[self._format_message(m) for m in messages],  # type: ignore
+            stream=True,
+            **self.request_kwargs,
+        )  # type: ignore
+
+    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[ChatCompletionChunk]:
+        """
+        Sends an asynchronous streaming chat completion request to the Cerebras API.
+
+        Args:
+            messages (List[Message]): A list of messages to send to the model.
+
+        Returns:
+            AsyncIterator[ChatCompletionChunk]: An asynchronous iterator of chat completion chunks.
+        """
+        async_stream = await self.get_async_client().chat.completions.create(
+            model=self.id,
+            messages=[self._format_message(m) for m in messages],  # type: ignore
+            stream=True,
+            **self.request_kwargs,
+        )
+        async for chunk in async_stream:  # type: ignore
+            yield chunk  # type
+
+    def _format_message(self, message: Message) -> Dict[str, Any]:
+        """
+        Format a message into the format expected by the Cerebras API.
+
+        Args:
+            message (Message): The message to format.
+
+        Returns:
+            Dict[str, Any]: The formatted message.
+        """
+        # Basic message content
+        message_dict: Dict[str, Any] = {
+            "role": message.role,
+            "content": message.content if message.content is not None else "",
+        }
+
+        # Add name if present
+        if message.name:
+            message_dict["name"] = message.name
+
+        # Handle tool calls
+        if message.tool_calls:
+            # Ensure tool_calls is properly formatted
+            message_dict["tool_calls"] = [
+                {
+                    "id": tool_call["id"],
+                    "type": tool_call["type"],
+                    "function": {
+                        "name": tool_call["function"]["name"],
+                        "arguments": json.dumps(tool_call["function"]["arguments"])
+                        if isinstance(tool_call["function"]["arguments"], (dict, list))
+                        else tool_call["function"]["arguments"],
+                    },
+                }
+                for tool_call in message.tool_calls
+            ]
+
+        # Handle tool responses
+        if message.role == "tool" and message.tool_call_id:
+            message_dict = {
+                "role": "tool",
+                "tool_call_id": message.tool_call_id,
+                "content": message.content if message.content is not None else "",
+            }
+
+        # Ensure no None values in the message
+        message_dict = {k: v for k, v in message_dict.items() if v is not None}
+
+        return message_dict
+
+    def parse_provider_response(self, response: ChatCompletion) -> ModelResponse:
+        """
+        Parse the Cerebras response into a ModelResponse.
+
+        Args:
+            response (ChatCompletion): The response from the Cerebras API.
+
+        Returns:
+            ModelResponse: The parsed response.
+        """
+        model_response = ModelResponse()
+
+        # Get the first choice (assuming single response)
+        choice = response.choices[0]
+        message = choice.message
+
+        # Add role
+        if message.role:
+            model_response.role = message.role
+
+        # Add content
+        if message.content:
+            model_response.content = message.content
+
+        # Add tool calls
+        print('delta.tool_calls', message.tool_calls)
+        if message.tool_calls:
+            try:
+                model_response.tool_calls = [
+                    {
+                        "id": tool_call.id,
+                        "type": tool_call.type,
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments,
+                        },
+                    }
+                    for tool_call in message.tool_calls
+                ]
+            except Exception as e:
+                log_warning(f"Error processing tool calls: {e}")
+
+        # Add usage metrics
+        if response.usage:
+            model_response.response_usage = {
+                "input_tokens": response.usage.prompt_tokens,
+                "output_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+            }
+
+        return model_response
+
+    def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
+        """
+        Parse the streaming response from the Cerebras API into a ModelResponse.
+
+        Args:
+            response_delta (ChatCompletionChunk): The streaming response chunk.
+
+        Returns:
+            ModelResponse: The parsed response.
+        """
+        model_response = ModelResponse()
+
+        # Get the first choice (assuming single response)
+        choice = response_delta.choices[0]
+        delta = choice.delta
+
+        # Add content
+        if delta.content:
+            model_response.content = delta.content
+
+        # Add tool calls
+        if delta.tool_calls:
+            model_response.tool_calls = [
+                {
+                    "id": tool_call.id,
+                    "type": tool_call.type,
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments,
+                    },
+                }
+                for tool_call in delta.tool_calls
+            ]
+
+        return model_response
