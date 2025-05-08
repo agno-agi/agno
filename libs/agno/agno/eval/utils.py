@@ -2,9 +2,14 @@
 
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 from agno.utils.log import logger
+
+if TYPE_CHECKING:
+    from agno.eval.accuracy import AccuracyResult
+    from agno.eval.performance import PerformanceResult
+    from agno.eval.reliability import ReliabilityResult
 
 
 def store_result_in_file(
