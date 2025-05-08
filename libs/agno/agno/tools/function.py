@@ -139,11 +139,11 @@ class Function(BaseModel):
             if strict:
                 parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team"]]
             else:
-                # Mark a field as required if it has no default value
+                # Mark a field as required if it has no default value (this would include optional fields)
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if (param.default == param.empty or param.default is None) and name != "self" and name not in ["agent", "team"]
+                    if param.default == param.empty and name != "self" and name not in ["agent", "team"]
                 ]
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
