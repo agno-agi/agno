@@ -11,7 +11,6 @@ from agno.models.google import Gemini
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.whatsapp import WhatsAppTools
 from agno.tools.youtube import YouTubeTools
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")

@@ -6,8 +6,6 @@ from agno.memory.v2.manager import MemoryManager
 from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.whatsapp import WhatsAppTools
 
 agent_storage = SqliteStorage(
     table_name="agent_sessions", db_file="tmp/persistent_memory.db"

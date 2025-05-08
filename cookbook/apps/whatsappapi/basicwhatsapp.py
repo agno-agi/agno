@@ -2,13 +2,10 @@ from agno.agent import Agent
 from agno.app.whatsapp.app import WhatsappAPI
 from agno.app.whatsapp.serve import serve_whatsapp_app
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.whatsapp import WhatsAppTools
 
 basic_agent = Agent(
     name="Basic Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
     add_history_to_messages=True,
     num_history_responses=3,
     add_datetime_to_instructions=True,
