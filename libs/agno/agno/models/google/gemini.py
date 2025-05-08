@@ -398,7 +398,7 @@ class Gemini(Model):
                             # Case 1: Video is a file_types.File object (Recommended)
                             # Add it as a File object
                             if video.content is not None and isinstance(video.content, GeminiFile):
-                                # Google recommends that if using a single image, place the text prompt after the image.
+                                # Google recommends that if using a single video, place the text prompt after the video.
                                 if video.content.uri and video.content.mime_type:
                                     message_parts.insert(
                                         0, Part.from_uri(file_uri=video.content.uri, mime_type=video.content.mime_type)
@@ -416,7 +416,7 @@ class Gemini(Model):
                     try:
                         for audio_snippet in message.audio:
                             if audio_snippet.content is not None and isinstance(audio_snippet.content, GeminiFile):
-                                # Google recommends that if using a single image, place the text prompt after the image.
+                                # Google recommends that if using a single audio file, place the text prompt after the audio file.
                                 if audio_snippet.content.uri and audio_snippet.content.mime_type:
                                     message_parts.insert(
                                         0,
