@@ -232,4 +232,3 @@ def test_tool_call_list_parameters():
         if call.get("type", "") == "function":
             assert call["function"]["name"] in ["get_contents", "exa_answer"]
     assert response.content is not None
-
