@@ -13,7 +13,7 @@ from rich.pretty import pprint
 memory = Memory(
     db=SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db"),
     memory_manager=MemoryManager(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-2.0-flash-001"),
         memory_capture_instructions=dedent("""\
             Memories should only include details about the user's academic interests.
             Ignore names, hobbies, and personal interests.
