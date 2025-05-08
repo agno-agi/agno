@@ -1,7 +1,7 @@
 import asyncio
-import uuid
 from pathlib import Path
 from typing import IO, Any, List, Optional, Union
+from uuid import uuid4
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
@@ -43,7 +43,7 @@ def process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
     # Append the document
     return Document(
         name=doc_name,
-        id=f"{doc_name}_{page_number}",
+        id=str(uuid4()),
         meta_data={"page": page_number},
         content=content,
     )
@@ -77,7 +77,7 @@ async def async_process_image_page(doc_name: str, page_number: int, page: Any) -
 
     return Document(
         name=doc_name,
-        id=f"{doc_name}_{page_number}",
+        id=str(uuid4()),
         meta_data={"page": page_number},
         content=content,
     )
@@ -116,7 +116,7 @@ class PDFReader(BasePDFReader):
             documents.append(
                 Document(
                     name=doc_name,
-                    id=str({uuid.uuid4()}),
+                    id=str(uuid4()),
                     meta_data={"page": page_number},
                     content=page.extract_text(),
                 )
@@ -145,7 +145,7 @@ class PDFReader(BasePDFReader):
         async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
             return Document(
                 name=doc_name,
-                id=str({uuid.uuid4()}),
+                id=str(uuid4()),
                 meta_data={"page": page_number},
                 content=page.extract_text(),
             )
