@@ -52,7 +52,7 @@ dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", 
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
 weave = ["weave"]
 openlit = ["openlit", "agno[opentelemetry]"]
-
+langfuse = ["langfuse"]
 # Dependencies for Models
 azure = ["azure-ai-inference", "aiohttp"]
 anthropic = ["anthropic"]
