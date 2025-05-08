@@ -154,9 +154,13 @@ class Workflow:
         # Update workflow_id for all agents before registration
         for field_name, value in self.__class__.__dict__.items():
             if isinstance(value, Agent):
+                value.initialize_agent() # Initialize agent to ensure agent_id is set
                 value.workflow_id = self.workflow_id
+                print(value.agent_id)
             if isinstance(value, Team):
+                value.initialize_team() # Initialize team to ensure team_id is set
                 value.workflow_id = self.workflow_id
+                print(value.team_id)
 
         # Register the workflow, which will also register agents and teams
         self._register_workflow()
@@ -733,7 +737,7 @@ class Workflow:
                 agent_config = attr_value.get_agent_config_dict()
                 agent_config.update(
                     {
-                        "agent_id": attr_value.agent_id,
+                        "agent_id": attr_value.agent_id if hasattr(attr_value, "agent_id") else None,
                         "name": attr_value.name or attr_name,
                         "workflow_id": self.workflow_id,
                     }
@@ -747,7 +751,7 @@ class Workflow:
                 team_config = attr_value.to_platform_dict()
                 team_config.update(
                     {
-                        "team_id": attr_value.team_id,
+                        "team_id": attr_value.team_id if hasattr(attr_value, "team_id") else None,
                         "name": attr_value.name or attr_name,
                         "workflow_id": self.workflow_id,
                     }
