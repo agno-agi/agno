@@ -5,6 +5,7 @@ from agno.memory.v2.db.postgres import PostgresMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.storage.agent.postgres import PostgresAgentStorage
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 # ************* Database Connection *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -45,4 +46,6 @@ def get_memory_agent(
         add_datetime_to_instructions=True,
         markdown=True,
         debug_mode=debug_mode,
+        # Add a tool to search the web
+        tools=[DuckDuckGoTools()],
     )
