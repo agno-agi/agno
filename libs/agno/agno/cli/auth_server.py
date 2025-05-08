@@ -34,11 +34,22 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
 
         return auth_token
 
-    def _redirect_with_status(self, redirect_uri, result: str, error_type: str = ""):
+    def _redirect_with_status(self, theme: str, redirect_uri, result: str, error_type: str = ""):
         """Render a simple HTML page with 'Authenticating...' and redirect with a loader."""
         redirect_url = f"{redirect_uri}?cli_auth={result}"
         if result == "error" and error_type:
             redirect_url += f"&type={quote(error_type)}"
+
+        if theme == "dark":
+            background_color = "#111113"
+            text_color_large = "#FAFAFA"
+            text_color_small = "#A1A1AA"
+            loader_color = "#FAFAFA"
+        else:  # Default to light theme
+            background_color = "#FFFFFF"
+            text_color_large = "#18181B"
+            text_color_small = "rgba(113, 113, 122, 1)"
+            loader_color = "#18181B"
 
         html = f"""
         <html>
@@ -54,7 +65,7 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
                     align-items: center;
                     height: 100vh;
                     margin: 0;
-                    background-color: #f4f4f9;
+                    background-color: {background_color};
                 }}
                 .container {{
                     display: flex;
@@ -64,30 +75,28 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
                     gap: 12px;
                 }}
                 .message-large {{
-                    font-family: 'Inter', sans-serif;
                     font-weight: 500;
                     font-size: 26px;
                     line-height: 100%;
                     letter-spacing: -0.02em;
                     text-align: center;
                     vertical-align: middle;
-                    color: rgba(24, 24, 27, 1);
+                    color: {text_color_large};
                 }}
                 .message-small {{
-                    font-family: 'Inter', sans-serif;
                     font-weight: 400;
                     font-size: 14px;
                     line-height: 150%;
                     letter-spacing: -0.02em;
                     text-align: center;
                     vertical-align: middle;
-                    color: rgba(113, 113, 122, 1);
+                    color: {text_color_small};
                 }}
                 .loader {{
                     width: 12px;
                     height: 12px;
                     border: 1px solid rgba(24, 24, 27, 0.2);
-                    border-top-color: rgba(24, 24, 27, 1);
+                    border-top-color: {loader_color};
                     border-radius: 50%;
                     animation: spin 0.8s linear infinite;
                     margin-bottom: 12px;
@@ -139,6 +148,7 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
         parsed_url = urlparse(self.path)
         query_params = parse_qs(parsed_url.query)
         redirect_uri = query_params.get("redirect_uri", [""])[0]
+        theme = query_params.get("theme", ["light"])[0]
 
         if not redirect_uri:
             self._set_html_response("<h2>Missing redirect_uri</h2>", status_code=400)
@@ -146,11 +156,11 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
 
         auth_token = self._get_token_from_cookies()
         if not auth_token:
-            self._redirect_with_status(redirect_uri, "error", "no_token")
+            self._redirect_with_status(theme, redirect_uri, "error", "no_token")
             return
 
         self._store_token(auth_token)
-        self._redirect_with_status(redirect_uri, "success")
+        self._redirect_with_status(theme, redirect_uri, "success")
 
     def do_OPTIONS(self):
         # logger.debug(
