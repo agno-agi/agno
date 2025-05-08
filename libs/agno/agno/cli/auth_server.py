@@ -35,7 +35,7 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
         return auth_token
 
     def _redirect_with_status(self, redirect_uri, result: str, error_type: str = ""):
-        """Render a simple HTML page with 'Authenticating...' and redirect."""
+        """Render a simple HTML page with 'Authenticating...' and redirect with a loader."""
         redirect_url = f"{redirect_uri}?cli_auth={result}"
         if result == "error" and error_type:
             redirect_url += f"&type={quote(error_type)}"
@@ -45,11 +45,64 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
         <head>
             <title>Agno Workspace</title>
             <meta http-equiv="refresh" content="1;url={redirect_url}" />
+            <style>
+                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+                body {{
+                    font-family: 'Inter', sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background-color: #f4f4f9;
+                }}
+                .container {{
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    text-align: center;
+                    gap: 12px;
+                }}
+                .message-large {{
+                    font-family: 'Inter', sans-serif;
+                    font-weight: 500;
+                    font-size: 26px;
+                    line-height: 100%;
+                    letter-spacing: -0.02em;
+                    text-align: center;
+                    vertical-align: middle;
+                    color: #333;
+                }}
+                .message-small {{
+                    font-family: 'Inter', sans-serif;
+                    font-weight: 400;
+                    font-size: 14px;
+                    line-height: 150%;
+                    letter-spacing: -0.02em;
+                    text-align: center;
+                    vertical-align: middle;
+                    color: #666;
+                }}
+                .loader {{
+                    border: 4px solid rgba(0, 0, 0, 0.1);
+                    width: 20px;
+                    height: 20px;
+                    border-radius: 50%;
+                    border-left-color: #4A90E2;
+                    animation: spin 1s linear infinite;
+                }}
+                @keyframes spin {{
+                    0% {{ transform: rotate(0deg); }}
+                    100% {{ transform: rotate(360deg); }}
+                }}
+            </style>
         </head>
         <body>
-            <p style="font-family:sans-serif;text-align:center;margin-top:30px;">
-            Authenticating your workspace... You will be redirected to Agno App shortly.
-            </p>
+            <div class="container">
+                <div class="loader"></div>
+                <div class="message-large">Authenticating your workspace...</div>
+                <div class="message-small">You will be redirected shortly.</div>
+            </div>
         </body>
         </html>
         """
