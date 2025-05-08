@@ -32,7 +32,7 @@ memory = Memory(
 StudyBuddy = Agent(
     name="StudyBuddy",
     memory=memory,
-    model=Gemini("gemini-2.0-flash-exp"),
+    model=Gemini("gemini-2.0"),
     enable_user_memories=True,
     storage=SqliteStorage(
         table_name="agent_sessions", db_file="tmp/persistent_memory.db"
