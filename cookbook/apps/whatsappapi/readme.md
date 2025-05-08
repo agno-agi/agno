@@ -1,32 +1,57 @@
-# WhatsApp Business API Integration with AI Agent
 
-A new structure of apps that create endpoints to allow a WhatsApp WebHook to connect to your AI Agents and Teams.
-The apps run on FastAPI and uses the WhatsApp Business API to handle message interactions.
+[comment]:AI Generated readme
 
-## Features
+# WhatsApp API Module Documentation
 
-- Automatically responds to any incoming WhatsApp messages using your Agents and Teams
-- Handles webhook verification for WhatsApp Business API
-- Supports secure HTTPS communication
-- Logs all interactions for monitoring
+## Overview
+The WhatsApp API module provides integration between WhatsApp Business API and AI agents, allowing for automated message handling and responses through WhatsApp. The module is built on FastAPI and supports various agent configurations.
 
-## Prerequisites
+## Module Structure
 
+### Core Components
+- `WhatsappAPI`: Main class for creating WhatsApp API endpoints
+- `serve_whatsapp_app`: Function to serve the WhatsApp application
+
+### Example Implementations
+1. **Basic WhatsApp Agent** (`basicwhatsapp.py`)
+   - Simple implementation with basic agent configuration
+   - Uses GPT-4 model
+   - Includes message history and datetime features
+
+2. **User Memory Agent** (`usermemoryagent.py`)
+   - Enhanced implementation with persistent memory
+   - Uses SQLite for storage
+   - Captures and utilizes user information
+   - Features:
+     - User name collection
+     - Hobbies and interests tracking
+     - Personalized responses
+
+3. **Study Buddy Agent** (`whatsappstudyfriend.py`)
+   - Specialized educational assistant
+   - Features:
+     - Memory-based learning
+     - DuckDuckGo search integration
+     - YouTube resource recommendations
+     - Personalized study plans
+     - Emotional support capabilities
+
+## Setup and Configuration
+
+### Prerequisites
 - Python 3.7+
-- ngrok account (for development/testing)
+- Meta Developer Account
 - WhatsApp Business API access
-- Meta Developer account
+- ngrok (for development)
 
-## Getting WhatsApp Credentials
+### Getting WhatsApp Credentials
 
 1. **Create Meta Developer Account**:
-
    - Go to [Meta Developer Portal](https://developers.facebook.com/) and create an account
    - Create a new app at [Meta Apps Dashboard](https://developers.facebook.com/apps/)
    - Enable WhatsApp integration for your app
 
 2. **Set Up WhatsApp Business API**:
-
    - Go to your app's WhatsApp Setup page
    - Find your WhatsApp Business Account ID in Business Settings
    - Get your Phone Number ID from the WhatsApp > Getting Started page
@@ -36,37 +61,27 @@ The apps run on FastAPI and uses the WhatsApp Business API to handle message int
    - Note: Initially, you can only send messages to numbers registered in your test environment
    - For production, you'll need to submit your app for review
 
-## Environment Setup
-
-Create a `.envrc` file in the project root with these variables:
-
+### Environment Variables
+Create a `.envrc` file with:
 ```bash
-# From Meta Developer Portal
-export WHATSAPP_ACCESS_TOKEN=your_whatsapp_access_token    # From App Dashboard > WhatsApp > API Setup
-export WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id      # From WhatsApp > Getting Started
-export WHATSAPP_WEBHOOK_URL=your_webhook_url              # Your ngrok URL + /webhook
-export WHATSAPP_VERIFY_TOKEN=your_verify_token           # Any secure string you choose
-
+export WHATSAPP_ACCESS_TOKEN=your_whatsapp_access_token
+export WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
+export WHATSAPP_WEBHOOK_URL=your_webhook_url
+export WHATSAPP_VERIFY_TOKEN=your_verify_token
 ```
 
-## Running the Application
-
-You need to run two components:
-
-1. **The ngrok tunnel** (in one terminal):
-
+### Running the Application
+1. Start ngrok:
 ```bash
 ngrok http --domain=your-domain.ngrok-free.app 8000
 ```
 
-2. **The FastAPI server** (in another terminal):
-
+2. Start the WhatsApp API endpoints:
 ```bash
-python app.py
+python <agent_file>.py
 ```
 
-## WhatsApp Business Setup
-
+### WhatsApp Business Setup
 1. Go to Meta Developer Portal
 2. Set up your WhatsApp Business account
 3. Configure the webhook:
@@ -74,67 +89,90 @@ python app.py
    - Verify Token: Same as WHATSAPP_VERIFY_TOKEN in your .envrc
    - Subscribe to the 'messages' webhook field
 
-## How It Works
+## Agent Configuration
 
-1. When someone sends a message to your WhatsApp Business number:
+### Basic Agent Setup
+To create a basic agent, you'll need to:
+1. Import the necessary components from the agno package
+2. Configure your agent with:
+   - A name
+   - Your preferred model (e.g., OpenAI, Gemini, etc.)
+   - Optional features like message history, datetime context, and markdown support
+3. Create the WhatsApp API app instance with your agent
 
-   - The message is received via webhook
-   - The AI agent processes the message
-   - A response is automatically generated and sent back
+### Memory-Enabled Agent Setup
+To create an agent with memory capabilities:
+1. Set up a database for memory storage (SQLite is supported by default)
+2. Configure the memory manager with your desired memory capture instructions
+3. Create your agent with memory enabled
+4. Configure additional features like user memory tracking
+5. Create the WhatsApp API app instance
 
-2. The agent can:
-   - Process incoming text messages
-   - Generate contextual responses
-   - Log all interactions
+The memory system allows you to:
+- Store and retrieve user information
+- Track conversation context
+- Maintain persistent data across sessions
+- Customize what information to capture and store
 
-## Monitoring
+## Features
 
-The application logs important events:
+### Message Handling
+- Automatic response generation
+- Message history tracking
+- Markdown support
+- Datetime awareness
 
-- Server start/stop
-- Incoming messages
-- Response generation
-- Message delivery status
+### Memory Management
+- Persistent storage using SQLite
+- User information collection
+- Context-aware responses
+- Session management
 
-Check the console output for logs.
+### Tools Integration
+- DuckDuckGo search
+- YouTube resource recommendations
+- Custom tool support
+
+## Security Considerations
+- Use HTTPS for all communications
+- Secure storage of API tokens
+- Regular token rotation
+- Webhook verification
 
 ## Error Handling
-
-The application includes error handling for:
-
-- Invalid webhook verification
+The module includes comprehensive error handling for:
+- Webhook verification failures
 - Message processing errors
 - API communication issues
+- Storage system errors
 
-## Security Notes
-
-- Keep your environment variables secure
-- Don't commit `.envrc` to version control
-- Use HTTPS for all communications
-- Regularly rotate your access tokens
+## Best Practices
+1. Always use environment variables for sensitive data
+2. Implement proper error handling
+3. Use memory features for personalized interactions
+4. Regular monitoring of API usage
+5. Keep dependencies updated
 
 ## Troubleshooting
+Common issues and solutions:
+1. Webhook verification failures
+   - Check verify token
+   - Verify ngrok connection
+   - Confirm webhook URL
 
-Common issues:
+2. Message delivery issues
+   - Verify API credentials
+   - Check phone number ID
+   - Confirm webhook subscription
 
-1. Webhook verification failing:
-
-   - Check your VERIFY_TOKEN matches
-   - Ensure ngrok is running
-   - Verify webhook URL is correct
-
-2. Messages not being received:
-
-   - Check webhook subscription status
-   - Verify WhatsApp Business API access
-
-3. No responses being sent:
-   - Check WhatsApp access token
+3. Memory/storage problems
+   - Check database permissions
+   - Verify storage paths
+   - Monitor disk space
 
 ## Support
-
-For issues and questions:
-
-1. Check the logs for error messages
+For additional support:
+1. Check the application logs
 2. Review Meta's WhatsApp Business API documentation
-3. Verify your API credentials and tokens
+3. Verify API credentials and tokens
+4. Monitor ngrok connection status
