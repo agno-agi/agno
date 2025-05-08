@@ -29,7 +29,7 @@ async def run_agent(message: str) -> None:
             "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
             "npx -y @modelcontextprotocol/server-google-maps",
         ],
-        include_tools=["maps_search_places", "airbnb_search"],
+        include_tools=["airbnb_search"],
         exclude_tools=["maps_place_details"],
     ) as mcp_tools:
         agent = Agent(
