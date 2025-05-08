@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.4.4"
+version = "1.4.5"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -63,6 +63,7 @@ litellm = ["litellm"]
 meta = ["llama-api-client"]
 
 # Dependencies for Tools
+apify = ["apify-client"]
 cartesia = ["cartesia"]
 exa = ["exa_py"]
 yfinance = ["yfinance"]
@@ -139,6 +140,7 @@ models = [
 
 # All tools
 tools = [
+  "agno[apify]",
   "agno[exa]",
   "agno[cartesia]",
   "agno[ddg]",
