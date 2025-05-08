@@ -169,6 +169,8 @@ class Function(BaseModel):
         from agno.utils.json_schema import get_json_schema
 
         if self.skip_entrypoint_processing:
+            if strict:
+                self.process_schema_for_strict()
             return
 
         if self.entrypoint is None:
@@ -259,6 +261,10 @@ class Function(BaseModel):
                 self.entrypoint = validate_call(self.entrypoint, config=dict(arbitrary_types_allowed=True))  # type: ignore
         except Exception as e:
             log_warning(f"Failed to add validate decorator to entrypoint: {e}")
+
+    def process_schema_for_strict(self):
+        self.parameters["additionalProperties"] = False
+        self.parameters["required"] = [name for name in self.parameters["properties"] if name not in ["agent", "team"]]
 
     def get_type_name(self, t: Type[T]):
         name = str(t)

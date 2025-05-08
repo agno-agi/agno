@@ -203,7 +203,6 @@ class MCPTools(Toolkit):
                 try:
                     # Get an entrypoint for the tool
                     entrypoint = get_entrypoint_for_tool(tool, self.session)
-
                     # Create a Function for the tool
                     f = Function(
                         name=tool.name,
