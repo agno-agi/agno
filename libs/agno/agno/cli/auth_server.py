@@ -71,7 +71,7 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
                     letter-spacing: -0.02em;
                     text-align: center;
                     vertical-align: middle;
-                    color: #333;
+                    color: rgba(24, 24, 27, 1);
                 }}
                 .message-small {{
                     font-family: 'Inter', sans-serif;
@@ -81,15 +81,16 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
                     letter-spacing: -0.02em;
                     text-align: center;
                     vertical-align: middle;
-                    color: #666;
+                    color: rgba(113, 113, 122, 1);
                 }}
                 .loader {{
-                    border: 4px solid rgba(0, 0, 0, 0.1);
-                    width: 20px;
-                    height: 20px;
+                    width: 12px;
+                    height: 12px;
+                    border: 1px solid rgba(24, 24, 27, 0.2);
+                    border-top-color: rgba(24, 24, 27, 1);
                     border-radius: 50%;
-                    border-left-color: #4A90E2;
-                    animation: spin 1s linear infinite;
+                    animation: spin 0.8s linear infinite;
+                    margin-bottom: 12px;
                 }}
                 @keyframes spin {{
                     0% {{ transform: rotate(0deg); }}
