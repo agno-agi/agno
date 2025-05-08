@@ -143,7 +143,7 @@ class Function(BaseModel):
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name not in ["agent", "team"]
+                    if (param.default == param.empty or param.default is None) and name != "self" and name not in ["agent", "team"]
                 ]
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")

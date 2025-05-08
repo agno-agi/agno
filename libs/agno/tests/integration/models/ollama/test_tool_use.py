@@ -232,3 +232,35 @@ def test_tool_call_list_parameters():
         if call.get("type", "") == "function":
             assert call["function"]["name"] in ["get_contents", "exa_answer"]
     assert response.content is not None
+
+
+
+def test_tool_call_custom_tool_optional_parameters():
+    def get_the_weather(city: Optional[str] = None):
+        """
+        Get the weather in a city
+
+        Args:
+            city: The city to get the weather for
+        """
+        if city is None:
+            return "It is currently 70 degrees and cloudy in Tokyo"
+        else:
+            return f"It is currently 70 degrees and cloudy in {city}"
+
+    agent = Agent(
+        model=Ollama(id="llama3.2:latest"),
+        tools=[get_the_weather],
+        show_tool_calls=True,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run("What is the weather in Paris?")
+
+    # Verify tool usage
+    assert any(msg.tool_calls for msg in response.messages)
+    assert response.content is not None
+    assert "70" in response.content
+
