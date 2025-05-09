@@ -49,8 +49,6 @@ class Claude(Model):
     top_p: Optional[float] = None
     top_k: Optional[int] = None
     request_params: Optional[Dict[str, Any]] = None
-    web_search: Optional[bool] = None
-    web_search_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
     api_key: Optional[str] = None
@@ -133,19 +131,6 @@ class Claude(Model):
 
         if self._tools:
             request_kwargs["tools"] = self._format_tools_for_model()
-        if self.web_search:
-            if request_kwargs.get("tools") is None:
-                request_kwargs["tools"] = []
-
-            web_search_tool = {
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": 5,
-            }
-            if self.web_search_params:
-                web_search_tool.update(self.web_search_params)
-            request_kwargs["tools"].append(web_search_tool)
-
         return request_kwargs
 
     def _format_tools_for_model(self) -> Optional[List[Dict[str, Any]]]:
@@ -155,12 +140,15 @@ class Claude(Model):
         Returns:
             Optional[List[Dict[str, Any]]]: A list of tools formatted for the API, or None if no functions are defined.
         """
-        if not self._functions:
+        if not self._tools:
             return None
 
         tools: List[Dict[str, Any]] = []
-        for func_name, func_def in self._functions.items():
-            parameters: Dict[str, Any] = func_def.parameters or {}
+        for func_def in self._tools:
+            if func_def.get("type") != "function":
+                tools.append(func_def)
+                continue
+            parameters: Dict[str, Any] = func_def.get("parameters", {})
             properties: Dict[str, Any] = parameters.get("properties", {})
             required_params: List[str] = []
 
@@ -182,8 +170,8 @@ class Claude(Model):
                     input_properties[param_name]["type"] = param_info.get("type", "")
 
             tool = {
-                "name": func_name,
-                "description": func_def.description or "",
+                "name": func_def.get("name") or "",
+                "description": func_def.get("description") or "",
                 "input_schema": {
                     "type": parameters.get("type", "object"),
                     "properties": input_properties,
