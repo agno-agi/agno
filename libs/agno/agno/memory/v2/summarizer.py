@@ -1,7 +1,7 @@
 from copy import deepcopy
 from dataclasses import dataclass
 from textwrap import dedent
-from typing import Any, Dict, List, Optional, Union, Type
+from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel, Field
 
@@ -69,7 +69,9 @@ class SessionSummarizer:
         else:
             return {"type": "json_object"}
 
-    def get_system_message(self, conversation: List[Message], response_format: Union[Dict[str, Any], Type[BaseModel]]) -> Message:
+    def get_system_message(
+        self, conversation: List[Message], response_format: Union[Dict[str, Any], Type[BaseModel]]
+    ) -> Message:
         if self.system_message is not None:
             return Message(role="system", content=self.system_message)
 

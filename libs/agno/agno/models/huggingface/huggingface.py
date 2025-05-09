@@ -388,7 +388,11 @@ class HuggingFace(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(self, response: ChatCompletionOutput, response_format: Optional[Union[Dict, Type[BaseModel]]] = None,) -> ModelResponse:
+    def parse_provider_response(
+        self,
+        response: ChatCompletionOutput,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> ModelResponse:
         """
         Parse the provider response into a ModelResponse.
         """

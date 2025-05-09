@@ -26,7 +26,6 @@ class MemorySummarizer(BaseModel):
                 exit(1)
             self.model = OpenAIChat(id="gpt-4o")
 
-
     def get_system_message(self, messages_for_summarization: List[Dict[str, str]]) -> Message:
         # -*- Return a system message for summarization
         system_prompt = dedent("""\

@@ -183,7 +183,9 @@ class MemoryManager(BaseModel):
 
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
-        response = self.model.response(messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model)
+        response = self.model.response(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
         log_debug("*********** MemoryManager End ***********")
         return response.content
 
@@ -209,6 +211,8 @@ class MemoryManager(BaseModel):
 
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
-        response = await self.model.aresponse(messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model)
+        response = await self.model.aresponse(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
         log_debug("*********** Async MemoryManager End ***********")
         return response.content

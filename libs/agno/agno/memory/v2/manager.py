@@ -64,7 +64,6 @@ class MemoryManager:
                 except Exception as e:
                     log_warning(f"Could not add function {tool}: {e}")
 
-
     def get_system_message(
         self,
         existing_memories: Optional[List[Dict[str, Any]]] = None,
@@ -179,7 +178,9 @@ class MemoryManager:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = model_copy.response(messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model)
+        response = model_copy.response(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
@@ -226,7 +227,9 @@ class MemoryManager:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = await model_copy.aresponse(messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model)
+        response = await model_copy.aresponse(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
@@ -267,7 +270,9 @@ class MemoryManager:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = model_copy.response(messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model)
+        response = model_copy.response(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
@@ -308,7 +313,9 @@ class MemoryManager:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = await model_copy.aresponse(messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model)
+        response = await model_copy.aresponse(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
