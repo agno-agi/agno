@@ -10,8 +10,8 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
-from agno.utils.openai import images_to_message
+from agno.utils.log import log_error
+from agno.utils.models.ai_foundry import format_message
 
 try:
     from azure.ai.inference import ChatCompletionsClient
@@ -30,44 +30,6 @@ except ImportError:
     raise ImportError(
         "`azure-ai-inference` not installed. Please install it via `pip install azure-ai-inference aiohttp`."
     )
-
-
-def _format_message(message: Message) -> Dict[str, Any]:
-    """
-    Format a message into the format expected by OpenAI.
-
-    Args:
-        message (Message): The message to format.
-
-    Returns:
-        Dict[str, Any]: The formatted message.
-    """
-    message_dict: Dict[str, Any] = {
-        "role": message.role,
-        "content": message.content,
-        "name": message.name,
-        "tool_call_id": message.tool_call_id,
-        "tool_calls": message.tool_calls,
-    }
-    message_dict = {k: v for k, v in message_dict.items() if v is not None}
-
-    if message.images is not None and len(message.images) > 0:
-        # Ignore non-string message content
-        # because we assume that the images/audio are already added to the message
-        if isinstance(message.content, str):
-            message_dict["content"] = [{"type": "text", "text": message.content}]
-            message_dict["content"].extend(images_to_message(images=message.images))
-
-    if message.audio is not None and len(message.audio) > 0:
-        log_warning("Audio input is currently unsupported.")
-
-    if message.files is not None and len(message.files) > 0:
-        log_warning("File input is currently unsupported.")
-
-    if message.videos is not None and len(message.videos) > 0:
-        log_warning("Video input is currently unsupported.")
-
-    return message_dict
 
 
 @dataclass
@@ -221,7 +183,7 @@ class AzureAIFoundry(Model):
         """
         try:
             return self.get_client().complete(
-                messages=[_format_message(m) for m in messages], **self._get_request_kwargs()
+                messages=[format_message(m) for m in messages], **self._get_request_kwargs()
             )
         except HttpResponseError as e:
             log_error(f"Azure AI API error: {e}")
@@ -249,7 +211,7 @@ class AzureAIFoundry(Model):
         try:
             async with self.get_async_client() as client:
                 return await client.complete(
-                    messages=[_format_message(m) for m in messages],
+                    messages=[format_message(m) for m in messages],
                     **self._get_request_kwargs(),
                 )
         except HttpResponseError as e:
@@ -276,7 +238,7 @@ class AzureAIFoundry(Model):
         """
         try:
             yield from self.get_client().complete(
-                messages=[_format_message(m) for m in messages], stream=True, **self._get_request_kwargs()
+                messages=[format_message(m) for m in messages], stream=True, **self._get_request_kwargs()
             )
         except HttpResponseError as e:
             log_error(f"Azure AI API error: {e}")
@@ -303,7 +265,7 @@ class AzureAIFoundry(Model):
         try:
             async with self.get_async_client() as client:
                 stream = await client.complete(
-                    messages=[_format_message(m) for m in messages],
+                    messages=[format_message(m) for m in messages],
                     stream=True,
                     **self._get_request_kwargs(),
                 )
