@@ -1255,8 +1255,6 @@ class Agent:
             self.run_response = RunResponse(run_id=self.run_id, session_id=session_id, agent_id=self.agent_id)
             run_response = self.run_response
         else:
-            # Update run_id if needed
-            run_response.run_id = self.run_id
             # For backward compatibility, also set self.run_response
             self.run_response = run_response
 
@@ -1865,9 +1863,6 @@ class Agent:
             citations = run_response.citations
             tools = run_response.tools
             reasoning_content = run_response.reasoning_content
-
-        # Use the provided run_response or fall back to self.run_response
-        run_response = run_response or self.run_response
 
         rr = RunResponse(
             run_id=self.run_id,
