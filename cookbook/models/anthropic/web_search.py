@@ -5,11 +5,13 @@ agent = Agent(
     model=Claude(
         id="claude-3-5-sonnet-20241022",
     ),
-    tools=[{
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": 5,
-            }],
+    tools=[
+        {
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "max_uses": 5,
+        }
+    ],
     markdown=True,
 )
 
