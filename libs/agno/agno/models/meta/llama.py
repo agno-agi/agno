@@ -4,7 +4,6 @@ from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Union
 
 import httpx
-from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
@@ -23,7 +22,7 @@ try:
         EventDeltaToolCallDeltaFunction,
     )
     from llama_api_client.types.message_text_content_item import MessageTextContentItem
-except (ImportError, ModuleNotFoundError):
+except ImportError:
     raise ImportError("`llama-api-client` not installed. Please install using `pip install llama-api-client`")
 
 
@@ -36,6 +35,7 @@ class Llama(Model):
     id: str = "Llama-4-Maverick-17B-128E-Instruct-FP8"
     name: str = "Llama"
     provider: str = "Llama"
+
     supports_native_structured_outputs: bool = False
     supports_json_schema_outputs: bool = True
 
@@ -341,19 +341,6 @@ class Llama(Model):
 
         # Get response message
         response_message = response.completion_message
-
-        # Parse structured outputs if enabled
-        try:
-            if (
-                self.response_format is not None
-                and self.structured_outputs
-                and issubclass(self.response_format, BaseModel)
-            ):
-                parsed_object = response_message.content  # type: ignore
-                if parsed_object is not None:
-                    model_response.parsed = parsed_object
-        except Exception as e:
-            log_warning(f"Error retrieving structured outputs: {e}")
 
         # Add role
         if response_message.role is not None:
