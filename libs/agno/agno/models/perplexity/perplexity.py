@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Optional, Union, Type, List
+from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -47,10 +47,12 @@ class Perplexity(OpenAILike):
 
     supports_native_structured_outputs: bool = True
 
-    def get_request_kwargs(self,
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Dict[str, Any]:
+    def get_request_kwargs(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
         """
@@ -64,11 +66,7 @@ class Perplexity(OpenAILike):
             "frequency_penalty": self.frequency_penalty,
         }
 
-        if (
-            response_format
-            and isinstance(response_format, type)
-            and issubclass(response_format, BaseModel)
-        ):
+        if response_format and isinstance(response_format, type) and issubclass(response_format, BaseModel):
             base_params["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {"schema": response_format.model_json_schema()},
@@ -81,7 +79,11 @@ class Perplexity(OpenAILike):
             request_params.update(self.request_params)
         return request_params
 
-    def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion], response_format: Optional[Union[Dict, Type[BaseModel]]] = None,) -> ModelResponse:
+    def parse_provider_response(
+        self,
+        response: Union[ChatCompletion, ParsedChatCompletion],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
         """
@@ -99,10 +101,7 @@ class Perplexity(OpenAILike):
 
         # Parse structured outputs if enabled
         try:
-            if (
-                response_format is not None
-                and issubclass(response_format, BaseModel)
-            ):
+            if response_format is not None and issubclass(response_format, BaseModel):
                 parsed_object = response_message.parsed  # type: ignore
                 if parsed_object is not None:
                     model_response.parsed = parsed_object

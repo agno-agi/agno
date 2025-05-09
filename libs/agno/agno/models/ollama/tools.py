@@ -1,7 +1,9 @@
 import json
 from dataclasses import dataclass, field
 from textwrap import dedent
-from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.models.message import Message, MessageMetrics
 from agno.models.ollama.chat import ChatResponse, Ollama, OllamaResponseUsage
@@ -189,17 +191,22 @@ class OllamaTools(Ollama):
         return function_calls_to_run
 
     def process_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
     ) -> Iterator[ModelResponse]:
         """
         Process a streaming response from the model.
         """
         tool_call_data = ToolCall()
 
-        for response_delta in self.invoke_stream(messages=messages,
-               response_format=response_format,
-               tools=tools,
-               tool_choice=tool_choice):
+        for response_delta in self.invoke_stream(
+            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+        ):
             model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
             if model_response_delta:
                 yield from self._populate_stream_data_and_assistant_message(
@@ -207,17 +214,22 @@ class OllamaTools(Ollama):
                 )
 
     async def aprocess_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process a streaming response from the model.
         """
         tool_call_data = ToolCall()
 
-        async for response_delta in self.ainvoke_stream(messages=messages,
-               response_format=response_format,
-               tools=tools,
-               tool_choice=tool_choice):
+        async for response_delta in self.ainvoke_stream(
+            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+        ):
             model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
             if model_response_delta:
                 for model_response in self._populate_stream_data_and_assistant_message(
@@ -329,11 +341,13 @@ class OllamaTools(Ollama):
             tool_call_prompt += "\n<tools>\n"
             tool_definitions: List[str] = []
             for func_def in self._tools:
-                _function_def = json.dumps({
+                _function_def = json.dumps(
+                    {
                         "name": func_def.get("name") or "",
                         "description": func_def.get("description") or "",
                         "arguments": func_def.get("parameters", {}).get("properties", {}),
-                    })
+                    }
+                )
                 if _function_def:
                     tool_definitions.append(_function_def)
             tool_call_prompt += "\n".join(tool_definitions)

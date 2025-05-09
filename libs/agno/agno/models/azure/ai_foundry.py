@@ -110,9 +110,12 @@ class AzureAIFoundry(Model):
     client: Optional[ChatCompletionsClient] = None
     async_client: Optional[AsyncChatCompletionsClient] = None
 
-    def _get_request_kwargs(self, tools: Optional[List[Dict[str, Any]]] = None,
-                            response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-                            tool_choice: Optional[str] = None) -> Dict[str, Any]:
+    def _get_request_kwargs(
+        self,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Get the parameters for creating an Azure AI request."""
         base_params = {
             "temperature": self.temperature,
@@ -211,16 +214,20 @@ class AzureAIFoundry(Model):
         self.async_client = AsyncChatCompletionsClient(**client_params)
         return self.async_client
 
-    def invoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Any:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Any:
         """
         Send a chat completion request to the Azure AI API.
         """
         try:
             return self.get_client().complete(
-                messages=[_format_message(m) for m in messages], **self._get_request_kwargs(tools=tools, response_format=response_format, tool_choice=tool_choice)
+                messages=[_format_message(m) for m in messages],
+                **self._get_request_kwargs(tools=tools, response_format=response_format, tool_choice=tool_choice),
             )
         except HttpResponseError as e:
             log_error(f"Azure AI API error: {e}")
@@ -234,10 +241,13 @@ class AzureAIFoundry(Model):
             log_error(f"Error from Azure AI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Any:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Any:
         """
         Sends an asynchronous chat completion request to the Azure AI API.
         """
@@ -260,16 +270,21 @@ class AzureAIFoundry(Model):
             log_error(f"Error from Azure AI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Iterator[Any]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Iterator[Any]:
         """
         Send a streaming chat completion request to the Azure AI API.
         """
         try:
             yield from self.get_client().complete(
-                messages=[_format_message(m) for m in messages], stream=True, **self._get_request_kwargs(tools=tools, response_format=response_format, tool_choice=tool_choice)
+                messages=[_format_message(m) for m in messages],
+                stream=True,
+                **self._get_request_kwargs(tools=tools, response_format=response_format, tool_choice=tool_choice),
             )
         except HttpResponseError as e:
             log_error(f"Azure AI API error: {e}")
@@ -283,10 +298,13 @@ class AzureAIFoundry(Model):
             log_error(f"Error from Azure AI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> AsyncIterator[Any]:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> AsyncIterator[Any]:
         """
         Sends an asynchronous streaming chat completion request to the Azure AI API.
         """

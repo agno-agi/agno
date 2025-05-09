@@ -3,6 +3,7 @@ from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 import httpx
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
@@ -10,7 +11,6 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
 from agno.utils.openai import images_to_message
-from pydantic import BaseModel
 
 try:
     from groq import APIError, APIResponseValidationError, APIStatusError
@@ -124,9 +124,12 @@ class Groq(Model):
             )
         return AsyncGroqClient(**client_params)
 
-    def get_request_kwargs(self, response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Dict[str, Any]:
+    def get_request_kwargs(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -190,7 +193,11 @@ class Groq(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
-    def format_message(self, message: Message, response_format: Optional[Union[Dict, Type[BaseModel]]] = None,) -> Dict[str, Any]:
+    def format_message(
+        self,
+        message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> Dict[str, Any]:
         """
         Format a message into the format expected by Groq.
 
@@ -237,10 +244,13 @@ class Groq(Model):
 
         return message_dict
 
-    def invoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> ChatCompletion:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> ChatCompletion:
         """
         Send a chat completion request to the Groq API.
         """
@@ -248,7 +258,7 @@ class Groq(Model):
             return self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
-                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice)
+                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
@@ -262,10 +272,13 @@ class Groq(Model):
             log_error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> ChatCompletion:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> ChatCompletion:
         """
         Sends an asynchronous chat completion request to the Groq API.
         """
@@ -273,7 +286,7 @@ class Groq(Model):
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
-                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice)
+                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
@@ -287,10 +300,13 @@ class Groq(Model):
             log_error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Iterator[ChatCompletionChunk]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Iterator[ChatCompletionChunk]:
         """
         Send a streaming chat completion request to the Groq API.
         """
@@ -313,10 +329,13 @@ class Groq(Model):
             log_error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Any:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Any:
         """
         Sends an asynchronous streaming chat completion request to the Groq API.
         """

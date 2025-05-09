@@ -142,8 +142,9 @@ class HuggingFace(Model):
         self.async_client = AsyncInferenceClient(**_client_params)
         return self.async_client
 
-    def get_request_kwargs(self, tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Dict[str, Any]:
+    def get_request_kwargs(
+        self, tools: Optional[List[Dict[str, Any]]] = None, tool_choice: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for inference model client requests.
 
@@ -246,10 +247,13 @@ class HuggingFace(Model):
 
         return message_dict
 
-    def invoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Union[ChatCompletionOutput]:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Union[ChatCompletionOutput]:
         """
         Send a chat completion request to the HuggingFace Hub.
         """
@@ -266,10 +270,13 @@ class HuggingFace(Model):
             log_error(f"Unexpected error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Union[ChatCompletionOutput]:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Union[ChatCompletionOutput]:
         """
         Sends an asynchronous chat completion request to the HuggingFace Hub Inference.
         """
@@ -287,10 +294,13 @@ class HuggingFace(Model):
             log_error(f"Unexpected error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Iterator[ChatCompletionStreamOutput]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Iterator[ChatCompletionStreamOutput]:
         """
         Send a streaming chat completion request to the HuggingFace API.
         """
@@ -309,10 +319,13 @@ class HuggingFace(Model):
             log_error(f"Unexpected error invoking HuggingFace model: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> AsyncIterator[Any]:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> AsyncIterator[Any]:
         """
         Sends an asynchronous streaming chat completion request to the HuggingFace API.
         """
@@ -394,10 +407,7 @@ class HuggingFace(Model):
                     tool_call["function"]["arguments"] = json.dumps(tool_call["function"]["arguments"])
 
         try:
-            if (
-                self.response_format is not None
-                and issubclass(self.response_format, BaseModel)
-            ):
+            if self.response_format is not None and issubclass(self.response_format, BaseModel):
                 parsed_object = response_message.parsed  # type: ignore
                 if parsed_object is not None:
                     model_response.parsed = parsed_object

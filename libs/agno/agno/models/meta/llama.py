@@ -186,10 +186,13 @@ class Llama(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
-    def invoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> CreateChatCompletionResponse:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> CreateChatCompletionResponse:
         """
         Send a chat completion request to the Llama API.
         """
@@ -199,10 +202,13 @@ class Llama(Model):
             **self.get_request_kwargs(tools=tools, response_format=response_format),
         )
 
-    async def ainvoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> CreateChatCompletionResponse:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> CreateChatCompletionResponse:
         """
         Sends an asynchronous chat completion request to the Llama API.
         """
@@ -213,10 +219,13 @@ class Llama(Model):
             **self.get_request_kwargs(tools=tools, response_format=response_format),
         )
 
-    def invoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Iterator[CreateChatCompletionResponseStreamChunk]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Iterator[CreateChatCompletionResponseStreamChunk]:
         """
         Send a streaming chat completion request to the Llama API.
         """
@@ -232,10 +241,13 @@ class Llama(Model):
             log_error(f"Error from Llama API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> AsyncIterator[CreateChatCompletionResponseStreamChunk]:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> AsyncIterator[CreateChatCompletionResponseStreamChunk]:
         """
         Sends an asynchronous streaming chat completion request to the Llama API.
         """
@@ -306,7 +318,9 @@ class Llama(Model):
 
         return tool_calls
 
-    def parse_provider_response(self, response: CreateChatCompletionResponse, response_format: Optional[Union[Dict, Type[BaseModel]]] = None) -> ModelResponse:
+    def parse_provider_response(
+        self, response: CreateChatCompletionResponse, response_format: Optional[Union[Dict, Type[BaseModel]]] = None
+    ) -> ModelResponse:
         """
         Parse the Llama response into a ModelResponse.
         """

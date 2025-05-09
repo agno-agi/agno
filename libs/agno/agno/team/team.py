@@ -788,7 +788,7 @@ class Team:
         self.model = cast(Model, self.model)
 
         # Configure parameters for the model
-        response_format  = self._get_response_format()
+        response_format = self._get_response_format()
 
         # 1. Reason about the task(s) if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
@@ -804,7 +804,14 @@ class Team:
         index_of_last_user_message = len(run_messages.messages)
 
         # 2. Get the model response for the team leader
-        model_response = self.model.response(messages=run_messages.messages, response_format=response_format, tools=self._tools_for_model, functions=self._functions_for_model, tool_choice=self.tool_choice, tool_call_limit=self.tool_call_limit)  # type: ignore
+        model_response = self.model.response(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        )  # type: ignore
 
         # 3. Update TeamRunResponse
         # Handle structured outputs
@@ -979,7 +986,7 @@ class Team:
         self.model = cast(Model, self.model)
 
         # Configure parameters for the model
-        response_format  = self._get_response_format()
+        response_format = self._get_response_format()
 
         reasoning_started = False
         reasoning_time_taken = 0.0
@@ -1005,7 +1012,14 @@ class Team:
 
         # 2. Get a response from the model
         full_model_response = ModelResponse()
-        model_stream = self.model.response_stream(messages=run_messages.messages, response_format=response_format, tools=self._tools_for_model, functions=self._functions_for_model, tool_choice=self.tool_choice, tool_call_limit=self.tool_call_limit)  # type: ignore
+        model_stream = self.model.response_stream(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        )  # type: ignore
         for model_response_chunk in model_stream:
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
@@ -1530,7 +1544,7 @@ class Team:
         self.model = cast(Model, self.model)
 
         # Configure parameters for the model
-        response_format  = self._get_response_format()
+        response_format = self._get_response_format()
 
         # 1. Reason about the task(s) if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
@@ -1547,7 +1561,14 @@ class Team:
         index_of_last_user_message = len(run_messages.messages)
 
         # 2. Get the model response for the team leader
-        model_response = await self.model.aresponse(messages=run_messages.messages, response_format=response_format, tools=self._tools_for_model, functions=self._functions_for_model, tool_choice=self.tool_choice, tool_call_limit=self.tool_call_limit)  # type: ignore
+        model_response = await self.model.aresponse(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        )  # type: ignore
 
         # 3. Update TeamRunResponse
         # Handle structured outputs
@@ -1722,7 +1743,7 @@ class Team:
         self.model = cast(Model, self.model)
 
         # Configure parameters for the model
-        response_format  = self._get_response_format()
+        response_format = self._get_response_format()
 
         reasoning_started = False
         reasoning_time_taken = 0.0
@@ -1749,7 +1770,14 @@ class Team:
 
         # 2. Get a response from the model
         full_model_response = ModelResponse()
-        model_stream = self.model.aresponse_stream(messages=run_messages.messages, response_format=response_format, tools=self._tools_for_model, functions=self._functions_for_model, tool_choice=self.tool_choice, tool_call_limit=self.tool_call_limit)  # type: ignore
+        model_stream = self.model.aresponse_stream(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        )  # type: ignore
         async for model_response_chunk in model_stream:
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
@@ -4295,9 +4323,9 @@ class Team:
             else:
                 log_warning("Context is not a dict")
 
-
-
-    def determine_tools_for_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> Tuple[List[Dict], Dict[str, Function]]:
+    def determine_tools_for_model(
+        self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]
+    ) -> Tuple[List[Dict], Dict[str, Function]]:
         if self._tools_for_model is None:
             self._functions_for_model: Dict[str, Function] = {}
             self._tools_for_model: List[Dict] = []
@@ -4308,7 +4336,11 @@ class Team:
 
                 # Check if we need strict mode for the model
                 strict = False
-                if self.response_model is not None and not self.use_json_mode and model.supports_native_structured_outputs:
+                if (
+                    self.response_model is not None
+                    and not self.use_json_mode
+                    and model.supports_native_structured_outputs
+                ):
                     strict = True
 
                 for tool in tools:
@@ -6538,7 +6570,9 @@ class Team:
         functions = {}
         if self._functions_for_model:
             functions = {
-                f_name: func.to_dict() for f_name, func in self._functions_for_model.items() if isinstance(func, Function)
+                f_name: func.to_dict()
+                for f_name, func in self._functions_for_model.items()
+                if isinstance(func, Function)
             }
 
         run_data: Dict[str, Any] = {

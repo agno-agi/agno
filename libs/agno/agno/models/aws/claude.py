@@ -3,12 +3,13 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Type, Union
 
+from pydantic import BaseModel
+
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.media import Image
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
-from pydantic import BaseModel
 
 try:
     from anthropic import AnthropicBedrock, APIConnectionError, APIStatusError, AsyncAnthropicBedrock, RateLimitError
@@ -307,10 +308,13 @@ class Claude(AnthropicClaude):
             _request_params.update(self.request_params)
         return _request_params
 
-    def invoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> AnthropicMessage:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> AnthropicMessage:
         """
         Send a request to the Anthropic API to generate a response.
         """
@@ -339,10 +343,13 @@ class Claude(AnthropicClaude):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Any:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Any:
         """
         Stream a response from the Anthropic API.
         """
@@ -375,10 +382,13 @@ class Claude(AnthropicClaude):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> AnthropicMessage:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> AnthropicMessage:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
         """
@@ -407,10 +417,13 @@ class Claude(AnthropicClaude):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> AsyncIterator[Any]:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> AsyncIterator[Any]:
         """
         Stream an asynchronous response from the Anthropic API.
         """

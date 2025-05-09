@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Union, Type
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel
@@ -157,10 +157,12 @@ class OpenAIChat(Model):
             )
         return AsyncOpenAIClient(**client_params)
 
-    def get_request_kwargs(self,
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Dict[str, Any]:
+    def get_request_kwargs(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -302,11 +304,13 @@ class OpenAIChat(Model):
             message_dict["content"] = None
         return message_dict
 
-    def invoke(self,
-               messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Union[ChatCompletion, ParsedChatCompletion]:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Union[ChatCompletion, ParsedChatCompletion]:
         """
         Send a chat completion request to the OpenAI API.
 
@@ -323,7 +327,9 @@ class OpenAIChat(Model):
                     return self.get_client().beta.chat.completions.parse(
                         model=self.id,
                         messages=[self._format_message(m) for m in messages],  # type: ignore
-                        **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                        **self.get_request_kwargs(
+                            response_format=response_format, tools=tools, tool_choice=tool_choice
+                        ),
                     )
                 else:
                     raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
@@ -371,10 +377,13 @@ class OpenAIChat(Model):
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Union[ChatCompletion, ParsedChatCompletion]:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Union[ChatCompletion, ParsedChatCompletion]:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
 
@@ -390,7 +399,9 @@ class OpenAIChat(Model):
                     return await self.get_async_client().beta.chat.completions.parse(
                         model=self.id,
                         messages=[self._format_message(m) for m in messages],  # type: ignore
-                        **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                        **self.get_request_kwargs(
+                            response_format=response_format, tools=tools, tool_choice=tool_choice
+                        ),
                     )
                 else:
                     raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
@@ -437,10 +448,13 @@ class OpenAIChat(Model):
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Iterator[ChatCompletionChunk]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Iterator[ChatCompletionChunk]:
         """
         Send a streaming chat completion request to the OpenAI API.
 
@@ -497,10 +511,13 @@ class OpenAIChat(Model):
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-                tool_choice: Optional[str] = None) -> AsyncIterator[ChatCompletionChunk]:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> AsyncIterator[ChatCompletionChunk]:
         """
         Sends an asynchronous streaming chat completion request to the OpenAI API.
 
@@ -600,7 +617,11 @@ class OpenAIChat(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion], response_format: Optional[Union[Dict, Type[BaseModel]]] = None,) -> ModelResponse:
+    def parse_provider_response(
+        self,
+        response: Union[ChatCompletion, ParsedChatCompletion],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
         """
@@ -620,7 +641,8 @@ class OpenAIChat(Model):
         try:
             if (
                 response_format is not None
-                and isinstance(response_format, type) and issubclass(response_format, BaseModel)
+                and isinstance(response_format, type)
+                and issubclass(response_format, BaseModel)
             ):
                 parsed_object = response_message.parsed  # type: ignore
                 if parsed_object is not None:

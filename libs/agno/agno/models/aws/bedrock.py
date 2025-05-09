@@ -3,12 +3,14 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 
+from pydantic import BaseModel
+
 from agno.exceptions import AgnoError, ModelProviderError
 from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
-from pydantic import BaseModel
+
 try:
     from boto3 import client as AwsClient
     from boto3.session import Session
@@ -210,10 +212,13 @@ class AwsBedrock(Model):
         # TODO: Add caching: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-call.html
         return formatted_messages, system_message
 
-    def invoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Dict[str, Any]:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Invoke the Bedrock API.
         """
@@ -242,11 +247,13 @@ class AwsBedrock(Model):
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self,
-                      messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Iterator[Dict[str, Any]]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Iterator[Dict[str, Any]]:
         """
         Invoke the Bedrock API with streaming.
         """
@@ -359,10 +366,9 @@ class AwsBedrock(Model):
         content = []
         tool_ids = []
 
-        for response_delta in self.invoke_stream(messages=messages,
-                                                 response_format=response_format,
-                                                 tools=tools,
-                                                 tool_choice=tool_choice):
+        for response_delta in self.invoke_stream(
+            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+        ):
             model_response = ModelResponse(role="assistant")
             should_yield = False
             if "contentBlockStart" in response_delta:

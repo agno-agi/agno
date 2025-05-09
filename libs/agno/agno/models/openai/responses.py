@@ -1,6 +1,6 @@
 import time
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Union, Type
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 import httpx
 from pydantic import BaseModel
@@ -152,7 +152,11 @@ class OpenAIResponses(Model):
         return self.async_client
 
     def get_request_params(
-        self, messages: List[Message], response_format: Optional[Union[Dict, Type[BaseModel]]] = None,tools: Optional[List[Dict[str, Any]]] = None, tool_choice: Optional[str] = None
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -282,7 +286,9 @@ class OpenAIResponses(Model):
             time.sleep(1)
         return vector_store.id
 
-    def _format_tool_params(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    def _format_tool_params(
+        self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None
+    ) -> List[Dict[str, Any]]:
         """Format the tool parameters for the OpenAI Responses API."""
         formatted_tools = []
         if tools:
@@ -382,15 +388,20 @@ class OpenAIResponses(Model):
                     )
         return formatted_messages
 
-    def invoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Response:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Response:
         """
         Send a request to the OpenAI Responses API.
         """
         try:
-            request_params = self.get_request_params(messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice)
+            request_params = self.get_request_params(
+                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+            )
 
             return self.get_client().responses.create(
                 model=self.id,
@@ -413,7 +424,7 @@ class OpenAIResponses(Model):
             ) from exc
         except APIConnectionError as exc:
             log_error(f"API connection error from OpenAI API: {exc}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from exc
+            raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
             error_message = exc.response.json().get("error", {})
@@ -432,15 +443,20 @@ class OpenAIResponses(Model):
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
-    async def ainvoke(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Response:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Response:
         """
         Sends an asynchronous request to the OpenAI Responses API.
         """
         try:
-            request_params = self.get_request_params(messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice)
+            request_params = self.get_request_params(
+                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+            )
 
             return await self.get_async_client().responses.create(
                 model=self.id,
@@ -482,15 +498,20 @@ class OpenAIResponses(Model):
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
-    def invoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> Iterator[ResponseStreamEvent]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> Iterator[ResponseStreamEvent]:
         """
         Send a streaming request to the OpenAI Responses API.
         """
         try:
-            request_params = self.get_request_params(messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice)
+            request_params = self.get_request_params(
+                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+            )
 
             yield from self.get_client().responses.create(
                 model=self.id,
@@ -533,15 +554,20 @@ class OpenAIResponses(Model):
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
-    async def ainvoke_stream(self, messages: List[Message],
-               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-               tools: Optional[List[Dict[str, Any]]] = None,
-               tool_choice: Optional[str] = None) -> AsyncIterator[ResponseStreamEvent]:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+    ) -> AsyncIterator[ResponseStreamEvent]:
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
         """
         try:
-            request_params = self.get_request_params(messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice)
+            request_params = self.get_request_params(
+                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+            )
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
@@ -769,7 +795,10 @@ class OpenAIResponses(Model):
         return model_response, tool_use
 
     def process_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data: MessageData,
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data: MessageData,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[str] = None,
@@ -789,7 +818,10 @@ class OpenAIResponses(Model):
                 yield model_response
 
     async def aprocess_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data: MessageData,
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data: MessageData,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[str] = None,

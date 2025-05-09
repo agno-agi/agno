@@ -605,7 +605,7 @@ class Agent:
 
         # 2.1 Prepare arguments for the model
         self.set_default_model()
-        response_format  = self._get_response_format()
+        response_format = self._get_response_format()
         self.determine_tools_for_model(model=self.model, session_id=session_id, user_id=user_id, async_mode=False)
 
         self.run_response.model = self.model.id if self.model is not None else None
@@ -659,7 +659,14 @@ class Agent:
         reasoning_time_taken = 0.0
         if self.stream:
             model_response = ModelResponse()
-            for model_response_chunk in self.model.response_stream(messages=run_messages.messages, response_format=response_format, tools=self._tools_for_model, functions=self._functions_for_model, tool_choice=self.tool_choice, tool_call_limit=self.tool_call_limit):
+            for model_response_chunk in self.model.response_stream(
+                messages=run_messages.messages,
+                response_format=response_format,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+            ):
                 # If the model response is an assistant_response, yield a RunResponse
                 if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
                     # Process content and thinking
@@ -815,7 +822,14 @@ class Agent:
                         )
         else:
             # Get the model response
-            model_response = self.model.response(messages=run_messages.messages, response_format=response_format, tools=self._tools_for_model, functions=self._functions_for_model, tool_choice=self.tool_choice, tool_call_limit=self.tool_call_limit)
+            model_response = self.model.response(
+                messages=run_messages.messages,
+                response_format=response_format,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+            )
             # Format tool calls if they exist
             if model_response.tool_calls:
                 self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
@@ -1262,7 +1276,7 @@ class Agent:
 
         # 2.1 Prepare arguments for the model
         self.set_default_model()
-        response_format  = self._get_response_format()
+        response_format = self._get_response_format()
         self.determine_tools_for_model(model=self.model, session_id=session_id, user_id=user_id, async_mode=True)
 
         self.run_response.model = self.model.id if self.model is not None else None
@@ -1317,7 +1331,14 @@ class Agent:
         self.model = cast(Model, self.model)
         if stream and self.is_streamable:
             model_response = ModelResponse(content="")
-            model_response_stream = self.model.aresponse_stream(messages=run_messages.messages, response_format=response_format, tools=self._tools_for_model, functions=self._functions_for_model, tool_choice=self.tool_choice, tool_call_limit=self.tool_call_limit)  # type: ignore
+            model_response_stream = self.model.aresponse_stream(
+                messages=run_messages.messages,
+                response_format=response_format,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+            )  # type: ignore
             async for model_response_chunk in model_response_stream:  # type: ignore
                 # If the model response is an assistant_response, yield a RunResponse
                 if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
@@ -1470,7 +1491,14 @@ class Agent:
                         )
         else:
             # Get the model response
-            model_response = await self.model.aresponse(messages=run_messages.messages, response_format=response_format, tools=self._tools_for_model, functions=self._functions_for_model, tool_choice=self.tool_choice, tool_call_limit=self.tool_call_limit)
+            model_response = await self.model.aresponse(
+                messages=run_messages.messages,
+                response_format=response_format,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+            )
             # Format tool calls if they exist
             if model_response.tool_calls:
                 self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
@@ -2081,7 +2109,11 @@ class Agent:
                             log_warning(f"Could not add tool {tool}: {e}")
 
     def _model_should_return_structured_output(self):
-        return bool(self.model.supports_native_structured_outputs and self.response_model is not None and (not self.use_json_mode or self.structured_outputs))
+        return bool(
+            self.model.supports_native_structured_outputs
+            and self.response_model is not None
+            and (not self.use_json_mode or self.structured_outputs)
+        )
 
     def _get_response_format(self) -> Optional[Union[Dict, Type[BaseModel]]]:
         if self.response_model is None:
@@ -2115,7 +2147,6 @@ class Agent:
             else:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
-
 
     def resolve_run_context(self) -> None:
         from inspect import signature
@@ -4370,7 +4401,9 @@ class Agent:
         functions = {}
         if self._functions_for_model is not None:
             functions = {
-                f_name: func.to_dict() for f_name, func in self._functions_for_model.items() if isinstance(func, Function)
+                f_name: func.to_dict()
+                for f_name, func in self._functions_for_model.items()
+                if isinstance(func, Function)
             }
 
         run_data: Dict[str, Any] = {
