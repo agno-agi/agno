@@ -3,7 +3,6 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
 from agno.models.cerebras import CerebrasOpenAI
-from agno.storage.sqlite import SqliteStorage
 
 
 def _assert_metrics(response: RunResponse):
