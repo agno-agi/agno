@@ -1,10 +1,11 @@
 """
 Notion MCP Agent - Manages your documents
 
-This example shows how to use the Agno MCP tools to manage your documents.
+This example shows how to use the Agno MCP tools to interact with your Notion workspace.
 
 1. Start by setting up a new internal integration in Notion: https://www.notion.so/profile/integrations
-2. Set the internal integrate key as the NOTION_API_KEY environment variable
+2. Export your new Notion key: `export NOTION_API_KEY=ntn_****`
+3. Connect your relevant Notion pages to the integration. To do this, you'll need to visit that page, and click on the 3 dots, and select "Connect to integration".
 
 Dependencies: pip install agno mcp openai
 
