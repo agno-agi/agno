@@ -31,12 +31,6 @@ class AwsBedrock(Model):
     2. Or provide a boto3 Session object
 
     Not all Bedrock models support all features. See this documentation for more information: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html
-
-    Args:
-        aws_region (Optional[str]): The AWS region to use.
-        aws_access_key_id (Optional[str]): The AWS access key ID to use.
-        aws_secret_access_key (Optional[str]): The AWS secret access key to use.
-        session (Optional[Session]): A boto3 Session object to use for authentication.
     """
 
     id: str = "mistral.mistral-small-2402-v1:0"
@@ -58,6 +52,12 @@ class AwsBedrock(Model):
     client: Optional[AwsClient] = None
 
     def get_client(self) -> AwsClient:
+        """
+        Get the Bedrock client.
+
+        Returns:
+            AwsClient: The Bedrock client.
+        """
         if self.client is not None:
             return self.client
 
@@ -84,6 +84,12 @@ class AwsBedrock(Model):
         return self.client
 
     def _format_tools_for_request(self) -> List[Dict[str, Any]]:
+        """
+        Format the tools for the request.
+
+        Returns:
+            List[Dict[str, Any]]: The formatted tools.
+        """
         tools = []
         if self._functions is not None:
             for f_name, function in self._functions.items():
@@ -118,6 +124,12 @@ class AwsBedrock(Model):
         return tools
 
     def _get_inference_config(self) -> Dict[str, Any]:
+        """
+        Get the inference config.
+
+        Returns:
+            Dict[str, Any]: The inference config.
+        """
         request_kwargs = {
             "maxTokens": self.max_tokens,
             "temperature": self.temperature,
@@ -128,6 +140,12 @@ class AwsBedrock(Model):
         return {k: v for k, v in request_kwargs.items() if v is not None}
 
     def _format_messages(self, messages: List[Message]) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+        """
+        Format the messages for the request.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]: The formatted messages.
+        """
         formatted_messages: List[Dict[str, Any]] = []
         system_message = None
         for message in messages:
@@ -305,6 +323,15 @@ class AwsBedrock(Model):
             messages.append(Message(role="user", content=tool_result_content))
 
     def parse_provider_response(self, response: Dict[str, Any]) -> ModelResponse:
+        """
+        Parse the provider response.
+
+        Args:
+            response (Dict[str, Any]): The response from the provider.
+
+        Returns:
+            ModelResponse: The parsed response.
+        """
         model_response = ModelResponse()
 
         if "output" in response and "message" in response["output"]:
@@ -353,7 +380,14 @@ class AwsBedrock(Model):
     def process_response_stream(
         self, messages: List[Message], assistant_message: Message, stream_data: MessageData
     ) -> Iterator[ModelResponse]:
-        """Process the synchronous response stream."""
+        """
+        Process the synchronous response stream.
+
+        Args:
+            messages (List[Message]): The messages to include in the request.
+            assistant_message (Message): The assistant message.
+            stream_data (MessageData): The stream data.
+        """
         tool_use: Dict[str, Any] = {}
         content = []
         tool_ids = []

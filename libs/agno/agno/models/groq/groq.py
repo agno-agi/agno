@@ -17,7 +17,7 @@ try:
     from groq import Groq as GroqClient
     from groq.types.chat import ChatCompletion
     from groq.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDelta, ChoiceDeltaToolCall
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     raise ImportError("`groq` not installed. Please install using `pip install groq`")
 
 
