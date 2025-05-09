@@ -80,7 +80,7 @@ class Clickhouse(VectorDb):
         if self.async_client is None:
             self.async_client = await clickhouse_connect.get_async_client(
                 host=self.host,
-                username=self.username,
+                username=self.username or "default",
                 password=self.password,
                 database=self.database_name,
                 port=self.port,
