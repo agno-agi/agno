@@ -2761,7 +2761,6 @@ class Agent:
                 additional_information.append(
                     dedent(f"""
                     The knowledge base contains documents with these metadata filters: {valid_filters_str}.
-                    When searching the knowledge base, you MUST use these filters to narrow down results.
                     Always use filters when the user query indicates specific metadata.
 
                     Examples:
