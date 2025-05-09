@@ -154,11 +154,11 @@ class Workflow:
         # Update workflow_id for all agents before registration
         for field_name, value in self.__class__.__dict__.items():
             if isinstance(value, Agent):
-                value.initialize_agent() # Initialize agent to ensure agent_id is set
+                value.initialize_agent()
                 value.workflow_id = self.workflow_id
                 print(value.agent_id)
             if isinstance(value, Team):
-                value.initialize_team() # Initialize team to ensure team_id is set
+                value.initialize_team()
                 value.workflow_id = self.workflow_id
                 print(value.team_id)
 
@@ -671,18 +671,13 @@ class Workflow:
         if not self.monitoring:
             return
 
-        # Ensure workflow_id is set
         if not self.workflow_id:
             self.set_workflow_id()
 
-        # Initialize agents and teams with the workflow_id
-
         try:
-            # Import here to avoid circular imports
             from agno.api.schemas.workflows import WorkflowCreate
             from agno.api.workflows import create_workflow
 
-            # Get complete workflow configuration
             workflow_config = self.to_config_dict()
             log_debug(f"Registering workflow: {self.name} (ID: {self.workflow_id})")
             print(f"Workflow config: {workflow_config}")
@@ -693,7 +688,7 @@ class Workflow:
                 )
             )
 
-            # log_debug(f"Successfully registered workflow: {self.name} (ID: {self.workflow_id})")
+            log_debug(f"Successfully registered workflow: {self.name} (ID: {self.workflow_id})")
             return True
         except Exception as e:
             log_warning(f"Failed to register workflow: {e}")
@@ -720,7 +715,6 @@ class Workflow:
         agents = []
         teams = []
 
-        # Then check class attributes which is where agents/teams are typically defined in Workflow subclasses
         for attr_name in dir(self.__class__):
             # Skip private/special attributes and methods
             if attr_name.startswith("_") or callable(getattr(self.__class__, attr_name)):
