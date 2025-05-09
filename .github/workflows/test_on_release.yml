@@ -529,7 +529,7 @@ jobs:
           python -m pytest ./libs/agno/tests/integration/models/ibm/watsonx
 
   # Run tests for Cerebras
-  test-google:
+  test-cerebras:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -551,7 +551,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Run Google tests
+      - name: Run Cerebras tests
         working-directory: .
         run: |
           source .venv/bin/activate
