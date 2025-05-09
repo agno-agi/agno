@@ -13,8 +13,9 @@ class CerebrasOpenAI(OpenAILike):
     name: str = "CerebrasOpenAI"
     provider: str = "CerebrasOpenAI"
 
-    api_key: Optional[str] = getenv("CEREBRAS_API_KEY", None)
+    parallel_tool_calls: bool = False
     base_url: str = "https://api.cerebras.ai/v1"
+    api_key: Optional[str] = getenv("CEREBRAS_API_KEY", None)
 
     @property
     def request_kwargs(self) -> Dict[str, Any]:
@@ -42,7 +43,7 @@ class CerebrasOpenAI(OpenAILike):
                 for tool in self._tools
             ]
             # Cerebras requires parallel_tool_calls=False for llama-4-scout-17b-16e-instruct
-            request_params["parallel_tool_calls"] = False
+            request_params["parallel_tool_calls"] = self.parallel_tool_calls
 
         return request_params
 

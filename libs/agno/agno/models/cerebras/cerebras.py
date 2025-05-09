@@ -16,7 +16,10 @@ try:
     from cerebras.cloud.sdk import Cerebras as CerebrasClient
     from cerebras.cloud.sdk.types.chat.chat_completion import (
         ChatChunkResponse,
+        ChatChunkResponseChoice,
+        ChatChunkResponseChoiceDelta,
         ChatCompletionResponse,
+        ChatCompletionResponseChoice,
         ChatCompletionResponseChoiceMessage,
     )
     from cerebras.cloud.sdk.types.completion import CompletionResponse
@@ -27,16 +30,18 @@ except (ImportError, ModuleNotFoundError):
 @dataclass
 class Cerebras(Model):
     """
-    A class for interacting with Cerebras models using the Cerebras API.
+    A class for interacting with models using the Cerebras API.
     """
 
     id: str = "llama-4-scout-17b-16e-instruct"
     name: str = "Cerebras"
     provider: str = "Cerebras"
+
     supports_native_structured_outputs: bool = False
     supports_json_schema_outputs: bool = True
 
     # Request parameters
+    parallel_tool_calls: bool = False
     max_completion_tokens: Optional[int] = None
     repetition_penalty: Optional[float] = None
     temperature: Optional[float] = None
@@ -162,23 +167,21 @@ class Cerebras(Model):
                 for tool in self._tools
             ]
             # Cerebras requires parallel_tool_calls=False for llama-4-scout-17b-16e-instruct
-            request_params["parallel_tool_calls"] = False
+            request_params["parallel_tool_calls"] = self.parallel_tool_calls
 
         # Handle response format for structured outputs
-        if (
-            isinstance(self.response_format, dict)
-            and "type" in self.response_format
-            and self.response_format["type"] == "json_schema"
-            and "json_schema" in self.response_format
-            and isinstance(self.response_format["json_schema"], dict)
-        ):
-            # Ensure json_schema has strict=True as required by Cerebras API-- Reference: https://arc.net/l/quote/tkifovqh
-            schema = self.response_format["json_schema"]
-            if "schema" in schema:
-                if "strict" not in schema:
+        if self.response_format is not None:
+            if (
+                isinstance(self.response_format, dict)
+                and self.response_format.get("type") == "json_schema"
+                and isinstance(self.response_format.get("json_schema"), dict)
+            ):
+                # Ensure json_schema has strict=True as required by Cerebras API
+                schema = self.response_format["json_schema"]
+                if isinstance(schema.get("schema"), dict) and "strict" not in schema:
                     schema["strict"] = True
 
-            request_params["response_format"] = self.response_format
+                request_params["response_format"] = self.response_format
 
         # Add additional request params if provided
         if self.request_params:
@@ -317,27 +320,27 @@ class Cerebras(Model):
         model_response = ModelResponse()
 
         # Get the first choice (assuming single response)
-        choice = response.choices[0]
+        choice: ChatCompletionResponseChoice = response.choices[0]
         message: ChatCompletionResponseChoiceMessage = choice.message
 
         # Add role
-        if message.role:
+        if message.role is not None:
             model_response.role = message.role
 
         # Add content
-        if message.content:
+        if message.content is not None:
             model_response.content = message.content
 
         # Add tool calls
-        if message.tool_calls:
+        if message.tool_calls is not None:
             try:
                 model_response.tool_calls = [
                     {
                         "id": tool_call.id,
                         "type": tool_call.type,
                         "function": {
-                            "name": tool_call.function.name,  # type: ignore
-                            "arguments": tool_call.function.arguments,  # type: ignore
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments,
                         },
                     }
                     for tool_call in message.tool_calls
@@ -368,26 +371,27 @@ class Cerebras(Model):
         model_response = ModelResponse()
 
         # Get the first choice (assuming single response)
-        choice = response_delta.choices[0]  # type: ignore
-        delta = choice.delta
+        if response_delta.choices is not None:
+            choice: ChatChunkResponseChoice = response_delta.choices[0]
+            delta: ChatChunkResponseChoiceDelta = choice.delta
 
-        # Add content
-        if delta.content:
-            model_response.content = delta.content
+            # Add content
+            if delta.content:
+                model_response.content = delta.content
 
-        # Add tool calls
-        if delta.tool_calls:
-            model_response.tool_calls = [
-                {
-                    "id": tool_call.id,
-                    "type": tool_call.type,
-                    "function": {
-                        "name": tool_call.function.name,  # type: ignore
-                        "arguments": tool_call.function.arguments,  # type: ignore
-                    },
-                }
-                for tool_call in delta.tool_calls
-            ]
+            # Add tool calls
+            if delta.tool_calls:
+                model_response.tool_calls = [
+                    {
+                        "id": tool_call.id,
+                        "type": tool_call.type,
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments,
+                        },
+                    }
+                    for tool_call in delta.tool_calls
+                ]
 
         # Add usage metrics
         if response_delta.usage:

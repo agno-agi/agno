@@ -25,13 +25,11 @@ class MovieScript(BaseModel):
     )
 
 
-# Agent that uses a JSON schema output
-json_schema_output_agent = Agent(
+# Agent that uses a structured output
+structured_output_agent = Agent(
     model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
     description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
     response_model=MovieScript,
-    show_tool_calls=True,
-    debug_mode=True,
 )
 
-json_schema_output_agent.print_response("New York")
+structured_output_agent.print_response("New York")
