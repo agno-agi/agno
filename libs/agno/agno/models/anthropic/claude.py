@@ -516,8 +516,8 @@ class Claude(Model):
                         model_response.citations.urls.append(UrlCitation(url=citation.url, title=citation.cited_text))  # type: ignore
                     # Document citations
                     elif isinstance(citation, CitationPageLocation):
-                        model_response.citations.documents.append(
-                            DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)  # type: ignore
+                        model_response.citations.documents.append(  # type: ignore
+                            DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
                         )
 
         # Handle message completion and usage metrics
