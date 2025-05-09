@@ -2,8 +2,6 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Optional, Union
 
-from pydantic import BaseModel
-
 from agno.exceptions import ModelProviderError
 from agno.models.message import Citations, UrlCitation
 from agno.models.response import ModelResponse
