@@ -376,8 +376,8 @@ class Team:
         self.team_session: Optional[TeamSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
-        self._functions_for_model: Dict[str, Function] = {}
-        self._tools_for_model: List[Dict] = []
+        self._functions_for_model: Dict[str, Function] = None
+        self._tools_for_model: List[Dict] = None
 
         # True if we should parse a member response model
         self._member_response_model: Optional[Type[BaseModel]] = None
