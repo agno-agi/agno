@@ -43,6 +43,7 @@ dependencies = [
   "tomli",
   "typer",
   "typing-extensions",
+  "opensearch-py"
 ]
 
 [project.optional-dependencies]
