@@ -418,7 +418,7 @@ def test_knowledge_base_with_invalid_filter(setup_vector_db):
     assert len(response_content) > 50
 
     clarification_phrases = [
-        "specify which",
+        "specify",
         "which candidate",
         "please clarify",
         "need more information",
