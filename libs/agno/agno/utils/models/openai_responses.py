@@ -1,7 +1,8 @@
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
-from agno.media import Image
+from agno.media import File, Image
+from agno.utils.file_utils import prepare_inline_files
 from agno.utils.log import logger
 
 
@@ -122,3 +123,42 @@ def sanitize_response_schema(schema: dict):
     elif isinstance(schema, list):
         for item in schema:
             sanitize_response_schema(item)
+
+
+# Utility to process files for the OpenAI Responses API
+def files_to_message(
+    files: Sequence[File],
+    upload_file: Callable[[File], Optional[str]],
+) -> List[Dict[str, Any]]:
+    """
+    Adds files to a message for the model. We upload PDFs and inline all other files.
+
+    Args:
+        files: Sequence of files in various formats:
+            - str: base64 encoded image, URL, or file path
+
+    Returns:
+        Message content with files added in the format expected by the model
+    """
+    upload_items: List[Dict[str, Any]] = []
+    to_upload = [file for file in files if Path(file.filepath or file.url or "").suffix.lower() == ".pdf"]
+    for file_obj in to_upload:
+        file_id = upload_file(file_obj)
+        if file_id:
+            upload_items.append({"type": "input_file", "file_id": file_id})
+    to_inline = [file for file in files if file not in to_upload]
+    extracted_items = prepare_inline_files(to_inline)
+    inline_items: List[Dict[str, Any]] = []
+    for part in extracted_items:
+        if part.get("type") == "text":
+            inline_items.append({"type": "input_text", "text": part.get("text", "")})
+        elif part.get("type") == "file" and "file" in part:
+            finfo = part["file"]
+            inline_items.append(
+                {
+                    "type": "input_file",
+                    "filename": finfo.get("filename"),
+                    "file_data": finfo.get("file_data"),
+                }
+            )
+    return upload_items + inline_items

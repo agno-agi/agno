@@ -11,8 +11,9 @@ from agno.media import AudioResponse
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
-from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
+from agno.utils.file_utils import prepare_inline_files
+from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.openai import audio_to_message, images_to_message
 
 try:
     from openai import APIConnectionError, APIStatusError, RateLimitError
@@ -42,6 +43,7 @@ class OpenAIChat(Model):
     name: str = "OpenAIChat"
     provider: str = "OpenAI"
     supports_native_structured_outputs: bool = True
+    supports_native_file_upload: bool = False
 
     # Request parameters
     store: Optional[bool] = None
@@ -287,23 +289,22 @@ class OpenAIChat(Model):
         if message.videos is not None and len(message.videos) > 0:
             log_warning("Video input is currently unsupported.")
 
+        if message.files is not None and len(message.files) > 0:
+            log_debug(f"Inlining files for chat: {message.files}")
+
+            inline_items = prepare_inline_files(message.files)
+            existing = message_dict.get("content")
+            if isinstance(existing, str):
+                base = [{"type": "text", "text": existing}]
+            elif isinstance(existing, list):
+                base = existing
+            else:
+                base = []
+            message_dict["content"] = base + inline_items
+
         # OpenAI expects the tool_calls to be None if empty, not an empty list
         if message.tool_calls is not None and len(message.tool_calls) == 0:
             message_dict["tool_calls"] = None
-
-        if message.files is not None:
-            # Ensure content is a list of parts
-            content = message_dict.get("content")
-            if isinstance(content, str):  # wrap existing text
-                text = content
-                message_dict["content"] = [{"type": "text", "text": text}]
-            elif content is None:
-                message_dict["content"] = []
-            # Insert each file part before text parts
-            for file in message.files:
-                file_part = _format_file_for_message(file)
-                if file_part:
-                    message_dict["content"].insert(0, file_part)
 
         # Manually add the content field even if it is None
         if message.content is None:

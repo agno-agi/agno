@@ -281,8 +281,17 @@ class File(BaseModel):
     # Raw bytes content of a file
     content: Optional[Any] = None
     mime_type: Optional[str] = None
-    # External file object (e.g. GeminiFile, must be a valid object as expected by the model you are using)
+    # External file object (e.g. GeminiFile)
     external: Optional[Any] = None
+    # Optional reader for text extraction (e.g. PDFReader, GoogleDocumentAIReader)
+    reader: Optional[Any] = None
+
+    @field_validator("filepath", mode="before")
+    @classmethod
+    def _convert_filepath_str_to_path(cls, v):
+        if isinstance(v, str):
+            return Path(v)
+        return v
 
     @model_validator(mode="before")
     @classmethod

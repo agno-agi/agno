@@ -1,7 +1,11 @@
+import base64
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
-from agno.media import Image
+from google.genai.types import Part
+
+from agno.media import File, Image
+from agno.utils.file_utils import prepare_inline_files
 from agno.utils.log import log_error, log_warning
 
 try:
@@ -22,8 +26,6 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         content_bytes = image.image_url_content
         if content_bytes is not None:
             try:
-                import base64
-
                 image_data = {
                     "mime_type": "image/jpeg",
                     "data": base64.b64encode(content_bytes).decode("utf-8"),
@@ -57,8 +59,6 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     # Case 3: Image is a bytes object
     # Add it as base64 encoded data
     elif image.content is not None and isinstance(image.content, bytes):
-        import base64
-
         image_data = {"mime_type": "image/jpeg", "data": base64.b64encode(image.content).decode("utf-8")}
         return image_data
     else:
@@ -171,3 +171,59 @@ def format_function_definitions(tools_list: List[Dict[str, Any]]) -> Optional[To
         return Tool(function_declarations=function_declarations)
     else:
         return None
+
+
+def format_files_for_message(
+    files: List[File],
+    upload_file_to_parts: Callable[[File], List[Part]],
+    threshold: int = 20 * 1024 * 1024,
+) -> List[Part]:
+    """
+    Process files for Gemini messages:
+    - Upload large PDFs via upload_file_to_parts callback
+    - Inline small PDFs and all other files via prepare_inline_files
+    """
+    parts: List[Part] = []
+    inline_candidates: List[File] = []
+    upload_candidates: List[File] = []
+    # Classify by PDF extension and size
+    for f in files:
+        src = f.filepath or f.url or ""
+        if Path(src).suffix.lower() == ".pdf":
+            try:
+                data = Path(f.filepath).read_bytes() if f.filepath else f.file_url_content[0]
+                (upload_candidates if len(data) > threshold else inline_candidates).append(f)
+            except Exception:
+                inline_candidates.append(f)
+        else:
+            inline_candidates.append(f)
+
+    # Upload large PDFs
+    for f in upload_candidates:
+        try:
+            parts.extend(upload_file_to_parts(f))
+        except Exception as e:
+            log_error(f"Error uploading file {f}: {e}")
+
+    # Inline files via shared utility
+    inline_items = prepare_inline_files(inline_candidates)
+    for item in inline_items:
+        t = item.get("type")
+        if t == "text":
+            parts.append(Part.from_text(text=item.get("text", "")))
+        elif t == "file" and "file" in item:
+            finfo = item["file"]
+            header, b64 = finfo.get("file_data", "").split(",", 1)
+            mime = header.split(";", 1)[0].split(":", 1)[1]
+            raw = base64.b64decode(b64)
+            if mime.startswith("text/") or mime == "application/json":
+                try:
+                    txt = raw.decode("utf-8")
+                except Exception:
+                    txt = raw.decode("utf-8", errors="ignore")
+                parts.append(Part.from_text(text=txt))
+            else:
+                parts.append(Part.from_bytes(mime_type=mime, data=raw))
+        elif t == "uri":
+            parts.append(Part.from_uri(file_uri=item.get("uri"), mime_type=item.get("mime_type")))
+    return parts

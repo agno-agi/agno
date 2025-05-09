@@ -13,8 +13,8 @@ from agno.media import Audio, File, ImageArtifact, Video
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.gemini import format_function_definitions, format_image_for_message
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.gemini import format_files_for_message, format_function_definitions, format_image_for_message
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
     from google import genai
@@ -420,18 +420,18 @@ class Gemini(Model):
                         continue
 
                 # Add files to the message for the model
-                if message.files is not None:
-                    for file in message.files:
-                        file_content = self._format_file_for_message(file)
-                        if isinstance(file_content, Part):
-                            formatted_messages.append(file_content)
+                if message.files:
+                    # Process attachments via shared utility
+                    file_parts = format_files_for_message(
+                        message.files, upload_file_to_parts=self._upload_file_and_get_parts
+                    )
+                    for part in reversed(file_parts):
+                        message_parts.insert(0, part)
 
             final_message = Content(role=role, parts=message_parts)
             formatted_messages.append(final_message)
-
-            if isinstance(file_content, GeminiFile):
-                formatted_messages.insert(0, file_content)
-
+        if isinstance(file_content, GeminiFile):
+            formatted_messages.insert(0, file_content)
         return formatted_messages, system_message
 
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:
@@ -548,65 +548,79 @@ class Gemini(Model):
             log_warning(f"Unknown video type: {type(video.content)}")
             return None
 
-    def _format_file_for_message(self, file: File) -> Optional[Part]:
-        # Case 1: File is a bytes object
-        if file.content and isinstance(file.content, bytes):
-            return Part.from_bytes(mime_type=file.mime_type, data=file.content)
+    def _partition_files_by_type(self, files: List[File]) -> tuple[List[File], List[File]]:
+        """Separate files into PDF and non-PDF lists.
 
-        # Case 2: File is a URL
-        elif file.url is not None:
-            url_content = file.file_url_content
-            if url_content is not None:
-                content, mime_type = url_content
-                return Part.from_bytes(mime_type=mime_type, data=content)
+        Args:
+            files: List of files to partition
+
+        Returns:
+            Tuple of (pdf_files, other_files)
+        """
+        pdf_files: List[File] = []
+        other_files: List[File] = []
+
+        for f in files:
+            source = f.filepath or f.url
+            if source and str(source).lower().endswith(".pdf"):
+                pdf_files.append(f)
             else:
-                log_warning(f"Failed to download file from {file.url}")
-                return None
+                other_files.append(f)
 
-        # Case 3: File is a local file path
-        elif file.filepath is not None:
-            file_path = file.filepath if isinstance(file.filepath, Path) else Path(file.filepath)
-            if file_path.exists() and file_path.is_file():
-                if file_path.stat().st_size < 20 * 1024 * 1024:  # 20MB in bytes
-                    if file.mime_type is not None:
-                        return Part.from_bytes(mime_type=file.mime_type, data=file_path.read_bytes())
-                    else:
-                        import mimetypes
+        return pdf_files, other_files
 
-                        return Part.from_bytes(
-                            mime_type=mimetypes.guess_type(file_path)[0], data=file_path.read_bytes()
-                        )
-                else:
-                    clean_file_name = f"files/{file_path.stem.lower().replace('_', '')}"
-                    remote_file = None
-                    try:
-                        remote_file = self.get_client().files.get(name=clean_file_name)
-                    except Exception as e:
-                        log_warning(f"Error getting file {clean_file_name}: {e}")
+    def _upload_file_to_parts(
+        self,
+        f: File,
+        parts: List[Part],
+        clean_name: Optional[str] = None,
+        default_name: bool = False,
+    ):
+        """
+        Helper to upload a file and append a Part.from_uri to parts.
+        If default_name is True, use filename from URL or path for config name.
+        """
+        log_debug(f"Uploading file to parts: {f}")
+        try:
+            remote = None
+            if f.url and default_name:
+                content_tuple = f.file_url_content
+                if not content_tuple:
+                    return
+                content, mime = content_tuple
+                name = f.url.split("/")[-1]
+                remote = self.get_client().files.upload(file=(name, content, mime), config={"name": name})
+            elif f.filepath:
+                path = Path(f.filepath)
+                name = clean_name or path.stem
+                # Try reusing existing
+                try:
+                    remote = self.get_client().files.get(name=name)
+                except Exception:
+                    remote = None
+                if not remote:
+                    remote = self.get_client().files.upload(file=path, config={"name": name})
+            # Wait for processing
+            if remote and hasattr(remote, "state"):
+                while remote.state.name == "PROCESSING":
+                    time.sleep(1)
+                    remote = self.get_client().files.get(name=remote.name)
+                if remote.state.name == "FAILED":
+                    log_error(f"Failed to upload file {f.filepath or f.url}")
+                    return
+            # Append part
+            if remote:
+                parts.append(Part.from_uri(file_uri=remote.uri, mime_type=remote.mime_type))
+        except Exception as e:
+            log_error(f"Error uploading file {f.filepath or f.url}: {e}")
 
-                    if remote_file is not None:
-                        return Part.from_uri(file_uri=remote_file.uri, mime_type=remote_file.mime_type)
-                    else:
-                        file_upload = self.get_client().files.upload(
-                            file=file_path,
-                            config=dict(
-                                name=clean_file_name,
-                            ),
-                        )
-                        # Check whether the file is ready to be used.
-                        while file_upload.state.name == "PROCESSING":
-                            time.sleep(2)
-                            file_upload = self.get_client().files.get(name=file_upload.name)
-                        if file_upload.state.name == "FAILED":
-                            raise ValueError(file_upload.state.name)
-                        return Part.from_uri(file_uri=file_upload.uri, mime_type=file_upload.mime_type)
-            else:
-                log_error(f"File {file_path} does not exist.")
-
-        # Case 4: File is a Gemini File object
-        elif isinstance(file.external, GeminiFile):
-            return file.external
-        return None
+    def _upload_file_and_get_parts(self, f: File) -> List[Part]:
+        """
+        Upload a file and return a list of Parts using _upload_file_to_parts.
+        """
+        parts: List[Part] = []
+        self._upload_file_to_parts(f, parts)
+        return parts
 
     def format_function_call_results(
         self, messages: List[Message], function_call_results: List[Message], **kwargs

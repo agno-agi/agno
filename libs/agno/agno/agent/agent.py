@@ -41,6 +41,7 @@ from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
+from agno.utils.file_utils import normalize_files
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -2836,6 +2837,10 @@ class Agent:
         2. If create_default_user_message is False or if the message is a list, return the message as is.
         3. Build the default user message for the Agent
         """
+        # Normalize file inputs to File objects
+        if files:
+            files = normalize_files(files)
+
         # Get references from the knowledge base to use in the user message
         references = None
         self.run_response = cast(RunResponse, self.run_response)

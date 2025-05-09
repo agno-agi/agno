@@ -8,6 +8,7 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
+from agno.utils.file_utils import prepare_inline_files
 from agno.utils.log import log_error, log_warning
 from agno.utils.openai import images_to_message
 
@@ -232,7 +233,19 @@ class Groq(Model):
                 message_dict["content"].extend(images_to_message(images=message.images))
 
         if message.files is not None and len(message.files) > 0:
-            log_warning("File input is currently unsupported.")
+            # Inline text from files via shared utility (drop unsupported binary embeds)
+            raw_items = prepare_inline_files(message.files)
+            inline_items = [item for item in raw_items if item.get("type") == "text"]
+            if any(item.get("type") == "file" for item in raw_items):
+                log_warning("Some file parts were skipped for Groq inline embedding")
+            existing = message_dict.get("content")
+            if isinstance(existing, str):
+                base = [{"type": "text", "text": existing}]
+            elif isinstance(existing, list):
+                base = existing
+            else:
+                base = []
+            message_dict["content"] = base + inline_items
 
         if message.audio is not None and len(message.audio) > 0:
             log_warning("Audio input is currently unsupported.")

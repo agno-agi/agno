@@ -11,7 +11,7 @@ from agno.models.base import MessageData, Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.models.openai_responses import images_to_message, sanitize_response_schema
+from agno.utils.models.openai_responses import files_to_message, images_to_message, sanitize_response_schema
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
@@ -226,7 +226,7 @@ class OpenAIResponses(Model):
 
     def _upload_file(self, file: File) -> Optional[str]:
         """Upload a file to the OpenAI vector database."""
-
+        # Upload file directly via OpenAI client
         if file.url is not None:
             file_content_tuple = file.file_url_content
             if file_content_tuple is not None:
@@ -234,8 +234,10 @@ class OpenAIResponses(Model):
             else:
                 return None
             file_name = file.url.split("/")[-1]
+            log_debug(f"Uploading file: {file_name}")
             file_tuple = (file_name, file_content)
             result = self.get_client().files.create(file=file_tuple, purpose="assistants")
+            log_debug(f"File uploaded: {result.id}")
             return result.id
         elif file.filepath is not None:
             import mimetypes
@@ -244,17 +246,20 @@ class OpenAIResponses(Model):
             file_path = file.filepath if isinstance(file.filepath, Path) else Path(file.filepath)
             if file_path.exists() and file_path.is_file():
                 file_name = file_path.name
+                log_debug(f"Uploading file: {file_name}")
                 file_content = file_path.read_bytes()  # type: ignore
                 content_type = mimetypes.guess_type(file_path)[0]
                 result = self.get_client().files.create(
                     file=(file_name, file_content, content_type),
                     purpose="assistants",  # type: ignore
                 )
+                log_debug(f"File uploaded: {result.id}")
                 return result.id
             else:
                 raise ValueError(f"File not found: {file_path}")
         elif file.content is not None:
             result = self.get_client().files.create(file=file.content, purpose="assistants")
+            log_debug(f"File uploaded: {result.id}")
             return result.id
 
         return None
@@ -296,6 +301,7 @@ class OpenAIResponses(Model):
                 else:
                     formatted_tools.append(_tool)
 
+        log_debug(f"messages: {messages}")
         # Find files to upload to the OpenAI vector database
         file_ids = []
         for message in messages:
@@ -334,8 +340,6 @@ class OpenAIResponses(Model):
                 }
                 message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-                # Ignore non-string message content
-                # because we assume that the images/audio are already added to the message
                 if message.images is not None and len(message.images) > 0:
                     # Ignore non-string message content
                     # because we assume that the images/audio are already added to the message
@@ -349,6 +353,16 @@ class OpenAIResponses(Model):
 
                 if message.videos is not None and len(message.videos) > 0:
                     log_warning("Video input is currently unsupported.")
+
+                if message.files:
+                    file_items = files_to_message(message.files, self._upload_file)
+                    existing_content = message_dict.get("content")
+                    content_items: List[Dict[str, Any]] = []
+                    if isinstance(existing_content, str):
+                        content_items = [{"type": "input_text", "text": existing_content}]
+                    elif isinstance(existing_content, list):
+                        content_items = existing_content
+                    message_dict["content"] = file_items + content_items
 
                 formatted_messages.append(message_dict)
 
