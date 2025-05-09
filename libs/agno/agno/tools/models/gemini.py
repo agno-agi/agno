@@ -32,7 +32,7 @@ class GeminiTools(Toolkit):
         super().__init__(name="gemini_tools", tools=[self.generate_image, self.generate_video], **kwargs)
 
         # Set mode and credentials: use only provided vertexai parameter
-        self.vertexai = vertexai
+        self.vertexai = vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI") == "true"
         self.project_id = project_id
         self.location = location
 
@@ -85,12 +85,14 @@ class GeminiTools(Toolkit):
             log_debug("DEBUG: Raw Gemini API response")
 
             # Extract image bytes
-            image_bytes = response.generated_images[0].image.image_bytes
+            if response.generated_images is None or not response.generated_images:
+                log_info("No images were generated.")
+                return "Failed to generate image: No images were generated."
+
             for generated_image in response.generated_images:
+                if generated_image.image is None or not generated_image.image.image_bytes:
+                    continue
                 image_bytes = generated_image.image.image_bytes
-                if not image_bytes:
-                    log_error("No valid image data extracted.")
-                    return "Failed to generate image: No valid image data extracted."
                 base64_encoded_image_bytes = base64.b64encode(image_bytes)
                 actual_mime_type = "image/png"
 
@@ -144,8 +146,17 @@ class GeminiTools(Toolkit):
                 time.sleep(5)
                 operation = self.client.operations.get(operation=operation)
 
-            for video in operation.result.generated_videos:
+            result = operation.result
+            if result is None or result.generated_videos is None or not result.generated_videos:
+                log_error("No videos were generated.")
+                return "Failed to generate video: No videos were generated."
+
+            for video in result.generated_videos:
+                if video.video is None or not video.video.video_bytes:
+                    continue
                 generated_video = video.video
+                if generated_video.video_bytes is None:
+                    continue
 
                 media_id = str(uuid4())
                 encoded_video = base64.b64encode(generated_video.video_bytes).decode("utf-8")
@@ -155,7 +166,7 @@ class GeminiTools(Toolkit):
                         id=media_id,
                         content=encoded_video,
                         original_prompt=prompt,
-                        mime_type=generated_video.mime_type,
+                        mime_type=generated_video.mime_type or "video/mp4",
                     )
                 )
                 log_debug(f"Successfully generated video {media_id} with model {self.video_model}")

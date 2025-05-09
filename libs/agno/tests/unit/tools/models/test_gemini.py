@@ -28,7 +28,14 @@ def mock_client():
 # Fixture for mock GeminiTools with mock client
 @pytest.fixture
 def mock_gemini_tools(mock_client):
-    with patch("agno.tools.models.gemini.Client", return_value=mock_client) as _:
+    def mock_getenv_side_effect(var_name):
+        if var_name == "GOOGLE_GENAI_USE_VERTEXAI":
+            return None
+        return None
+
+    with patch("agno.tools.models.gemini.Client", return_value=mock_client) as _, patch(
+        "agno.tools.models.gemini.getenv", side_effect=mock_getenv_side_effect
+    ) as _:
         gemini_tools = GeminiTools(api_key="fake_test_key")
         gemini_tools.client = mock_client
         return gemini_tools
@@ -48,10 +55,7 @@ def mock_successful_response():
 @pytest.fixture
 def mock_failed_response_no_bytes():
     mock_response = MagicMock()
-    mock_image = MagicMock()
-    # Simulate the case where image_bytes is None or missing
-    mock_image.image_bytes = None
-    mock_response.generated_images = [MagicMock(image=mock_image)]
+    mock_response.generated_images = []  # Empty list to simulate no images generated
     return mock_response
 
 
@@ -60,7 +64,14 @@ def test_gemini_tools_init_with_api_key_arg():
     """Test initialization with API key provided as an argument."""
     api_key = "test_api_key_arg"
 
-    with patch("agno.tools.models.gemini.Client") as mock_client_cls:
+    def mock_getenv_side_effect(var_name):
+        if var_name == "GOOGLE_GENAI_USE_VERTEXAI":
+            return None
+        return None
+
+    with patch("agno.tools.models.gemini.Client") as mock_client_cls, patch(
+        "agno.tools.models.gemini.getenv", side_effect=mock_getenv_side_effect
+    ) as _:
         mock_client_instance = MagicMock()
         mock_client_cls.return_value = mock_client_instance
 
@@ -75,7 +86,14 @@ def test_gemini_tools_init_with_env_var():
     """Test initialization with API key from environment variable."""
     env_api_key = "test_api_key_env"
 
-    with patch("agno.tools.models.gemini.getenv", return_value=env_api_key) as mock_getenv:
+    def mock_getenv_side_effect(var_name):
+        if var_name == "GOOGLE_API_KEY":
+            return env_api_key
+        if var_name == "GOOGLE_GENAI_USE_VERTEXAI":
+            return None
+        return None
+
+    with patch("agno.tools.models.gemini.getenv", side_effect=mock_getenv_side_effect) as mock_getenv:
         with patch("agno.tools.models.gemini.Client") as mock_client_cls:
             mock_client_instance = MagicMock()
             mock_client_cls.return_value = mock_client_instance
@@ -83,18 +101,22 @@ def test_gemini_tools_init_with_env_var():
             gemini_tools = GeminiTools()
 
             assert gemini_tools.api_key == env_api_key
-            mock_getenv.assert_called_once_with("GOOGLE_API_KEY")
             mock_client_cls.assert_called_once_with(api_key=env_api_key)
             assert gemini_tools.client == mock_client_instance
+            assert mock_getenv.call_count == 2
 
 
 def test_gemini_tools_init_no_api_key():
     """Test initialization raises ValueError when no API key is found."""
-    with patch("agno.tools.models.gemini.getenv", return_value=None) as mock_getenv:
+
+    def mock_getenv_side_effect(var_name):
+        return None
+
+    with patch("agno.tools.models.gemini.getenv", side_effect=mock_getenv_side_effect) as mock_getenv:
         with pytest.raises(ValueError, match="GOOGLE_API_KEY not set"):
             GeminiTools()
 
-        mock_getenv.assert_called_once_with("GOOGLE_API_KEY")
+        assert mock_getenv.call_count == 2
 
 
 def test_gemini_tools_init_client_creation_fails():
@@ -167,9 +189,9 @@ def test_generate_image_no_image_bytes(mock_gemini_tools, mock_agent, mock_faile
 
     result = mock_gemini_tools.generate_image(mock_agent, prompt)
 
-    assert result == "Failed to generate image: No valid image data extracted."
+    assert result == "Failed to generate image: No images were generated."
     mock_gemini_tools.client.models.generate_images.assert_called_once_with(
-        model=mock_gemini_tools.image_model,  # Use default model
+        model=mock_gemini_tools.image_model,
         prompt=prompt,
     )
     mock_agent.add_image.assert_not_called()
@@ -178,6 +200,7 @@ def test_generate_image_no_image_bytes(mock_gemini_tools, mock_agent, mock_faile
 # Tests for generate_video method
 def test_generate_video_requires_vertexai(mock_gemini_tools, mock_agent):
     """Test video generation when vertexai mode is disabled."""
+    mock_gemini_tools.vertexai = False  # Explicitly set vertexai to False
     prompt = "A sample video prompt"
     result = mock_gemini_tools.generate_video(mock_agent, prompt)
     expected = (

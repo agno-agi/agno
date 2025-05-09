@@ -23,7 +23,7 @@ try:
         MessageStopEvent,
     )
     from anthropic.types import Message as AnthropicMessage
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
 
 
@@ -224,6 +224,11 @@ class Claude(Model):
 
         Returns:
             Any: The streamed response from the model.
+
+        Raises:
+            APIConnectionError: If there are network connectivity issues
+            RateLimitError: If the API rate limit is exceeded
+            APIStatusError: For other API-related errors
         """
         chat_messages, system_message = format_messages(messages)
         request_kwargs = self._prepare_request_kwargs(system_message)
@@ -301,6 +306,11 @@ class Claude(Model):
 
         Returns:
             Any: The streamed response from the model.
+
+        Raises:
+            APIConnectionError: If there are network connectivity issues
+            RateLimitError: If the API rate limit is exceeded
+            APIStatusError: For other API-related errors
         """
         try:
             chat_messages, system_message = format_messages(messages)
@@ -393,7 +403,7 @@ class Claude(Model):
                 elif block.type == "redacted_thinking":
                     model_response.redacted_thinking = block.data
 
-        # -*- Extract tool calls from the response
+        # Extract tool calls from the response
         if response.stop_reason == "tool_use":
             for block in response.content:
                 if block.type == "tool_use":
