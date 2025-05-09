@@ -54,10 +54,9 @@ class Mem0Toolkit(Toolkit):
             log_error(f"Failed to initialize Mem0 client: {e}")
             raise ConnectionError("Failed to initialize Mem0 client. Ensure API keys/config are set.") from e
 
-    # Helper to get the required User ID
     def _get_user_id(self, method_name: str, user_id: Optional[str] = None) -> str:
         """Gets the user ID from kwargs or defaults, raising ValueError if none found."""
-        resolved_user_id = user_id
+        resolved_user_id = user_id or self.user_id
 
         if not resolved_user_id:
             error_msg = f"Error in {method_name}: A user_id must be provided in the method call."
@@ -71,9 +70,6 @@ class Mem0Toolkit(Toolkit):
         user_id: Optional[str] = None,
     ) -> str:
         """Adds information to the memory for a specific user. Requires user_id.
-
-        Mem0 will automatically infer and process the messages unless configured otherwise.
-
         Args:
             messages (Any): Data to add.
             user_id (Optional[str]): User ID to associate the memory with
@@ -81,11 +77,9 @@ class Mem0Toolkit(Toolkit):
             str: JSON string of the result from Mem0, or an error message.
         """
         try:
-            # Use reinstated helper
             resolved_user_id = self._get_user_id("add_memory", user_id)
             log_debug(f"Adding memory for user_id: {resolved_user_id}")
 
-            # Ensure messages is a list
             if isinstance(messages, dict):
                 messages_list = [messages]
             elif isinstance(messages, list):
@@ -109,31 +103,23 @@ class Mem0Toolkit(Toolkit):
         self,
         query: str,
         user_id: Optional[str] = None,
-        limit: int = 5,
     ) -> str:
-        """Searches the memory for a specific user. Requires user_id.
-
+        """Searches the memory for a specific user
         Args:
             query (str): The search query.
             user_id (Optional[str]): Filter results by user ID
-            limit (int): Maximum number of results to return (default: 5).
         Returns:
             str: JSON string containing a list of relevant memories found, or an error message.
         """
         try:
-            # Use reinstated helper
             resolved_user_id = self._get_user_id("search_memory", user_id)
-            log_debug(f"Searching memory for user_id: {resolved_user_id} with query '{query}', limit: {limit}")
+            log_debug(f"Searching memory for user_id: {resolved_user_id} with query '{query}'")
 
-            # Use mem0client and pass limit explicitly
-            results = self.mem0client.search(query=query, user_id=resolved_user_id, limit=limit)
+            results = self.mem0client.search(query=query, user_id=resolved_user_id)
 
-            # Handle different return types from Memory vs MemoryClient
             if isinstance(results, dict) and "results" in results:
-                # Memory class likely returns a dict
                 search_results_list = results.get("results", [])
             elif isinstance(results, list):
-                # MemoryClient likely returns a list directly
                 search_results_list = results
             else:
                 log_warning(f"Unexpected return type from mem0.search: {type(results)}. Returning empty list.")
@@ -141,7 +127,6 @@ class Mem0Toolkit(Toolkit):
 
             return json.dumps(search_results_list)
         except ValueError as ve:
-            # Catch the ValueError from _get_user_id
             log_error(str(ve))
             return str(ve)
         except Exception as e:
@@ -228,23 +213,17 @@ class Mem0Toolkit(Toolkit):
 
     def get_all_memories(self, user_id: Optional[str] = None, limit: int = 100) -> str:
         """Retrieves all memories for a specific user. Requires user_id.
-
         Args:
             user_id (Optional[str]): Filter by User ID
-            limit (int): Maximum number of results to return (default: 100).
         Returns:
             str: JSON string containing a list of all memories found, or an error message.
         """
         try:
-            # Use helper to get user_id
             resolved_user_id = self._get_user_id("get_all_memories", user_id)
             log_debug(f"Getting all memories for user_id: {resolved_user_id}, limit: {limit}")
 
-            # Call the client method (Note: mem0 SDK might not support limit here, adjust if needed)
-            # Assuming mem0client.get_all might return dict or list
-            results = self.mem0client.get_all(user_id=resolved_user_id)  # Pass limit if supported by SDK
+            results = self.mem0client.get_all(user_id=resolved_user_id)
 
-            # Handle potential return types
             if isinstance(results, dict) and "results" in results:
                 memories_list = results.get("results", [])
             elif isinstance(results, list):
@@ -252,14 +231,8 @@ class Mem0Toolkit(Toolkit):
             else:
                 log_warning(f"Unexpected return type from mem0.get_all: {type(results)}. Returning empty list.")
                 memories_list = []
-
-            # TODO: Manually apply limit if SDK doesn't support it
-            # if len(memories_list) > limit:
-            #     memories_list = memories_list[:limit]
-
             return json.dumps(memories_list)
         except ValueError as ve:
-            # Catch error from _get_user_id
             log_error(str(ve))
             return str(ve)
         except Exception as e:
@@ -273,13 +246,12 @@ class Mem0Toolkit(Toolkit):
         """Deletes ALL memories associated with the specified user. Requires user_id. Use with caution!
 
         Args:
-            user_id (Optional[str]): Delete memories for this User ID
+            user_id: Delete memories for this User ID
 
         Returns:
             str: Confirmation message or error string.
         """
         try:
-            # Use reinstated helper
             resolved_user_id = self._get_user_id("delete_all_memories", user_id)
             log_debug(f"Attempting to delete ALL memories associated with user_id: {resolved_user_id}")
 

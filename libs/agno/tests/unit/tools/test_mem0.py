@@ -168,9 +168,9 @@ class TestMem0Toolkit:
     def test_search_memory_success_arg_id(self, toolkit_config, mock_memory_instance):
         # toolkit_config uses Memory.from_config -> mock_memory_instance
         # Pass limit explicitly in the test call
-        result_str = toolkit_config.search_memory(query="find stuff", user_id="test_user_search", limit=10)
+        result_str = toolkit_config.search_memory(query="find stuff", user_id="test_user_search")
         # Expect limit to be passed explicitly
-        mock_memory_instance.search.assert_called_once_with(query="find stuff", user_id="test_user_search", limit=10)
+        mock_memory_instance.search.assert_called_once_with(query="find stuff", user_id="test_user_search")
         # Mock returns dict with "results", toolkit extracts list and json.dumps it
         expected_result = [{"id": "mem-search-456", "memory": "found memory", "score": 0.9}]
         assert json.loads(result_str) == expected_result
@@ -183,7 +183,6 @@ class TestMem0Toolkit:
         mock_memory_instance.search.assert_called_once_with(
             query="default search",
             user_id="user_default_limit",
-            limit=5,  # Check default limit is used
         )
 
     def test_search_memory_no_user_id(self, toolkit_config):
@@ -196,10 +195,11 @@ class TestMem0Toolkit:
     def test_search_memory_api_key_list_return(self, toolkit_api_key, mock_memory_client_instance):
         # toolkit_api_key uses MemoryClient -> mock_memory_client_instance
         # Mock returns list directly
-        result_str = toolkit_api_key.search_memory(query="client search", user_id="default_user_api", limit=7)
+        result_str = toolkit_api_key.search_memory(query="client search", user_id="default_user_api")
         # Expect specified limit (7) to be passed explicitly
         mock_memory_client_instance.search.assert_called_once_with(
-            query="client search", user_id="default_user_api", limit=7
+            query="client search",
+            user_id="default_user_api",
         )
         # Mock returns list, toolkit json.dumps it
         expected_result = [{"id": "mem-client-search-456", "memory": "found client memory", "score": 0.8}]
