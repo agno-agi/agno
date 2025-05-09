@@ -61,6 +61,7 @@ ibm = ["ibm-watsonx-ai"]
 lmstudio = ["lmstudio"]
 litellm = ["litellm"]
 meta = ["llama-api-client"]
+cerebras = ["cerebras-cloud-sdk"]
 
 # Dependencies for Tools
 apify = ["apify-client"]
@@ -135,7 +136,8 @@ models = [
   "agno[openai]",
   "agno[ibm]",
   "agno[litellm]",
-  "agno[meta]"
+  "agno[meta]",
+  "agno[cerebras]"
 ]
 
 # All tools
@@ -264,6 +266,8 @@ module = [
   "bson.*",
   "browserbase.*",
   "cassio.*",
+  "cerebras.*",
+  "cerebras_cloud_sdk.*",
   "chonkie.*",
   "chromadb.*",
   "clickhouse_connect.*",
@@ -296,7 +300,6 @@ module = [
   "lancedb.*",
   "langchain_core.*",
   "langchain.*",
-  "litellm.*",
   "llama_index.*",
   "llama_api_client.*",
   "litellm.*",
