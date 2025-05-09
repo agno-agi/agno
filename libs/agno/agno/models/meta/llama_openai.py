@@ -6,7 +6,7 @@ import httpx
 
 try:
     from openai import AsyncOpenAI as AsyncOpenAIClient
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
 from agno.models.meta.llama import Message
