@@ -38,7 +38,6 @@ class PDFKnowledgeBase(AgentKnowledge):
         else:
             # Handle single path
             _pdf_path = Path(self.path)
-            print(f"PDF path: {_pdf_path}")
             if _pdf_path.is_dir():
                 for _pdf in _pdf_path.glob("**/*.pdf"):
                     if _pdf.name not in self.exclude_files:
