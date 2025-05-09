@@ -95,8 +95,7 @@ class Ollama(Model):
 
         return AsyncOllamaClient(**self._get_client_params())
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_kwargs(self, tools: Optional[List[Dict[str, Any]]] = None,) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -112,8 +111,8 @@ class Ollama(Model):
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
         # Add tools
-        if self._tools is not None and len(self._tools) > 0:
-            request_params["tools"] = self._tools
+        if tools is not None and len(tools) > 0:
+            request_params["tools"] = tools
 
         # Add additional request params if provided
         if self.request_params:
@@ -136,8 +135,6 @@ class Ollama(Model):
                 "request_params": self.request_params,
             }
         )
-        if self._tools is not None:
-            model_dict["tools"] = self._tools
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
@@ -179,14 +176,13 @@ class Ollama(Model):
 
         return _message
 
-    def _prepare_request_kwargs_for_invoke(self) -> Dict[str, Any]:
-        request_kwargs = self.request_kwargs
-        if self.response_format is not None and isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
-            if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
-                log_debug("Using structured outputs")
-                format_schema = self.response_format.model_json_schema()
-                if "format" not in request_kwargs:
-                    request_kwargs["format"] = format_schema
+    def _prepare_request_kwargs_for_invoke(self, response_format: Optional[Union[Dict, Type[BaseModel]]] = None, tools: Optional[List[Dict[str, Any]]] = None,) -> Dict[str, Any]:
+        request_kwargs = self.get_request_kwargs(tools=tools)
+        if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            log_debug("Using structured outputs")
+            format_schema = response_format.model_json_schema()
+            if "format" not in request_kwargs:
+                request_kwargs["format"] = format_schema
         return request_kwargs
 
     def invoke(self, messages: List[Message],
@@ -195,14 +191,8 @@ class Ollama(Model):
                tool_choice: Optional[str] = None) -> Mapping[str, Any]:
         """
         Send a chat request to the Ollama API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Mapping[str, Any]: The response from the API.
         """
-        request_kwargs = self._prepare_request_kwargs_for_invoke()
+        request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
 
         return self.get_client().chat(
             model=self.id.strip(),
@@ -210,17 +200,14 @@ class Ollama(Model):
             **request_kwargs,
         )  # type: ignore
 
-    async def ainvoke(self, messages: List[Message]) -> Mapping[str, Any]:
+    async def ainvoke(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> Mapping[str, Any]:
         """
         Sends an asynchronous chat request to the Ollama API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Mapping[str, Any]: The response from the API.
         """
-        request_kwargs = self._prepare_request_kwargs_for_invoke()
+        request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
 
         return await self.get_async_client().chat(
             model=self.id.strip(),
@@ -234,18 +221,12 @@ class Ollama(Model):
                tool_choice: Optional[str] = None) -> Iterator[Mapping[str, Any]]:
         """
         Sends a streaming chat request to the Ollama API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Iterator[Mapping[str, Any]]: An iterator of chunks from the API.
         """
         yield from self.get_client().chat(
             model=self.id,
             messages=[self._format_message(m) for m in messages],  # type: ignore
             stream=True,
-            **self.request_kwargs,
+            **self.get_request_kwargs(tools=tools),
         )  # type: ignore
 
     async def ainvoke_stream(self, messages: List[Message],
@@ -254,31 +235,19 @@ class Ollama(Model):
                tool_choice: Optional[str] = None) -> Any:
         """
         Sends an asynchronous streaming chat completion request to the Ollama API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Any: An asynchronous iterator of chunks from the API.
         """
         async_stream = await self.get_async_client().chat(
             model=self.id.strip(),
             messages=[self._format_message(m) for m in messages],  # type: ignore
             stream=True,
-            **self.request_kwargs,
+            **self.get_request_kwargs(tools=tools),
         )
         async for chunk in async_stream:  # type: ignore
             yield chunk
 
-    def parse_provider_response(self, response: ChatResponse, **kwargs) -> ModelResponse:
+    def parse_provider_response(self, response: ChatResponse, response_format: Optional[Union[Dict, Type[BaseModel]]] = None,) -> ModelResponse:
         """
         Parse the provider response.
-
-        Args:
-            response (ChatResponse): The response from the provider.
-
-        Returns:
-            ModelResponse: The model response.
         """
         model_response = ModelResponse()
         # Get response message
@@ -287,8 +256,8 @@ class Ollama(Model):
         # Parse structured outputs if enabled
         try:
             if (
-                self.response_format is not None
-                and isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel)
+                response_format is not None
+                and isinstance(response_format, type) and issubclass(response_format, BaseModel)
             ):
                 parsed_object = response_message.content  # type: ignore
                 if parsed_object is not None:

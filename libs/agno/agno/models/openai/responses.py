@@ -1,6 +1,6 @@
 import time
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Union, Type
 
 import httpx
 from pydantic import BaseModel
@@ -44,7 +44,7 @@ class OpenAIResponses(Model):
     top_p: Optional[float] = None
     truncation: Optional[str] = None
     user: Optional[str] = None
-    response_format: Optional[Any] = None
+
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -86,7 +86,7 @@ class OpenAIResponses(Model):
         """
         from os import getenv
 
-        # Fetch API key from env if not already set
+        # Fetch API key from excnv if not already set
         if not self.api_key:
             self.api_key = getenv("OPENAI_API_KEY")
             if not self.api_key:
@@ -151,7 +151,9 @@ class OpenAIResponses(Model):
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
 
-    def get_request_params(self, messages: List[Message]) -> Dict[str, Any]:
+    def get_request_params(
+        self, messages: List[Message], response_format: Optional[Union[Dict, Type[BaseModel]]] = None,tools: Optional[List[Dict[str, Any]]] = None, tool_choice: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -173,15 +175,15 @@ class OpenAIResponses(Model):
         }
 
         # Set the response format
-        if self.response_format is not None:
-            if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
-                schema = self.response_format.model_json_schema()
+        if response_format is not None:
+            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                schema = response_format.model_json_schema()
                 # Sanitize the schema to ensure it complies with OpenAI's requirements
                 sanitize_response_schema(schema)
                 base_params["text"] = {
                     "format": {
                         "type": "json_schema",
-                        "name": self.response_format.__name__,
+                        "name": response_format.__name__,
                         "schema": schema,
                         "strict": True,
                     }
@@ -193,11 +195,11 @@ class OpenAIResponses(Model):
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
 
-        if self._tools:
-            request_params["tools"] = self._format_tool_params(messages=messages)
+        if tools:
+            request_params["tools"] = self._format_tool_params(messages=messages, tools=tools)
 
-        if self.tool_choice is not None:
-            request_params["tool_choice"] = self.tool_choice
+        if tool_choice is not None:
+            request_params["tool_choice"] = tool_choice
 
         # Handle reasoning tools for o3 and o4-mini models
         if self.id.startswith("o3") or self.id.startswith("o4-mini"):
@@ -280,11 +282,11 @@ class OpenAIResponses(Model):
             time.sleep(1)
         return vector_store.id
 
-    def _format_tool_params(self, messages: List[Message]) -> List[Dict[str, Any]]:
+    def _format_tool_params(self, messages: List[Message], tools: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
         """Format the tool parameters for the OpenAI Responses API."""
         formatted_tools = []
-        if self._tools:
-            for _tool in self._tools:
+        if tools:
+            for _tool in tools:
                 if _tool["type"] == "function":
                     _tool_dict = _tool["function"]
                     _tool_dict["type"] = "function"
@@ -386,24 +388,18 @@ class OpenAIResponses(Model):
                tool_choice: Optional[str] = None) -> Response:
         """
         Send a request to the OpenAI Responses API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Response: The response from the API.
         """
         try:
-            request_params = self.get_request_params(messages=messages)
+            request_params = self.get_request_params(messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice)
 
             return self.get_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
                 **request_params,
             )
-        except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+        except RateLimitError as exc:
+            log_error(f"Rate limit error from OpenAI API: {exc}")
+            error_message = exc.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -411,16 +407,16 @@ class OpenAIResponses(Model):
             )
             raise ModelProviderError(
                 message=error_message,
-                status_code=e.response.status_code,
+                status_code=exc.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
-            ) from e
-        except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            ) from exc
+        except APIConnectionError as exc:
+            log_error(f"API connection error from OpenAI API: {exc}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from exc
+        except APIStatusError as exc:
+            log_error(f"API status error from OpenAI API: {exc}")
+            error_message = exc.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -428,13 +424,13 @@ class OpenAIResponses(Model):
             )
             raise ModelProviderError(
                 message=error_message,
-                status_code=e.response.status_code,
+                status_code=exc.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
-            ) from e
-        except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            ) from exc
+        except Exception as exc:
+            log_error(f"Error from OpenAI API: {exc}")
+            raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
     async def ainvoke(self, messages: List[Message],
                response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -442,24 +438,18 @@ class OpenAIResponses(Model):
                tool_choice: Optional[str] = None) -> Response:
         """
         Sends an asynchronous request to the OpenAI Responses API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Response: The response from the API.
         """
         try:
-            request_params = self.get_request_params(messages=messages)
+            request_params = self.get_request_params(messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice)
 
             return await self.get_async_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
                 **request_params,
             )
-        except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+        except RateLimitError as exc:
+            log_error(f"Rate limit error from OpenAI API: {exc}")
+            error_message = exc.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -467,16 +457,16 @@ class OpenAIResponses(Model):
             )
             raise ModelProviderError(
                 message=error_message,
-                status_code=e.response.status_code,
+                status_code=exc.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
-            ) from e
-        except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            ) from exc
+        except APIConnectionError as exc:
+            log_error(f"API connection error from OpenAI API: {exc}")
+            raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
+        except APIStatusError as exc:
+            log_error(f"API status error from OpenAI API: {exc}")
+            error_message = exc.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -484,13 +474,13 @@ class OpenAIResponses(Model):
             )
             raise ModelProviderError(
                 message=error_message,
-                status_code=e.response.status_code,
+                status_code=exc.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
-            ) from e
-        except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            ) from exc
+        except Exception as exc:
+            log_error(f"Error from OpenAI API: {exc}")
+            raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
     def invoke_stream(self, messages: List[Message],
                response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -498,15 +488,9 @@ class OpenAIResponses(Model):
                tool_choice: Optional[str] = None) -> Iterator[ResponseStreamEvent]:
         """
         Send a streaming request to the OpenAI Responses API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Iterator[ResponseStreamEvent]: An iterator of response stream events.
         """
         try:
-            request_params = self.get_request_params(messages=messages)
+            request_params = self.get_request_params(messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice)
 
             yield from self.get_client().responses.create(
                 model=self.id,
@@ -514,9 +498,9 @@ class OpenAIResponses(Model):
                 stream=True,
                 **request_params,
             )  # type: ignore
-        except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+        except RateLimitError as exc:
+            log_error(f"Rate limit error from OpenAI API: {exc}")
+            error_message = exc.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -524,16 +508,16 @@ class OpenAIResponses(Model):
             )
             raise ModelProviderError(
                 message=error_message,
-                status_code=e.response.status_code,
+                status_code=exc.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
-            ) from e
-        except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            ) from exc
+        except APIConnectionError as exc:
+            log_error(f"API connection error from OpenAI API: {exc}")
+            raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
+        except APIStatusError as exc:
+            log_error(f"API status error from OpenAI API: {exc}")
+            error_message = exc.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -541,13 +525,13 @@ class OpenAIResponses(Model):
             )
             raise ModelProviderError(
                 message=error_message,
-                status_code=e.response.status_code,
+                status_code=exc.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
-            ) from e
-        except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            ) from exc
+        except Exception as exc:
+            log_error(f"Error from OpenAI API: {exc}")
+            raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
     async def ainvoke_stream(self, messages: List[Message],
                response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -555,15 +539,9 @@ class OpenAIResponses(Model):
                tool_choice: Optional[str] = None) -> AsyncIterator[ResponseStreamEvent]:
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Any: An asynchronous iterator of chat completion chunks.
         """
         try:
-            request_params = self.get_request_params(messages=messages)
+            request_params = self.get_request_params(messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice)
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
@@ -572,9 +550,9 @@ class OpenAIResponses(Model):
             )
             async for chunk in async_stream:  # type: ignore
                 yield chunk
-        except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+        except RateLimitError as exc:
+            log_error(f"Rate limit error from OpenAI API: {exc}")
+            error_message = exc.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -582,16 +560,16 @@ class OpenAIResponses(Model):
             )
             raise ModelProviderError(
                 message=error_message,
-                status_code=e.response.status_code,
+                status_code=exc.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
-            ) from e
-        except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            ) from exc
+        except APIConnectionError as exc:
+            log_error(f"API connection error from OpenAI API: {exc}")
+            raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
+        except APIStatusError as exc:
+            log_error(f"API status error from OpenAI API: {exc}")
+            error_message = exc.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -599,13 +577,13 @@ class OpenAIResponses(Model):
             )
             raise ModelProviderError(
                 message=error_message,
-                status_code=e.response.status_code,
+                status_code=exc.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
-            ) from e
-        except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            ) from exc
+        except Exception as exc:
+            log_error(f"Error from OpenAI API: {exc}")
+            raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
 
     def format_function_call_results(
         self, messages: List[Message], function_call_results: List[Message], tool_call_ids: List[str]
@@ -791,7 +769,10 @@ class OpenAIResponses(Model):
         return model_response, tool_use
 
     def process_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
+        self, messages: List[Message], assistant_message: Message, stream_data: MessageData,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
     ) -> Iterator[ModelResponse]:
         """Process the synchronous response stream."""
         tool_use: Dict[str, Any] = {}
@@ -808,7 +789,10 @@ class OpenAIResponses(Model):
                 yield model_response
 
     async def aprocess_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
+        self, messages: List[Message], assistant_message: Message, stream_data: MessageData,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
     ) -> AsyncIterator[ModelResponse]:
         """Process the asynchronous response stream."""
         tool_use: Dict[str, Any] = {}

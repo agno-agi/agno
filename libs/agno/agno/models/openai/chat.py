@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Union, Type
 
 import httpx
 from pydantic import BaseModel
@@ -58,7 +58,6 @@ class OpenAIChat(Model):
         None  # E.g. {"voice": "alloy", "format": "wav"}. `format` must be one of `wav`, `mp3`, `flac`, `opus`, or `pcm16`. `voice` must be one of `ash`, `ballad`, `coral`, `sage`, `verse`, `alloy`, `echo`, and `shimmer`.
     )
     presence_penalty: Optional[float] = None
-    response_format: Optional[Any] = None
     seed: Optional[int] = None
     stop: Optional[Union[str, List[str]]] = None
     temperature: Optional[float] = None
@@ -158,8 +157,10 @@ class OpenAIChat(Model):
             )
         return AsyncOpenAIClient(**client_params)
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_kwargs(self,
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -179,7 +180,7 @@ class OpenAIChat(Model):
             "modalities": self.modalities,
             "audio": self.audio,
             "presence_penalty": self.presence_penalty,
-            "response_format": self.response_format,
+            "response_format": response_format,
             "seed": self.seed,
             "stop": self.stop,
             "temperature": self.temperature,
@@ -194,11 +195,11 @@ class OpenAIChat(Model):
         request_params = {k: v for k, v in base_params.items() if v is not None}
 
         # Add tools
-        if self._tools is not None and len(self._tools) > 0:
-            request_params["tools"] = self._tools
+        if tools is not None and len(tools) > 0:
+            request_params["tools"] = tools
 
-            if self.tool_choice is not None:
-                request_params["tool_choice"] = self.tool_choice
+            if tool_choice is not None:
+                request_params["tool_choice"] = tool_choice
 
         # Add additional request params if provided
         if self.request_params:
@@ -225,9 +226,6 @@ class OpenAIChat(Model):
                 "modalities": self.modalities,
                 "audio": self.audio,
                 "presence_penalty": self.presence_penalty,
-                "response_format": self.response_format
-                if isinstance(self.response_format, dict)
-                else str(self.response_format),
                 "seed": self.seed,
                 "stop": self.stop,
                 "temperature": self.temperature,
@@ -237,12 +235,6 @@ class OpenAIChat(Model):
                 "extra_query": self.extra_query,
             }
         )
-        if self._tools is not None:
-            model_dict["tools"] = self._tools
-            if self.tool_choice is not None:
-                model_dict["tool_choice"] = self.tool_choice
-            else:
-                model_dict["tool_choice"] = "auto"
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
@@ -326,12 +318,12 @@ class OpenAIChat(Model):
         """
 
         try:
-            if self.response_format is not None:
-                if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+            if response_format is not None:
+                if isinstance(response_format, type) and issubclass(response_format, BaseModel):
                     return self.get_client().beta.chat.completions.parse(
                         model=self.id,
                         messages=[self._format_message(m) for m in messages],  # type: ignore
-                        **self.request_kwargs,
+                        **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
                     )
                 else:
                     raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
@@ -339,7 +331,7 @@ class OpenAIChat(Model):
             return self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
-                **self.request_kwargs,
+                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
@@ -393,19 +385,19 @@ class OpenAIChat(Model):
             ChatCompletion: The chat completion response from the API.
         """
         try:
-            if self.response_format is not None:
-                if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
+            if response_format is not None:
+                if isinstance(response_format, type) and issubclass(response_format, BaseModel):
                     return await self.get_async_client().beta.chat.completions.parse(
                         model=self.id,
                         messages=[self._format_message(m) for m in messages],  # type: ignore
-                        **self.request_kwargs,
+                        **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
                     )
                 else:
                     raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
-                **self.request_kwargs,
+                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
@@ -465,7 +457,7 @@ class OpenAIChat(Model):
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
-                **self.request_kwargs,
+                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )  # type: ignore
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
@@ -525,7 +517,7 @@ class OpenAIChat(Model):
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
-                **self.request_kwargs,
+                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             async for chunk in async_stream:
                 yield chunk
@@ -608,7 +600,7 @@ class OpenAIChat(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion], **kwargs) -> ModelResponse:
+    def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion], response_format: Optional[Union[Dict, Type[BaseModel]]] = None,) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
         """
@@ -627,8 +619,8 @@ class OpenAIChat(Model):
         # Parse structured outputs if enabled
         try:
             if (
-                self.response_format is not None
-                and isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel)
+                response_format is not None
+                and isinstance(response_format, type) and issubclass(response_format, BaseModel)
             ):
                 parsed_object = response_message.parsed  # type: ignore
                 if parsed_object is not None:
