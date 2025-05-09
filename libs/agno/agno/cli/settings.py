@@ -27,7 +27,7 @@ class AgnoCliSettings(BaseSettings):
     api_enabled: bool = True
     alpha_features: bool = False
     api_url: str = Field("https://api.agno.com", validate_default=True)
-    app_url: str = Field("https://app.agno.com", validate_default=True)
+    cli_auth_url: str = Field("https://app.agno.com", validate_default=True)
     signin_url: str = Field("https://app.agno.com/login", validate_default=True)
     playground_url: str = Field("https://app.agno.com/playground", validate_default=True)
 
@@ -43,15 +43,15 @@ class AgnoCliSettings(BaseSettings):
 
         return v.lower()
 
-    @field_validator("app_url", mode="before")
-    def update_app_url(cls, v, info: ValidationInfo):
+    @field_validator("cli_auth_url", mode="before")
+    def update_cli_auth_url(cls, v, info: ValidationInfo):
         api_runtime = info.data["api_runtime"]
         if api_runtime == "dev":
-            return "http://localhost:3000"
+            return "http://localhost:3000/cli-auth"
         elif api_runtime == "stg":
-            return "https://app-stg.agno.com"
+            return "https://app-stg.agno.com/cli-auth"
         else:
-            return "https://app.agno.com"
+            return "https://app.agno.com/cli-auth"
 
     @field_validator("signin_url", mode="before")
     def update_signin_url(cls, v, info: ValidationInfo):
