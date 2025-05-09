@@ -114,6 +114,8 @@ class AgentKnowledge(BaseModel):
         log_info("Loading knowledge base")
         num_documents = 0
         for document_list in self.document_lists:
+            documents_to_load = document_list
+
             # Track metadata for filtering capabilities
             for doc in document_list:
                 if doc.meta_data:
@@ -125,7 +127,6 @@ class AgentKnowledge(BaseModel):
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
-                documents_to_load = document_list
                 if skip_existing:
                     log_debug("Filtering out existing documents before insertion.")
                     documents_to_load = self.filter_existing_documents(document_list)

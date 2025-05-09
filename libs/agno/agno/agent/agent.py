@@ -4448,8 +4448,6 @@ class Agent:
         self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
     ) -> Callable:
         """Factory function to create a search_knowledge_base function with filters."""
-        # Determine which filters to use
-        effective_filters = knowledge_filters if knowledge_filters is not None else self.knowledge_filters
 
         def search_knowledge_base(query: str) -> str:
             """Use this function to search the knowledge base for information about a query.
@@ -4465,7 +4463,7 @@ class Agent:
             self.run_response = cast(RunResponse, self.run_response)
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=effective_filters)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -4497,7 +4495,7 @@ class Agent:
             self.run_response = cast(RunResponse, self.run_response)
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=effective_filters)
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -4523,8 +4521,6 @@ class Agent:
         self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
     ) -> Callable:
         """Factory function to create a search_knowledge_base function with filters."""
-        # Determine which filters to use
-        effective_filters = knowledge_filters if knowledge_filters is not None else self.knowledge_filters
 
         def search_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
             """Use this function to search the knowledge base for information about a query.
@@ -4535,7 +4531,7 @@ class Agent:
             Returns:
                 str: A string containing the response from the knowledge base.
             """
-            search_filters = self._get_agentic_or_user_search_filters(filters, effective_filters)
+            search_filters = self._get_agentic_or_user_search_filters(filters, knowledge_filters)
 
             # Get the relevant documents from the knowledge base, passing filters
             self.run_response = cast(RunResponse, self.run_response)
@@ -4570,7 +4566,7 @@ class Agent:
             Returns:
                 str: A string containing the response from the knowledge base.
             """
-            search_filters = self._get_agentic_or_user_search_filters(filters, effective_filters)
+            search_filters = self._get_agentic_or_user_search_filters(filters, knowledge_filters)
 
             self.run_response = cast(RunResponse, self.run_response)
             retrieval_timer = Timer()
