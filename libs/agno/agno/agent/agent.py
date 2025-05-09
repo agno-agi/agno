@@ -1113,7 +1113,7 @@ class Agent:
                     if self.stream and self.stream is True:
                         log_debug("Setting stream=False as response_model is set")
                         self.stream = False
-                    run_response: RunResponse = next(
+                    generator: RunResponse = next(
                         self._run(
                             message=message,
                             stream=False,
@@ -1131,28 +1131,25 @@ class Agent:
                     )
 
                     # Do a final check confirming the content is in the response_model format
-                    if isinstance(run_response.content, self.response_model):
-                        return run_response
+                    if isinstance(generator.content, self.response_model):
+                        return generator
 
                     # Otherwise convert the response to the structured format
-                    if isinstance(run_response.content, str):
+                    if isinstance(generator.content, str):
                         try:
-                            structured_output = parse_response_model_str(run_response.content, self.response_model)
+                            structured_output = parse_response_model_str(generator.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
-                                run_response.content = structured_output
-                                run_response.content_type = self.response_model.__name__
-                                if self.run_response is not None:
-                                    self.run_response.content = structured_output
-                                    self.run_response.content_type = self.response_model.__name__
+                                generator.content = structured_output
+                                generator.content_type = self.response_model.__name__
                             else:
                                 log_warning("Failed to convert response to response_model")
                         except Exception as e:
                             log_warning(f"Failed to convert response to output model: {e}")
                     else:
                         log_warning("Something went wrong. Run response content is not a string")
-                    return run_response
+                    return generator
                 else:
                     if stream and self.is_streamable:
                         resp = self._run(
