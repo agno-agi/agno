@@ -277,7 +277,6 @@ def test_history():
     assert len(agent.run_response.messages) == 4
 
 
-@pytest.mark.skip(reason="Need to fix this by getting credentials in Github actions")
 def test_custom_client_params():
     generation_config = types.GenerateContentConfig(
         temperature=0,
