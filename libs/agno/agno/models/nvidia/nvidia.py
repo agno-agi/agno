@@ -22,7 +22,7 @@ class Nvidia(OpenAILike):
     name: str = "Nvidia"
     provider: str = "Nvidia"
 
-    api_key: Optional[str] = getenv("NVIDIA_API_KEY", None)
+    api_key: Optional[str] = getenv("NVIDIA_API_KEY")
     base_url: str = "https://integrate.api.nvidia.com/v1"
 
     supports_native_structured_outputs: bool = False

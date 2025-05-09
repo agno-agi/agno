@@ -1,7 +1,7 @@
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.media import File, Image
+from agno.media import Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
 
@@ -11,7 +11,8 @@ try:
         ToolUseBlock,
     )
 except ImportError:
-    raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
+    log_error("`anthropic[bedrock]` not installed. Please install it via `pip install anthropic[bedrock]`.")
+    raise
 
 ROLE_MAP = {
     "system": "system",
@@ -33,12 +34,12 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     # 'filetype' used as a fallback
     try:
         import imghdr
-    except ImportError:
+    except (ModuleNotFoundError, ImportError):
         try:
             import filetype
 
             using_filetype = True
-        except ImportError:
+        except (ModuleNotFoundError, ImportError):
             raise ImportError("`filetype` not installed. Please install using `pip install filetype`")
 
     type_mapping = {
@@ -52,7 +53,7 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     try:
         # Case 1: Image is a URL
         if image.url is not None:
-            return {"type": "image", "source": {"type": "url", "url": image.url}}
+            content_bytes = image.image_url_content
 
         # Case 2: Image is a local file path
         elif image.filepath is not None:
@@ -107,70 +108,6 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
-    """
-    Add a document url or base64 encoded content to a message.
-    """
-
-    mime_mapping = {
-        "application/pdf": "base64",
-        "text/plain": "text",
-    }
-
-    # Case 1: Document is a URL
-    if file.url is not None:
-        return {
-            "type": "document",
-            "source": {
-                "type": "url",
-                "url": file.url,
-            },
-            "citations": {"enabled": True},
-        }
-    # Case 2: Document is a local file path
-    elif file.filepath is not None:
-        import base64
-        from pathlib import Path
-
-        path = Path(file.filepath) if isinstance(file.filepath, str) else file.filepath
-        if path.exists() and path.is_file():
-            file_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
-
-            # Determine media type
-            media_type = file.mime_type
-            if media_type is None:
-                import mimetypes
-
-                media_type = mimetypes.guess_type(file.filepath)[0] or "application/pdf"
-
-            # Map media type to type, default to "base64" if no mapping exists
-            type = mime_mapping.get(media_type, "base64")
-
-            return {
-                "type": "document",
-                "source": {
-                    "type": type,
-                    "media_type": media_type,
-                    "data": file_data,
-                },
-                "citations": {"enabled": True},
-            }
-        else:
-            log_error(f"Document file not found: {file}")
-            return None
-    # Case 3: Document is bytes content
-    elif file.content is not None:
-        import base64
-
-        file_data = base64.standard_b64encode(file.content).decode("utf-8")
-        return {
-            "type": "document",
-            "source": {"type": "base64", "media_type": file.mime_type or "application/pdf", "data": file_data},
-            "citations": {"enabled": True},
-        }
-    return None
-
-
 def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
@@ -181,6 +118,7 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
     Returns:
         Tuple[List[Dict[str, str]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
+
     chat_messages: List[Dict[str, str]] = []
     system_messages: List[str] = []
 
@@ -200,36 +138,18 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                     if image_content:
                         content.append(image_content)
 
-            if message.files is not None:
-                for file in message.files:
-                    file_content = _format_file_for_message(file)
-                    if file_content:
-                        content.append(file_content)
+            if message.files is not None and len(message.files) > 0:
+                log_warning("Files are not supported for AWS Bedrock Claude")
 
             if message.audio is not None and len(message.audio) > 0:
-                log_warning("Audio input is currently unsupported.")
+                log_warning("Audio is not supported for AWS Bedrock Claude")
 
             if message.videos is not None and len(message.videos) > 0:
-                log_warning("Video input is currently unsupported.")
+                log_warning("Video is not supported for AWS Bedrock Claude")
 
+        # Handle tool calls from history
         elif message.role == "assistant":
             content = []
-
-            if message.thinking is not None and message.provider_data is not None:
-                from anthropic.types import RedactedThinkingBlock, ThinkingBlock
-
-                content.append(
-                    ThinkingBlock(
-                        thinking=message.thinking,
-                        signature=message.provider_data.get("signature"),
-                        type="thinking",
-                    )
-                )
-
-            if message.redacted_thinking is not None:
-                from anthropic.types import RedactedThinkingBlock
-
-                content.append(RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking"))
 
             if isinstance(message.content, str) and message.content:
                 content.append(TextBlock(text=message.content, type="text"))
@@ -246,6 +166,5 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                             type="tool_use",
                         )
                     )
-
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
     return chat_messages, " ".join(system_messages)
