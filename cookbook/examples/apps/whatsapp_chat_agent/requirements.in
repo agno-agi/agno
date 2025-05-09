@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-dotenv
+requests
+duckduckgo-search
+openai
+agno
+python-multipart
+aiohttp
+SQLAlchemy
