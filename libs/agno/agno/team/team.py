@@ -4613,7 +4613,7 @@ class Team:
         if self.add_state_in_messages:
             system_message_content = self._format_message_with_state_variables(system_message_content, user_id=user_id)
 
-        system_message_from_model = self.model.get_system_message_for_model()
+        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 

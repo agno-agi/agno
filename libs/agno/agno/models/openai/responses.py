@@ -119,7 +119,7 @@ class OpenAIResponses(Model):
         Returns:
             OpenAI: An instance of the OpenAI client.
         """
-        if self.client:
+        if self.client and not self.client.is_closed():
             return self.client
 
         client_params: Dict[str, Any] = self._get_client_params()
@@ -174,7 +174,7 @@ class OpenAIResponses(Model):
 
         # Set the response format
         if self.response_format is not None:
-            if self.structured_outputs and issubclass(self.response_format, BaseModel):
+            if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
                 schema = self.response_format.model_json_schema()
                 # Sanitize the schema to ensure it complies with OpenAI's requirements
                 sanitize_response_schema(schema)
@@ -380,7 +380,10 @@ class OpenAIResponses(Model):
                     )
         return formatted_messages
 
-    def invoke(self, messages: List[Message]) -> Response:
+    def invoke(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> Response:
         """
         Send a request to the OpenAI Responses API.
 
@@ -433,7 +436,10 @@ class OpenAIResponses(Model):
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message]) -> Response:
+    async def ainvoke(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> Response:
         """
         Sends an asynchronous request to the OpenAI Responses API.
 
@@ -486,7 +492,10 @@ class OpenAIResponses(Model):
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[ResponseStreamEvent]:
+    def invoke_stream(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> Iterator[ResponseStreamEvent]:
         """
         Send a streaming request to the OpenAI Responses API.
 
@@ -540,7 +549,10 @@ class OpenAIResponses(Model):
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[ResponseStreamEvent]:
+    async def ainvoke_stream(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> AsyncIterator[ResponseStreamEvent]:
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
 
@@ -611,7 +623,7 @@ class OpenAIResponses(Model):
                 _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
                 messages.append(_fc_message)
 
-    def parse_provider_response(self, response: Response) -> ModelResponse:
+    def parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
 

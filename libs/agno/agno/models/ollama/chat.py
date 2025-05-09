@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Union
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -187,7 +187,7 @@ class Ollama(Model):
 
     def _prepare_request_kwargs_for_invoke(self) -> Dict[str, Any]:
         request_kwargs = self.request_kwargs
-        if self.response_format is not None and self.structured_outputs:
+        if self.response_format is not None and isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
             if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
                 log_debug("Using structured outputs")
                 format_schema = self.response_format.model_json_schema()
@@ -195,7 +195,10 @@ class Ollama(Model):
                     request_kwargs["format"] = format_schema
         return request_kwargs
 
-    def invoke(self, messages: List[Message]) -> Mapping[str, Any]:
+    def invoke(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> Mapping[str, Any]:
         """
         Send a chat request to the Ollama API.
 
@@ -231,7 +234,10 @@ class Ollama(Model):
             **request_kwargs,
         )  # type: ignore
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[Mapping[str, Any]]:
+    def invoke_stream(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> Iterator[Mapping[str, Any]]:
         """
         Sends a streaming chat request to the Ollama API.
 
@@ -248,7 +254,10 @@ class Ollama(Model):
             **self.request_kwargs,
         )  # type: ignore
 
-    async def ainvoke_stream(self, messages: List[Message]) -> Any:
+    async def ainvoke_stream(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> Any:
         """
         Sends an asynchronous streaming chat completion request to the Ollama API.
 
@@ -267,7 +276,7 @@ class Ollama(Model):
         async for chunk in async_stream:  # type: ignore
             yield chunk
 
-    def parse_provider_response(self, response: ChatResponse) -> ModelResponse:
+    def parse_provider_response(self, response: ChatResponse, **kwargs) -> ModelResponse:
         """
         Parse the provider response.
 
@@ -285,8 +294,7 @@ class Ollama(Model):
         try:
             if (
                 self.response_format is not None
-                and self.structured_outputs
-                and issubclass(self.response_format, BaseModel)
+                and isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel)
             ):
                 parsed_object = response_message.content  # type: ignore
                 if parsed_object is not None:

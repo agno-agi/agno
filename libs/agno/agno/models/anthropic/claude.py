@@ -2,7 +2,9 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Type
+
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
@@ -74,7 +76,7 @@ class Claude(Model):
         """
         Returns an instance of the Anthropic client.
         """
-        if self.client:
+        if self.client and not self.client.is_closed():
             return self.client
 
         _client_params = self._get_client_params()
@@ -114,7 +116,7 @@ class Claude(Model):
             _request_params.update(self.request_params)
         return _request_params
 
-    def _prepare_request_kwargs(self, system_message: str) -> Dict[str, Any]:
+    def _prepare_request_kwargs(self, system_message: str, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Prepare the request keyword arguments for the API call.
 
@@ -127,23 +129,20 @@ class Claude(Model):
         request_kwargs = self.request_kwargs.copy()
         request_kwargs["system"] = system_message
 
-        if self._tools:
-            request_kwargs["tools"] = self._format_tools_for_model()
+        if tools:
+            request_kwargs["tools"] = self._format_tools_for_model(tools)
         return request_kwargs
 
-    def _format_tools_for_model(self) -> Optional[List[Dict[str, Any]]]:
+    def _format_tools_for_model(self, tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
         """
         Transforms function definitions into a format accepted by the Anthropic API.
-
-        Returns:
-            Optional[List[Dict[str, Any]]]: A list of tools formatted for the API, or None if no functions are defined.
         """
-        if not self._functions:
+        if not tools:
             return None
 
         tools: List[Dict[str, Any]] = []
-        for func_name, func_def in self._functions.items():
-            parameters: Dict[str, Any] = func_def.parameters or {}
+        for func_def in tools:
+            parameters: Dict[str, Any] = func_def.get("parameters", {})
             properties: Dict[str, Any] = parameters.get("properties", {})
             required_params: List[str] = []
 
@@ -165,8 +164,8 @@ class Claude(Model):
                     input_properties[param_name]["type"] = param_info.get("type", "")
 
             tool = {
-                "name": func_name,
-                "description": func_def.description or "",
+                "name": func_def.get("name") or "",
+                "description": func_def.get("description") or "",
                 "input_schema": {
                     "type": parameters.get("type", "object"),
                     "properties": input_properties,
@@ -176,24 +175,16 @@ class Claude(Model):
             tools.append(tool)
         return tools
 
-    def invoke(self, messages: List[Message]) -> AnthropicMessage:
+    def invoke(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> AnthropicMessage:
         """
         Send a request to the Anthropic API to generate a response.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            AnthropicMessage: The response from the model.
-
-        Raises:
-            APIConnectionError: If there are network connectivity issues
-            RateLimitError: If the API rate limit is exceeded
-            APIStatusError: For other API-related errors
         """
         try:
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             return self.get_client().messages.create(
                 model=self.id,
@@ -215,18 +206,16 @@ class Claude(Model):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Any:
+    def invoke_stream(self,
+                      messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> Any:
         """
         Stream a response from the Anthropic API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Any: The streamed response from the model.
         """
         chat_messages, system_message = format_messages(messages)
-        request_kwargs = self._prepare_request_kwargs(system_message)
+        request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
         try:
             return (
@@ -253,24 +242,17 @@ class Claude(Model):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message]) -> AnthropicMessage:
+    async def ainvoke(self,
+                      messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> AnthropicMessage:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            AnthropicMessage: The response from the model.
-
-        Raises:
-            APIConnectionError: If there are network connectivity issues
-            RateLimitError: If the API rate limit is exceeded
-            APIStatusError: For other API-related errors
         """
         try:
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             return await self.get_async_client().messages.create(
                 model=self.id,
@@ -292,19 +274,16 @@ class Claude(Model):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
+    async def ainvoke_stream(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> AsyncIterator[Any]:
         """
         Stream an asynchronous response from the Anthropic API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Any: The streamed response from the model.
         """
         try:
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools)
             async with self.get_async_client().messages.stream(
                 model=self.id,
                 messages=chat_messages,  # type: ignore
@@ -350,13 +329,13 @@ class Claude(Model):
                 )
             messages.append(Message(role="user", content=fc_responses))
 
-    def get_system_message_for_model(self) -> Optional[str]:
-        if self._functions is not None and len(self._functions) > 0:
+    def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
+        if tools is not None and len(tools) > 0:
             tool_call_prompt = "Do not reflect on the quality of the returned search results in your response"
             return tool_call_prompt
         return None
 
-    def parse_provider_response(self, response: AnthropicMessage) -> ModelResponse:
+    def parse_provider_response(self, response: AnthropicMessage, **kwargs) -> ModelResponse:
         """
         Parse the Claude response into a ModelResponse.
 

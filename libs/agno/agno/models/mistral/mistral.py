@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Image
@@ -253,7 +255,10 @@ class MistralChat(Model):
         cleaned_dict = {k: v for k, v in _dict.items() if v is not None}
         return cleaned_dict
 
-    def invoke(self, messages: List[Message]) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
+    def invoke(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
         """
         Send a chat completion request to the Mistral model.
 
@@ -266,7 +271,7 @@ class MistralChat(Model):
         mistral_messages = _format_messages(messages)
         try:
             response: Union[ChatCompletionResponse, ParsedChatCompletionResponse]
-            if self.response_format is not None and self.structured_outputs:
+            if self.response_format is not None and isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
                 response = self.get_client().chat.parse(
                     model=self.id,
                     messages=mistral_messages,
@@ -288,7 +293,10 @@ class MistralChat(Model):
             log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
+    def invoke_stream(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> Iterator[Any]:
         """
         Stream the response from the Mistral model.
 
@@ -313,7 +321,10 @@ class MistralChat(Model):
             log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
+    async def ainvoke(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
         """
         Send an asynchronous chat completion request to the Mistral API.
 
@@ -326,7 +337,7 @@ class MistralChat(Model):
         mistral_messages = _format_messages(messages)
         try:
             response: Union[ChatCompletionResponse, ParsedChatCompletionResponse]
-            if self.response_format is not None and self.structured_outputs:
+            if self.response_format is not None and isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
                 response = await self.get_client().chat.parse_async(
                     model=self.id,
                     messages=mistral_messages,
@@ -347,7 +358,10 @@ class MistralChat(Model):
             log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> Any:
+    async def ainvoke_stream(self, messages: List[Message],
+               response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+               tools: Optional[List[Dict[str, Any]]] = None,
+               tool_choice: Optional[str] = None) -> Any:
         """
         Stream an asynchronous response from the Mistral API.
 
@@ -375,7 +389,7 @@ class MistralChat(Model):
             log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def parse_provider_response(self, response: ChatCompletionResponse) -> ModelResponse:
+    def parse_provider_response(self, response: ChatCompletionResponse, **kwargs) -> ModelResponse:
         """
         Parse the response from the Mistral model.
 

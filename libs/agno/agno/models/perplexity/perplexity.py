@@ -82,15 +82,9 @@ class Perplexity(OpenAILike):
             request_params.update(self.request_params)
         return request_params
 
-    def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion]) -> ModelResponse:
+    def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion], **kwargs) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
-
-        Args:
-            response: Response from invoke() method
-
-        Returns:
-            ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
 
@@ -108,7 +102,6 @@ class Perplexity(OpenAILike):
         try:
             if (
                 self.response_format is not None
-                and self.structured_outputs
                 and issubclass(self.response_format, BaseModel)
             ):
                 parsed_object = response_message.parsed  # type: ignore

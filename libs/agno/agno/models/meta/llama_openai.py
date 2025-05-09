@@ -73,8 +73,8 @@ class LlamaOpenAI(OpenAILike):
         request_params = {k: v for k, v in base_params.items() if v is not None}
 
         # Add tools
-        if self._tools is not None and len(self._tools) > 0:
-            request_params["tools"] = self._tools
+        if tools is not None and len(tools) > 0:
+            request_params["tools"] = tools
 
             # Fix optional parameters where the "type" is [<type>, null]
             for tool in request_params["tools"]:  # type: ignore
