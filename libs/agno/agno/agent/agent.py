@@ -2355,6 +2355,9 @@ class Agent:
             if isinstance(self.memory, dict) and "create_user_memories" in self.memory:
                 # Convert dict to AgentMemory
                 self.memory = AgentMemory(**self.memory)
+                # Convert dict to Memory
+            elif isinstance(self.memory, dict):
+                self.memory = Memory(**self.memory)
             else:
                 raise TypeError(f"Expected memory to be a dict or AgentMemory, but got {type(self.memory)}")
 
