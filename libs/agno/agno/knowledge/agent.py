@@ -297,7 +297,7 @@ class AgentKnowledge(BaseModel):
             else:
                 log_info("No new documents to load")
 
-    def load_document_to_kb(
+    def add_document_to_knowledge_base(
         self,
         document: Document,
         upsert: bool = False,
