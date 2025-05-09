@@ -4130,6 +4130,142 @@ class Agent:
                     session_id=session_id,
                 )
 
+    def update_reasoning_content_from_tool_call(
+        self, tool_name: str, tool_args: Dict[str, Any]
+    ) -> Optional[ReasoningStep]:
+        """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
+
+        # Case 1: ReasoningTools.think (has title, thought, optional action and confidence)
+        if tool_name.lower() == "think" and "title" in tool_args and "thought" in tool_args:
+            title = tool_args["title"]
+            thought = tool_args["thought"]
+            action = tool_args.get("action", "")
+            confidence = tool_args.get("confidence", None)
+
+            # Create a reasoning step
+            reasoning_step = ReasoningStep(
+                title=title,
+                reasoning=thought,
+                action=action,
+                next_action=NextAction.CONTINUE,
+                confidence=confidence,
+            )
+
+            # Add the step to the run response
+            self._add_reasoning_step_to_extra_data(reasoning_step)
+
+            formatted_content = f"## {title}\n{thought}\n"
+            if action:
+                formatted_content += f"Action: {action}\n"
+            if confidence is not None:
+                formatted_content += f"Confidence: {confidence}\n"
+            formatted_content += "\n"
+
+            self._append_to_reasoning_content(formatted_content)
+            return reasoning_step
+
+        # Case 2: ReasoningTools.analyze (has title, result, analysis, optional next_action and confidence)
+        elif tool_name.lower() == "analyze" and "title" in tool_args:
+            title = tool_args["title"]
+            result = tool_args.get("result", "")
+            analysis = tool_args.get("analysis", "")
+            next_action = tool_args.get("next_action", "")
+            confidence = tool_args.get("confidence", None)
+
+            # Map string next_action to enum
+            next_action_enum = NextAction.CONTINUE
+            if next_action.lower() == "validate":
+                next_action_enum = NextAction.VALIDATE
+            elif next_action.lower() in ["final", "final_answer", "finalize"]:
+                next_action_enum = NextAction.FINAL_ANSWER
+
+            # Create a reasoning step
+            reasoning_step = ReasoningStep(
+                title=title,
+                result=result,
+                reasoning=analysis,
+                next_action=next_action_enum,
+                confidence=confidence,
+            )
+
+            # Add the step to the run response
+            self._add_reasoning_step_to_extra_data(reasoning_step)
+
+            formatted_content = f"## {title}\n"
+            if result:
+                formatted_content += f"Result: {result}\n"
+            if analysis:
+                formatted_content += f"{analysis}\n"
+            if next_action and next_action.lower() != "continue":
+                formatted_content += f"Next Action: {next_action}\n"
+            if confidence is not None:
+                formatted_content += f"Confidence: {confidence}\n"
+            formatted_content += "\n"
+
+            self._append_to_reasoning_content(formatted_content)
+            return reasoning_step
+
+        # Case 3: ThinkingTools.think (simple format, just has 'thought')
+        elif tool_name.lower() == "think" and "thought" in tool_args:
+            thought = tool_args["thought"]
+            reasoning_step = ReasoningStep(
+                title="Thinking",
+                reasoning=thought,
+                confidence=None,
+            )
+            formatted_content = f"## Thinking\n{thought}\n\n"
+            self._add_reasoning_step_to_extra_data(reasoning_step)
+            self._append_to_reasoning_content(formatted_content)
+            return reasoning_step
+
+        return None
+
+    def _append_to_reasoning_content(self, content: str) -> None:
+        """Helper to append content to the reasoning_content field."""
+        if not hasattr(self.run_response, "reasoning_content") or not self.run_response.reasoning_content:  # type: ignore
+            self.run_response.reasoning_content = content  # type: ignore
+        else:
+            self.run_response.reasoning_content += content  # type: ignore
+
+    def _add_reasoning_step_to_extra_data(self, reasoning_step: ReasoningStep) -> None:
+        if hasattr(self, "run_response") and self.run_response is not None:
+            if self.run_response.extra_data is None:
+                from agno.run.response import RunResponseExtraData
+
+                self.run_response.extra_data = RunResponseExtraData()
+
+            if self.run_response.extra_data.reasoning_steps is None:
+                self.run_response.extra_data.reasoning_steps = []
+
+            self.run_response.extra_data.reasoning_steps.append(reasoning_step)
+
+    def _add_reasoning_metrics_to_extra_data(self, reasoning_time_taken: float) -> None:
+        try:
+            if hasattr(self, "run_response") and self.run_response is not None:
+                if self.run_response.extra_data is None:
+                    from agno.run.response import RunResponseExtraData
+
+                    self.run_response.extra_data = RunResponseExtraData()
+
+                # Initialize reasoning_messages if it doesn't exist
+                if self.run_response.extra_data.reasoning_messages is None:
+                    self.run_response.extra_data.reasoning_messages = []
+
+                metrics_message = Message(
+                    role="assistant",
+                    content=self.run_response.reasoning_content,
+                    metrics={"time": reasoning_time_taken},
+                )
+
+                # Add the metrics message to the reasoning_messages
+                self.run_response.extra_data.reasoning_messages.append(metrics_message)
+
+        except Exception as e:
+            # Log the error but don't crash
+            from agno.utils.log import log_error
+
+            log_error(f"Failed to add reasoning metrics to extra_data: {str(e)}")
+
     ###########################################################################
     # Default Tools
     ###########################################################################
@@ -5265,142 +5401,6 @@ class Agent:
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]
                 live_log.update(Group(*panels))
-
-    def update_reasoning_content_from_tool_call(
-        self, tool_name: str, tool_args: Dict[str, Any]
-    ) -> Optional[ReasoningStep]:
-        """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
-
-        # Case 1: ReasoningTools.think (has title, thought, optional action and confidence)
-        if tool_name.lower() == "think" and "title" in tool_args and "thought" in tool_args:
-            title = tool_args["title"]
-            thought = tool_args["thought"]
-            action = tool_args.get("action", "")
-            confidence = tool_args.get("confidence", None)
-
-            # Create a reasoning step
-            reasoning_step = ReasoningStep(
-                title=title,
-                reasoning=thought,
-                action=action,
-                next_action=NextAction.CONTINUE,
-                confidence=confidence,
-            )
-
-            # Add the step to the run response
-            self._add_reasoning_step_to_extra_data(reasoning_step)
-
-            formatted_content = f"## {title}\n{thought}\n"
-            if action:
-                formatted_content += f"Action: {action}\n"
-            if confidence is not None:
-                formatted_content += f"Confidence: {confidence}\n"
-            formatted_content += "\n"
-
-            self._append_to_reasoning_content(formatted_content)
-            return reasoning_step
-
-        # Case 2: ReasoningTools.analyze (has title, result, analysis, optional next_action and confidence)
-        elif tool_name.lower() == "analyze" and "title" in tool_args:
-            title = tool_args["title"]
-            result = tool_args.get("result", "")
-            analysis = tool_args.get("analysis", "")
-            next_action = tool_args.get("next_action", "")
-            confidence = tool_args.get("confidence", None)
-
-            # Map string next_action to enum
-            next_action_enum = NextAction.CONTINUE
-            if next_action.lower() == "validate":
-                next_action_enum = NextAction.VALIDATE
-            elif next_action.lower() in ["final", "final_answer", "finalize"]:
-                next_action_enum = NextAction.FINAL_ANSWER
-
-            # Create a reasoning step
-            reasoning_step = ReasoningStep(
-                title=title,
-                result=result,
-                reasoning=analysis,
-                next_action=next_action_enum,
-                confidence=confidence,
-            )
-
-            # Add the step to the run response
-            self._add_reasoning_step_to_extra_data(reasoning_step)
-
-            formatted_content = f"## {title}\n"
-            if result:
-                formatted_content += f"Result: {result}\n"
-            if analysis:
-                formatted_content += f"{analysis}\n"
-            if next_action and next_action.lower() != "continue":
-                formatted_content += f"Next Action: {next_action}\n"
-            if confidence is not None:
-                formatted_content += f"Confidence: {confidence}\n"
-            formatted_content += "\n"
-
-            self._append_to_reasoning_content(formatted_content)
-            return reasoning_step
-
-        # Case 3: ThinkingTools.think (simple format, just has 'thought')
-        elif tool_name.lower() == "think" and "thought" in tool_args:
-            thought = tool_args["thought"]
-            reasoning_step = ReasoningStep(
-                title="Thinking",
-                reasoning=thought,
-                confidence=None,
-            )
-            formatted_content = f"## Thinking\n{thought}\n\n"
-            self._add_reasoning_step_to_extra_data(reasoning_step)
-            self._append_to_reasoning_content(formatted_content)
-            return reasoning_step
-
-        return None
-
-    def _append_to_reasoning_content(self, content: str) -> None:
-        """Helper to append content to the reasoning_content field."""
-        if not hasattr(self.run_response, "reasoning_content") or not self.run_response.reasoning_content:  # type: ignore
-            self.run_response.reasoning_content = content  # type: ignore
-        else:
-            self.run_response.reasoning_content += content  # type: ignore
-
-    def _add_reasoning_step_to_extra_data(self, reasoning_step: ReasoningStep) -> None:
-        if hasattr(self, "run_response") and self.run_response is not None:
-            if self.run_response.extra_data is None:
-                from agno.run.response import RunResponseExtraData
-
-                self.run_response.extra_data = RunResponseExtraData()
-
-            if self.run_response.extra_data.reasoning_steps is None:
-                self.run_response.extra_data.reasoning_steps = []
-
-            self.run_response.extra_data.reasoning_steps.append(reasoning_step)
-
-    def _add_reasoning_metrics_to_extra_data(self, reasoning_time_taken: float) -> None:
-        try:
-            if hasattr(self, "run_response") and self.run_response is not None:
-                if self.run_response.extra_data is None:
-                    from agno.run.response import RunResponseExtraData
-
-                    self.run_response.extra_data = RunResponseExtraData()
-
-                # Initialize reasoning_messages if it doesn't exist
-                if self.run_response.extra_data.reasoning_messages is None:
-                    self.run_response.extra_data.reasoning_messages = []
-
-                metrics_message = Message(
-                    role="assistant",
-                    content=self.run_response.reasoning_content,
-                    metrics={"time": reasoning_time_taken},
-                )
-
-                # Add the metrics message to the reasoning_messages
-                self.run_response.extra_data.reasoning_messages.append(metrics_message)
-
-        except Exception as e:
-            # Log the error but don't crash
-            from agno.utils.log import log_error
-
-            log_error(f"Failed to add reasoning metrics to extra_data: {str(e)}")
 
     def cli_app(
         self,
