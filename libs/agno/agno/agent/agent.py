@@ -567,6 +567,7 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
+        run_response: Optional[RunResponse] = None,
         **kwargs: Any,
     ) -> Iterator[RunResponse]:
         """Run the Agent and yield the RunResponse.
@@ -597,13 +598,21 @@ class Agent:
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
         # 1.3 Create a run_id and RunResponse
         self.run_id = str(uuid4())
-        self.run_response = RunResponse(run_id=self.run_id, session_id=session_id, agent_id=self.agent_id)
 
-        log_debug(f"Agent Run Start: {self.run_response.run_id}", center=True)
+        # If run_response is None, create a new one
+        if run_response is None:
+            # For backwards compatibility, still set self.run_response
+            self.run_response = RunResponse(run_id=self.run_id, session_id=session_id, agent_id=self.agent_id)
+            run_response = self.run_response
+        else:
+            # For backward compatibility, also set self.run_response
+            self.run_response = run_response
+
+        log_debug(f"Async Agent Run Start: {run_response.run_id}", center=True)
 
         # 2. Update the Model and resolve context
         self.update_model(async_mode=False, user_id=user_id, session_id=session_id)
-        self.run_response.model = self.model.id if self.model is not None else None
+        run_response.model = self.model.id if self.model is not None else None
         if self.context is not None and self.resolve_context:
             self.resolve_run_context()
 
@@ -658,11 +667,11 @@ class Agent:
                     # Process content and thinking
                     if model_response_chunk.content is not None:
                         model_response.content = (model_response.content or "") + model_response_chunk.content
-                        self.run_response.content = model_response.content
+                        run_response.content = model_response.content
 
                     if model_response_chunk.thinking is not None:
                         model_response.thinking = (model_response.thinking or "") + model_response_chunk.thinking
-                        self.run_response.thinking = model_response.thinking
+                        run_response.thinking = model_response.thinking
 
                     if model_response_chunk.redacted_thinking is not None:
                         model_response.redacted_thinking = (
@@ -670,11 +679,11 @@ class Agent:
                         ) + model_response_chunk.redacted_thinking
 
                         # We only have thinking on response
-                        self.run_response.thinking = model_response.redacted_thinking
+                        run_response.thinking = model_response.redacted_thinking
 
                     if model_response_chunk.citations is not None:
                         # We get citations in one chunk
-                        self.run_response.citations = model_response_chunk.citations
+                        run_response.citations = model_response_chunk.citations
 
                     # Only yield if we have content or thinking to show
                     if (
@@ -711,21 +720,21 @@ class Agent:
                         model_response.audio.channels = model_response_chunk.audio.channels
 
                         # Yield the audio and transcript bit by bit
-                        self.run_response.response_audio = AudioResponse(
+                        run_response.response_audio = AudioResponse(
                             id=model_response_chunk.audio.id,
                             content=model_response_chunk.audio.content,
                             transcript=model_response_chunk.audio.transcript,
                             sample_rate=model_response_chunk.audio.sample_rate,
                             channels=model_response_chunk.audio.channels,
                         )
-                        self.run_response.created_at = model_response_chunk.created_at
+                        run_response.created_at = model_response_chunk.created_at
 
-                        yield self.run_response
+                        yield run_response
 
                     if model_response_chunk.image is not None:
                         self.add_image(model_response_chunk.image)
 
-                        yield self.run_response
+                        yield run_response
 
                 # If the model response is a tool_call_started, add the tool call to the run_response
                 elif (
@@ -734,13 +743,13 @@ class Agent:
                     new_tool_calls_list = model_response_chunk.tool_calls
                     if new_tool_calls_list is not None:
                         # Add tool calls to the agent.run_response
-                        if self.run_response.tools is None:
-                            self.run_response.tools = new_tool_calls_list
+                        if run_response.tools is None:
+                            run_response.tools = new_tool_calls_list
                         else:
-                            self.run_response.tools.extend(new_tool_calls_list)
+                            run_response.tools.extend(new_tool_calls_list)
 
                         # Format tool calls whenever new ones are added during streaming
-                        self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
+                        run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
 
                     # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
                     if self.stream_intermediate_steps:
@@ -757,11 +766,11 @@ class Agent:
                     new_tool_calls_list = model_response_chunk.tool_calls
                     if new_tool_calls_list is not None:
                         # Update the existing tool call in the run_response
-                        if self.run_response.tools:
+                        if run_response.tools:
                             # Create a mapping of tool_call_id to index
                             tool_call_index_map = {
                                 tc["tool_call_id"]: i
-                                for i, tc in enumerate(self.run_response.tools)
+                                for i, tc in enumerate(run_response.tools)
                                 if tc.get("tool_call_id") is not None
                             }
                             # Process tool calls
@@ -769,9 +778,9 @@ class Agent:
                                 tool_call_id = tool_call_dict.get("tool_call_id")
                                 index = tool_call_index_map.get(tool_call_id)
                                 if index is not None:
-                                    self.run_response.tools[index] = tool_call_dict
+                                    run_response.tools[index] = tool_call_dict
                         else:
-                            self.run_response.tools = new_tool_calls_list
+                            run_response.tools = new_tool_calls_list
 
                         # Only iterate through new tool calls
                         for tool_call in new_tool_calls_list:
@@ -798,7 +807,7 @@ class Agent:
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,
                                 event=RunEvent.reasoning_step,
-                                reasoning_content=self.run_response.reasoning_content,
+                                reasoning_content=run_response.reasoning_content,
                             )
 
                         yield self.create_run_response(
@@ -811,39 +820,39 @@ class Agent:
             model_response = self.model.response(messages=run_messages.messages)
             # Format tool calls if they exist
             if model_response.tool_calls:
-                self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
+                run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
 
             # Handle structured outputs
             if self.response_model is not None and model_response.parsed is not None:
                 # We get native structured outputs from the model
                 if self.model.structured_outputs:
                     # Update the run_response content with the structured output
-                    self.run_response.content = model_response.parsed
+                    run_response.content = model_response.parsed
                     # Update the run_response content_type with the structured output class name
-                    self.run_response.content_type = self.response_model.__name__
+                    run_response.content_type = self.response_model.__name__
             else:
                 # Update the run_response content with the model response content
-                self.run_response.content = model_response.content
+                run_response.content = model_response.content
 
             # Update the run_response thinking with the model response thinking
             if model_response.thinking is not None:
-                self.run_response.thinking = model_response.thinking
+                run_response.thinking = model_response.thinking
             if model_response.redacted_thinking is not None:
-                if self.run_response.thinking is None:
-                    self.run_response.thinking = model_response.redacted_thinking
+                if run_response.thinking is None:
+                    run_response.thinking = model_response.redacted_thinking
                 else:
-                    self.run_response.thinking += model_response.redacted_thinking
+                    run_response.thinking += model_response.redacted_thinking
 
             # Update the run_response citations with the model response citations
             if model_response.citations is not None:
-                self.run_response.citations = model_response.citations
+                run_response.citations = model_response.citations
 
             # Update the run_response tools with the model response tools
             if model_response.tool_calls is not None:
-                if self.run_response.tools is None:
-                    self.run_response.tools = model_response.tool_calls
+                if run_response.tools is None:
+                    run_response.tools = model_response.tool_calls
                 else:
-                    self.run_response.tools.extend(model_response.tool_calls)
+                    run_response.tools.extend(model_response.tool_calls)
 
                 # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
                 for tool_call in model_response.tool_calls:
@@ -854,24 +863,20 @@ class Agent:
 
             # Update the run_response audio with the model response audio
             if model_response.audio is not None:
-                self.run_response.response_audio = model_response.audio
+                run_response.response_audio = model_response.audio
 
             if model_response.image is not None:
                 self.add_image(model_response.image)
 
             # Update the run_response messages with the messages
-            self.run_response.messages = run_messages.messages
+            run_response.messages = run_messages.messages
             # Update the run_response created_at with the model response created_at
-            self.run_response.created_at = model_response.created_at
+            run_response.created_at = model_response.created_at
 
         if self.stream_intermediate_steps and reasoning_started:
             all_reasoning_steps: List[ReasoningStep] = []
-            if (
-                self.run_response
-                and self.run_response.extra_data
-                and hasattr(self.run_response.extra_data, "reasoning_steps")
-            ):
-                all_reasoning_steps = cast(List[ReasoningStep], self.run_response.extra_data.reasoning_steps)
+            if run_response and run_response.extra_data and hasattr(run_response.extra_data, "reasoning_steps"):
+                all_reasoning_steps = cast(List[ReasoningStep], run_response.extra_data.reasoning_steps)
 
             if all_reasoning_steps:
                 self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
@@ -885,13 +890,13 @@ class Agent:
         # Build a list of messages that should be added to the RunResponse
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         # Update the RunResponse messages
-        self.run_response.messages = messages_for_run_response
+        run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        self.run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
+        run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
 
         # Update the run_response audio if streaming
         if self.stream and model_response.audio is not None:
-            self.run_response.response_audio = model_response.audio
+            run_response.response_audio = model_response.audio
 
         # 9. Update Agent Memory
         if isinstance(self.memory, AgentMemory):
@@ -913,7 +918,7 @@ class Agent:
                 self.memory.add_messages(messages=messages_for_memory)
 
             # Create an AgentRun object to add to memory
-            agent_run = AgentRun(response=self.run_response)
+            agent_run = AgentRun(response=run_response)
             agent_run.message = run_messages.user_message
 
             # Update the memories with the user message if needed
@@ -958,7 +963,7 @@ class Agent:
             self.session_metrics = self.calculate_metrics(self.memory.messages)
         elif isinstance(self.memory, Memory):
             # Add AgentRun to memory
-            self.memory.add_run(session_id=session_id, run=self.run_response)
+            self.memory.add_run(session_id=session_id, run=run_response)
 
             self._make_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
 
@@ -997,18 +1002,18 @@ class Agent:
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
 
-        log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
+        log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
         if self.stream_intermediate_steps:
             yield self.create_run_response(
-                content=self.run_response.content,
-                reasoning_content=self.run_response.reasoning_content,
+                content=run_response.content,
+                reasoning_content=run_response.reasoning_content,
                 session_id=session_id,
                 event=RunEvent.run_completed,
             )
 
         # Yield final response if not streaming so that run() can get the response
         if not self.stream:
-            yield self.run_response
+            yield run_response
 
     @overload
     def run(
@@ -1093,10 +1098,16 @@ class Agent:
 
         last_exception = None
         num_attempts = retries + 1
+
+        # Create a run_id for this specific run
+        run_id = str(uuid4())
+
         for attempt in range(num_attempts):
             try:
-                # If a response_model is set, return the response as a structured output
+                # Create a new run_response for this attempt
+                run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id)
 
+                # If a response_model is set, return the response as a structured output
                 if self.response_model is not None and self.parse_response:
                     # Set stream=False and run the agent
                     if self.stream and self.stream is True:
@@ -1114,6 +1125,7 @@ class Agent:
                             files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            run_response=run_response,
                             **kwargs,
                         )
                     )
@@ -1154,6 +1166,7 @@ class Agent:
                             files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            run_response=run_response,
                             **kwargs,
                         )
                         return resp
@@ -1169,6 +1182,7 @@ class Agent:
                             files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            run_response=run_response,
                             **kwargs,
                         )
                         return next(resp)
