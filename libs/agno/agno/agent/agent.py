@@ -4527,6 +4527,7 @@ class Agent:
 
             Args:
                 query: The query to search for.
+                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
 
             Returns:
                 str: A string containing the response from the knowledge base.
@@ -4562,6 +4563,7 @@ class Agent:
 
             Args:
                 query: The query to search for.
+                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
 
             Returns:
                 str: A string containing the response from the knowledge base.
