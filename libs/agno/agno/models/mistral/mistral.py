@@ -274,7 +274,7 @@ class MistralChat(Model):
                 response = self.get_client().chat.parse(
                     model=self.id,
                     messages=mistral_messages,
-                    response_format=self.response_format,  # type: ignore
+                    response_format=response_format,  # type: ignore
                     **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
                 )
             else:
@@ -338,7 +338,7 @@ class MistralChat(Model):
                 response = await self.get_client().chat.parse_async(
                     model=self.id,
                     messages=mistral_messages,
-                    response_format=self.response_format,  # type: ignore
+                    response_format=response_format,  # type: ignore
                     **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
                 )
             else:

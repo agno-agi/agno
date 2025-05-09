@@ -128,7 +128,9 @@ class OpenAIChat(Model):
         Returns:
             OpenAIClient: An instance of the OpenAI client.
         """
-        if self.client and not self.client.is_closed():
+        # There is a bug in OpenAI preventing the reuse of the same client for multiple requests in some cases.
+        # So we need to create a new client for each request.
+        if self.client:
             return self.client
 
         client_params: Dict[str, Any] = self._get_client_params()
