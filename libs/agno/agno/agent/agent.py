@@ -119,7 +119,7 @@ class Agent:
     knowledge_filters: Optional[Dict[str, Any]] = None
 
     # Let the agent choose the knowledge filters
-    enable_agentic_filters: Optional[bool] = False
+    enable_agentic_knowledge_filters: Optional[bool] = False
 
     add_references: bool = False
     # Retrieval function to get references
@@ -303,7 +303,7 @@ class Agent:
         num_history_runs: int = 3,
         knowledge: Optional[AgentKnowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        enable_agentic_filters: Optional[bool] = None,
+        enable_agentic_knowledge_filters: Optional[bool] = None,
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
@@ -388,7 +388,7 @@ class Agent:
 
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
-        self.enable_agentic_filters = enable_agentic_filters
+        self.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
         self.add_references = add_references
         self.retriever = retriever
         self.references_format = references_format
@@ -1102,7 +1102,7 @@ class Agent:
             effective_filters = self._get_effective_filters(knowledge_filters)
 
         # Agentic filters are enabled
-        if self.enable_agentic_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
+        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
             # initialize metadata (specially required in case when load is commented out)
             self.knowledge.initialize_valid_filters()  # type: ignore
 
@@ -1736,7 +1736,7 @@ class Agent:
             effective_filters = self._get_effective_filters(knowledge_filters)
 
         # Agentic filters are enabled
-        if self.enable_agentic_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
+        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
             # initialize metadata (specially required in case when load is commented out)
             self.knowledge.initialize_valid_filters()  # type: ignore
 
@@ -2039,7 +2039,7 @@ class Agent:
 
             if self.search_knowledge:
                 # Use async or sync search based on async_mode
-                if self.enable_agentic_filters:
+                if self.enable_agentic_knowledge_filters:
                     agent_tools.append(
                         self.search_knowledge_base_with_agentic_filters_function(
                             async_mode=async_mode, knowledge_filters=knowledge_filters
@@ -2754,7 +2754,7 @@ class Agent:
             additional_information.append(f"Your name is: {self.name}.")
 
         # 3.2.4 Add information about agentic filters if enabled
-        if self.knowledge is not None and self.enable_agentic_filters:
+        if self.knowledge is not None and self.enable_agentic_knowledge_filters:
             valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
             if valid_filters:
                 valid_filters_str = ", ".join(valid_filters)

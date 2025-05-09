@@ -72,7 +72,7 @@ knowledge_base.load(recreate=True)
 agent = Agent(
     knowledge=knowledge_base,
     search_knowledge=True,
-    enable_agentic_filters=True,
+    enable_agentic_knowledge_filters=True,
 )
 
 # Query for Jordan Mitchell's experience and skills with filters in query so that Agent can automatically pick them up
