@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.4.2"
+version = "1.4.5"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -60,8 +60,11 @@ ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
 lmstudio = ["lmstudio"]
 litellm = ["litellm"]
+meta = ["llama-api-client"]
+cerebras = ["cerebras-cloud-sdk"]
 
 # Dependencies for Tools
+apify = ["apify-client"]
 cartesia = ["cartesia"]
 exa = ["exa_py"]
 yfinance = ["yfinance"]
@@ -132,11 +135,14 @@ models = [
   "agno[ollama]",
   "agno[openai]",
   "agno[ibm]",
-  "agno[litellm]"
+  "agno[litellm]",
+  "agno[meta]",
+  "agno[cerebras]"
 ]
 
 # All tools
 tools = [
+  "agno[apify]",
   "agno[exa]",
   "agno[cartesia]",
   "agno[ddg]",
@@ -260,6 +266,8 @@ module = [
   "bson.*",
   "browserbase.*",
   "cassio.*",
+  "cerebras.*",
+  "cerebras_cloud_sdk.*",
   "chonkie.*",
   "chromadb.*",
   "clickhouse_connect.*",
@@ -292,8 +300,8 @@ module = [
   "lancedb.*",
   "langchain_core.*",
   "langchain.*",
-  "litellm.*",
   "llama_index.*",
+  "llama_api_client.*",
   "litellm.*",
   "mem0.*",
   "mcp.*",
