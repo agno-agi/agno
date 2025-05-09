@@ -510,14 +510,14 @@ class Claude(Model):
                 if not citations:
                     continue
                 for citation in citations:
-                    model_response.citations.raw.append(citation.model_dump())
+                    model_response.citations.raw.append(citation.model_dump())  # type: ignore
                     # Web search citations
                     if isinstance(citation, CitationsWebSearchResultLocation):
-                        model_response.citations.urls.append(UrlCitation(url=citation.url, title=citation.cited_text))
+                        model_response.citations.urls.append(UrlCitation(url=citation.url, title=citation.cited_text))  # type: ignore
                     # Document citations
                     elif isinstance(citation, CitationPageLocation):
                         model_response.citations.documents.append(
-                            DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
+                            DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)  # type: ignore
                         )
 
         # Handle message completion and usage metrics
