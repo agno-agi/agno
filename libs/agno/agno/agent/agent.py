@@ -1088,6 +1088,10 @@ class Agent:
                 self.session_id = session_id
 
         session_id = cast(str, session_id)
+        
+        self.session_state = self.session_state or {}
+        self.session_state["current_user_id"] = user_id
+        self.session_state["current_session_id"] = session_id
 
         log_debug(f"Session ID: {session_id}", center=True)
 
@@ -1697,6 +1701,10 @@ class Agent:
                 self.session_id = session_id
 
         session_id = cast(str, session_id)
+        
+        self.session_state = self.session_state or {}
+        self.session_state["current_user_id"] = user_id
+        self.session_state["current_session_id"] = session_id
 
         log_debug(f"Session ID: {session_id}", center=True)
 
