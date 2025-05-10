@@ -520,9 +520,6 @@ class Claude(Model):
                         model_response.citations.documents.append(  # type: ignore
                             DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
                         )
-
-        # Handle message completion and usage metrics
-        elif isinstance(response, MessageStopEvent):
             if response.message.usage is not None:
                 model_response.response_usage = response.message.usage
 

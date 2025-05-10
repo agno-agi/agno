@@ -18,7 +18,7 @@ class Reader:
 
     def __init__(self, chunk_size: int = 5000, chunking_strategy: Optional[ChunkingStrategy] = None) -> None:
         self.chunk_size = chunk_size
-        self.chunking_strategy = chunking_strategy or FixedSizeChunking(chunk_size=self.chunk_size)
+        self.chunking_strategy = chunking_strategy
 
     def read(self, obj: Any) -> List[Document]:
         raise NotImplementedError
