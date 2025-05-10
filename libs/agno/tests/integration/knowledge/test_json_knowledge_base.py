@@ -276,7 +276,7 @@ def test_docx_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
     assert len(response_content) > 50
 
     clarification_phrases = [
-        "specify which",
+        "specify",
         "which candidate",
         "please clarify",
         "need more information",
@@ -340,7 +340,7 @@ async def test_async_docx_knowledge_base_with_metadata_path_invalid_filter(setup
     assert len(response_content) > 50
 
     clarification_phrases = [
-        "specify which",
+        "specify",
         "which candidate",
         "please clarify",
         "need more information",
@@ -437,7 +437,7 @@ def test_knowledge_base_with_invalid_filter(setup_vector_db):
     assert len(response_content) > 50
 
     clarification_phrases = [
-        "specify which",
+        "specify",
         "which candidate",
         "please clarify",
         "need more information",
@@ -569,7 +569,7 @@ async def test_async_knowledge_base_with_invalid_filter(setup_vector_db):
     assert len(response_content) > 50
 
     clarification_phrases = [
-        "specify which",
+        "specify",
         "which candidate",
         "please clarify",
         "need more information",

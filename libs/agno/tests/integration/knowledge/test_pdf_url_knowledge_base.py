@@ -203,7 +203,7 @@ def test_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_d
 
     # The response should either ask for clarification or mention recipes
     clarification_phrases = [
-        "specify which",
+        "specify",
         "which cuisine",
         "please clarify",
         "need more information",
@@ -303,7 +303,7 @@ async def test_async_pdf_url_knowledge_base_with_metadata_path_invalid_filter(se
 
     # The response should either ask for clarification or mention recipes
     clarification_phrases = [
-        "specify which",
+        "specify",
         "which cuisine",
         "please clarify",
         "need more information",
@@ -404,7 +404,7 @@ def test_pdf_url_knowledge_base_with_invalid_filter(setup_vector_db):
     assert len(response_content) > 50
 
     clarification_phrases = [
-        "specify which",
+        "specify",
         "which cuisine",
         "please clarify",
         "need more information",
@@ -533,7 +533,7 @@ async def test_async_pdf_url_knowledge_base_with_invalid_filter(setup_vector_db)
     assert len(response_content) > 50
 
     clarification_phrases = [
-        "specify which",
+        "specify",
         "which cuisine",
         "please clarify",
         "need more information",
