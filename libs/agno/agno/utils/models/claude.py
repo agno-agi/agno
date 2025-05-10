@@ -10,7 +10,7 @@ try:
         TextBlock,
         ToolUseBlock,
     )
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
 
 ROLE_MAP = {
@@ -33,12 +33,12 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     # 'filetype' used as a fallback
     try:
         import imghdr
-    except (ModuleNotFoundError, ImportError):
+    except ImportError:
         try:
             import filetype
 
             using_filetype = True
-        except (ModuleNotFoundError, ImportError):
+        except ImportError:
             raise ImportError("`filetype` not installed. Please install using `pip install filetype`")
 
     type_mapping = {
