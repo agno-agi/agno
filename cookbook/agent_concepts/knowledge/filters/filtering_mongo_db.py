@@ -2,7 +2,7 @@ from agno.agent import Agent
 from agno.knowledge.pdf import PDFKnowledgeBase
 from agno.vectordb.mongodb import MongoDb
 
-mdb_connection_string = "mongodb+srv://kaus:agno123@agno-test.tniefel.mongodb.net/?retryWrites=true&w=majority&appName=agno-test"
+mdb_connection_string = "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
 
 # Step 1: Initialize knowledge base with documents and metadata
 # ------------------------------------------------------------------------------
@@ -60,7 +60,7 @@ knowledge_base = PDFKnowledgeBase(
 )
 
 # Load all documents into the vector database
-# knowledge_base.load(recreate=True)
+knowledge_base.load(recreate=True)
 
 # Step 2: Query the knowledge base with different filter combinations
 # ------------------------------------------------------------------------------
