@@ -277,6 +277,7 @@ def test_history():
     assert len(agent.run_response.messages) == 4
 
 
+@pytest.mark.skip("Need to update credentials for this to work")
 def test_custom_client_params():
     generation_config = types.GenerateContentConfig(
         temperature=0,

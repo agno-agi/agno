@@ -144,10 +144,12 @@ class Claude(Model):
             return None
 
         tools: List[Dict[str, Any]] = []
-        for func_def in self._tools:
-            if func_def.get("type") != "function":
-                tools.append(func_def)
+        for tool_def in self._tools:
+            if tool_def.get("type") != "function":
+                tools.append(tool_def)
                 continue
+
+            func_def = tool_def.get("function")
             parameters: Dict[str, Any] = func_def.get("parameters", {})
             properties: Dict[str, Any] = parameters.get("properties", {})
             required_params: List[str] = []
