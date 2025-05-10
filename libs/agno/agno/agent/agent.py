@@ -23,7 +23,6 @@ from typing import (
 from uuid import uuid4
 
 from pydantic import BaseModel
-from streamlit.runtime.state import SessionState
 
 from agno.agent.metrics import SessionMetrics
 from agno.exceptions import ModelProviderError, StopAgentRun
@@ -1854,7 +1853,7 @@ class Agent:
             rr.created_at = created_at
         return rr
 
-    def _initialize_session_state(self, user_id: Optional[str] = None, session_id:  Optional[str] = None) -> None:
+    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
         self.session_state = self.session_state or {}
         self.session_state["current_user_id"] = user_id
         self.session_state["current_session_id"] = session_id
