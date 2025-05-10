@@ -53,9 +53,9 @@ knowledge_base = PDFKnowledgeBase(
         },
     ],
     vector_db=MongoDb(
-        collection_name="recipes",
+        collection_name="filters",
         db_url=mdb_connection_string,
-        search_index_name="recipes",
+        search_index_name="filters",
     ),
 )
 
