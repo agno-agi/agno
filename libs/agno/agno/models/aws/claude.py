@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, List, Optional, Union, Type
+from typing import Any, AsyncIterator, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 

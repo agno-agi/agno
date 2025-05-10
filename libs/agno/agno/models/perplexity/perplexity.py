@@ -77,11 +77,7 @@ class Perplexity(OpenAILike):
             request_params.update(self.request_params)
         return request_params
 
-    def parse_provider_response(
-        self,
-        response: Union[ChatCompletion, ParsedChatCompletion],
-        **kwargs
-    ) -> ModelResponse:
+    def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion], **kwargs) -> ModelResponse:
         """
         Parse the Perplexity response into a ModelResponse.
 

@@ -4,6 +4,7 @@ from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 import httpx
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
@@ -318,9 +319,7 @@ class Llama(Model):
 
         return tool_calls
 
-    def parse_provider_response(
-        self, response: CreateChatCompletionResponse, **kwargs
-    ) -> ModelResponse:
+    def parse_provider_response(self, response: CreateChatCompletionResponse, **kwargs) -> ModelResponse:
         """
         Parse the Llama response into a ModelResponse.
         """
