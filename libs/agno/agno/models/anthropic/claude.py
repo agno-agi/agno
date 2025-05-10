@@ -145,11 +145,11 @@ class Claude(Model):
 
         tools: List[Dict[str, Any]] = []
         for tool_def in self._tools:
-            if tool_def.get("type") != "function":
+            if tool_def.get("type", "") != "function":
                 tools.append(tool_def)
                 continue
 
-            func_def = tool_def.get("function")
+            func_def = tool_def.get("function", {})
             parameters: Dict[str, Any] = func_def.get("parameters", {})
             properties: Dict[str, Any] = parameters.get("properties", {})
             required_params: List[str] = []
@@ -504,6 +504,7 @@ class Claude(Model):
 
         # Capture citations from the final response
         elif isinstance(response, MessageStopEvent):
+            model_response.content = ""
             model_response.citations = Citations(raw=[], urls=[], documents=[])
             for block in response.message.content:
                 citations = getattr(block, "citations", None)
