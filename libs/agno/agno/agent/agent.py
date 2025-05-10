@@ -608,7 +608,7 @@ class Agent:
             # For backward compatibility, also set self.run_response
             self.run_response = run_response
 
-        log_debug(f"Async Agent Run Start: {run_response.run_id}", center=True)
+        log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # 2. Update the Model and resolve context
         self.update_model(async_mode=False, user_id=user_id, session_id=session_id)
