@@ -41,6 +41,7 @@ def test_session_metrics():
     assert agent.session_metrics.output_tokens == output_tokens
     assert agent.session_metrics.total_tokens == total_tokens
 
+
 def test_run_response_metrics():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),

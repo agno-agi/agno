@@ -104,12 +104,6 @@ def get_json_schema(
                 arg_json_schema = {}
 
             if arg_json_schema is not None:
-                if is_optional:
-                    # Handle null type for optional fields
-                    if isinstance(arg_json_schema["type"], list):
-                        arg_json_schema["type"].append("null")
-                    else:
-                        arg_json_schema["type"] = [arg_json_schema["type"], "null"]
                 # Add description
                 if param_descriptions and k in param_descriptions and param_descriptions[k]:
                     arg_json_schema["description"] = param_descriptions[k]

@@ -1,3 +1,5 @@
+from typing import Optional
+
 import pytest
 from pydantic import BaseModel, Field
 
@@ -203,6 +205,37 @@ def test_tool_call_custom_tool_untyped_parameters():
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_the_weather],
+        show_tool_calls=True,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run("What is the weather in Paris?")
+
+    # Verify tool usage
+    assert any(msg.tool_calls for msg in response.messages)
+    assert response.content is not None
+    assert "70" in response.content
+
+
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "o3"])
+def test_tool_call_custom_tool_optional_parameters(model: str):
+    def get_the_weather(city: Optional[str] = None):
+        """
+        Get the weather in a city
+
+        Args:
+            city: The city to get the weather for
+        """
+        if city is None:
+            return "It is currently 70 degrees and cloudy in Tokyo"
+        else:
+            return f"It is currently 70 degrees and cloudy in {city}"
+
+    agent = Agent(
+        model=OpenAIChat(id=model),
         tools=[get_the_weather],
         show_tool_calls=True,
         markdown=True,

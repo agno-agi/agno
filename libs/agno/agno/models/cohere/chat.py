@@ -108,16 +108,11 @@ class Cohere(Model):
             _request_params["tools"] = self._tools
             # Fix optional parameters where the "type" is [type, null]
             for tool in _request_params["tools"]:  # type: ignore
-                params = []
                 if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
-                    for param_name, obj in tool["function"]["parameters"].get("properties", {}).items():  # type: ignore
-                        params.append(param_name)
-                        if isinstance(obj["type"], list):
-                            obj["type"] = obj["type"][0]
-
+                    params = tool["function"]["parameters"]
                     # Cohere requires at least one required parameter, so if unset, set it to all parameters
-                    if len(tool["function"]["parameters"].get("required", [])) == 0:
-                        tool["function"]["parameters"]["required"] = params
+                    if len(params.get("required", [])) == 0:
+                        params["required"] = list(params["properties"].keys())
             _request_params["strict_tools"] = self.strict_tools
 
         if self.request_params:
