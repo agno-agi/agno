@@ -27,6 +27,8 @@ class Reader:
         raise NotImplementedError
 
     def chunk_document(self, document: Document) -> List[Document]:
+        if self.chunking_strategy is None:
+            self.chunking_strategy = FixedSizeChunking(chunk_size=self.chunk_size)
         return self.chunking_strategy.chunk(document)  # type: ignore
 
     async def chunk_documents_async(self, documents: List[Document]) -> List[Document]:
