@@ -80,21 +80,26 @@ def main() -> None:
     # Initialize session state
     if "sage_session_id" not in st.session_state:
         st.session_state["sage_session_id"] = None
-    
+
     # Attempt to load or create a session
     if not st.session_state["sage_session_id"]:
         try:
             logger.info("---*--- Loading Sage session ---*---")
             st.session_state["sage_session_id"] = sage.load_session()
-            logger.info(f"---*--- Sage session: {st.session_state['sage_session_id']} ---*---")
+            logger.info(
+                f"---*--- Sage session: {st.session_state['sage_session_id']} ---*---"
+            )
         except Exception as e:
             logger.error(f"Session load error: {str(e)}")
             st.warning("Database connection unavailable. Running in memory-only mode.")
             # Generate a temporary session ID to allow the app to function without storage
             if not st.session_state["sage_session_id"]:
                 import uuid
+
                 st.session_state["sage_session_id"] = f"temp-{str(uuid.uuid4())}"
-                logger.info(f"---*--- Created temporary session: {st.session_state['sage_session_id']} ---*---")
+                logger.info(
+                    f"---*--- Created temporary session: {st.session_state['sage_session_id']} ---*---"
+                )
 
     ####################################################################
     # Load runs from memory
@@ -102,25 +107,29 @@ def main() -> None:
     # Initialize the messages array if not already done
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
-    
+
     # Only try to load runs from memory if we have a valid session and no messages yet
-    if len(st.session_state["messages"]) == 0 and hasattr(sage, "memory") and sage.memory is not None:
+    if (
+        len(st.session_state["messages"]) == 0
+        and hasattr(sage, "memory")
+        and sage.memory is not None
+    ):
         agent_runs = []
         # Check if memory is a dict or an object with runs attribute
         if isinstance(sage.memory, dict) and "runs" in sage.memory:
             agent_runs = sage.memory["runs"]
         elif hasattr(sage.memory, "runs"):
             agent_runs = sage.memory.runs
-        
+
         # Load messages from agent runs
         if len(agent_runs) > 0:
             logger.debug("Loading run history")
             for _run in agent_runs:
                 # Check if _run is an object with message attribute
-                if hasattr(_run, 'message') and _run.message is not None:
+                if hasattr(_run, "message") and _run.message is not None:
                     add_message(_run.message.role, _run.message.content)
                 # Check if _run is an object with response attribute
-                if hasattr(_run, 'response') and _run.response is not None:
+                if hasattr(_run, "response") and _run.response is not None:
                     add_message("assistant", _run.response.content, _run.response.tools)
         else:
             logger.debug("No run history found")

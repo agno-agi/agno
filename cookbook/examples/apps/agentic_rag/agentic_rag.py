@@ -89,7 +89,6 @@ def get_agentic_rag_agent(
         storage=PostgresAgentStorage(
             table_name="agentic_rag_agent_sessions", db_url=db_url
         ),  # Persist session data
-
         knowledge=knowledge_base,  # Add knowledge base
         description="You are a helpful Agent called 'Agentic RAG' and your goal is to assist the user in the best way possible.",
         instructions=[
