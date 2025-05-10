@@ -7,6 +7,8 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from rich.console import Console
 
+from agno.api.schemas.evals import EvalType
+from agno.eval.utils import track_eval_run
 from agno.run.response import RunResponse
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
 
@@ -59,6 +61,8 @@ class ReliabilityEval:
     print_results: bool = False
     # Save the result to a file
     save_result_to_file: Optional[str] = None
+    # Track the results, for them to be available in the Agno Platform
+    track_results: bool = False
 
     # debug_mode=True enables debug logs
     debug_mode: bool = False
@@ -135,6 +139,15 @@ class ReliabilityEval:
         # Show results
         if self.print_summary or self.print_results:
             self.result.print_eval(console)
+
+        # Track results
+        if self.track_results:
+            track_eval_run(
+                run_id=self.eval_id,  # type: ignore
+                run_data=asdict(self.result),
+                eval_type=EvalType.RELIABILITY,
+                agent_id=self.agent_response.agent_id if self.agent_response is not None else None,
+            )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result
