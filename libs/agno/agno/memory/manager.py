@@ -40,10 +40,7 @@ class MemoryManager(BaseModel):
                 exit(1)
             self.model = OpenAIChat(id="gpt-4o")
 
-        # Add tools to the Model
-        self.add_tools_to_model(model=self.model)
-
-    def add_tools_to_model(self, model: Model) -> None:
+    def determine_tools_for_model(self) -> None:
         if self._tools_for_model is None:
             self._tools_for_model = []
         if self._functions_for_model is None:
@@ -64,10 +61,6 @@ class MemoryManager(BaseModel):
                     log_debug(f"Added function {func.name}")
             except Exception as e:
                 logger.warning(f"Could not add function {tool}: {e}")
-        # Set tools on the model
-        model.set_tools(tools=self._tools_for_model)
-        # Set functions on the model
-        model.set_functions(functions=self._functions_for_model)
 
     def get_existing_memories(self) -> Optional[List[MemoryRow]]:
         if self.db is None:
@@ -175,6 +168,7 @@ class MemoryManager(BaseModel):
 
         # Update the Model (set defaults, add logit etc.)
         self.update_model()
+        self.determine_tools_for_model()
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [self.get_system_message()]
@@ -189,7 +183,9 @@ class MemoryManager(BaseModel):
 
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
-        response = self.model.response(messages=messages_for_model)
+        response = self.model.response(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
         log_debug("*********** MemoryManager End ***********")
         return response.content
 
@@ -215,6 +211,8 @@ class MemoryManager(BaseModel):
 
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
-        response = await self.model.aresponse(messages=messages_for_model)
+        response = await self.model.aresponse(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
         log_debug("*********** Async MemoryManager End ***********")
         return response.content

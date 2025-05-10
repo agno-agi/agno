@@ -13,7 +13,6 @@ def get_function_call(
     call_id: Optional[str] = None,
     functions: Optional[Dict[str, Function]] = None,
 ) -> Optional[FunctionCall]:
-    log_debug(f"Getting function {name}")
     if functions is None:
         return None
 

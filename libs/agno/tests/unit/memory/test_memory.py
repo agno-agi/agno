@@ -166,7 +166,7 @@ def test_custom_summarizer_with_system_message(mock_model, mock_db):
     ]
 
     # Get the system message with the custom prompt
-    system_message = memory.summary_manager.get_system_message(conversation, model=mock_model)
+    system_message = memory.summary_manager.get_system_message(conversation, {"type": "json_object"})
     assert system_message.role == "system"
     assert system_message.content == custom_system_message
 
@@ -226,7 +226,7 @@ def test_custom_summarizer_with_additional_instructions(mock_model, mock_db):
     ]
 
     # Get the system message with the custom prompt
-    system_message = memory.summary_manager.get_system_message(conversation, model=mock_model)
+    system_message = memory.summary_manager.get_system_message(conversation, {"type": "json_object"})
     assert system_message.role == "system"
     assert custom_additional_instructions in system_message.content
 

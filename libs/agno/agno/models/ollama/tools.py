@@ -1,7 +1,9 @@
 import json
 from dataclasses import dataclass, field
 from textwrap import dedent
-from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.models.message import Message, MessageMetrics
 from agno.models.ollama.chat import ChatResponse, Ollama
@@ -200,14 +202,22 @@ class OllamaTools(Ollama):
         return function_calls_to_run
 
     def process_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
     ) -> Iterator[ModelResponse]:
         """
         Process a streaming response from the model.
         """
         tool_call_data = ToolCall()
 
-        for response_delta in self.invoke_stream(messages=messages):
+        for response_delta in self.invoke_stream(
+            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+        ):
             model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
             if model_response_delta:
                 yield from self._populate_stream_data_and_assistant_message(
@@ -215,14 +225,22 @@ class OllamaTools(Ollama):
                 )
 
     async def aprocess_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process a streaming response from the model.
         """
         tool_call_data = ToolCall()
 
-        async for response_delta in self.ainvoke_stream(messages=messages):
+        async for response_delta in self.ainvoke_stream(
+            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+        ):
             model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
             if model_response_delta:
                 for model_response in self._populate_stream_data_and_assistant_message(
@@ -305,7 +323,7 @@ class OllamaTools(Ollama):
         return model_response
 
     def get_instructions_to_generate_tool_calls(self) -> List[str]:
-        if self._functions is not None:
+        if self._tools is not None:
             return [
                 "At the very first turn you don't have <tool_results> so you shouldn't not make up the results.",
                 "To respond to the users message, you can use only one tool at a time.",
@@ -315,7 +333,7 @@ class OllamaTools(Ollama):
         return []
 
     def get_tool_call_prompt(self) -> Optional[str]:
-        if self._functions is not None and len(self._functions) > 0:
+        if self._tools is not None and len(self._tools) > 0:
             tool_call_prompt = dedent(
                 """\
             You are a function calling with a language model.
@@ -333,8 +351,14 @@ class OllamaTools(Ollama):
             tool_call_prompt += "\nHere are the available tools:"
             tool_call_prompt += "\n<tools>\n"
             tool_definitions: List[str] = []
-            for _f_name, _function in self._functions.items():
-                _function_def = _function.get_definition_for_prompt()
+            for func_def in self._tools:
+                _function_def = json.dumps(
+                    {
+                        "name": func_def.get("name") or "",
+                        "description": func_def.get("description") or "",
+                        "arguments": func_def.get("parameters", {}).get("properties", {}),
+                    }
+                )
                 if _function_def:
                     tool_definitions.append(_function_def)
             tool_call_prompt += "\n".join(tool_definitions)
@@ -351,7 +375,7 @@ class OllamaTools(Ollama):
             return tool_call_prompt
         return None
 
-    def get_system_message_for_model(self) -> Optional[str]:
+    def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
         return self.get_tool_call_prompt()
 
     def get_instructions_for_model(self) -> Optional[List[str]]:
