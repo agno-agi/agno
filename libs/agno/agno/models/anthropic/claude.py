@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
-from agno.models.message import Citations, DocumentCitation, Message
+from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
 from agno.utils.models.claude import format_messages
@@ -18,6 +18,8 @@ try:
     from anthropic import APIConnectionError, APIStatusError, RateLimitError
     from anthropic import AsyncAnthropic as AsyncAnthropicClient
     from anthropic.types import (
+        CitationPageLocation,
+        CitationsWebSearchResultLocation,
         ContentBlockDeltaEvent,
         ContentBlockStartEvent,
         ContentBlockStopEvent,
@@ -144,6 +146,9 @@ class Claude(Model):
 
         tools: List[Dict[str, Any]] = []
         for func_def in tools:
+            if func_def.get("type") != "function":
+                tools.append(func_def)
+                continue
             parameters: Dict[str, Any] = func_def.get("parameters", {})
             properties: Dict[str, Any] = parameters.get("properties", {})
             required_params: List[str] = []
@@ -392,12 +397,25 @@ class Claude(Model):
                     else:
                         model_response.content += block.text
 
-                    if block.citations:
-                        model_response.citations = Citations(raw=block.citations, documents=[])
+                    # Capture citations from the response
+                    if block.citations is not None:
+                        if model_response.citations is None:
+                            model_response.citations = Citations(raw=[], urls=[], documents=[])
                         for citation in block.citations:
-                            model_response.citations.documents.append(  # type: ignore
-                                DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
-                            )
+                            model_response.citations.raw.append(citation.model_dump())  # type: ignore
+                            # Web search citations
+                            if isinstance(citation, CitationsWebSearchResultLocation):
+                                model_response.citations.urls.append(  # type: ignore
+                                    UrlCitation(url=citation.url, title=citation.cited_text)
+                                )
+                            # Document citations
+                            elif isinstance(citation, CitationPageLocation):
+                                model_response.citations.documents.append(  # type: ignore
+                                    DocumentCitation(
+                                        document_title=citation.document_title,
+                                        cited_text=citation.cited_text,
+                                    )
+                                )
                 elif block.type == "thinking":
                     model_response.thinking = block.thinking
                     model_response.provider_data = {
@@ -455,12 +473,6 @@ class Claude(Model):
             # Handle text content
             if response.delta.type == "text_delta":
                 model_response.content = response.delta.text
-            elif response.delta.type == "citation_delta":
-                citation = response.delta.citation
-                model_response.citations = Citations(raw=citation)
-                model_response.citations.documents.append(  # type: ignore
-                    DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
-                )
             # Handle thinking content
             elif response.delta.type == "thinking_delta":
                 model_response.thinking = response.delta.thinking
@@ -490,6 +502,24 @@ class Claude(Model):
                         "function": function_def,
                     }
                 ]
+
+        # Capture citations from the final response
+        elif isinstance(response, MessageStopEvent):
+            model_response.citations = Citations(raw=[], urls=[], documents=[])
+            for block in response.message.content:
+                citations = getattr(block, "citations", None)
+                if not citations:
+                    continue
+                for citation in citations:
+                    model_response.citations.raw.append(citation.model_dump())  # type: ignore
+                    # Web search citations
+                    if isinstance(citation, CitationsWebSearchResultLocation):
+                        model_response.citations.urls.append(UrlCitation(url=citation.url, title=citation.cited_text))  # type: ignore
+                    # Document citations
+                    elif isinstance(citation, CitationPageLocation):
+                        model_response.citations.documents.append(  # type: ignore
+                            DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
+                        )
 
         # Handle message completion and usage metrics
         elif isinstance(response, MessageStopEvent):

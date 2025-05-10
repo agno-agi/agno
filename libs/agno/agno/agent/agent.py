@@ -1110,6 +1110,8 @@ class Agent:
 
         session_id = cast(str, session_id)
 
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
+
         log_debug(f"Session ID: {session_id}", center=True)
 
         last_exception = None
@@ -1740,6 +1742,8 @@ class Agent:
 
         session_id = cast(str, session_id)
 
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
+
         log_debug(f"Session ID: {session_id}", center=True)
 
         last_exception = None
@@ -1890,6 +1894,11 @@ class Agent:
         if created_at is not None:
             rr.created_at = created_at
         return rr
+
+    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
+        self.session_state = self.session_state or {}
+        self.session_state["current_user_id"] = user_id
+        self.session_state["current_session_id"] = session_id
 
     def _make_memories_and_summaries(
         self,
