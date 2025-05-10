@@ -19,17 +19,6 @@ except ImportError:
 
 
 @dataclass
-class OllamaResponseUsage:
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-    total_duration: int = 0
-    load_duration: int = 0
-    prompt_eval_duration: int = 0
-    eval_duration: int = 0
-
-
-@dataclass
 class Ollama(Model):
     """
     A class for interacting with Ollama models.
