@@ -200,7 +200,7 @@ class Llama(Model):
         """
         return self.get_client().chat.completions.create(
             model=self.id,
-            messages=[format_message(m) for m in messages],  # type: ignore
+            messages=[format_message(m, tool_calls=bool(self._tools)) for m in messages],  # type: ignore
             **self.request_kwargs,
         )
 
@@ -217,7 +217,7 @@ class Llama(Model):
 
         return await self.get_async_client().chat.completions.create(
             model=self.id,
-            messages=[format_message(m) for m in messages],  # type: ignore
+            messages=[format_message(m, tool_calls=bool(self._tools)) for m in messages],  # type: ignore
             **self.request_kwargs,
         )
 
@@ -235,7 +235,7 @@ class Llama(Model):
         try:
             yield from self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[format_message(m) for m in messages],  # type: ignore
+                messages=[format_message(m, tool_calls=bool(self._tools)) for m in messages],  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )  # type: ignore
@@ -257,7 +257,7 @@ class Llama(Model):
         try:
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[format_message(m) for m in messages],  # type: ignore
+                messages=[format_message(m, tool_calls=bool(self._tools)) for m in messages],  # type: ignore
                 stream=True,
                 **self.request_kwargs,
             )

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from agno.agent.agent import Agent
 from agno.media import Image
-from agno.models.meta import Llama
+from agno.models.meta import LlamaOpenAI
 from agno.utils.media import download_image
 
 image_path = Path(__file__).parent.joinpath("sample.jpg")
@@ -15,7 +15,7 @@ download_image(
 
 def test_image_input_file():
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False, monitoring=False
+        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False, monitoring=False
     )
 
     response = agent.run(
@@ -29,7 +29,7 @@ def test_image_input_file():
 
 def test_image_input_bytes():
     agent = Agent(
-        model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False, monitoring=False
+        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False, monitoring=False
     )
 
     image_bytes = image_path.read_bytes()
