@@ -255,7 +255,7 @@ def test_search(mock_pinecone_db, mock_embedder):
 
     # Check that index.query was called with the right arguments
     mock_pinecone_db.index.query.assert_called_with(
-        vector=[0.1] * 1024, top_k=2, namespace=TEST_NAMESPACE, filter=None, include_values=None, include_metadata=True
+        vector=[0.1] * 1024, top_k=2, namespace=TEST_NAMESPACE, include_values=None, include_metadata=True
     )
 
     # Check the results

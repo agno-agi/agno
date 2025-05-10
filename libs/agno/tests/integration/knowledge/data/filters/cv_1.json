@@ -1,0 +1,25 @@
+{
+  "name": "Jordan Mitchell",
+  "position": "Junior Software Engineer",
+  "summary": "Recent Computer Science graduate with strong foundational knowledge in web development and data structures. Passionate about building scalable software solutions.",
+  "experience": [
+    {
+      "title": "Software Engineering Intern",
+      "company": "SnapTech Solutions",
+      "location": "San Francisco, CA",
+      "period": "Jun 2023 – Aug 2023",
+      "responsibilities": [
+        "Worked on front-end components using React and Tailwind CSS",
+        "Optimized internal tools, improving load times by 30%"
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "BSc in Computer Science",
+      "institution": "University of California, Berkeley",
+      "period": "2019 – 2023"
+    }
+  ],
+  "skills": ["JavaScript", "React", "Python", "HTML/CSS", "Git"]
+}

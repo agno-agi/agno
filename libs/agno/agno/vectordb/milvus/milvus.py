@@ -320,7 +320,7 @@ class Milvus(VectorDb):
         results = self.client.search(
             collection_name=self.collection,
             data=[query_embedding],
-            filter=self._build_expr(filters),
+            # filter=self._build_expr(filters),
             output_fields=["*"],
             limit=limit,
         )
@@ -353,7 +353,7 @@ class Milvus(VectorDb):
         results = await self.async_client.search(
             collection_name=self.collection,
             data=[query_embedding],
-            filter=self._build_expr(filters),
+            # filter=self._build_expr(filters),
             output_fields=["*"],
             limit=limit,
         )

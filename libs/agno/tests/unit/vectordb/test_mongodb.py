@@ -419,7 +419,7 @@ async def test_async_insert(
 
     # Mock the prepare_doc method to avoid embedding issues during test
     original_prepare_doc = async_vector_db.prepare_doc
-    async_vector_db.prepare_doc = lambda doc: {
+    async_vector_db.prepare_doc = lambda doc, filters=None: {
         "_id": md5(doc.content.encode("utf-8")).hexdigest(),
         "name": doc.name,
         "content": doc.content,

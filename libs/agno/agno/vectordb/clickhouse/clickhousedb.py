@@ -80,7 +80,6 @@ class Clickhouse(VectorDb):
         if self.async_client is None:
             self.async_client = await clickhouse_connect.get_async_client(
                 host=self.host,
-                username=self.username or "default",
                 password=self.password,
                 database=self.database_name,
                 port=self.port,
@@ -413,13 +412,13 @@ class Clickhouse(VectorDb):
 
         parameters = self._get_base_parameters()
         where_query = ""
-        if filters:
-            query_filters: List[str] = []
-            for key, value in filters.values():
-                query_filters.append(f"{{{key}_key:String}} = {{{key}_value:String}}")
-                parameters[f"{key}_key"] = key
-                parameters[f"{key}_value"] = value
-            where_query = f"WHERE {' AND '.join(query_filters)}"
+        # if filters:
+        #     query_filters: List[str] = []
+        #     for key, value in filters.values():
+        #         query_filters.append(f"{{{key}_key:String}} = {{{key}_value:String}}")
+        #         parameters[f"{key}_key"] = key
+        #         parameters[f"{key}_value"] = value
+        #     where_query = f"WHERE {' AND '.join(query_filters)}"
 
         order_by_query = ""
         if self.distance == Distance.l2 or self.distance == Distance.max_inner_product:
@@ -477,13 +476,13 @@ class Clickhouse(VectorDb):
 
         parameters = self._get_base_parameters()
         where_query = ""
-        if filters:
-            query_filters: List[str] = []
-            for key, value in filters.values():
-                query_filters.append(f"{{{key}_key:String}} = {{{key}_value:String}}")
-                parameters[f"{key}_key"] = key
-                parameters[f"{key}_value"] = value
-            where_query = f"WHERE {' AND '.join(query_filters)}"
+        # if filters:
+        #     query_filters: List[str] = []
+        #     for key, value in filters.values():
+        #         query_filters.append(f"{{{key}_key:String}} = {{{key}_value:String}}")
+        #         parameters[f"{key}_key"] = key
+        #         parameters[f"{key}_value"] = value
+        #     where_query = f"WHERE {' AND '.join(query_filters)}"
 
         order_by_query = ""
         if self.distance == Distance.l2 or self.distance == Distance.max_inner_product:

@@ -87,7 +87,7 @@ async def test_firecrawl_knowledge_base_async_directory(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "async_search_knowledge_base" for call in function_calls)
+    assert any(call["function"]["name"] == "asearch_knowledge_base" for call in function_calls)
 
 
 @pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")
@@ -109,7 +109,7 @@ async def test_firecrawl_knowledge_base_async_single_url(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "async_search_knowledge_base" for call in function_calls)
+    assert any(call["function"]["name"] == "asearch_knowledge_base" for call in function_calls)
 
 
 @pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")

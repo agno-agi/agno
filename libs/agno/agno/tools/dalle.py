@@ -85,7 +85,6 @@ class DalleTools(Toolkit):
 
             # Update the run response with the image URLs
             response_str = ""
-
             if response.data:
                 for img in response.data:
                     if img.url:

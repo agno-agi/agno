@@ -417,7 +417,7 @@ class PineconeDb(VectorDb):
                 sparse_vector=hsparse,
                 top_k=limit,
                 namespace=namespace or self.namespace,
-                filter=filters,
+                # filter=filters,
                 include_values=include_values,
                 include_metadata=True,
             )
@@ -426,7 +426,7 @@ class PineconeDb(VectorDb):
                 vector=dense_embedding,
                 top_k=limit,
                 namespace=namespace or self.namespace,
-                filter=filters,
+                # filter=filters,
                 include_values=include_values,
                 include_metadata=True,
             )
