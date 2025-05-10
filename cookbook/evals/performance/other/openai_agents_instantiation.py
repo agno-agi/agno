@@ -1,8 +1,10 @@
-"""Run `pip install langgraph langchain_openai` to install dependencies."""
+"""Run `pip install agents` to install dependencies."""
 
 from typing import Literal
+
 from agents import Agent, function_tool
-from agno.eval.perf import PerfEval
+from agno.eval.performance import PerformanceEval
+
 
 def get_weather(city: Literal["nyc", "sf"]):
     """Use this to get weather information."""
@@ -13,6 +15,7 @@ def get_weather(city: Literal["nyc", "sf"]):
     else:
         raise AssertionError("Unknown city")
 
+
 def instantiate_agent():
     return Agent(
         name="Haiku agent",
@@ -22,7 +25,9 @@ def instantiate_agent():
     )
 
 
-openai_agents_instantiation = PerfEval(func=instantiate_agent, num_iterations=1000)
+openai_agents_instantiation = PerformanceEval(
+    func=instantiate_agent, num_iterations=1000
+)
 
 if __name__ == "__main__":
-    openai_agents_instantiation.run(print_results=True)
+    openai_agents_instantiation.run(print_results=True, print_summary=True)
