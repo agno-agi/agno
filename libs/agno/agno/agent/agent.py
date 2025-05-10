@@ -469,6 +469,16 @@ class Agent:
 
         self._formatter: Optional[SafeFormatter] = None
 
+    def __or__(self, *others: Union[Any, List[Any]]) -> Any:
+        """
+        Sequential chain flow: Pass the output of one agent as input to the next in a sequence.
+        Supports chaining multiple agents.
+        The input for the next agent is a JSON string containing all previous results.
+        """
+        from agno.utils.chain import sequential_chain
+
+        return sequential_chain(self, *others)
+
     def set_agent_id(self) -> str:
         if self.agent_id is None:
             self.agent_id = str(uuid4())
