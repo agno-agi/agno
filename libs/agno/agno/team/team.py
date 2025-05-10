@@ -567,6 +567,8 @@ class Team:
 
         session_id = cast(str, session_id)
 
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
+
         log_debug(f"Session ID: {session_id}", center=True)
 
         self.initialize_team(session_id=session_id)
@@ -1313,6 +1315,8 @@ class Team:
 
         session_id = cast(str, session_id)
 
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
+
         log_debug(f"Session ID: {session_id}", center=True)
 
         self.initialize_team(session_id=session_id)
@@ -1989,6 +1993,11 @@ class Team:
             )
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
+
+    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
+        self.session_state = self.session_state or {}
+        self.session_state["current_user_id"] = user_id
+        self.session_state["current_session_id"] = session_id
 
     def _make_memories_and_summaries(
         self, run_messages: RunMessages, session_id: str, user_id: Optional[str] = None
