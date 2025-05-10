@@ -3489,7 +3489,7 @@ class Agent:
 
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = self.knowledge.search(
-                query=query, num_documents=num_documents, filters=filters, **kwargs
+                query=query, num_documents=num_documents, filters=filters
             )
 
             if not relevant_docs or len(relevant_docs) == 0:

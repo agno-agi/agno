@@ -451,8 +451,9 @@ class MongoDb(VectorDb):
                 {"$set": {"score": {"$meta": "vectorSearchScore"}}},
             ]
 
+            match_filters = {}
             if min_score > 0:
-                pipeline.append({"$match": {"score": {"$gte": min_score}}})
+                match_filters["score"] = {"$gte": min_score}
 
             # Handle filters if provided
             if filters:
@@ -465,7 +466,10 @@ class MongoDb(VectorDb):
                     else:
                         mongo_filters[key] = value
 
-                pipeline.append({"$match": mongo_filters})
+                match_filters.update(mongo_filters)
+
+            if match_filters:
+                pipeline.append({"$match": match_filters})
 
             pipeline.append({"$project": {"embedding": 0}})
 
