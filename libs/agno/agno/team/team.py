@@ -1996,8 +1996,10 @@ class Team:
 
     def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
         self.session_state = self.session_state or {}
-        self.session_state["current_user_id"] = user_id
-        self.session_state["current_session_id"] = session_id
+        if user_id is not None:
+            self.session_state["current_user_id"] = user_id
+        if session_id is not None:
+            self.session_state["current_session_id"] = session_id
 
     def _make_memories_and_summaries(
         self, run_messages: RunMessages, session_id: str, user_id: Optional[str] = None
