@@ -471,6 +471,51 @@ class LanceDb(VectorDb):
 
         return results.to_pandas()
 
+    def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
+        query_embedding = self.embedder.get_embedding(query)
+        if query_embedding is None:
+            logger.error(f"Error getting embedding for Query: {query}")
+            return []
+
+        if self.table is None:
+            logger.error("Table not initialized. Please create the table first")
+            return []
+
+        if not self.fts_index_exists:
+            self.table.create_fts_index("payload", use_tantivy=self.use_tantivy, replace=True)
+            self.fts_index_exists = True
+
+        results = (
+            self.table.search(
+                vector_column_name=self._vector_col,
+                query_type="hybrid",
+            )
+            .vector(query_embedding)
+            .text(query)
+            .limit(limit)
+        )
+
+        if self.nprobes:
+            results.nprobes(self.nprobes)
+
+        return results.to_pandas()
+
+    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
+        if self.table is None:
+            logger.error("Table not initialized. Please create the table first")
+            return []
+
+        if not self.fts_index_exists:
+            self.table.create_fts_index("payload", use_tantivy=self.use_tantivy, replace=True)
+            self.fts_index_exists = True
+
+        results = self.table.search(
+            query=query,
+            query_type="fts",
+        ).limit(limit)
+
+        return results.to_pandas()
+
     def _build_search_results(self, results) -> List[Document]:  # TODO: typehint pandas?
         search_results: List[Document] = []
         try:
