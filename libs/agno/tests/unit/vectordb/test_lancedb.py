@@ -85,7 +85,6 @@ def test_vector_search(lance_db, sample_documents):
     assert found
 
 
-@pytest.mark.skip(reason="Keyword search not implemented for LanceDb")
 def test_keyword_search(lance_db, sample_documents):
     """Test keyword search"""
     lance_db.search_type = SearchType.keyword
@@ -95,7 +94,6 @@ def test_keyword_search(lance_db, sample_documents):
     assert "curry" in results[0].content.lower()
 
 
-@pytest.mark.skip(reason="Hybrid search not implemented for LanceDb")
 def test_hybrid_search(lance_db, sample_documents):
     """Test hybrid search"""
     lance_db.search_type = SearchType.hybrid
