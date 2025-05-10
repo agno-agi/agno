@@ -390,7 +390,7 @@ class MongoDb(VectorDb):
         prepared_docs = []
         for document in documents:
             try:
-                doc_data = self.prepare_doc(document)
+                doc_data = self.prepare_doc(document, filters)
                 prepared_docs.append(doc_data)
             except ValueError as e:
                 logger.error(f"Error preparing document '{document.name}': {e}")
@@ -451,11 +451,25 @@ class MongoDb(VectorDb):
                 {"$set": {"score": {"$meta": "vectorSearchScore"}}},
             ]
 
+            match_filters = {}
             if min_score > 0:
-                pipeline.append({"$match": {"score": {"$gte": min_score}}})
+                match_filters["score"] = {"$gte": min_score}
 
+            # Handle filters if provided
             if filters:
-                pipeline.append({"$match": filters})
+                # MongoDB uses dot notation for nested fields, so we need to prepend meta_data. if needed
+                mongo_filters = {}
+                for key, value in filters.items():
+                    # If the key doesn't already include a dot notation for meta_data
+                    if not key.startswith("meta_data.") and "." not in key:
+                        mongo_filters[f"meta_data.{key}"] = value
+                    else:
+                        mongo_filters[key] = value
+
+                match_filters.update(mongo_filters)
+
+            if match_filters:
+                pipeline.append({"$match": match_filters})
 
             pipeline.append({"$project": {"embedding": 0}})
 
@@ -554,11 +568,17 @@ class MongoDb(VectorDb):
                 return False
         return True  # Return True if collection doesn't exist (nothing to delete)
 
-    def prepare_doc(self, document: Document) -> Dict[str, Any]:
+    def prepare_doc(self, document: Document, filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Prepare a document for insertion or upsertion into MongoDB."""
         document.embed(embedder=self.embedder)
         if document.embedding is None:
             raise ValueError(f"Failed to generate embedding for document: {document.id}")
+
+        # Add filters to document metadata if provided
+        if filters:
+            meta_data = document.meta_data.copy() if document.meta_data else {}
+            meta_data.update(filters)
+            document.meta_data = meta_data
 
         cleaned_content = document.content.replace("\x00", "\ufffd")
         doc_id = md5(cleaned_content.encode("utf-8")).hexdigest()
@@ -604,7 +624,7 @@ class MongoDb(VectorDb):
         prepared_docs = []
         for document in documents:
             try:
-                doc_data = self.prepare_doc(document)
+                doc_data = self.prepare_doc(document, filters)
                 prepared_docs.append(doc_data)
             except ValueError as e:
                 logger.error(f"Error preparing document '{document.name}': {e}")
@@ -661,8 +681,18 @@ class MongoDb(VectorDb):
                 {"$set": {"score": {"$meta": "vectorSearchScore"}}},
             ]
 
+            # Handle filters if provided
             if filters:
-                pipeline.append({"$match": filters})
+                # MongoDB uses dot notation for nested fields, so we need to prepend meta_data. if needed
+                mongo_filters = {}
+                for key, value in filters.items():
+                    # If the key doesn't already include a dot notation for meta_data
+                    if not key.startswith("meta_data.") and "." not in key:
+                        mongo_filters[f"meta_data.{key}"] = value
+                    else:
+                        mongo_filters[key] = value
+
+                pipeline.append({"$match": mongo_filters})
 
             pipeline.append({"$project": {"embedding": 0}})
 

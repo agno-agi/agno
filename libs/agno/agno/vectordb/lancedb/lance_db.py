@@ -210,7 +210,7 @@ class LanceDb(VectorDb):
 
         Args:
             documents (List[Document]): List of documents to insert
-            filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
+            filters (Optional[Dict[str, Any]]): Filters to add as metadata to documents
         """
         if len(documents) <= 0:
             log_info("No documents to insert")
@@ -222,6 +222,13 @@ class LanceDb(VectorDb):
         for document in documents:
             if self.doc_exists(document):
                 continue
+
+            # Add filters to document metadata if provided
+            if filters:
+                meta_data = document.meta_data.copy() if document.meta_data else {}
+                meta_data.update(filters)
+                document.meta_data = meta_data
+
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = str(md5(cleaned_content.encode()).hexdigest())
@@ -274,6 +281,13 @@ class LanceDb(VectorDb):
         for document in documents:
             if await self.async_doc_exists(document):
                 continue
+
+            # Add filters to document metadata if provided
+            if filters:
+                meta_data = document.meta_data.copy() if document.meta_data else {}
+                meta_data.update(filters)
+                document.meta_data = meta_data
+
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = str(md5(cleaned_content.encode()).hexdigest())
@@ -323,17 +337,60 @@ class LanceDb(VectorDb):
         await self.async_insert(documents, filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        """
+        Search for documents matching the query.
+
+        Args:
+            query (str): Query string to search for
+            limit (int): Maximum number of results to return
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search
+
+        Returns:
+            List[Document]: List of matching documents
+        """
         if self.connection:
             self.table = self.connection.open_table(name=self.table_name)
+
+        results = None
+
         if self.search_type == SearchType.vector:
-            return self.vector_search(query, limit)
+            results = self.vector_search(query, limit)
         elif self.search_type == SearchType.keyword:
-            return self.keyword_search(query, limit)
+            results = self.keyword_search(query, limit)
         elif self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit)
+            results = self.hybrid_search(query, limit)
         else:
             logger.error(f"Invalid search type '{self.search_type}'.")
             return []
+
+        if results is None:
+            return []
+
+        search_results = self._build_search_results(results)
+
+        # Filter results based on metadata if filters are provided
+        if filters and search_results:
+            filtered_results = []
+            for doc in search_results:
+                if doc.meta_data is None:
+                    continue
+
+                # Check if all filter criteria match
+                match = True
+                for key, value in filters.items():
+                    if key not in doc.meta_data or doc.meta_data[key] != value:
+                        match = False
+                        break
+
+                if match:
+                    filtered_results.append(doc)
+
+            search_results = filtered_results
+
+        if self.reranker and search_results:
+            search_results = self.reranker.rerank(query=query, documents=search_results)
+
+        return search_results
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
@@ -352,25 +409,57 @@ class LanceDb(VectorDb):
         # TODO: Search is not yet supported in async (https://github.com/lancedb/lancedb/pull/2049)
         if self.connection:
             self.table = self.connection.open_table(name=self.table_name)
+
+        results = None
+
         if self.search_type == SearchType.vector:
-            return self.vector_search(query, limit)
+            results = self.vector_search(query, limit)
         elif self.search_type == SearchType.keyword:
-            return self.keyword_search(query, limit)
+            results = self.keyword_search(query, limit)
         elif self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit)
+            results = self.hybrid_search(query, limit)
         else:
             logger.error(f"Invalid search type '{self.search_type}'.")
             return []
+
+        if results is None:
+            return []
+
+        search_results = self._build_search_results(results)
+
+        # Filter results based on metadata if filters are provided
+        if filters and search_results:
+            filtered_results = []
+            for doc in search_results:
+                if doc.meta_data is None:
+                    continue
+
+                # Check if all filter criteria match
+                match = True
+                for key, value in filters.items():
+                    if key not in doc.meta_data or doc.meta_data[key] != value:
+                        match = False
+                        break
+
+                if match:
+                    filtered_results.append(doc)
+
+            search_results = filtered_results
+
+        if self.reranker and search_results:
+            search_results = self.reranker.rerank(query=query, documents=search_results)
+
+        return search_results
 
     def vector_search(self, query: str, limit: int = 5) -> List[Document]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
-            return []
+            return None
 
         if self.table is None:
             logger.error("Table not initialized. Please create the table first")
-            return []
+            return None  # type: ignore
 
         results = self.table.search(
             query=query_embedding,
@@ -380,70 +469,7 @@ class LanceDb(VectorDb):
         if self.nprobes:
             results.nprobes(self.nprobes)
 
-        results = results.to_pandas()
-
-        search_results = self._build_search_results(results)
-
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
-
-        return search_results
-
-    def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
-        query_embedding = self.embedder.get_embedding(query)
-        if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
-            return []
-        if self.table is None:
-            logger.error("Table not initialized. Please create the table first")
-            return []
-        if not self.fts_index_exists:
-            self.table.create_fts_index("payload", use_tantivy=self.use_tantivy, replace=True)
-            self.fts_index_exists = True
-
-        results = (
-            self.table.search(
-                vector_column_name=self._vector_col,
-                query_type="hybrid",
-            )
-            .vector(query_embedding)
-            .text(query)
-            .limit(limit)
-        )
-
-        if self.nprobes:
-            results.nprobes(self.nprobes)
-
-        results = results.to_pandas()
-
-        search_results = self._build_search_results(results)
-
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
-
-        return search_results
-
-    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
-        if self.table is None:
-            logger.error("Table not initialized. Please create the table first")
-            return []
-        if not self.fts_index_exists:
-            self.table.create_fts_index("payload", use_tantivy=self.use_tantivy, replace=True)
-            self.fts_index_exists = True
-
-        results = (
-            self.table.search(
-                query=query,
-                query_type="fts",
-            )
-            .limit(limit)
-            .to_pandas()
-        )
-        search_results = self._build_search_results(results)
-
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
-        return search_results
+        return results.to_pandas()
 
     def _build_search_results(self, results) -> List[Document]:  # TODO: typehint pandas?
         search_results: List[Document] = []
