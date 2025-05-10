@@ -10,8 +10,4 @@ agent = Agent(
     show_tool_calls=True,
     markdown=True,
 )
-tt= agent.run("Whats happening in France?")
-
-print(tt.metrics)
-
-
+agent.run("Whats happening in France?")
