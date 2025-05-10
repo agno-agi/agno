@@ -58,7 +58,11 @@ def display_tool_calls(tool_calls_container, tools):
                 execution_time_str = "N/A"
                 try:
                     if metrics:
-                        execution_time = metrics["time"] if isinstance(metrics, dict) else metrics.time
+                        execution_time = (
+                            metrics["time"]
+                            if isinstance(metrics, dict)
+                            else metrics.time
+                        )
                         if execution_time is not None:
                             execution_time_str = f"{execution_time:.2f}s"
                 except Exception as e:
