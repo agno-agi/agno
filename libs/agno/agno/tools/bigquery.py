@@ -1,15 +1,13 @@
 import json
 from os import getenv
 from typing import Any, Dict, List, Optional
- 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
-
+ 
 try:
     from google.cloud import bigquery
 except ImportError:
     raise ImportError("`bigquery` not installed. Please install it with google-cloud-bigquery")
- 
 class BQTools(Toolkit):
     def __init__(
         self,
@@ -29,7 +27,7 @@ class BQTools(Toolkit):
         
         # Initialize the BQ CLient
         self.client = bigquery.Client(project=self.project, credentials=credentials)
-
+ 
         # Register functions in the toolkit
         if list_tables:
             self.register(self.list_tables)
@@ -37,10 +35,9 @@ class BQTools(Toolkit):
             self.register(self.describe_table)
         if run_sql_query:
             self.register(self.run_sql_query)
-
+ 
     def list_tables(self) -> str:
         """Use this function to get a list of table names in the dataset.
- 
         Returns:
             str: list of tables in the dataset.
         """
@@ -57,10 +54,8 @@ class BQTools(Toolkit):
     
     def describe_table(self, table_id: str) -> str:
         """Use this function to describe a table.
- 
         Args:
             table_name (str): The name of the table to get the schema for.
- 
         Returns:
             str: schema of a table
         """
@@ -69,47 +64,42 @@ class BQTools(Toolkit):
             log_debug(f"Describing table: {table_id}")
             api_response = self.client.get_table(table_id)
             api_response = api_response.to_api_repr()
-            desc = str(api_response.get("description", "")) 
+            desc = str(api_response.get("description", ""))
             col_names =  str([column["name"] for column in api_response["schema"]["fields"]]) # Columns in a table
-            return json.dumps({
+            result = json.dumps({
                 "table_description": desc,
                 "columns": col_names
             })
+            return result
         except Exception as e:
             logger.error(f"Error getting table schema: {e}")
             return f"Error getting table schema: {e}"
         
-    def run_sql_query(self, query: str, limit: Optional[int] = None) -> List[dict]:
+    def run_sql_query(self, query: str) -> str:
         """Use this function to run a BigQuery SQL query and return the result.
- 
         Args:
             query (str): The query to run.
-            limit (int, optional): The number of rows to return. Defaults to 10. Use `None` to show all results.
         Returns:
             str: Result of the Google BigQuery SQL query.
         Notes:
             - The result may be empty if the query does not return any data.
         """
         try:
-            return json.dumps(self._run_sql(sql=query, limit=limit), default=str)
+            return json.dumps(self._run_sql(sql=query), default=str)
         except Exception as e:
             logger.error(f"Error running query: {e}")
             return f"Error running query: {e}"
-
-    def _run_sql(self, sql: str, limit: Optional[int] = None) -> str:
-        """Internal function to run a sql query.
  
+    def _run_sql(self, sql: str) -> str:
+        """Internal function to run a sql query.
         Args:
             sql (str): The sql query to run.
- 
         Returns:
             results (str): The result of the query.
         """
         try:
             log_debug(f"Running Google SQL |\n{sql}")
             cleaned_query = (sql.replace("\\n", " ").replace("\n", "").replace("\\", ""))
-            if limit:
-                cleaned_query = f"{cleaned_query} LIMIT {limit}"
             query_job = self.client.query(cleaned_query)
             results = query_job.result()
             results = str([dict(row) for row in results])
@@ -117,4 +107,4 @@ class BQTools(Toolkit):
             return results
         except Exception as e:
             logger.error(f"Error while executing SQL: {e}")
-            return []
+            return ""

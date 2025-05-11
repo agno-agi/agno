@@ -29,7 +29,7 @@ agent = Agent(
         
     tools=[BQTools("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "DATASET_ID")],
     show_tool_calls=True,
-    model=Gemini(id="gemini-2.0-flash", vertexai=True, project_id="GOOGLE_CLOUD_PROJECT", location="us-central1"), 
+    model=Gemini(id="gemini-2.0-flash", vertexai=True, project_id="GOOGLE_CLOUD_PROJECT", location="GOOGLE_CLOUD_LOCATION"), 
 )
 
 agent.print_response(
