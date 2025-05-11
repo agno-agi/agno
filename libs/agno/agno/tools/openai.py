@@ -85,6 +85,7 @@ class OpenAITools(Toolkit):
             prompt (str): The text prompt to generate the image from.
         """
         try:
+            # gpt-image-1 by default outputs a base64 encoded image but other models do not so we add a response_format parameter to make have a consistent base64 encoded image output
             if self.image_model and self.image_model.startswith("gpt-image"):
                 response = OpenAIClient().images.generate(
                     model=self.image_model,
