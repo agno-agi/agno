@@ -1,6 +1,3 @@
-# Add this to libs/agno/agno/vectordb/mongodb/cosmosdb.py
-
-import time
 from typing import Any, Dict, List, Optional
 
 from pymongo import MongoClient, errors
@@ -101,7 +98,11 @@ class CosmosMongoDb(MongoDb):
             self._create_search_index()
         else:
             log_info(f"Using existing collection '{self.collection_name}'.")
-            self._create_search_index()
+            if not self._search_index_exists():
+                log_info(f"Vector search index not found. Creating it.")
+                self._create_search_index()
+            else:
+                log_info(f"Using existing vector search index.")
 
         return self._collection  # type: ignore
 
@@ -144,6 +145,28 @@ class CosmosMongoDb(MongoDb):
         # Cosmos DB supports: COS (cosine), L2 (Euclidean), IP (inner product)
         metric_mapping = {"cosine": "COS", "euclidean": "L2", "dotProduct": "IP"}
         return metric_mapping.get(self.distance_metric, "COS")
+
+    def _search_index_exists(self) -> bool:
+        """Check if the vector search index exists in Cosmos DB."""
+        index_name = self.search_index_name or "vector_index_1"
+        try:
+            collection = self._get_collection()
+            indexes = collection.index_information()
+
+            for idx_name, idx_info in indexes.items():
+                if idx_name == index_name:
+                    key_info = idx_info.get("key", [])
+                    for key, value in key_info:
+                        if key == "embedding" and value == "cosmosSearch":
+                            log_debug(f"Found existing vector search index: {index_name}")
+                            return True
+
+            log_debug(f"Vector search index '{index_name}' not found")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error checking search index existence: {e}")
+            return False
 
     def search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None, min_score: float = 0.0
@@ -198,14 +221,6 @@ class CosmosMongoDb(MongoDb):
             logger.error(f"Error during vector search: {e}")
             return []
 
-    def _search_index_exists(self) -> bool:
-        """Override to avoid checking for vector search indexes."""
-        return False
-
-    def create(self) -> None:
-        """Create the collection with appropriate indexes for Cosmos DB."""
-        self._get_or_create_collection()
-
     def vector_search(self, query: str, limit: int = 5) -> List[Document]:
         return self.search(query, limit=limit)
 
@@ -250,3 +265,30 @@ class CosmosMongoDb(MongoDb):
         """Fallback to regular search for hybrid search."""
         log_info("Hybrid search not implemented in Cosmos DB - using vector search")
         return self.search(query, limit=limit)
+
+    def create(self) -> None:
+        """Create the collection with appropriate indexes for Cosmos DB."""
+        self._get_or_create_collection()
+
+    def drop(self) -> None:
+        """Drop the collection and clean up indexes."""
+        if self.exists():
+            try:
+                collection = self._get_collection()
+                index_name = self.search_index_name or "vector_index_1"
+
+                # Drop the index if it exists
+                if self._search_index_exists():
+                    log_info(f"Dropping index '{index_name}'")
+                    try:
+                        collection.drop_index(index_name)
+                    except Exception as e:
+                        logger.error(f"Error dropping index: {e}")
+
+                # Drop the collection
+                collection.drop()
+                log_info(f"Collection '{self.collection_name}' dropped successfully")
+
+            except Exception as e:
+                logger.error(f"Error dropping collection: {e}")
+                raise
