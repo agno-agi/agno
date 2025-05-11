@@ -62,12 +62,12 @@ class CosmosMongoDb(MongoDb):
                     warnings.filterwarnings(
                         "ignore", category=UserWarning, message=".*connected to a CosmosDB cluster.*"
                     )
-                    self._client = MongoClient(self.connection_string, **cosmos_kwargs)
+                    self._client = MongoClient(self.connection_string, **cosmos_kwargs)  # type: ignore
 
                     self._client.admin.command("ping")
 
                 log_info("Connected to Azure Cosmos DB successfully.")
-                self._db = self._client.get_database(self.database)
+                self._db = self._client.get_database(self.database)  # type: ignore
                 log_info(f"Using database: {self.database}")
 
             except errors.ConnectionFailure as e:
@@ -84,7 +84,7 @@ class CosmosMongoDb(MongoDb):
             if self._client is None:
                 self._get_client()
 
-            self._collection = self._db.get_collection(self.collection_name)
+            self._collection = self._db.get_collection(self.collection_name)  # type: ignore
             log_info(f"Using collection: {self.collection_name}")
         return self._collection
 
