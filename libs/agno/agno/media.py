@@ -20,7 +20,11 @@ class VideoArtifact(Media):
     def to_dict(self) -> Dict[str, Any]:
         response_dict = {
             "url": self.url,
-            "content": self.content if isinstance(self.content, str) else self.content.decode("utf-8") if self.content else None,
+            "content": self.content
+            if isinstance(self.content, str)
+            else self.content.decode("utf-8")
+            if self.content
+            else None,
             "mime_type": self.mime_type,
             "eta": self.eta,
         }
@@ -36,11 +40,14 @@ class ImageArtifact(Media):
     def to_dict(self) -> Dict[str, Any]:
         response_dict = {
             "url": self.url,
-            "content": self.content.decode("utf-8") if self.content and isinstance(self.content, bytes) else self.content,
+            "content": self.content.decode("utf-8")
+            if self.content and isinstance(self.content, bytes)
+            else self.content,
             "mime_type": self.mime_type,
             "alt_text": self.alt_text,
         }
         return {k: v for k, v in response_dict.items() if v is not None}
+
 
 class AudioArtifact(Media):
     url: Optional[str] = None  # Remote location for file
