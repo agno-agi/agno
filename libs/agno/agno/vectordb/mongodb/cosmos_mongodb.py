@@ -106,23 +106,97 @@ class CosmosMongoDb(MongoDb):
         return self._collection  # type: ignore
 
     def _create_search_index(self, overwrite: bool = True) -> None:
+        """
+        Create vector search index for Cosmos DB using IVF (Inverted File).
+        """
         try:
             collection = self._get_collection()
-            index_name = self.search_index_name
+            index_name = self.search_index_name or "vector_index_1"
 
             # Handle overwrite if requested
             if overwrite and index_name in collection.index_information():
                 log_info(f"Dropping existing index '{index_name}'")
                 collection.drop_index(index_name)
 
-            # Create regular index on name field (Cosmos DB compatible)
-            log_info(f"Creating regular index '{index_name}'")
-            collection.create_index("name", name=index_name)
-            log_info(f"Created index '{index_name}' successfully")
+            embedding_dim = getattr(self.embedder, "embedding_dim", 1536)
+            log_info(f"Creating vector search index '{index_name}'")
+
+            # Create vector search index using Cosmos DB IVF format
+            collection.create_index(
+                [("embedding", "cosmosSearch")],
+                name=index_name,
+                cosmosSearchOptions={
+                    "kind": "vector-ivf",
+                    "numLists": 1,
+                    "dimensions": embedding_dim,
+                    "similarity": self._get_cosmos_similarity_metric(),
+                },
+            )
+
+            log_info(f"Created vector search index '{index_name}' successfully")
 
         except Exception as e:
-            logger.error(f"Error creating index: {e}")
+            logger.error(f"Error creating vector search index: {e}")
             raise
+
+    def _get_cosmos_similarity_metric(self) -> str:
+        """Convert MongoDB distance metric to Cosmos DB format."""
+        # Cosmos DB supports: COS (cosine), L2 (Euclidean), IP (inner product)
+        metric_mapping = {"cosine": "COS", "euclidean": "L2", "dotProduct": "IP"}
+        return metric_mapping.get(self.distance_metric, "COS")
+
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None, min_score: float = 0.0
+    ) -> List[Document]:
+        """
+        Perform vector search using Cosmos DB's IVF vector search capabilities.
+        """
+        query_embedding = self.embedder.get_embedding(query)
+        if query_embedding is None:
+            logger.error(f"Failed to generate embedding for query: {query}")
+            return []
+
+        try:
+            collection = self._get_collection()
+
+            # Construct the search pipeline
+            search_stage = {
+                "$search": {
+                    "cosmosSearch": {"vector": query_embedding, "path": "embedding", "k": limit, "nProbes": 2},
+                    "returnStoredSource": True,
+                }
+            }
+
+            pipeline = [
+                search_stage,
+                {
+                    "$project": {
+                        "similarityScore": {"$meta": "searchScore"},
+                        "_id": 1,
+                        "name": 1,
+                        "content": 1,
+                        "meta_data": 1,
+                    }
+                },
+            ]
+
+            results = list(collection.aggregate(pipeline))
+            docs = [
+                Document(
+                    id=str(doc["_id"]),
+                    name=doc.get("name"),
+                    content=doc["content"],
+                    meta_data={**doc.get("meta_data", {}), "score": doc.get("similarityScore", 0.0)},
+                )
+                for doc in results
+            ]
+
+            log_info(f"Search completed. Found {len(docs)} documents.")
+            return docs
+
+        except Exception as e:
+            logger.error(f"Error during vector search: {e}")
+            return []
 
     def _search_index_exists(self) -> bool:
         """Override to avoid checking for vector search indexes."""
@@ -132,21 +206,10 @@ class CosmosMongoDb(MongoDb):
         """Create the collection with appropriate indexes for Cosmos DB."""
         self._get_or_create_collection()
 
-    def search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None, min_score: float = 0.0
-    ) -> List[Document]:
-        """
-        Simple keyword-based search implementation for Cosmos DB using regex pattern matching.
+    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
+        return self.search(query, limit=limit)
 
-        Args:
-            query: Search query string
-            limit: Maximum number of documents to return
-            filters: Optional metadata filters to apply
-            min_score: Not used in keyword search, kept for interface compatibility
-
-        Returns:
-            List[Document]: List of matching documents
-        """
+    def keyword_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         try:
             collection = self._get_collection()
 
@@ -183,15 +246,7 @@ class CosmosMongoDb(MongoDb):
             logger.error(f"Error during search: {e}")
             return []
 
-    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
-        """Fallback to regular search for vector search."""
-        return self.search(query, limit=limit)
-
-    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
-        """Perform a keyword-based search using Cosmos DB compatible methods."""
-        return self.search(query, limit=limit)
-
     def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
         """Fallback to regular search for hybrid search."""
-        log_info("Hybrid search not available in Cosmos DB - using text search")
+        log_info("Hybrid search not implemented in Cosmos DB - using vector search")
         return self.search(query, limit=limit)
