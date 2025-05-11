@@ -85,29 +85,40 @@ class OpenAITools(Toolkit):
             prompt (str): The text prompt to generate the image from.
         """
         try:
-            response = OpenAIClient().images.generate(
-                model=self.image_model,
-                prompt=prompt,
-                response_format="url",
-            )
-
-            if response.data and response.data[0].url:
-                image_url = response.data[0].url
+            # gpt-image-1 by default outputs a base64 encoded image but other models do not so we add a response_format parameter to make have a consistent base64 encoded image output
+            if self.image_model and self.image_model.startswith("gpt-image"):
+                response = OpenAIClient().images.generate(
+                    model=self.image_model,
+                    prompt=prompt,
+                )
+            else:
+                response = OpenAIClient().images.generate(
+                    model=self.image_model,
+                    prompt=prompt,
+                    response_format="b64_json",
+                )
+            data = None
+            if hasattr(response, "data") and response.data:
+                data = response.data[0]
+            if data is None:
+                log_warning("OpenAI API did not return any data.")
+                return "Failed to generate image: No data received from API."
+            if hasattr(data, "b64_json") and data.b64_json:
+                image_base64 = data.b64_json
                 media_id = str(uuid4())
+                # Store base64-encoded content as bytes for later saving
                 agent.add_image(
                     ImageArtifact(
                         id=media_id,
-                        url=image_url,
+                        content=image_base64.encode("utf-8"),
+                        mime_type="image/png",
                     )
                 )
-                return f"Image generated successfully: {image_url}"
-            else:
-                log_warning("OpenAI API did not return an image URL.")
-                return "Failed to generate image: No URL received from API."
-
+                return "Image generated successfully."
+            return "Failed to generate image: No content received from API."
         except Exception as e:
-            log_error(f"Failed to generate image using {self.image_model}: {str(e)}")
-            return f"Failed to generate image: {str(e)}"
+            log_error(f"Failed to generate image using {self.image_model}: {e}")
+            return f"Failed to generate image: {e}"
 
     def generate_speech(
         self,
