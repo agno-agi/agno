@@ -99,10 +99,10 @@ class CosmosMongoDb(MongoDb):
         else:
             log_info(f"Using existing collection '{self.collection_name}'.")
             if not self._search_index_exists():
-                log_info(f"Vector search index not found. Creating it.")
+                log_info("Vector search index not found. Creating it.")
                 self._create_search_index()
             else:
-                log_info(f"Using existing vector search index.")
+                log_info("Using existing vector search index.")
 
         return self._collection  # type: ignore
 
