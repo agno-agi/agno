@@ -114,6 +114,13 @@ class Agent:
     # --- Agent Knowledge ---
     knowledge: Optional[AgentKnowledge] = None
     # Enable RAG by adding references from AgentKnowledge to the user prompt.
+
+    # Add knowledge_filters to the Agent class attributes
+    knowledge_filters: Optional[Dict[str, Any]] = None
+
+    # Let the agent choose the knowledge filters
+    enable_agentic_knowledge_filters: Optional[bool] = False
+
     add_references: bool = False
     # Retrieval function to get references
     # This function, if provided, is used instead of the default search_knowledge function
@@ -295,6 +302,8 @@ class Agent:
         num_history_responses: Optional[int] = None,
         num_history_runs: int = 3,
         knowledge: Optional[AgentKnowledge] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        enable_agentic_knowledge_filters: Optional[bool] = None,
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
@@ -378,6 +387,8 @@ class Agent:
         self.num_history_runs = num_history_runs
 
         self.knowledge = knowledge
+        self.knowledge_filters = knowledge_filters
+        self.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
         self.add_references = add_references
         self.retriever = retriever
         self.references_format = references_format
@@ -566,6 +577,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         stream_intermediate_steps: bool = False,
         **kwargs: Any,
     ) -> Iterator[RunResponse]:
@@ -602,7 +614,12 @@ class Agent:
         log_debug(f"Agent Run Start: {self.run_response.run_id}", center=True)
 
         # 2. Update the Model and resolve context
-        self.update_model(async_mode=False, user_id=user_id, session_id=session_id)
+        self.update_model(
+            async_mode=False,
+            user_id=user_id,
+            session_id=session_id,
+            knowledge_filters=knowledge_filters,
+        )
         self.run_response.model = self.model.id if self.model is not None else None
         if self.context is not None and self.resolve_context:
             self.resolve_run_context()
@@ -1025,6 +1042,7 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> RunResponse: ...
 
@@ -1043,6 +1061,7 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Iterator[RunResponse]: ...
 
@@ -1060,12 +1079,32 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[RunResponse, Iterator[RunResponse]]:
         """Run the Agent and return the response."""
 
         # Initialize the Agent
         self.initialize_agent()
+
+        effective_filters = knowledge_filters
+
+        # When filters are passed manually
+        if self.knowledge_filters or knowledge_filters:
+            """
+                initialize metadata (specially required in case when load is commented out)
+                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
+                so we need to call initialize_valid_filters to make sure the filters are initialized
+            """
+            if not self.knowledge.valid_metadata_filters:  # type: ignore
+                self.knowledge.initialize_valid_filters()  # type: ignore
+
+            effective_filters = self._get_effective_filters(knowledge_filters)
+
+        # Agentic filters are enabled
+        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
+            # initialize metadata (specially required in case when load is commented out)
+            self.knowledge.initialize_valid_filters()  # type: ignore
 
         # If no retries are set, use the agent's default retries
         if retries is None:
@@ -1088,6 +1127,8 @@ class Agent:
                 self.session_id = session_id
 
         session_id = cast(str, session_id)
+
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
 
         log_debug(f"Session ID: {session_id}", center=True)
 
@@ -1114,6 +1155,7 @@ class Agent:
                             files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            knowledge_filters=effective_filters,
                             **kwargs,
                         )
                     )
@@ -1154,6 +1196,7 @@ class Agent:
                             files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            knowledge_filters=effective_filters,
                             **kwargs,
                         )
                         return resp
@@ -1169,6 +1212,7 @@ class Agent:
                             files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            knowledge_filters=effective_filters,
                             **kwargs,
                         )
                         return next(resp)
@@ -1218,6 +1262,7 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[RunResponse]:
         """Run the Agent and yield the RunResponse.
@@ -1252,7 +1297,7 @@ class Agent:
         log_debug(f"Async Agent Run Start: {self.run_response.run_id}", center=True, symbol="*")
 
         # 2. Update the Model and resolve context
-        self.update_model(async_mode=True, user_id=user_id, session_id=session_id)
+        self.update_model(async_mode=True, user_id=user_id, session_id=session_id, knowledge_filters=knowledge_filters)
         self.run_response.model = self.model.id if self.model is not None else None
         if self.context is not None and self.resolve_context:
             await self.aresolve_run_context()
@@ -1670,11 +1715,32 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Any:
         """Async Run the Agent and return the response."""
+
         # Initialize the Agent
         self.initialize_agent()
+
+        effective_filters = knowledge_filters
+
+        # When filters are passed manually
+        if self.knowledge_filters or knowledge_filters:
+            """
+                initialize metadata (specially required in case when load is commented out)
+                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
+                so we need to call initialize_valid_filters to make sure the filters are initialized
+            """
+            if not self.knowledge.valid_metadata_filters:  # type: ignore
+                self.knowledge.initialize_valid_filters()  # type: ignore
+
+            effective_filters = self._get_effective_filters(knowledge_filters)
+
+        # Agentic filters are enabled
+        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
+            # initialize metadata (specially required in case when load is commented out)
+            self.knowledge.initialize_valid_filters()  # type: ignore
 
         # If no retries are set, use the agent's default retries
         if retries is None:
@@ -1697,6 +1763,8 @@ class Agent:
                 self.session_id = session_id
 
         session_id = cast(str, session_id)
+
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
 
         log_debug(f"Session ID: {session_id}", center=True)
 
@@ -1721,6 +1789,7 @@ class Agent:
                         files=files,
                         messages=messages,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        knowledge_filters=effective_filters,
                         **kwargs,
                     ).__anext__()
 
@@ -1760,6 +1829,7 @@ class Agent:
                             files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            knowledge_filters=effective_filters,
                             **kwargs,
                         )
                         return resp
@@ -1775,6 +1845,7 @@ class Agent:
                             files=files,
                             messages=messages,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            knowledge_filters=effective_filters,
                             **kwargs,
                         )
                         return await resp.__anext__()
@@ -1848,6 +1919,13 @@ class Agent:
         if created_at is not None:
             rr.created_at = created_at
         return rr
+
+    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
+        self.session_state = self.session_state or {}
+        if user_id is not None:
+            self.session_state["current_user_id"] = user_id
+        if session_id is not None:
+            self.session_state["current_session_id"] = session_id
 
     def _make_memories_and_summaries(
         self,
@@ -1936,7 +2014,11 @@ class Agent:
             await self.memory.acreate_session_summary(session_id=session_id, user_id=user_id)
 
     def get_tools(
-        self, session_id: str, async_mode: bool = False, user_id: Optional[str] = None
+        self,
+        session_id: str,
+        async_mode: bool = False,
+        user_id: Optional[str] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
@@ -1968,10 +2050,16 @@ class Agent:
 
             if self.search_knowledge:
                 # Use async or sync search based on async_mode
-                if async_mode:
-                    agent_tools.append(self.async_search_knowledge_base)
+                if self.enable_agentic_knowledge_filters:
+                    agent_tools.append(
+                        self.search_knowledge_base_with_agentic_filters_function(
+                            async_mode=async_mode, knowledge_filters=knowledge_filters
+                        )
+                    )
                 else:
-                    agent_tools.append(self.search_knowledge_base)
+                    agent_tools.append(
+                        self.search_knowledge_base_function(async_mode=async_mode, knowledge_filters=knowledge_filters)
+                    )
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
@@ -1983,9 +2071,16 @@ class Agent:
         return agent_tools
 
     def add_tools_to_model(
-        self, model: Model, session_id: str, async_mode: bool = False, user_id: Optional[str] = None
+        self,
+        model: Model,
+        session_id: str,
+        async_mode: bool = False,
+        user_id: Optional[str] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> None:
-        agent_tools = self.get_tools(session_id=session_id, async_mode=async_mode, user_id=user_id)
+        agent_tools = self.get_tools(
+            session_id=session_id, async_mode=async_mode, user_id=user_id, knowledge_filters=knowledge_filters
+        )
         agent_tool_names = []
         # Get all the tool names
         if agent_tools is not None:
@@ -2084,7 +2179,13 @@ class Agent:
                 # Set functions on the model
                 model.set_functions(functions=_functions_for_model)
 
-    def update_model(self, session_id: str, async_mode: bool = False, user_id: Optional[str] = None) -> None:
+    def update_model(
+        self,
+        session_id: str,
+        async_mode: bool = False,
+        user_id: Optional[str] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self.set_default_model()
 
         self.model = cast(Model, self.model)
@@ -2127,7 +2228,13 @@ class Agent:
                 self.model.structured_outputs = False
 
         # Add tools to the Model
-        self.add_tools_to_model(model=self.model, session_id=session_id, async_mode=async_mode, user_id=user_id)
+        self.add_tools_to_model(
+            model=self.model,
+            session_id=session_id,
+            async_mode=async_mode,
+            user_id=user_id,
+            knowledge_filters=knowledge_filters,
+        )
 
         # Set show_tool_calls on the Model
         if self.show_tool_calls is not None:
@@ -2656,6 +2763,31 @@ class Agent:
         # 3.2.3 Add agent name if provided
         if self.name is not None and self.add_name_to_instructions:
             additional_information.append(f"Your name is: {self.name}.")
+
+        # 3.2.4 Add information about agentic filters if enabled
+        if self.knowledge is not None and self.enable_agentic_knowledge_filters:
+            valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
+            if valid_filters:
+                valid_filters_str = ", ".join(valid_filters)
+                additional_information.append(
+                    dedent(f"""
+                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
+                    Always use filters when the user query indicates specific metadata.
+
+                    Examples:
+                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
+                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
+                    4. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
+
+                    General Guidelines:
+                    - Always analyze the user query to identify relevant metadata.
+                    - Use the most specific filter(s) possible to narrow down results.
+                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
+                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
+
+                    You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
+                """)
+                )
 
         # 3.3 Build the default system message for the Agent.
         system_message_content: str = ""
@@ -3313,10 +3445,34 @@ class Agent:
         return ""
 
     def get_relevant_docs_from_knowledge(
-        self, query: str, num_documents: Optional[int] = None, **kwargs
+        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
     ) -> Optional[List[Dict[str, Any]]]:
-        """Return a list of references from the knowledge base"""
+        """Get relevant docs from the knowledge base to answer a query.
+
+        Args:
+            query (str): The query to search for.
+            num_documents (Optional[int]): Number of documents to return.
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: List of relevant document dicts.
+        """
         from agno.document import Document
+
+        # Validate the filters against known valid filter keys
+        valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+
+        # Warn about invalid filter keys
+        if invalid_keys:
+            # type: ignore
+            log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+            log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+
+            # Only use valid filters
+            filters = valid_filters
+            if not filters:
+                log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
         if self.retriever is not None and callable(self.retriever):
             from inspect import signature
@@ -3326,25 +3482,54 @@ class Agent:
                 retriever_kwargs: Dict[str, Any] = {}
                 if "agent" in sig.parameters:
                     retriever_kwargs = {"agent": self}
+                if "filters" in sig.parameters:
+                    retriever_kwargs["filters"] = filters
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.retriever(**retriever_kwargs)
             except Exception as e:
                 log_warning(f"Retriever failed: {e}")
                 return None
 
-        if self.knowledge is None:
-            return None
+        # Use knowledge base search
+        try:
+            if self.knowledge is None or self.knowledge.vector_db is None:
+                return None
 
-        relevant_docs: List[Document] = self.knowledge.search(query=query, num_documents=num_documents, **kwargs)
-        if len(relevant_docs) == 0:
+            if num_documents is None:
+                num_documents = self.knowledge.num_documents
+
+            log_debug(f"Searching knowledge base with filters: {filters}")
+            relevant_docs: List[Document] = self.knowledge.search(
+                query=query, num_documents=num_documents, filters=filters
+            )
+
+            if not relevant_docs or len(relevant_docs) == 0:
+                log_debug("No relevant documents found for query")
+                return None
+
+            return [doc.to_dict() for doc in relevant_docs]
+        except Exception as e:
+            log_warning(f"Error searching knowledge base: {e}")
             return None
-        return [doc.to_dict() for doc in relevant_docs]
 
     async def aget_relevant_docs_from_knowledge(
-        self, query: str, num_documents: Optional[int] = None, **kwargs
+        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
     ) -> Optional[List[Dict[str, Any]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.document import Document
+
+        # Validate the filters against known valid filter keys
+        valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+
+        # Warn about invalid filter keys
+        if invalid_keys:  # type: ignore
+            log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+            log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+
+            # Only use valid filters
+            filters = valid_filters
+            if not filters:
+                log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
         if self.retriever is not None and callable(self.retriever):
             from inspect import isawaitable, signature
@@ -3354,6 +3539,8 @@ class Agent:
                 retriever_kwargs: Dict[str, Any] = {}
                 if "agent" in sig.parameters:
                     retriever_kwargs = {"agent": self}
+                if "filters" in sig.parameters:
+                    retriever_kwargs["filters"] = filters
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 result = self.retriever(**retriever_kwargs)
 
@@ -3365,15 +3552,27 @@ class Agent:
                 log_warning(f"Retriever failed: {e}")
                 return None
 
-        if self.knowledge is None or self.knowledge.vector_db is None:
-            return None
+        # Use knowledge base search
+        try:
+            if self.knowledge is None or self.knowledge.vector_db is None:
+                return None
 
-        relevant_docs: List[Document] = await self.knowledge.async_search(
-            query=query, num_documents=num_documents, **kwargs
-        )
-        if len(relevant_docs) == 0:
+            if num_documents is None:
+                num_documents = self.knowledge.num_documents
+
+            log_debug(f"Searching knowledge base with filters: {filters}")
+            relevant_docs: List[Document] = await self.knowledge.async_search(
+                query=query, num_documents=num_documents, filters=filters, **kwargs
+            )
+
+            if not relevant_docs or len(relevant_docs) == 0:
+                log_debug("No relevant documents found for query")
+                return None
+
+            return [doc.to_dict() for doc in relevant_docs]
+        except Exception as e:
+            log_warning(f"Error searching knowledge base: {e}")
             return None
-        return [doc.to_dict() for doc in relevant_docs]
 
     def convert_documents_to_string(self, docs: List[Dict[str, Any]]) -> str:
         if docs is None or len(docs) == 0:
@@ -4130,142 +4329,6 @@ class Agent:
                     session_id=session_id,
                 )
 
-    def update_reasoning_content_from_tool_call(
-        self, tool_name: str, tool_args: Dict[str, Any]
-    ) -> Optional[ReasoningStep]:
-        """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
-
-        # Case 1: ReasoningTools.think (has title, thought, optional action and confidence)
-        if tool_name.lower() == "think" and "title" in tool_args and "thought" in tool_args:
-            title = tool_args["title"]
-            thought = tool_args["thought"]
-            action = tool_args.get("action", "")
-            confidence = tool_args.get("confidence", None)
-
-            # Create a reasoning step
-            reasoning_step = ReasoningStep(
-                title=title,
-                reasoning=thought,
-                action=action,
-                next_action=NextAction.CONTINUE,
-                confidence=confidence,
-            )
-
-            # Add the step to the run response
-            self._add_reasoning_step_to_extra_data(reasoning_step)
-
-            formatted_content = f"## {title}\n{thought}\n"
-            if action:
-                formatted_content += f"Action: {action}\n"
-            if confidence is not None:
-                formatted_content += f"Confidence: {confidence}\n"
-            formatted_content += "\n"
-
-            self._append_to_reasoning_content(formatted_content)
-            return reasoning_step
-
-        # Case 2: ReasoningTools.analyze (has title, result, analysis, optional next_action and confidence)
-        elif tool_name.lower() == "analyze" and "title" in tool_args:
-            title = tool_args["title"]
-            result = tool_args.get("result", "")
-            analysis = tool_args.get("analysis", "")
-            next_action = tool_args.get("next_action", "")
-            confidence = tool_args.get("confidence", None)
-
-            # Map string next_action to enum
-            next_action_enum = NextAction.CONTINUE
-            if next_action.lower() == "validate":
-                next_action_enum = NextAction.VALIDATE
-            elif next_action.lower() in ["final", "final_answer", "finalize"]:
-                next_action_enum = NextAction.FINAL_ANSWER
-
-            # Create a reasoning step
-            reasoning_step = ReasoningStep(
-                title=title,
-                result=result,
-                reasoning=analysis,
-                next_action=next_action_enum,
-                confidence=confidence,
-            )
-
-            # Add the step to the run response
-            self._add_reasoning_step_to_extra_data(reasoning_step)
-
-            formatted_content = f"## {title}\n"
-            if result:
-                formatted_content += f"Result: {result}\n"
-            if analysis:
-                formatted_content += f"{analysis}\n"
-            if next_action and next_action.lower() != "continue":
-                formatted_content += f"Next Action: {next_action}\n"
-            if confidence is not None:
-                formatted_content += f"Confidence: {confidence}\n"
-            formatted_content += "\n"
-
-            self._append_to_reasoning_content(formatted_content)
-            return reasoning_step
-
-        # Case 3: ThinkingTools.think (simple format, just has 'thought')
-        elif tool_name.lower() == "think" and "thought" in tool_args:
-            thought = tool_args["thought"]
-            reasoning_step = ReasoningStep(
-                title="Thinking",
-                reasoning=thought,
-                confidence=None,
-            )
-            formatted_content = f"## Thinking\n{thought}\n\n"
-            self._add_reasoning_step_to_extra_data(reasoning_step)
-            self._append_to_reasoning_content(formatted_content)
-            return reasoning_step
-
-        return None
-
-    def _append_to_reasoning_content(self, content: str) -> None:
-        """Helper to append content to the reasoning_content field."""
-        if not hasattr(self.run_response, "reasoning_content") or not self.run_response.reasoning_content:  # type: ignore
-            self.run_response.reasoning_content = content  # type: ignore
-        else:
-            self.run_response.reasoning_content += content  # type: ignore
-
-    def _add_reasoning_step_to_extra_data(self, reasoning_step: ReasoningStep) -> None:
-        if hasattr(self, "run_response") and self.run_response is not None:
-            if self.run_response.extra_data is None:
-                from agno.run.response import RunResponseExtraData
-
-                self.run_response.extra_data = RunResponseExtraData()
-
-            if self.run_response.extra_data.reasoning_steps is None:
-                self.run_response.extra_data.reasoning_steps = []
-
-            self.run_response.extra_data.reasoning_steps.append(reasoning_step)
-
-    def _add_reasoning_metrics_to_extra_data(self, reasoning_time_taken: float) -> None:
-        try:
-            if hasattr(self, "run_response") and self.run_response is not None:
-                if self.run_response.extra_data is None:
-                    from agno.run.response import RunResponseExtraData
-
-                    self.run_response.extra_data = RunResponseExtraData()
-
-                # Initialize reasoning_messages if it doesn't exist
-                if self.run_response.extra_data.reasoning_messages is None:
-                    self.run_response.extra_data.reasoning_messages = []
-
-                metrics_message = Message(
-                    role="assistant",
-                    content=self.run_response.reasoning_content,
-                    metrics={"time": reasoning_time_taken},
-                )
-
-                # Add the metrics message to the reasoning_messages
-                self.run_response.extra_data.reasoning_messages.append(metrics_message)
-
-        except Exception as e:
-            # Log the error but don't crash
-            from agno.utils.log import log_error
-
-            log_error(f"Failed to add reasoning metrics to extra_data: {str(e)}")
-
     ###########################################################################
     # Default Tools
     ###########################################################################
@@ -4391,66 +4454,181 @@ class Agent:
 
         return get_tool_call_history
 
-    def search_knowledge_base(self, query: str) -> str:
-        """Use this function to search the knowledge base for information about a query.
+    def search_knowledge_base_function(
+        self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
+    ) -> Callable:
+        """Factory function to create a search_knowledge_base function with filters."""
+
+        def search_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+
+            # Get the relevant documents from the knowledge base, passing filters
+            self.run_response = cast(RunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                # Add the references to the run_response
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            from agno.utils.log import log_debug
+
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        async def asearch_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query asynchronously.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            self.run_response = cast(RunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        if async_mode:
+            return asearch_knowledge_base
+        else:
+            return search_knowledge_base
+
+    def search_knowledge_base_with_agentic_filters_function(
+        self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
+    ) -> Callable:
+        """Factory function to create a search_knowledge_base function with filters."""
+
+        def search_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            search_filters = self._get_agentic_or_user_search_filters(filters, knowledge_filters)
+
+            # Get the relevant documents from the knowledge base, passing filters
+            self.run_response = cast(RunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                # Add the references to the run_response
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            from agno.utils.log import log_debug
+
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        async def asearch_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+            """Use this function to search the knowledge base for information about a query asynchronously.
+
+            Args:
+                query: The query to search for.
+                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            search_filters = self._get_agentic_or_user_search_filters(filters, knowledge_filters)
+
+            self.run_response = cast(RunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        if async_mode:
+            return asearch_knowledge_base
+        else:
+            return search_knowledge_base
+
+    def _get_agentic_or_user_search_filters(
+        self, filters: Optional[Dict[str, Any]], effective_filters: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Helper function to determine the final filters to use for the search.
 
         Args:
-            query: The query to search for.
+            filters: Filters passed by the agent.
+            effective_filters: Filters passed by user.
 
         Returns:
-            str: A string containing the response from the knowledge base.
+            Dict[str, Any]: The final filters to use for the search.
         """
+        search_filters = {}
 
-        # Get the relevant documents from the knowledge base
-        self.run_response = cast(RunResponse, self.run_response)
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query)
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
-            )
-            # Add the references to the run_response
-            if self.run_response.extra_data is None:
-                self.run_response.extra_data = RunResponseExtraData()
-            if self.run_response.extra_data.references is None:
-                self.run_response.extra_data.references = []
-            self.run_response.extra_data.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+        # If agentic filters exist and manual filters (passed by user) do not, use agentic filters
+        if filters and not effective_filters:
+            search_filters = filters
 
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return self.convert_documents_to_string(docs_from_knowledge)
+        # If both agentic filters exist and manual filters (passed by user) exist, use manual filters (give priority to user and override)
+        if filters and effective_filters:
+            search_filters = effective_filters
 
-    async def async_search_knowledge_base(self, query: str) -> str:
-        """Use this function to search the knowledge base for information about a query asynchronously.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        self.run_response = cast(RunResponse, self.run_response)
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query)
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
-            )
-            if self.run_response.extra_data is None:
-                self.run_response.extra_data = RunResponseExtraData()
-            if self.run_response.extra_data.references is None:
-                self.run_response.extra_data.references = []
-            self.run_response.extra_data.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return self.convert_documents_to_string(docs_from_knowledge)
+        log_info(f"Filters used by Agent: {search_filters}")
+        return search_filters
 
     def add_to_knowledge(self, query: str, result: str) -> str:
         """Use this function to add information to the knowledge base for future use.
@@ -4473,7 +4651,7 @@ class Agent:
             document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to knowledge base: {document_name}: {document_content}")
-        self.knowledge.load_document(
+        self.knowledge.add_document_to_knowledge_base(
             document=Document(
                 name=document_name,
                 content=document_content,
@@ -4629,6 +4807,7 @@ class Agent:
         console: Optional[Any] = None,
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
         import json
@@ -4689,6 +4868,7 @@ class Agent:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    knowledge_filters=knowledge_filters,
                     **kwargs,
                 ):
                     if isinstance(resp, RunResponse):
@@ -4869,6 +5049,7 @@ class Agent:
                     files=files,
                     stream=False,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    knowledge_filters=knowledge_filters,
                     **kwargs,
                 )
                 response_timer.stop()
@@ -5027,6 +5208,7 @@ class Agent:
         console: Optional[Any] = None,
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
         import json
@@ -5086,6 +5268,7 @@ class Agent:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    knowledge_filters=knowledge_filters,
                     **kwargs,
                 ):
                     if isinstance(resp, RunResponse):
@@ -5266,6 +5449,7 @@ class Agent:
                     files=files,
                     stream=False,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    knowledge_filters=knowledge_filters,
                     **kwargs,
                 )
                 response_timer.stop()
@@ -5401,6 +5585,171 @@ class Agent:
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]
                 live_log.update(Group(*panels))
+
+    def update_reasoning_content_from_tool_call(
+        self, tool_name: str, tool_args: Dict[str, Any]
+    ) -> Optional[ReasoningStep]:
+        """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
+
+        # Case 1: ReasoningTools.think (has title, thought, optional action and confidence)
+        if tool_name.lower() == "think" and "title" in tool_args and "thought" in tool_args:
+            title = tool_args["title"]
+            thought = tool_args["thought"]
+            action = tool_args.get("action", "")
+            confidence = tool_args.get("confidence", None)
+
+            # Create a reasoning step
+            reasoning_step = ReasoningStep(
+                title=title,
+                reasoning=thought,
+                action=action,
+                next_action=NextAction.CONTINUE,
+                confidence=confidence,
+            )
+
+            # Add the step to the run response
+            self._add_reasoning_step_to_extra_data(reasoning_step)
+
+            formatted_content = f"## {title}\n{thought}\n"
+            if action:
+                formatted_content += f"Action: {action}\n"
+            if confidence is not None:
+                formatted_content += f"Confidence: {confidence}\n"
+            formatted_content += "\n"
+
+            self._append_to_reasoning_content(formatted_content)
+            return reasoning_step
+
+        # Case 2: ReasoningTools.analyze (has title, result, analysis, optional next_action and confidence)
+        elif tool_name.lower() == "analyze" and "title" in tool_args:
+            title = tool_args["title"]
+            result = tool_args.get("result", "")
+            analysis = tool_args.get("analysis", "")
+            next_action = tool_args.get("next_action", "")
+            confidence = tool_args.get("confidence", None)
+
+            # Map string next_action to enum
+            next_action_enum = NextAction.CONTINUE
+            if next_action.lower() == "validate":
+                next_action_enum = NextAction.VALIDATE
+            elif next_action.lower() in ["final", "final_answer", "finalize"]:
+                next_action_enum = NextAction.FINAL_ANSWER
+
+            # Create a reasoning step
+            reasoning_step = ReasoningStep(
+                title=title,
+                result=result,
+                reasoning=analysis,
+                next_action=next_action_enum,
+                confidence=confidence,
+            )
+
+            # Add the step to the run response
+            self._add_reasoning_step_to_extra_data(reasoning_step)
+
+            formatted_content = f"## {title}\n"
+            if result:
+                formatted_content += f"Result: {result}\n"
+            if analysis:
+                formatted_content += f"{analysis}\n"
+            if next_action and next_action.lower() != "continue":
+                formatted_content += f"Next Action: {next_action}\n"
+            if confidence is not None:
+                formatted_content += f"Confidence: {confidence}\n"
+            formatted_content += "\n"
+
+            self._append_to_reasoning_content(formatted_content)
+            return reasoning_step
+
+        # Case 3: ThinkingTools.think (simple format, just has 'thought')
+        elif tool_name.lower() == "think" and "thought" in tool_args:
+            thought = tool_args["thought"]
+            reasoning_step = ReasoningStep(
+                title="Thinking",
+                reasoning=thought,
+                confidence=None,
+            )
+            formatted_content = f"## Thinking\n{thought}\n\n"
+            self._add_reasoning_step_to_extra_data(reasoning_step)
+            self._append_to_reasoning_content(formatted_content)
+            return reasoning_step
+
+        return None
+
+    def _append_to_reasoning_content(self, content: str) -> None:
+        """Helper to append content to the reasoning_content field."""
+        if not hasattr(self.run_response, "reasoning_content") or not self.run_response.reasoning_content:  # type: ignore
+            self.run_response.reasoning_content = content  # type: ignore
+        else:
+            self.run_response.reasoning_content += content  # type: ignore
+
+    def _add_reasoning_step_to_extra_data(self, reasoning_step: ReasoningStep) -> None:
+        if hasattr(self, "run_response") and self.run_response is not None:
+            if self.run_response.extra_data is None:
+                from agno.run.response import RunResponseExtraData
+
+                self.run_response.extra_data = RunResponseExtraData()
+
+            if self.run_response.extra_data.reasoning_steps is None:
+                self.run_response.extra_data.reasoning_steps = []
+
+            self.run_response.extra_data.reasoning_steps.append(reasoning_step)
+
+    def _add_reasoning_metrics_to_extra_data(self, reasoning_time_taken: float) -> None:
+        try:
+            if hasattr(self, "run_response") and self.run_response is not None:
+                if self.run_response.extra_data is None:
+                    from agno.run.response import RunResponseExtraData
+
+                    self.run_response.extra_data = RunResponseExtraData()
+
+                # Initialize reasoning_messages if it doesn't exist
+                if self.run_response.extra_data.reasoning_messages is None:
+                    self.run_response.extra_data.reasoning_messages = []
+
+                metrics_message = Message(
+                    role="assistant",
+                    content=self.run_response.reasoning_content,
+                    metrics={"time": reasoning_time_taken},
+                )
+
+                # Add the metrics message to the reasoning_messages
+                self.run_response.extra_data.reasoning_messages.append(metrics_message)
+
+        except Exception as e:
+            # Log the error but don't crash
+            from agno.utils.log import log_error
+
+            log_error(f"Failed to add reasoning metrics to extra_data: {str(e)}")
+
+    def _get_effective_filters(self, knowledge_filters: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """
+        Determine which knowledge filters to use, with priority to run-level filters.
+
+        Args:
+            knowledge_filters: Filters passed at run time
+
+        Returns:
+            The effective filters to use, with run-level filters taking priority
+        """
+        effective_filters = None
+
+        # If agent has filters, use those as a base
+        if self.knowledge_filters:
+            effective_filters = self.knowledge_filters.copy()
+
+        # If run has filters, they override agent filters
+        if knowledge_filters:
+            if effective_filters:
+                # Merge filters, with run filters taking priority
+                effective_filters.update(knowledge_filters)
+            else:
+                effective_filters = knowledge_filters
+
+        if effective_filters:
+            log_debug(f"Using knowledge filters: {effective_filters}")
+
+        return effective_filters
 
     def cli_app(
         self,
