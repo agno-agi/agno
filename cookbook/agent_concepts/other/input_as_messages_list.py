@@ -4,11 +4,15 @@ Agent().print_response(
     messages=[
         Message(
             role="user",
-            content=[{"type": "text", "text": "Hi! My name is John."},],
+            content=[
+                {"type": "text", "text": "Hi! My name is John."},
+            ],
         ),
         Message(
             role="user",
-            content=[{"type": "text", "text": "What are you capable of?"},],
+            content=[
+                {"type": "text", "text": "What are you capable of?"},
+            ],
         ),
     ],
     stream=True,
