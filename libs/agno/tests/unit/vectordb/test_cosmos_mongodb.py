@@ -35,8 +35,7 @@ def mock_cosmos_client() -> Generator[MagicMock, None, None]:
         mock_client.return_value = mock_client_instance
         mock_client_instance.__getitem__.return_value = mock_db
         mock_db.__getitem__.return_value = mock_collection
-        mock_db.list_collection_names = MagicMock(
-            return_value=["test_vectors"])
+        mock_db.list_collection_names = MagicMock(return_value=["test_vectors"])
 
         # Setup admin for ping
         mock_admin = MagicMock()
@@ -46,14 +45,12 @@ def mock_cosmos_client() -> Generator[MagicMock, None, None]:
         # Setup collection methods specific to Cosmos DB
         mock_collection.create_index = MagicMock(return_value=None)
         mock_collection.index_information = MagicMock(
-            return_value={"vector_index_1": {
-                "key": [("embedding", "cosmosSearch")]}}
+            return_value={"vector_index_1": {"key": [("embedding", "cosmosSearch")]}}
         )
         mock_collection.aggregate = MagicMock(return_value=[])
         mock_collection.insert_many = MagicMock(return_value=None)
         mock_collection.find_one = MagicMock(return_value=None)
-        mock_collection.delete_many = MagicMock(
-            return_value=MagicMock(deleted_count=1))
+        mock_collection.delete_many = MagicMock(return_value=MagicMock(deleted_count=1))
         mock_collection.drop = MagicMock()
 
         yield mock_client_instance
@@ -68,7 +65,7 @@ def cosmos_db(mock_cosmos_client: MagicMock, mock_embedder: MagicMock) -> AzureC
         embedder=mock_embedder,
         client=mock_cosmos_client,
         database="test_vectordb",
-        search_index_name="vector_index_1"
+        search_index_name="vector_index_1",
     )
 
     # Setup specific mocks for this instance
@@ -94,10 +91,7 @@ def create_test_documents(num_docs: int = 3) -> List[Document]:
 def test_cosmos_initialization(mock_cosmos_client: MagicMock, mock_embedder: MagicMock) -> None:
     """Test AzureCosmosMongoDb initialization."""
     db = AzureCosmosMongoDb(
-        collection_name="test_vectors",
-        database="test_vectordb",
-        client=mock_cosmos_client,
-        embedder=mock_embedder
+        collection_name="test_vectors", database="test_vectordb", client=mock_cosmos_client, embedder=mock_embedder
     )
     assert db.collection_name == "test_vectors"
     assert db.database == "test_vectordb"
@@ -131,7 +125,9 @@ def test_cosmos_search_index_creation(cosmos_db: AzureCosmosMongoDb, mock_cosmos
     assert kwargs["cosmosSearchOptions"]["similarity"] == "COS"
 
 
-def test_cosmos_vector_search(cosmos_db: AzureCosmosMongoDb, mock_cosmos_client: MagicMock, mock_embedder: MagicMock) -> None:
+def test_cosmos_vector_search(
+    cosmos_db: AzureCosmosMongoDb, mock_cosmos_client: MagicMock, mock_embedder: MagicMock
+) -> None:
     """Test Cosmos DB vector search functionality."""
     collection = mock_cosmos_client["test_vectordb"][cosmos_db.collection_name]
 
@@ -169,15 +165,11 @@ def test_cosmos_index_exists(cosmos_db: AzureCosmosMongoDb, mock_cosmos_client: 
     collection = mock_cosmos_client["test_vectordb"][cosmos_db.collection_name]
 
     # Test when index exists
-    collection.index_information.return_value = {
-        "vector_index_1": {"key": [("embedding", "cosmosSearch")]}
-    }
+    collection.index_information.return_value = {"vector_index_1": {"key": [("embedding", "cosmosSearch")]}}
     assert cosmos_db._search_index_exists() is True
 
     # Test when index doesn't exist
-    collection.index_information.return_value = {
-        "other_index": {"key": [("name", 1)]}
-    }
+    collection.index_information.return_value = {"other_index": {"key": [("name", 1)]}}
     assert cosmos_db._search_index_exists() is False
 
 
