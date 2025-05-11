@@ -1,4 +1,4 @@
-from agno.vectordb.mongodb.cosmos_mongodb import CosmosMongoDb
+from agno.vectordb.mongodb.cosmos_mongodb import AzureCosmosMongoDb
 from agno.vectordb.mongodb.mongodb import MongoDb
 
-__all__ = ["MongoDb", "CosmosMongoDb"]
+__all__ = ["MongoDb", "AzureCosmosMongoDb"]

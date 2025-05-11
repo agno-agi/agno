@@ -9,7 +9,7 @@ from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.mongodb.mongodb import MongoDb
 
 
-class CosmosMongoDb(MongoDb):
+class AzureCosmosMongoDb(MongoDb):
     """
     Azure Cosmos DB for MongoDB implementation with fallback search mechanisms.
     This class handles compatibility issues between MongoDB Atlas and Azure Cosmos DB.
