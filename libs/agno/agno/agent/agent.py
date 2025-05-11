@@ -618,7 +618,13 @@ class Agent:
         # 2.1 Prepare arguments for the model
         self.set_default_model()
         response_format = self._get_response_format()
-        self.determine_tools_for_model(model=self.model, session_id=session_id, user_id=user_id, async_mode=False, knowledge_filters=knowledge_filters)
+        self.determine_tools_for_model(
+            model=self.model,
+            session_id=session_id,
+            user_id=user_id,
+            async_mode=False,
+            knowledge_filters=knowledge_filters,
+        )
 
         self.run_response.model = self.model.id if self.model is not None else None
 
@@ -1315,7 +1321,13 @@ class Agent:
         # 2.1 Prepare arguments for the model
         self.set_default_model()
         response_format = self._get_response_format()
-        self.determine_tools_for_model(model=self.model, session_id=session_id, user_id=user_id, async_mode=True, knowledge_filters=knowledge_filters)
+        self.determine_tools_for_model(
+            model=self.model,
+            session_id=session_id,
+            user_id=user_id,
+            async_mode=True,
+            knowledge_filters=knowledge_filters,
+        )
 
         self.run_response.model = self.model.id if self.model is not None else None
 
@@ -2113,7 +2125,9 @@ class Agent:
         async_mode: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> None:
-        agent_tools = self.get_tools(session_id=session_id, async_mode=async_mode, user_id=user_id, knowledge_filters=knowledge_filters)
+        agent_tools = self.get_tools(
+            session_id=session_id, async_mode=async_mode, user_id=user_id, knowledge_filters=knowledge_filters
+        )
 
         if self._tools_for_model is None:
             self._tools_for_model = []
