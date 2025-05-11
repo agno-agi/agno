@@ -102,29 +102,59 @@ def main():
     ####################################################################
     # Load Agent Session from the database
     ####################################################################
-    try:
-        st.session_state["agentic_rag_agent_session_id"] = (
-            agentic_rag_agent.load_session()
-        )
-    except Exception:
-        st.warning("Could not create Agent session, is the database running?")
-        return
+    # Check if session ID is already in session state
+    session_id_exists = (
+        "agentic_rag_agent_session_id" in st.session_state
+        and st.session_state["agentic_rag_agent_session_id"]
+    )
+
+    if not session_id_exists:
+        try:
+            st.session_state["agentic_rag_agent_session_id"] = (
+                agentic_rag_agent.load_session()
+            )
+        except Exception as e:
+            logger.error(f"Session load error: {str(e)}")
+            st.warning("Could not create Agent session, is the database running?")
+            # Continue anyway instead of returning, to avoid breaking session switching
+    elif (
+        st.session_state["agentic_rag_agent_session_id"]
+        and hasattr(agentic_rag_agent, "memory")
+        and agentic_rag_agent.memory is not None
+        and not agentic_rag_agent.memory.runs
+    ):
+        # If we have a session ID but no runs, try to load the session explicitly
+        try:
+            agentic_rag_agent.load_session(
+                st.session_state["agentic_rag_agent_session_id"]
+            )
+        except Exception as e:
+            logger.error(f"Failed to load existing session: {str(e)}")
+            # Continue anyway
 
     ####################################################################
     # Load runs from memory
     ####################################################################
-    agent_runs = agentic_rag_agent.memory.runs
-    if len(agent_runs) > 0:
+    agent_runs = []
+    if hasattr(agentic_rag_agent, "memory") and agentic_rag_agent.memory is not None:
+        agent_runs = agentic_rag_agent.memory.runs
+
+    # Initialize messages if it doesn't exist yet
+    if "messages" not in st.session_state:
+        st.session_state["messages"] = []
+
+    # Only populate messages from agent runs if we haven't already
+    if len(st.session_state["messages"]) == 0 and len(agent_runs) > 0:
         logger.debug("Loading run history")
-        st.session_state["messages"] = []
         for _run in agent_runs:
-            if _run.message is not None:
+            # Check if _run is an object with message attribute
+            if hasattr(_run, "message") and _run.message is not None:
                 add_message(_run.message.role, _run.message.content)
-            if _run.response is not None:
+            # Check if _run is an object with response attribute
+            if hasattr(_run, "response") and _run.response is not None:
                 add_message("assistant", _run.response.content, _run.response.tools)
-    else:
+    elif len(agent_runs) == 0 and len(st.session_state["messages"]) == 0:
         logger.debug("No run history found")
-        st.session_state["messages"] = []
 
     if prompt := st.chat_input("👋 Ask me anything!"):
         add_message("user", prompt)
