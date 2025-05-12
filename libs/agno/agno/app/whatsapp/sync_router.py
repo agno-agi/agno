@@ -2,13 +2,13 @@ from typing import Optional, cast
 import logging
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import PlainTextResponse
-
+from agno.media import Audio,Video,Image
 from agno.agent.agent import Agent, RunResponse
 from agno.team.team import Team
 from agno.tools.whatsapp import WhatsAppTools
 
 from .security import validate_webhook_signature
-from .wappreq import VERIFY_TOKEN
+from .wappreq import VERIFY_TOKEN,get_media
 logger = logging.getLogger(__name__)
 
 def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
@@ -66,20 +66,48 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                         continue
 
                     message = messages[0]
-                    if message.get("type") != "text":
+                    if message.get("type") == "text":
+                        # Extract message details
+                        message_text = message["text"]["body"]
+                        message_image = None
+                        message_video = None
+                        message_audio = None
+                    elif message.get("type") == "image":
+                        try:
+                            message_text = message["image"]["caption"]
+                        except:
+                            message_text = "Describe the image"
+                        message_image = message["image"]["id"]
+                        message_video = None
+                        message_audio = None
+                    elif message.get("type") == "video":
+                        try:
+                            message_text = message["video"]["caption"]
+                        except:
+                            message_text = "Describe the video"
+                        message_video = message["video"]["id"]
+                        message_image = None
+                        message_audio = None
+                    elif message.get("type") == "audio":
+                        message_text = "reply to audio"
+                        message_audio = message["audio"]["id"]
+                        message_image = None
+                        message_video = None
+                    else:
                         continue
-
-                    # Extract message details
                     phone_number = message["from"]
-                    message_text = message["text"]["body"]
-
                     logger.info(f"Processing message from {phone_number}: {message_text}")
-
                     # Generate and send response
                     if agent:
-                        response = agent.run(message_text,user_id=phone_number)
+                        response = agent.run(message_text,user_id=phone_number,
+                                             images=[Image(content=get_media(message_image))] if message_image else None,
+                                             videos=[Video(content=get_media(message_video))] if message_video else None,
+                                             audio=[Audio(content=get_media(message_audio))] if message_audio else None,)
                     elif team:
-                        response = team.run(message_text,user_id=phone_number)
+                        response = team.run(message_text,user_id=phone_number,
+                                             images=[Image(content=get_media(message_image))] if message_image else None,
+                                             videos=[Video(content=get_media(message_video))] if message_video else None,
+                                             audio=[Audio(content=get_media(message_audio))] if message_audio else None,)
                     WhatsAppTools().send_text_message_sync(
                         recipient=phone_number, text=response.content
                     )

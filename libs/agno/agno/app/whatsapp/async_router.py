@@ -102,7 +102,10 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
                                              videos=[Video(content=get_media(message_video))] if message_video else None,
                                              audio=[Audio(content=get_media(message_audio))] if message_audio else None,)
                     elif team:
-                        response = team.run(message_text,user_id=phone_number)
+                        response = team.run(message_text,user_id=phone_number,
+                                             images=[Image(content=get_media(message_image))] if message_image else None,
+                                             videos=[Video(content=get_media(message_video))] if message_video else None,
+                                             audio=[Audio(content=get_media(message_audio))] if message_audio else None,)
                     WhatsAppTools().send_text_message_sync(
                         recipient=phone_number, text=response.content
                     )
