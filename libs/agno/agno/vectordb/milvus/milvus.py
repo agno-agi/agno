@@ -99,8 +99,19 @@ class Milvus(VectorDb):
 
     def _get_sparse_vector(self, text: str) -> Dict[int, float]:
         """
-        Convert text to sparse vector representation.
-        This is a simple implementation - you might want to use a proper sparse vector embedder.
+        Convert text into a sparse vector representation using a simple TF-IDF-like scoring.
+
+        This method creates a sparse vector by:
+        1. Converting text to lowercase and splitting into words
+        2. Computing word frequencies
+        3. Creating a hash-based word ID (modulo 10000)
+        4. Computing a TF-IDF-like score for each word
+
+        Args:
+            text: Input text to convert to sparse vector
+
+        Returns:
+            Dictionary mapping word IDs (int) to their TF-IDF-like scores (float)
         """
         from collections import Counter
 
@@ -364,8 +375,16 @@ class Milvus(VectorDb):
         else:
             for document in documents:
                 document.embed(embedder=self.embedder)
-                data = self._prepare_document_data(document, include_vectors=True)
-
+                cleaned_content = document.content.replace("\x00", "\ufffd")
+                doc_id = md5(cleaned_content.encode()).hexdigest()
+                data = {
+                    "id": doc_id,
+                    "vector": document.embedding,
+                    "name": document.name,
+                    "meta_data": document.meta_data,
+                    "content": cleaned_content,
+                    "usage": document.usage,
+                }
                 self.client.insert(
                     collection_name=self.collection,
                     data=data,
@@ -382,10 +401,18 @@ class Milvus(VectorDb):
             await asyncio.gather(*[self._async_insert_hybrid_document(doc) for doc in documents])
         else:
 
-            async def process_document(document: Document) -> Dict[str, Any]:
+            async def process_document(document):
                 document.embed(embedder=self.embedder)
-                data = self._prepare_document_data(document, include_vectors=True)
-
+                cleaned_content = document.content.replace("\x00", "\ufffd")
+                doc_id = md5(cleaned_content.encode()).hexdigest()
+                data = {
+                    "id": doc_id,
+                    "vector": document.embedding,
+                    "name": document.name,
+                    "meta_data": document.meta_data,
+                    "content": cleaned_content,
+                    "usage": document.usage,
+                }
                 await self.async_client.insert(
                     collection_name=self.collection,
                     data=data,
