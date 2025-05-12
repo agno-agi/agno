@@ -82,11 +82,18 @@ def convert_schema(schema_dict: Dict[str, Any]) -> Optional[Schema]:
     if schema_type is None or schema_type == "null":
         return None
     description = schema_dict.get("description", None)
-    default = schema_dict.get("default", None)
-
+    
+    # Remove default field as it's not supported by Gemini API
+    if "default" in schema_dict:
+        del schema_dict["default"]
+    
     if schema_type == "object" and "properties" in schema_dict:
         properties = {}
         for key, prop_def in schema_dict["properties"].items():
+            # Remove default field from properties too
+            if "default" in prop_def:
+                del prop_def["default"]
+                
             # Process nullable types
             prop_type = prop_def.get("type", "")
             is_nullable = False
@@ -109,10 +116,9 @@ def convert_schema(schema_dict: Dict[str, Any]) -> Optional[Schema]:
                 properties=properties,
                 required=required,
                 description=description,
-                default=default,
             )
         else:
-            return Schema(type=Type.OBJECT, description=description, default=default)
+            return Schema(type=Type.OBJECT, description=description)
 
     elif schema_type == "array" and "items" in schema_dict:
         items = convert_schema(schema_dict["items"])
@@ -121,6 +127,10 @@ def convert_schema(schema_dict: Dict[str, Any]) -> Optional[Schema]:
     elif schema_type == "" and "anyOf" in schema_dict:
         any_of = []
         for sub_schema in schema_dict["anyOf"]:
+            # Remove default field from anyOf schemas too
+            if "default" in sub_schema:
+                del sub_schema["default"]
+                
             sub_schema_converted = convert_schema(sub_schema)
             any_of.append(sub_schema_converted)
 
@@ -141,11 +151,10 @@ def convert_schema(schema_dict: Dict[str, Any]) -> Optional[Schema]:
             return Schema(
                 any_of=any_of,
                 description=description,
-                default=default,
             )
     else:
         schema_type = schema_type.upper()
-        return Schema(type=schema_type, description=description, default=default)
+        return Schema(type=schema_type, description=description)
 
 
 def format_function_definitions(tools_list: List[Dict[str, Any]]) -> Optional[Tool]:
