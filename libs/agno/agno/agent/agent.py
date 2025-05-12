@@ -2315,11 +2315,11 @@ class Agent:
         if self.team_data is not None:
             session_data["team_data"] = self.team_data
         if self.images is not None:
-            session_data["images"] = [img.model_dump() for img in self.images]  # type: ignore
+            session_data["images"] = [img.to_dict() for img in self.images]  # type: ignore
         if self.videos is not None:
-            session_data["videos"] = [vid.model_dump() for vid in self.videos]  # type: ignore
+            session_data["videos"] = [vid.to_dict() for vid in self.videos]  # type: ignore
         if self.audio is not None:
-            session_data["audio"] = [aud.model_dump() for aud in self.audio]  # type: ignore
+            session_data["audio"] = [aud.to_dict() for aud in self.audio]  # type: ignore
         return session_data
 
     def get_agent_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
