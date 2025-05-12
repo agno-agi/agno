@@ -117,13 +117,5 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
             logger.error(f"Error processing webhook: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
-        if agent:
-            run_response = cast(
-                RunResponse,
-                await agent.arun(...),
-            )
-        elif team:
-            run_response = await team.arun(...)
-        return run_response.to_dict()
 
     return router

@@ -118,13 +118,6 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
         except Exception as e:
             logger.error(f"Error processing webhook: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
-        if agent:
-            run_response = cast(
-                RunResponse,
-                agent.run(...),
-            )
-        elif team:
-            run_response = team.arun(...)
-        return run_response.to_dict()
+
 
     return router
