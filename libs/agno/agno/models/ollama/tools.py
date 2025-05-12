@@ -351,7 +351,8 @@ class OllamaTools(Ollama):
             tool_call_prompt += "\nHere are the available tools:"
             tool_call_prompt += "\n<tools>\n"
             tool_definitions: List[str] = []
-            for func_def in tools:
+            for tool_def in tools:
+                func_def = tool_def.get("function", {})
                 _function_def = json.dumps(
                     {
                         "name": func_def.get("name") or "",

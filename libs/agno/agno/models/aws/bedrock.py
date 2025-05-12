@@ -94,7 +94,8 @@ class AwsBedrock(Model):
         """
         parsed_tools = []
         if tools is not None:
-            for func_def in tools:
+            for tool_def in tools:
+                func_def = tool_def.get("function", {})
                 properties = {}
                 required = []
 
@@ -246,7 +247,7 @@ class AwsBedrock(Model):
             tool_config = None
             if tools is not None:
                 tool_config = {"tools": self._format_tools_for_request(tools)}
-
+                
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
@@ -281,7 +282,7 @@ class AwsBedrock(Model):
             tool_config = None
             if tools is not None:
                 tool_config = {"tools": self._format_tools_for_request(tools)}
-
+            
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
