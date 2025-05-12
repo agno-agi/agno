@@ -36,6 +36,21 @@ def factorial():
     assert result is not None and result.avg_score >= 8
 
 
+def which_is_bigger_911_or_99():
+    evaluation = AccuracyEval(
+        agent=Agent(
+            model=OpenAIChat(id="gpt-4o-mini"),
+            tools=[CalculatorTools(enable_all=True)],
+        ),
+        question="Which is bigger 9.11 or 9.9?",
+        expected_answer="9.9",
+        evaluator_context="Its ok if the Agent returns reasoning, but the answer must be 9.9",
+        num_iterations=1
+    )
+    result: Optional[AccuracyResult] = evaluation.run(print_results=True)
+
+    assert result is not None and result.avg_score >= 8
+
+
 if __name__ == "__main__":
-    multiply_and_exponentiate()
-    # factorial()
+    which_is_bigger_911_or_99()

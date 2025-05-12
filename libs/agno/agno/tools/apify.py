@@ -15,11 +15,11 @@ except ImportError:
 
 
 class ApifyTools(Toolkit):
-    def __init__(self, actors: Union[str, List[str]] = None, apify_api_token: Optional[str] = None):
+    def __init__(self, actors: Optional[Union[str, List[str]]] = None, apify_api_token: Optional[str] = None):
         """Initialize ApifyTools with specific Actors.
 
         Args:
-            actors (Union[str, List[str]]): Single Actor ID as string or list of Actor IDs to register as individual tools
+            actors (Optional[Union[str, List[str]]]): Single Actor ID as string or list of Actor IDs to register as individual tools
             apify_api_token (Optional[str]): Apify API token (defaults to APIFY_API_TOKEN env variable)
 
         Examples:
@@ -173,7 +173,7 @@ APIFY_API_ENDPOINT_GET_DEFAULT_BUILD = "https://api.apify.com/v2/acts/{actor_id}
 
 # Utility functions
 def props_to_json_schema(input_dict, required_fields=None):
-    schema = {"type": "object", "properties": {}, "required": required_fields or []}
+    schema: Dict[str, Any] = {"type": "object", "properties": {}, "required": required_fields or []}
 
     def infer_array_item_type(prop):
         type_map = {
@@ -194,7 +194,7 @@ def props_to_json_schema(input_dict, required_fields=None):
         return "string"  # Fallback for arrays like searchStringsArray
 
     for key, value in input_dict.items():
-        prop_schema = {}
+        prop_schema: Dict[str, Any] = {}
         prop_type = value.get("type")
 
         if "enum" in value:
