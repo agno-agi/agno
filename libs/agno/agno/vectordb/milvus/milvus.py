@@ -120,29 +120,37 @@ class Milvus(VectorDb):
 
         return sparse_vector
 
-    def _create_hybrid_collection(self) -> None:
-        """Create a collection specifically for hybrid search with both dense and sparse vectors."""
+    def _create_hybrid_schema(self) -> Any:
+        """Create a schema for hybrid collection with all necessary fields."""
         from pymilvus import DataType
 
-        log_debug(f"Creating hybrid collection: {self.collection}")
-
-        # Create schema with support for multiple vector fields
         schema = MilvusClient.create_schema(
             auto_id=False,
             enable_dynamic_field=True,
         )
 
-        # Add fields to schema with proper max_length for all VARCHAR fields
-        schema.add_field(field_name="id", datatype=DataType.VARCHAR, max_length=128, is_primary=True)
-        schema.add_field(field_name="name", datatype=DataType.VARCHAR, max_length=1000)
-        schema.add_field(field_name="content", datatype=DataType.VARCHAR, max_length=65535)
-        schema.add_field(field_name="text", datatype=DataType.VARCHAR, max_length=1000)
-        schema.add_field(field_name="meta_data", datatype=DataType.VARCHAR, max_length=65535)
-        schema.add_field(field_name="usage", datatype=DataType.VARCHAR, max_length=65535)
+        # Define field configurations
+        fields = [
+            ("id", DataType.VARCHAR, 128, True),  # (name, type, max_length, is_primary)
+            ("name", DataType.VARCHAR, 1000, False),
+            ("content", DataType.VARCHAR, 65535, False),
+            ("text", DataType.VARCHAR, 1000, False),
+            ("meta_data", DataType.VARCHAR, 65535, False),
+            ("usage", DataType.VARCHAR, 65535, False),
+        ]
+
+        # Add VARCHAR fields
+        for field_name, datatype, max_length, is_primary in fields:
+            schema.add_field(field_name=field_name, datatype=datatype, max_length=max_length, is_primary=is_primary)
+
+        # Add vector fields
         schema.add_field(field_name="dense_vector", datatype=DataType.FLOAT_VECTOR, dim=self.dimensions)
         schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
 
-        # Prepare index parameters
+        return schema
+
+    def _prepare_hybrid_index_params(self) -> Any:
+        """Prepare index parameters for both dense and sparse vectors."""
         index_params = self.client.prepare_index_params()
 
         # Add indexes for both vector types
@@ -162,64 +170,60 @@ class Milvus(VectorDb):
             params={"drop_ratio_build": 0.2},
         )
 
-        # Create the collection
+        return index_params
+
+    def _prepare_document_data(self, document: Document, include_vectors: bool = True) -> Dict[str, Any]:
+        """Prepare document data for insertion."""
+        # Ensure document is embedded if vectors are needed
+        if include_vectors and document.embedding is None:
+            document.embed(embedder=self.embedder)
+            if document.embedding is None:
+                raise ValueError(f"Failed to embed document: {document.name}")
+
+        cleaned_content = document.content.replace("\x00", "\ufffd")
+        doc_id = md5(cleaned_content.encode()).hexdigest()
+
+        # Convert dictionary fields to JSON strings
+        meta_data_str = json.dumps(document.meta_data) if document.meta_data else "{}"
+        usage_str = json.dumps(document.usage) if document.usage else "{}"
+
+        data = {
+            "id": doc_id,
+            "text": cleaned_content,
+            "name": document.name,
+            "meta_data": meta_data_str,
+            "content": cleaned_content,
+            "usage": usage_str,
+        }
+
+        if include_vectors:
+            if self.search_type == SearchType.hybrid:
+                data.update(
+                    {"dense_vector": document.embedding, "sparse_vector": self._get_sparse_vector(cleaned_content)}
+                )
+            else:
+                data["vector"] = document.embedding
+
+        return data
+
+    def _create_hybrid_collection(self) -> None:
+        """Create a collection specifically for hybrid search."""
+        log_debug(f"Creating hybrid collection: {self.collection}")
+
+        schema = self._create_hybrid_schema()
+        index_params = self._prepare_hybrid_index_params()
+
         self.client.create_collection(collection_name=self.collection, schema=schema, index_params=index_params)
-        
+
     async def _async_create_hybrid_collection(self) -> None:
         """Create a hybrid collection asynchronously."""
-        from pymilvus import DataType
-
         log_debug(f"Creating hybrid collection asynchronously: {self.collection}")
 
-        # Create schema with support for multiple vector fields
-        schema = MilvusClient.create_schema(
-            auto_id=False,
-            enable_dynamic_field=True,
-        )
+        schema = self._create_hybrid_schema()
+        index_params = self._prepare_hybrid_index_params()
 
-        # Add fields to schema with proper max_length for all VARCHAR fields
-        schema.add_field(field_name="id", datatype=DataType.VARCHAR,
-                        max_length=128, is_primary=True)
-        schema.add_field(field_name="name",
-                        datatype=DataType.VARCHAR, max_length=1000)
-        schema.add_field(field_name="content",
-                        datatype=DataType.VARCHAR, max_length=65535)
-        schema.add_field(field_name="text",
-                        datatype=DataType.VARCHAR, max_length=1000)
-        schema.add_field(field_name="meta_data",
-                        datatype=DataType.VARCHAR, max_length=65535)
-        schema.add_field(field_name="usage",
-                        datatype=DataType.VARCHAR, max_length=65535)
-        schema.add_field(field_name="dense_vector",
-                        datatype=DataType.FLOAT_VECTOR, dim=self.dimensions)
-        schema.add_field(field_name="sparse_vector",
-                        datatype=DataType.SPARSE_FLOAT_VECTOR)
-
-        # Prepare index parameters
-        index_params = self.client.prepare_index_params()
-
-        # Add indexes for both vector types
-        index_params.add_index(
-            field_name="dense_vector",
-            index_name="dense_index",
-            index_type="IVF_FLAT",
-            metric_type=self._get_metric_type(),
-            params={"nlist": 1024}
-        )
-
-        index_params.add_index(
-            field_name="sparse_vector",
-            index_name="sparse_index",
-            index_type="SPARSE_INVERTED_INDEX",
-            metric_type="IP",
-            params={"drop_ratio_build": 0.2}
-        )
-
-        # Create the collection asynchronously
         await self.async_client.create_collection(
-            collection_name=self.collection,
-            schema=schema,
-            index_params=index_params
+            collection_name=self.collection, schema=schema, index_params=index_params
         )
 
     def create(self) -> None:
@@ -317,69 +321,27 @@ class Milvus(VectorDb):
 
     def _insert_hybrid_document(self, document: Document) -> None:
         """Insert a document with both dense and sparse vectors."""
-        # Get dense vector using the regular embedder
-        document.embed(embedder=self.embedder)
-        dense_vector = document.embedding
-
-        # Get sparse vector
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        sparse_vector = self._get_sparse_vector(cleaned_content)
-
-        # Create document ID
-        doc_id = md5(cleaned_content.encode()).hexdigest()
-
-        # Convert dictionary fields to JSON strings
-        meta_data_str = json.dumps(document.meta_data) if document.meta_data else "{}"
-        usage_str = json.dumps(document.usage) if document.usage else "{}"
-
-        # Prepare data with both vector types
-        data = {
-            "id": doc_id,
-            "dense_vector": dense_vector,
-            "sparse_vector": sparse_vector,
-            "text": cleaned_content,
-            "name": document.name,
-            "meta_data": meta_data_str,
-            "content": cleaned_content,
-            "usage": usage_str,
-        }
+        data = self._prepare_document_data(document, include_vectors=True)
 
         self.client.insert(
             collection_name=self.collection,
             data=data,
         )
         log_debug(f"Inserted hybrid document: {document.name} ({document.meta_data})")
-        
+
     async def _async_insert_hybrid_document(self, document: Document) -> None:
         """Insert a document with both dense and sparse vectors asynchronously."""
-        document.embed(embedder=self.embedder)
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        doc_id = md5(cleaned_content.encode()).hexdigest()
+        data = self._prepare_document_data(document, include_vectors=True)
 
-        meta_data_str = json.dumps(
-            document.meta_data) if document.meta_data else "{}"
-        usage_str = json.dumps(document.usage) if document.usage else "{}"
-
-        data = {
-            "id": doc_id,
-            "dense_vector": document.embedding,
-            "sparse_vector": self._get_sparse_vector(cleaned_content),
-            "text": cleaned_content,
-            "name": document.name,
-            "meta_data": meta_data_str,
-            "content": cleaned_content,
-            "usage": usage_str,
-        }
         await self.async_client.insert(
             collection_name=self.collection,
             data=data,
         )
-        log_debug(
-            f"Inserted hybrid document asynchronously: {document.name} ({document.meta_data})")
+        log_debug(f"Inserted hybrid document asynchronously: {document.name} ({document.meta_data})")
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents based on search type."""
-        log_debug(f"Inserting {len(documents)} documents")
+        log_info(f"Inserting {len(documents)} documents")
 
         if self.search_type == SearchType.hybrid:
             for document in documents:
@@ -387,55 +349,38 @@ class Milvus(VectorDb):
         else:
             for document in documents:
                 document.embed(embedder=self.embedder)
-                cleaned_content = document.content.replace("\x00", "\ufffd")
-                doc_id = md5(cleaned_content.encode()).hexdigest()
-                data = {
-                    "id": doc_id,
-                    "vector": document.embedding,
-                    "name": document.name,
-                    "meta_data": document.meta_data,
-                    "content": cleaned_content,
-                    "usage": document.usage,
-                }
+                data = self._prepare_document_data(document, include_vectors=True)
+
                 self.client.insert(
                     collection_name=self.collection,
                     data=data,
                 )
                 log_debug(f"Inserted document: {document.name} ({document.meta_data})")
-            
-            log_debug(f"Inserted {len(documents)} documents")
+
+        log_info(f"Inserted {len(documents)} documents")
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents asynchronously based on search type."""
-        log_debug(f"Inserting {len(documents)} documents asynchronously")
+        log_info(f"Inserting {len(documents)} documents asynchronously")
 
         if self.search_type == SearchType.hybrid:
             await asyncio.gather(*[self._async_insert_hybrid_document(doc) for doc in documents])
         else:
-            # Original async insert logic
-            async def process_document(document):
+
+            async def process_document(document: Document) -> Dict[str, Any]:
                 document.embed(embedder=self.embedder)
-                cleaned_content = document.content.replace("\x00", "\ufffd")
-                doc_id = md5(cleaned_content.encode()).hexdigest()
-                data = {
-                    "id": doc_id,
-                    "vector": document.embedding,
-                    "name": document.name,
-                    "meta_data": document.meta_data,
-                    "content": cleaned_content,
-                    "usage": document.usage,
-                }
+                data = self._prepare_document_data(document, include_vectors=True)
+
                 await self.async_client.insert(
                     collection_name=self.collection,
                     data=data,
                 )
-                log_debug(
-                    f"Inserted document asynchronously: {document.name} ({document.meta_data})")
+                log_debug(f"Inserted document asynchronously: {document.name} ({document.meta_data})")
                 return data
 
             await asyncio.gather(*[process_document(doc) for doc in documents])
 
-        log_debug(f"Inserted {len(documents)} documents asynchronously")
+        log_info(f"Inserted {len(documents)} documents asynchronously")
 
     def upsert_available(self) -> bool:
         """
@@ -554,6 +499,7 @@ class Milvus(VectorDb):
                 )
             )
 
+        log_info(f"Found {len(search_results)} documents")
         return search_results
 
     async def async_search(
@@ -590,6 +536,7 @@ class Milvus(VectorDb):
                 )
             )
 
+        log_info(f"Found {len(search_results)} documents")
         return search_results
 
     def hybrid_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
@@ -675,6 +622,7 @@ class Milvus(VectorDb):
             if self.reranker and search_results:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
 
+            log_info(f"Found {len(search_results)} documents")
             return search_results
 
         except Exception as e:
