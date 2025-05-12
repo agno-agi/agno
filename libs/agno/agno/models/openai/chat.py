@@ -163,7 +163,7 @@ class OpenAIChat(Model):
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -311,7 +311,7 @@ class OpenAIChat(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Union[ChatCompletion, ParsedChatCompletion]:
         """
         Send a chat completion request to the OpenAI API.
@@ -384,7 +384,7 @@ class OpenAIChat(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Union[ChatCompletion, ParsedChatCompletion]:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
@@ -455,7 +455,7 @@ class OpenAIChat(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[ChatCompletionChunk]:
         """
         Send a streaming chat completion request to the OpenAI API.
@@ -518,7 +518,7 @@ class OpenAIChat(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[ChatCompletionChunk]:
         """
         Sends an asynchronous streaming chat completion request to the OpenAI API.

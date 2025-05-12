@@ -134,7 +134,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         functions: Optional[Dict[str, Function]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
     ) -> ModelResponse:
         """
@@ -212,7 +212,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         functions: Optional[Dict[str, Function]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
     ) -> ModelResponse:
         """
@@ -289,7 +289,7 @@ class Model(ABC):
         model_response: ModelResponse,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Tuple[Message, bool]:
         """
         Process a single model response and return the assistant message and whether to continue.
@@ -355,7 +355,7 @@ class Model(ABC):
         model_response: ModelResponse,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Tuple[Message, bool]:
         """
         Process a single async model response and return the assistant message and whether to continue.
@@ -485,7 +485,7 @@ class Model(ABC):
         stream_data: MessageData,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[ModelResponse]:
         """
         Process a streaming response from the model.
@@ -507,7 +507,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         functions: Optional[Dict[str, Function]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
     ) -> Iterator[ModelResponse]:
         """
@@ -601,7 +601,7 @@ class Model(ABC):
         stream_data: MessageData,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process a streaming response from the model.
@@ -624,7 +624,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         functions: Optional[Dict[str, Function]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
@@ -797,7 +797,7 @@ class Model(ABC):
         return tool_calls_data
 
     def get_function_calls_to_run(
-        self, assistant_message: Message, messages: List[Message], functions: Dict[str, Function]
+        self, assistant_message: Message, messages: List[Message], functions: Optional[Dict[str, Function]] = None,
     ) -> List[FunctionCall]:
         """
         Prepare function calls for the assistant message.
@@ -1082,7 +1082,7 @@ class Model(ABC):
         assistant_message: Message,
         messages: List[Message],
         model_response: ModelResponse,
-        functions: Dict[str, Function],
+        x: Dict[str, Function],
     ) -> List[FunctionCall]:
         """
         Prepare function calls from tool calls in the assistant message.

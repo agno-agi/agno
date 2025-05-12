@@ -186,7 +186,7 @@ class Ollama(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Mapping[str, Any]:
         """
         Send a chat request to the Ollama API.
@@ -204,7 +204,7 @@ class Ollama(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Mapping[str, Any]:
         """
         Sends an asynchronous chat request to the Ollama API.
@@ -222,7 +222,7 @@ class Ollama(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[Mapping[str, Any]]:
         """
         Sends a streaming chat request to the Ollama API.
@@ -239,7 +239,7 @@ class Ollama(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Any:
         """
         Sends an asynchronous streaming chat completion request to the Ollama API.

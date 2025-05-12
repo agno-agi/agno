@@ -128,7 +128,7 @@ class Groq(Model):
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -249,7 +249,7 @@ class Groq(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> ChatCompletion:
         """
         Send a chat completion request to the Groq API.
@@ -277,7 +277,7 @@ class Groq(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> ChatCompletion:
         """
         Sends an asynchronous chat completion request to the Groq API.
@@ -305,7 +305,7 @@ class Groq(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[ChatCompletionChunk]:
         """
         Send a streaming chat completion request to the Groq API.
@@ -334,7 +334,7 @@ class Groq(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Any:
         """
         Sends an asynchronous streaming chat completion request to the Groq API.

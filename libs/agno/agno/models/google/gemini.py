@@ -220,7 +220,7 @@ class Gemini(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ):
         """
         Invokes the model with a list of messages and returns the response.
@@ -251,7 +251,7 @@ class Gemini(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ):
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -282,7 +282,7 @@ class Gemini(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ):
         """
         Invokes the model with a list of messages and returns the response.
@@ -314,7 +314,7 @@ class Gemini(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ):
         """
         Invokes the model with a list of messages and returns the response as a stream.

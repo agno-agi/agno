@@ -95,7 +95,7 @@ class WatsonX(Model):
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         params = {
             "frequency_penalty": self.frequency_penalty,
@@ -153,7 +153,7 @@ class WatsonX(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Any:
         """
         Send a chat completion request to the WatsonX API.
@@ -179,7 +179,7 @@ class WatsonX(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Any:
         """
         Sends an asynchronous chat completion request to the WatsonX API.
@@ -203,7 +203,7 @@ class WatsonX(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[Any]:
         """
         Send a streaming chat completion request to the WatsonX API.
@@ -227,7 +227,7 @@ class WatsonX(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncGenerator[Any, None]:
         """
         Sends an asynchronous streaming chat completion request to the WatsonX API.

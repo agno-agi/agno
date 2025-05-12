@@ -76,7 +76,7 @@ class AzureAIFoundry(Model):
         self,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Get the parameters for creating an Azure AI request."""
         base_params = {
@@ -181,7 +181,7 @@ class AzureAIFoundry(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Any:
         """
         Send a chat completion request to the Azure AI API.
@@ -208,7 +208,7 @@ class AzureAIFoundry(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Any:
         """
         Sends an asynchronous chat completion request to the Azure AI API.
@@ -237,7 +237,7 @@ class AzureAIFoundry(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[Any]:
         """
         Send a streaming chat completion request to the Azure AI API.
@@ -265,7 +265,7 @@ class AzureAIFoundry(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[Any]:
         """
         Sends an asynchronous streaming chat completion request to the Azure AI API.

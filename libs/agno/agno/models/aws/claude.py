@@ -169,7 +169,7 @@ class Claude(AnthropicClaude):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AnthropicMessage:
         """
         Send a request to the Anthropic API to generate a response.
@@ -204,7 +204,7 @@ class Claude(AnthropicClaude):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Any:
         """
         Stream a response from the Anthropic API.
@@ -254,7 +254,7 @@ class Claude(AnthropicClaude):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AnthropicMessage:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
@@ -289,7 +289,7 @@ class Claude(AnthropicClaude):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[Any]:
         """
         Stream an asynchronous response from the Anthropic API.

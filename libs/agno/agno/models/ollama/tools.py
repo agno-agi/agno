@@ -208,7 +208,7 @@ class OllamaTools(Ollama):
         stream_data,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[ModelResponse]:
         """
         Process a streaming response from the model.
@@ -231,7 +231,7 @@ class OllamaTools(Ollama):
         stream_data,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process a streaming response from the model.

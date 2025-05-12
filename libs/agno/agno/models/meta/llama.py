@@ -192,7 +192,7 @@ class Llama(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> CreateChatCompletionResponse:
         """
         Send a chat completion request to the Llama API.
@@ -208,7 +208,7 @@ class Llama(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> CreateChatCompletionResponse:
         """
         Sends an asynchronous chat completion request to the Llama API.
@@ -225,7 +225,7 @@ class Llama(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[CreateChatCompletionResponseStreamChunk]:
         """
         Send a streaming chat completion request to the Llama API.
@@ -247,7 +247,7 @@ class Llama(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[CreateChatCompletionResponseStreamChunk]:
         """
         Sends an asynchronous streaming chat completion request to the Llama API.

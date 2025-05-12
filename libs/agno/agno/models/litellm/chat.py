@@ -140,7 +140,7 @@ class LiteLLM(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Mapping[str, Any]:
         """Sends a chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_kwargs(tools=tools)
@@ -152,7 +152,7 @@ class LiteLLM(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[Mapping[str, Any]]:
         """Sends a streaming chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_kwargs(tools=tools)
@@ -165,7 +165,7 @@ class LiteLLM(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Mapping[str, Any]:
         """Sends an asynchronous chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_kwargs(tools=tools)
@@ -177,7 +177,7 @@ class LiteLLM(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[Any]:
         """Sends an asynchronous streaming chat request to the LiteLLM API."""
         completion_kwargs = self.get_request_kwargs(tools=tools)

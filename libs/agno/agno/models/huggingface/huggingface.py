@@ -118,7 +118,7 @@ class HuggingFace(Model):
         return self.async_client
 
     def get_request_kwargs(
-        self, tools: Optional[List[Dict[str, Any]]] = None, tool_choice: Optional[str] = None
+        self, tools: Optional[List[Dict[str, Any]]] = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for inference model client requests.
@@ -227,7 +227,7 @@ class HuggingFace(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Union[ChatCompletionOutput]:
         """
         Send a chat completion request to the HuggingFace Hub.
@@ -250,7 +250,7 @@ class HuggingFace(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Union[ChatCompletionOutput]:
         """
         Sends an asynchronous chat completion request to the HuggingFace Hub Inference.
@@ -274,7 +274,7 @@ class HuggingFace(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[ChatCompletionStreamOutput]:
         """
         Send a streaming chat completion request to the HuggingFace API.
@@ -299,7 +299,7 @@ class HuggingFace(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[Any]:
         """
         Sends an asynchronous streaming chat completion request to the HuggingFace API.

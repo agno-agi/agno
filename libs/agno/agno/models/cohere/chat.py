@@ -129,7 +129,7 @@ class Cohere(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> ChatResponse:
         """
         Invoke a non-streamed chat response from the Cohere API.
@@ -148,7 +148,7 @@ class Cohere(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[StreamedChatResponseV2]:
         """
         Invoke a streamed chat response from the Cohere API.
@@ -170,7 +170,7 @@ class Cohere(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> ChatResponse:
         """
         Asynchronously invoke a non-streamed chat response from the Cohere API.
@@ -192,7 +192,7 @@ class Cohere(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[StreamedChatResponseV2]:
         """
         Asynchronously invoke a streamed chat response from the Cohere API.
@@ -321,7 +321,7 @@ class Cohere(Model):
         stream_data: MessageData,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[ModelResponse]:
         """Process the synchronous response stream."""
         tool_use: Dict[str, Any] = {}
@@ -342,7 +342,7 @@ class Cohere(Model):
         stream_data: MessageData,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[ModelResponse]:
         """Process the asynchronous response stream."""
         tool_use: Dict[str, Any] = {}

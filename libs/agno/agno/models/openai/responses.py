@@ -156,7 +156,7 @@ class OpenAIResponses(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -393,7 +393,7 @@ class OpenAIResponses(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Response:
         """
         Send a request to the OpenAI Responses API.
@@ -448,7 +448,7 @@ class OpenAIResponses(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Response:
         """
         Sends an asynchronous request to the OpenAI Responses API.
@@ -503,7 +503,7 @@ class OpenAIResponses(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[ResponseStreamEvent]:
         """
         Send a streaming request to the OpenAI Responses API.
@@ -559,7 +559,7 @@ class OpenAIResponses(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[ResponseStreamEvent]:
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
@@ -801,7 +801,7 @@ class OpenAIResponses(Model):
         stream_data: MessageData,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[ModelResponse]:
         """Process the synchronous response stream."""
         tool_use: Dict[str, Any] = {}
@@ -824,7 +824,7 @@ class OpenAIResponses(Model):
         stream_data: MessageData,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[ModelResponse]:
         """Process the asynchronous response stream."""
         tool_use: Dict[str, Any] = {}

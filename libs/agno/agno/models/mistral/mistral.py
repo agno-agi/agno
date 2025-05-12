@@ -107,7 +107,7 @@ class MistralChat(Model):
         return {k: v for k, v in client_params.items() if v is not None}
 
     def get_request_kwargs(
-        self, tools: Optional[List[Dict[str, Any]]] = None, tool_choice: Optional[str] = None
+        self, tools: Optional[List[Dict[str, Any]]] = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         Get the API kwargs for the Mistral model.
@@ -163,7 +163,7 @@ class MistralChat(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
         """
         Send a chat completion request to the Mistral model.
@@ -202,7 +202,7 @@ class MistralChat(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[Any]:
         """
         Stream the response from the Mistral model.
@@ -227,7 +227,7 @@ class MistralChat(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
         """
         Send an asynchronous chat completion request to the Mistral API.
@@ -265,7 +265,7 @@ class MistralChat(Model):
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[str] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Any:
         """
         Stream an asynchronous response from the Mistral API.

@@ -477,7 +477,7 @@ class Agent:
         self.agent_session: Optional[AgentSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
-        self._tools_for_model: Optional[List[str]] = None
+        self._tools_for_model: Optional[List[Dict[str, Any]]] = None
         self._functions_for_model: Optional[Dict[str, Function]] = None
 
         self._formatter: Optional[SafeFormatter] = None
@@ -2209,6 +2209,7 @@ class Agent:
                             log_warning(f"Could not add tool {tool}: {e}")
 
     def _model_should_return_structured_output(self):
+        self.model = cast(Model, self.model)
         return bool(
             self.model.supports_native_structured_outputs
             and self.response_model is not None
