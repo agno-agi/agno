@@ -8,10 +8,22 @@ Please follow the [fork and pull request](https://docs.github.com/en/get-started
 
 - Fork the repository.
 - Create a new branch for your feature.
-- Add your feature or improvement.
-- Send a pull request.
-- We appreciate your support & input!
+  - Add your feature or improvement.
+  - **Ensure your Pull Request follows our guidelines (see below).**
+  - Send a pull request.
+  - We appreciate your support & input!
 
+## Pull Request Guidelines
+
+To maintain a clear and organized project history, please adhere to the following guidelines when submitting Pull Requests:
+
+1.  **Title Format:** Your PR title must start with a type tag enclosed in square brackets, followed by a space and a concise subject.
+    - Example: `[feat] Add user authentication`
+    - Valid types: `[feat]`, `[fix]`, `[docs]`, `[test]`, `[refactor]`, `[build]`, `[ci]`, `[chore]`, `[perf]`, `[style]`, `[revert]`.
+2.  **Link to Issue:** The PR description should ideally reference the issue it addresses using keywords like `fixes #<issue_number>`, `closes #<issue_number>`, or `resolves #<issue_number>`.
+    - Example: `This PR fixes #42 by implementing the new login flow.`
+
+_These guidelines are enforced automatically by our [PR Lint workflow](.github/workflows/pr-lint.yml)._
 
 ## Development setup
 
