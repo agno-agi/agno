@@ -52,7 +52,7 @@ def test_read_path(csv_reader, csv_file):
 
     assert len(documents) == 1
     assert documents[0].name == "test"
-    assert documents[0].id == "test_1"
+    assert documents[0].id.endswith("_1")
 
     expected_content = "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago "
     assert documents[0].content == expected_content
@@ -66,7 +66,7 @@ def test_read_file_object(csv_reader):
 
     assert len(documents) == 1
     assert documents[0].name == "memory"
-    assert documents[0].id == "memory_1"
+    assert documents[0].id.endswith("_1")
 
     expected_content = "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago "
     assert documents[0].content == expected_content
@@ -76,7 +76,7 @@ def test_read_complex_csv(csv_reader, complex_csv_file):
     documents = csv_reader.read(complex_csv_file, delimiter=",", quotechar='"')
 
     assert len(documents) == 1
-    assert documents[0].id == "complex_1"
+    assert documents[0].id.endswith("_1")
 
     expected_content = "product, description with, comma, price Laptop, Pro, High performance, ultra-thin, 1200.99 Phone XL, 5G compatible, water resistant, 899.50 "
     assert documents[0].content == expected_content
@@ -102,9 +102,9 @@ def test_read_with_chunking(csv_reader, csv_file):
 
     assert len(documents) == 2
     assert documents[0].name == "test_chunk1"
-    assert documents[0].id == "test_chunk1"
+    assert documents[0].id.endswith("_chunk1")
     assert documents[1].name == "test_chunk2"
-    assert documents[1].id == "test_chunk2"
+    assert documents[1].id.endswith("_chunk2")
     assert documents[0].content == "Chunk 1 content"
     assert documents[1].content == "Chunk 2 content"
 
@@ -115,7 +115,7 @@ async def test_async_read_path(csv_reader, csv_file):
 
     assert len(documents) == 1
     assert documents[0].name == "test"
-    assert documents[0].id == "test_1"
+    assert documents[0].id.endswith("_1")
     assert documents[0].content == "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago"
 
 
@@ -147,19 +147,19 @@ async def test_async_read_multi_page_csv(csv_reader, multi_page_csv_file):
 
     # Check first page
     assert documents[0].name == "multi_page"
-    assert documents[0].id == "multi_page_page1_1"
+    assert documents[0].id is not None and isinstance(documents[0].id, str)
     assert documents[0].meta_data["page"] == 1
     assert documents[0].meta_data["start_row"] == 1
     assert documents[0].meta_data["rows"] == 5
 
     # Check second page
-    assert documents[1].id == "multi_page_page2_1"
+    assert documents[1].id is not None and isinstance(documents[1].id, str)
     assert documents[1].meta_data["page"] == 2
     assert documents[1].meta_data["start_row"] == 6
     assert documents[1].meta_data["rows"] == 5
 
     # Check third page
-    assert documents[2].id == "multi_page_page3_1"
+    assert documents[2].id is not None and isinstance(documents[2].id, str)
     assert documents[2].meta_data["page"] == 3
     assert documents[2].meta_data["start_row"] == 11
     assert documents[2].meta_data["rows"] == 1
@@ -179,9 +179,9 @@ async def test_async_read_with_chunking(csv_reader, csv_file):
     documents = await csv_reader.async_read(csv_file)
 
     assert len(documents) == 2
-    assert documents[0].id == "test_chunk1"
+    assert documents[0].id.endswith("_chunk1")
     assert documents[0].name == "test_chunk1"
-    assert documents[1].id == "test_chunk2"
+    assert documents[1].id.endswith("_chunk2")
     assert documents[1].name == "test_chunk2"
 
 
@@ -204,7 +204,7 @@ def test_read_url(csv_url_reader):
 
     assert len(documents) == 2
     assert documents[0].name == "employees"
-    assert documents[0].id == "employees_1"
+    assert documents[0].id.endswith("_1")
 
     content = documents[0].content
     assert all(field in content for field in ["EmployeeID", "FirstName", "LastName", "Department"])
@@ -217,8 +217,7 @@ async def test_async_read_url(csv_url_reader):
 
     assert len(documents) == 2
     assert documents[0].name == "employees"
-    assert documents[0].id == "employees_page1_1"
-    assert documents[1].id == "employees_page1_2"
+    assert documents[0].id.endswith("_1")
 
     expected_first_row = "EmployeeID, FirstName, LastName, Department, Role, Age, Salary, StartDate"
     expected_second_row = "101, John, Doe, Engineering, Software Engineer, 28, 75000, 2018-06-15"

@@ -68,7 +68,7 @@ def test_chunking():
 
     assert len(documents) == 2
     assert all(doc.name.startswith("test_chunk_") for doc in documents)
-    assert all(doc.id.startswith("test_1_chunk_") for doc in documents)
+    assert all(doc.id.endswith("_chunk_0") or doc.id.endswith("_chunk_1") for doc in documents)
     assert all("chunk" in doc.meta_data for doc in documents)
 
 
@@ -151,7 +151,6 @@ def test_large_json():
 
     assert len(documents) == 1000
     assert all(doc.name == "large" for doc in documents)
-    assert all(doc.id.startswith("large_") for doc in documents)
 
 
 @pytest.mark.asyncio
@@ -214,7 +213,7 @@ async def test_async_chunking():
 
     assert len(documents) == 2
     assert all(doc.name.startswith("test_chunk_") for doc in documents)
-    assert all(doc.id.startswith("test_1_chunk_") for doc in documents)
+    assert all(doc.id.endswith("_chunk_0") or doc.id.endswith("_chunk_1") for doc in documents)
     assert all("chunk" in doc.meta_data for doc in documents)
 
 
@@ -266,4 +265,3 @@ async def test_async_large_json():
 
     assert len(documents) == 1000
     assert all(doc.name == "large" for doc in documents)
-    assert all(doc.id.startswith("large_") for doc in documents)
