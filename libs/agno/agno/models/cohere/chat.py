@@ -1,107 +1,31 @@
 from dataclasses import dataclass
 from os import getenv
-from pathlib import Path
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple
 
 from agno.exceptions import ModelProviderError
-from agno.media import Image
 from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error
+from agno.utils.models.cohere import format_messages
 
 try:
     from cohere import AsyncClientV2 as CohereAsyncClient
     from cohere import ClientV2 as CohereClient
     from cohere.types.chat_response import ChatResponse
     from cohere.types.streamed_chat_response_v2 import StreamedChatResponseV2
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     raise ImportError("`cohere` not installed. Please install using `pip install cohere`")
-
-
-def _format_images_for_message(message: Message, images: Sequence[Image]) -> List[Dict[str, Any]]:
-    """
-    Format an image into the format expected by WatsonX.
-    """
-
-    # Create a default message content with text
-    message_content_with_image: List[Dict[str, Any]] = [{"type": "text", "text": message.content}]
-
-    # Add images to the message content
-    for image in images:
-        try:
-            if image.content is not None:
-                image_content = image.content
-            elif image.url is not None:
-                image_content = image.image_url_content
-            elif image.filepath is not None:
-                if isinstance(image.filepath, Path):
-                    image_content = image.filepath.read_bytes()
-                else:
-                    with open(image.filepath, "rb") as f:
-                        image_content = f.read()
-            else:
-                log_warning(f"Unsupported image format: {image}")
-                continue
-
-            if image_content is not None:
-                import base64
-
-                base64_image = base64.b64encode(image_content).decode("utf-8")
-                image_url = f"data:image/jpeg;base64,{base64_image}"
-                image_payload = {"type": "image_url", "image_url": {"url": image_url}}
-                message_content_with_image.append(image_payload)
-
-        except Exception as e:
-            log_error(f"Failed to process image: {str(e)}")
-
-    # Update the message content with the images
-    return message_content_with_image
-
-
-def _format_messages(messages: List[Message]) -> List[Dict[str, Any]]:
-    """
-    Format messages for the Cohere API.
-
-    Args:
-        messages (List[Message]): The list of messages.
-
-    Returns:
-        List[Dict[str, Any]]: The formatted messages.
-    """
-    formatted_messages = []
-    for message in messages:
-        message_dict = {
-            "role": message.role,
-            "content": message.content,
-            "name": message.name,
-            "tool_call_id": message.tool_call_id,
-            "tool_calls": message.tool_calls,
-        }
-
-        if message.images is not None and len(message.images) > 0:
-            # Ignore non-string message content
-            if isinstance(message.content, str):
-                message_content_with_image = _format_images_for_message(message=message, images=message.images)
-                if len(message_content_with_image) > 1:
-                    message_dict["content"] = message_content_with_image
-
-        if message.videos is not None and len(message.videos) > 0:
-            log_warning("Video input is currently unsupported.")
-
-        if message.audio is not None and len(message.audio) > 0:
-            log_warning("Audio input is currently unsupported.")
-
-        if message.files is not None and len(message.files) > 0:
-            log_warning("File input is currently unsupported.")
-
-        message_dict = {k: v for k, v in message_dict.items() if v is not None}
-        formatted_messages.append(message_dict)
-    return formatted_messages
 
 
 @dataclass
 class Cohere(Model):
+    """
+    A class representing the Cohere model.
+
+    For more information, see: https://docs.cohere.com/docs/chat-api
+    """
+
     id: str = "command-r-plus"
     name: str = "cohere"
     provider: str = "Cohere"
@@ -184,16 +108,11 @@ class Cohere(Model):
             _request_params["tools"] = self._tools
             # Fix optional parameters where the "type" is [type, null]
             for tool in _request_params["tools"]:  # type: ignore
-                params = []
                 if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
-                    for param_name, obj in tool["function"]["parameters"].get("properties", {}).items():  # type: ignore
-                        params.append(param_name)
-                        if isinstance(obj["type"], list):
-                            obj["type"] = obj["type"][0]
-
+                    params = tool["function"]["parameters"]
                     # Cohere requires at least one required parameter, so if unset, set it to all parameters
-                    if len(tool["function"]["parameters"].get("required", [])) == 0:
-                        tool["function"]["parameters"]["required"] = params
+                    if len(params.get("required", [])) == 0:
+                        params["required"] = list(params["properties"].keys())
             _request_params["strict_tools"] = self.strict_tools
 
         if self.request_params:
@@ -214,7 +133,7 @@ class Cohere(Model):
         request_kwargs = self.request_kwargs
 
         try:
-            return self.get_client().chat(model=self.id, messages=_format_messages(messages), **request_kwargs)  # type: ignore
+            return self.get_client().chat(model=self.id, messages=format_messages(messages), **request_kwargs)  # type: ignore
         except Exception as e:
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -234,7 +153,7 @@ class Cohere(Model):
         try:
             return self.get_client().chat_stream(
                 model=self.id,
-                messages=_format_messages(messages),  # type: ignore
+                messages=format_messages(messages),  # type: ignore
                 **request_kwargs,
             )
         except Exception as e:
@@ -256,7 +175,7 @@ class Cohere(Model):
         try:
             return await self.get_async_client().chat(
                 model=self.id,
-                messages=_format_messages(messages),  # type: ignore
+                messages=format_messages(messages),  # type: ignore
                 **request_kwargs,
             )
         except Exception as e:
@@ -278,7 +197,7 @@ class Cohere(Model):
         try:
             async for response in self.get_async_client().chat_stream(
                 model=self.id,
-                messages=_format_messages(messages),  # type: ignore
+                messages=format_messages(messages),  # type: ignore
                 **request_kwargs,
             ):
                 yield response

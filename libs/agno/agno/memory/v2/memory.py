@@ -673,6 +673,7 @@ class Memory:
         """Adds a RunResponse to the runs list."""
         if not self.runs:
             self.runs = {}
+
         self.runs.setdefault(session_id, []).append(run)
         log_debug("Added RunResponse to Memory")
 
