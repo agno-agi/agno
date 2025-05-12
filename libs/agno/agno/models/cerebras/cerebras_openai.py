@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Optional, Union, Type, List
+from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -32,7 +32,9 @@ class CerebrasOpenAI(OpenAILike):
             Dict[str, Any]: A dictionary of keyword arguments for API requests.
         """
         # Get base request kwargs from the parent class
-        request_params = super().get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice)
+        request_params = super().get_request_kwargs(
+            response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
 
         # Add tools with proper formatting
         if tools is not None and len(tools) > 0:

@@ -797,7 +797,10 @@ class Model(ABC):
         return tool_calls_data
 
     def get_function_calls_to_run(
-        self, assistant_message: Message, messages: List[Message], functions: Optional[Dict[str, Function]] = None,
+        self,
+        assistant_message: Message,
+        messages: List[Message],
+        functions: Optional[Dict[str, Function]] = None,
     ) -> List[FunctionCall]:
         """
         Prepare function calls for the assistant message.
@@ -1082,7 +1085,7 @@ class Model(ABC):
         assistant_message: Message,
         messages: List[Message],
         model_response: ModelResponse,
-        x: Dict[str, Function],
+        functions: Optional[Dict[str, Function]] = None,
     ) -> List[FunctionCall]:
         """
         Prepare function calls from tool calls in the assistant message.

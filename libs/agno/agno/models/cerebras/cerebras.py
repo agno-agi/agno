@@ -2,7 +2,7 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Union, Type
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel
@@ -15,6 +15,7 @@ from agno.utils.log import log_error, log_warning
 try:
     from cerebras.cloud.sdk import AsyncCerebras as AsyncCerebrasClient
     from cerebras.cloud.sdk import Cerebras as CerebrasClient
+    from cerebras.cloud.sdk.types.chat import ChatCompletion
     from cerebras.cloud.sdk.types.chat.chat_completion import (
         ChatChunkResponse,
         ChatChunkResponseChoice,
@@ -23,7 +24,6 @@ try:
         ChatCompletionResponseChoice,
         ChatCompletionResponseChoiceMessage,
     )
-    from cerebras.cloud.sdk.types.chat import ChatCompletion
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`cerebras-cloud-sdk` not installed. Please install using `pip install cerebras-cloud-sdk`")
 
@@ -129,9 +129,11 @@ class Cerebras(Model):
         self.async_client = AsyncCerebrasClient(**client_params)
         return self.async_client
 
-    def get_request_kwargs(self,
+    def get_request_kwargs(
+        self,
         tools: Optional[List[Dict[str, Any]]] = None,
-                       response_format: Optional[Union[Dict, Type[BaseModel]]] = None,) -> Dict[str, Any]:
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -191,10 +193,13 @@ class Cerebras(Model):
 
         return request_params
 
-    def invoke(self, messages: List[Message],
+    def invoke(
+        self,
+        messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,) -> ChatCompletion:
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> ChatCompletion:
         """
         Send a chat completion request to the Cerebras API.
 
@@ -210,10 +215,13 @@ class Cerebras(Model):
             **self.get_request_kwargs(response_format=response_format, tools=tools),
         )
 
-    async def ainvoke(self, messages: List[Message],
+    async def ainvoke(
+        self,
+        messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,) -> ChatCompletion:
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> ChatCompletion:
         """
         Sends an asynchronous chat completion request to the Cerebras API.
 
@@ -229,10 +237,13 @@ class Cerebras(Model):
             **self.get_request_kwargs(response_format=response_format, tools=tools),
         )
 
-    def invoke_stream(self, messages: List[Message],
+    def invoke_stream(
+        self,
+        messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,) -> Iterator[ChatChunkResponse]:
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Iterator[ChatChunkResponse]:
         """
         Send a streaming chat completion request to the Cerebras API.
 
@@ -249,10 +260,13 @@ class Cerebras(Model):
             **self.get_request_kwargs(response_format=response_format, tools=tools),
         )  # type: ignore
 
-    async def ainvoke_stream(self, messages: List[Message],
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,) -> AsyncIterator[ChatChunkResponse]:
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> AsyncIterator[ChatChunkResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Cerebras API.
 
