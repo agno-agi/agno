@@ -630,7 +630,7 @@ class Agent:
             knowledge_filters=knowledge_filters,
         )
         run_response.model = self.model.id if self.model is not None else None
-        
+
         if self.context is not None and self.resolve_context:
             self.resolve_run_context()
 
@@ -774,6 +774,7 @@ class Agent:
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             event=RunEvent.tool_call_started,
+                            run_response=run_response,
                             session_id=session_id,
                         )
 
@@ -831,6 +832,7 @@ class Agent:
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             event=RunEvent.tool_call_completed,
+                            run_response=run_response,
                             session_id=session_id,
                         )
         else:
@@ -1320,7 +1322,7 @@ class Agent:
         # 2. Update the Model and resolve context
         self.update_model(async_mode=True, user_id=user_id, session_id=session_id, knowledge_filters=knowledge_filters)
         run_response.model = self.model.id if self.model is not None else None
-        
+
         if self.context is not None and self.resolve_context:
             await self.aresolve_run_context()
 
@@ -1463,6 +1465,7 @@ class Agent:
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             event=RunEvent.tool_call_started,
+                            run_response=run_response,
                             session_id=session_id,
                         )
 
@@ -1519,6 +1522,7 @@ class Agent:
                         yield self.create_run_response(
                             content=model_response_chunk.content,
                             event=RunEvent.tool_call_completed,
+                            run_response=run_response,
                             session_id=session_id,
                         )
         else:
