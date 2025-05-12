@@ -144,10 +144,10 @@ class Claude(Model):
         if not tools:
             return None
 
-        tools: List[Dict[str, Any]] = []
+        parsed_tools: List[Dict[str, Any]] = []
         for tool_def in tools:
             if tool_def.get("type", "") != "function":
-                tools.append(tool_def)
+                parsed_tools.append(tool_def)
                 continue
 
             func_def = tool_def.get("function", {})
@@ -181,8 +181,8 @@ class Claude(Model):
                     "required": required_params,
                 },
             }
-            tools.append(tool)
-        return tools
+            parsed_tools.append(tool)
+        return parsed_tools
 
     def invoke(
         self,

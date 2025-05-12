@@ -1240,7 +1240,7 @@ class Model(ABC):
     def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
         return self.system_prompt
 
-    def get_instructions_for_model(self) -> Optional[List[str]]:
+    def get_instructions_for_model(self, tools: Optional[List[Any]] = None) -> Optional[List[str]]:
         return self.instructions
 
     def clear(self) -> None:

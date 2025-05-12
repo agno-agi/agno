@@ -44,7 +44,7 @@ class MemoryManager:
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions
         self.additional_instructions = additional_instructions
-        self._tools_for_model: Optional[List[str]] = None
+        self._tools_for_model: Optional[List[Dict[str, Any]]] = None
         self._functions_for_model: Optional[Dict[str, Function]] = None
 
     def determine_tools_for_model(self, tools: List[Callable]) -> None:

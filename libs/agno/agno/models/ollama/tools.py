@@ -70,7 +70,7 @@ class OllamaTools(Ollama):
             request_params.update(self.request_params)
         return request_params
 
-    def parse_provider_response(self, response: ChatResponse) -> ModelResponse:
+    def parse_provider_response(self, response: ChatResponse, **kwargs) -> ModelResponse:
         """
         Parse the provider response.
 
@@ -322,8 +322,8 @@ class OllamaTools(Ollama):
 
         return model_response
 
-    def get_instructions_to_generate_tool_calls(self) -> List[str]:
-        if self._tools is not None:
+    def get_instructions_to_generate_tool_calls(self, tools: Optional[List[Any]] = None) -> List[str]:
+        if tools is not None:
             return [
                 "At the very first turn you don't have <tool_results> so you shouldn't not make up the results.",
                 "To respond to the users message, you can use only one tool at a time.",
@@ -332,8 +332,8 @@ class OllamaTools(Ollama):
             ]
         return []
 
-    def get_tool_call_prompt(self) -> Optional[str]:
-        if self._tools is not None and len(self._tools) > 0:
+    def get_tool_call_prompt(self, tools: Optional[List[Any]] = None) -> Optional[str]:
+        if tools is not None and len(tools) > 0:
             tool_call_prompt = dedent(
                 """\
             You are a function calling with a language model.
@@ -376,10 +376,10 @@ class OllamaTools(Ollama):
         return None
 
     def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
-        return self.get_tool_call_prompt()
+        return self.get_tool_call_prompt(tools)
 
-    def get_instructions_for_model(self) -> Optional[List[str]]:
-        return self.get_instructions_to_generate_tool_calls()
+    def get_instructions_for_model(self, tools: Optional[List[Any]] = None) -> Optional[List[str]]:
+        return self.get_instructions_to_generate_tool_calls(tools)
 
 
 def _parse_tool_calls_from_content(response_content: str) -> List[Dict[str, Any]]:

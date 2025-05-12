@@ -618,6 +618,7 @@ class Agent:
         # 2.1 Prepare arguments for the model
         self.set_default_model()
         response_format = self._get_response_format()
+        self.model = cast(Model, self.model)
         self.determine_tools_for_model(
             model=self.model,
             session_id=session_id,
@@ -1321,6 +1322,7 @@ class Agent:
         # 2.1 Prepare arguments for the model
         self.set_default_model()
         response_format = self._get_response_format()
+        self.model = cast(Model, self.model)
         self.determine_tools_for_model(
             model=self.model,
             session_id=session_id,
@@ -2217,6 +2219,7 @@ class Agent:
         )
 
     def _get_response_format(self) -> Optional[Union[Dict, Type[BaseModel]]]:
+        self.model = cast(Model, self.model)
         if self.response_model is None:
             return None
         else:
@@ -2735,7 +2738,7 @@ class Agent:
             elif isinstance(_instructions, list):
                 instructions.extend(_instructions)
         # 3.1.1 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model()
+        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 

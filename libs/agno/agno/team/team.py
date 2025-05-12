@@ -686,6 +686,7 @@ class Team:
                 if self.get_member_information_tool:
                     _tools.append(self.get_member_information)
 
+            self.model = cast(Model, self.model)
             self.determine_tools_for_model(model=self.model, tools=_tools)
 
             # Run the team
@@ -1449,6 +1450,7 @@ class Team:
                 if self.enable_agentic_context:
                     _tools.append(self.get_set_shared_context_function(session_id=session_id))
 
+            self.model = cast(Model, self.model)
             self.determine_tools_for_model(model=self.model, tools=_tools)
 
             # Run the team
@@ -2068,6 +2070,7 @@ class Team:
             await self.memory.acreate_session_summary(session_id=session_id, user_id=user_id)
 
     def _get_response_format(self) -> Optional[Union[Dict, Type[BaseModel]]]:
+        self.model = cast(Model, self.model)
         if self.response_model is None:
             return None
         else:
@@ -4336,10 +4339,10 @@ class Team:
 
     def determine_tools_for_model(
         self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]
-    ) -> Tuple[List[Dict], Dict[str, Function]]:
+    ) -> None:
         if self._tools_for_model is None:
-            self._functions_for_model: Dict[str, Function] = {}
-            self._tools_for_model: List[Dict] = []
+            self._functions_for_model = {}
+            self._tools_for_model = []
 
             # Get Agent tools
             if len(tools) > 0:
@@ -4474,7 +4477,7 @@ class Team:
                 instructions.extend(_instructions)
 
         # 1.2 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model()
+        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
