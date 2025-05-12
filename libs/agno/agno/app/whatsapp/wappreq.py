@@ -2,22 +2,11 @@ from dotenv import load_dotenv
 import os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.media import Image
+from agno.media import Image,Video
 
-  
-agent = Agent(
-    name="Basic Agent",
-    model=OpenAIChat(id="gpt-4o"),
-    add_history_to_messages=True,
-    num_history_responses=3,
-    add_datetime_to_instructions=True,
-    markdown=True,
-)
 
-# Load environment variables
 load_dotenv()
 
-# Configure constants
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN")
 ACCESS_TOKEN= os.getenv("WHATSAPP_ACCESS_TOKEN")
 import requests
@@ -56,12 +45,3 @@ def get_media(media_id):
         return data
     except requests.exceptions.RequestException as e:
         return {"error": str(e)}
-"""
-image_bytes=get_media("656523164040303")
-agent.print_response(
-    "Tell me about this image and give me the latest news about it.",
-    images=[
-        Image(content=image_bytes),
-    ],
-    stream=True,
-)"""
