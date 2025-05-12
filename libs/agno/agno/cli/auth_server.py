@@ -147,16 +147,12 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
         """Redirect to the provided redirect_uri after storing the auth token."""
         parsed_url = urlparse(self.path)
         query_params = parse_qs(parsed_url.query)
+        auth_token = query_params.get("token", [""])[0]
         redirect_uri = query_params.get("redirect_uri", [""])[0]
         theme = query_params.get("theme", ["light"])[0]
 
         if not redirect_uri:
             self._set_html_response("<h2>Missing redirect_uri</h2>", status_code=400)
-            return
-
-        auth_token = self._get_token_from_cookies()
-        if not auth_token:
-            self._redirect_with_status(theme, redirect_uri, "error", "no_token")
             return
 
         self._store_token(auth_token)
