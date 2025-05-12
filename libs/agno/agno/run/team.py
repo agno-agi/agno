@@ -58,13 +58,13 @@ class TeamRunResponse:
             _dict["extra_data"] = self.extra_data.to_dict()
 
         if self.images is not None:
-            _dict["images"] = [img.model_dump(exclude_none=True) for img in self.images]
+            _dict["images"] = [img.to_dict() for img in self.images]
 
         if self.videos is not None:
-            _dict["videos"] = [vid.model_dump(exclude_none=True) for vid in self.videos]
+            _dict["videos"] = [vid.to_dict() for vid in self.videos]
 
         if self.audio is not None:
-            _dict["audio"] = [aud.model_dump(exclude_none=True) for aud in self.audio]
+            _dict["audio"] = [aud.to_dict() for aud in self.audio]
 
         if self.response_audio is not None:
             _dict["response_audio"] = self.response_audio.to_dict()
