@@ -99,7 +99,7 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
         </html>
         """
         self._set_html_response(html, status_code=200)
-        self.server.running = False
+        self.server.running = False  # type: ignore
 
     def _set_response(self):
         self.send_response(204)
