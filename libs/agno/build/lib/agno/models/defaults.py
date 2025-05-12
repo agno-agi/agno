@@ -1,1 +1,0 @@
-DEFAULT_OPENAI_MODEL_ID: str = "gpt-4o"
