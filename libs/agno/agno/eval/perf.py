@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional
 from uuid import uuid4
 
 from agno.api.schemas.evals import EvalType
-from agno.eval.utils import track_eval_run
+from agno.eval.utils import log_eval_run
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.timer import Timer
 
@@ -179,10 +179,9 @@ class PerfEval:
     print_results: bool = False
     # Save the result to a file
     save_result_to_file: Optional[str] = None
-    # Track the results, for them to be available in the Agno Platform
-    track_results: bool = False
-
-    # Debug mode = True enables debug logs & top memory usage stats
+    # Log the results to the Agno platform for monitoring
+    monitoring: bool = getenv("AGNO_MONITOR", "").lower() == "true"
+    # debug_mode=True enables debug logs
     debug_mode: bool = False
 
     def set_eval_id(self) -> str:
@@ -268,7 +267,7 @@ class PerfEval:
         4. Collect results
         5. Save results if requested
         6. Print results as requested
-        7. Track results
+        7. Log results to the Agno platform if requested
         """
         from rich.console import Console
         from rich.live import Live
@@ -347,12 +346,14 @@ class PerfEval:
         if (self.print_summary or self.print_results) and self.result:
             self.result.print_summary(console)
 
-        # 7. Track results
-        if self.track_results:
-            track_eval_run(
+        # 7. Log results to the Agno platform if requested
+        if self.monitoring:
+            log_eval_run(
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.PERFORMANCE,
+                eval_run_name=self.name if self.name is not None else None,
+                evaluated_entity_name=self.func.__name__,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")

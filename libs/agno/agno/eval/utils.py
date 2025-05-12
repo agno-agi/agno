@@ -5,15 +5,14 @@ from agno.api.schemas.evals import EvalRunCreate, EvalType
 from agno.utils.log import log_debug
 
 
-def track_eval_run(
+def log_eval_run(
     run_id: str,
     run_data: dict,
     eval_type: EvalType,
     agent_id: Optional[str] = None,
-    user_id: Optional[str] = None,
+    eval_run_name: Optional[str] = None,
+    evaluated_entity_name: Optional[str] = None,
     team_id: Optional[str] = None,
-    workspace_id: Optional[str] = None,
-    agent_name: Optional[str] = None,
 ) -> None:
     """Call the API to create an evaluation run."""
 
@@ -24,25 +23,23 @@ def track_eval_run(
                 type=eval_type,
                 data=run_data,
                 agent_id=agent_id,
-                user_id=user_id,
+                eval_run_name=eval_run_name,
+                evaluated_entity_name=evaluated_entity_name,
                 team_id=team_id,
-                workspace_id=workspace_id,
-                agent_name=agent_name,
             )
         )
     except Exception as e:
         log_debug(f"Could not create agent event: {e}")
 
 
-async def async_track_eval_run(
+async def async_log_eval_run(
     run_id: str,
     run_data: dict,
     eval_type: EvalType,
     agent_id: Optional[str] = None,
-    user_id: Optional[str] = None,
+    eval_run_name: Optional[str] = None,
+    evaluated_entity_name: Optional[str] = None,
     team_id: Optional[str] = None,
-    workspace_id: Optional[str] = None,
-    agent_name: Optional[str] = None,
 ) -> None:
     """Asycn call to the API to create an evaluation run."""
 
@@ -53,10 +50,9 @@ async def async_track_eval_run(
                 type=eval_type,
                 data=run_data,
                 agent_id=agent_id,
-                user_id=user_id,
                 team_id=team_id,
-                workspace_id=workspace_id,
-                agent_name=agent_name,
+                eval_run_name=eval_run_name,
+                evaluated_entity_name=evaluated_entity_name,
             )
         )
     except Exception as e:

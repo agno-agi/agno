@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
 from agno.api.schemas.evals import EvalType
-from agno.eval.utils import track_eval_run
+from agno.eval.utils import log_eval_run
 from agno.models.base import Model
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
 
@@ -164,9 +164,8 @@ class AccuracyEval:
     print_results: bool = False
     # Save the result to a file
     save_result_to_file: Optional[str] = None
-    # Track the results, for them to be available in the Agno Platform
-    track_results: bool = False
-
+    # Log the results to the Agno platform for monitoring
+    monitoring: bool = getenv("AGNO_MONITOR", "").lower() == "true"
     # debug_mode=True enables debug logs
     debug_mode: bool = False
 
@@ -457,15 +456,15 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
         if self.print_summary or self.print_results:
             self.result.print_summary(console)
 
-        # Track results
-        if self.track_results:
-            track_eval_run(
+        # Log results to the Agno platform if requested
+        if self.monitoring:
+            log_eval_run(
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
                 agent_id=self.agent.agent_id if self.agent is not None else None,
-                agent_name=self.agent.name if self.agent is not None else None,
-                user_id=self.agent.user_id if self.agent is not None else None,
+                eval_run_name=self.name if self.name is not None else None,
+                evaluated_entity_name=self.agent.name if self.agent is not None else None,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")

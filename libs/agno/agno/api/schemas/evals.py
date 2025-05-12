@@ -14,10 +14,9 @@ class EvalRunCreate(BaseModel):
     """Data sent to the API to create an evaluation run"""
 
     agent_id: Optional[str] = None
-    user_id: Optional[str] = None
     team_id: Optional[str] = None
-    workspace_id: Optional[str] = None
-    agent_name: Optional[str] = None
+    eval_run_name: Optional[str] = None
+    evaluated_entity_name: Optional[str] = None
 
     run_id: str
     type: EvalType
