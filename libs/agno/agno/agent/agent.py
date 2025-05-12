@@ -1115,7 +1115,7 @@ class Agent:
                     if self.stream and self.stream is True:
                         log_debug("Setting stream=False as response_model is set")
                         self.stream = False
-                    generator: RunResponse = next(
+                    run_response: RunResponse = next(
                         self._run(
                             message=message,
                             stream=False,
@@ -1133,25 +1133,25 @@ class Agent:
                     )
 
                     # Do a final check confirming the content is in the response_model format
-                    if isinstance(generator.content, self.response_model):
-                        return generator
+                    if isinstance(run_response.content, self.response_model):
+                        return run_response
 
                     # Otherwise convert the response to the structured format
-                    if isinstance(generator.content, str):
+                    if isinstance(run_response.content, str):
                         try:
-                            structured_output = parse_response_model_str(generator.content, self.response_model)
+                            structured_output = parse_response_model_str(run_response.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
-                                generator.content = structured_output
-                                generator.content_type = self.response_model.__name__
+                                run_response.content = structured_output
+                                run_response.content_type = self.response_model.__name__
                             else:
                                 log_warning("Failed to convert response to response_model")
                         except Exception as e:
                             log_warning(f"Failed to convert response to output model: {e}")
                     else:
                         log_warning("Something went wrong. Run response content is not a string")
-                    return generator
+                    return run_response
                 else:
                     if stream and self.is_streamable:
                         resp = self._run(
@@ -1738,7 +1738,7 @@ class Agent:
                         log_debug("Setting stream=False as response_model is set")
                         self.stream = False
 
-                    generator = self._arun(
+                    run_response = self._arun(
                         message=message,
                         stream=False,
                         user_id=user_id,
@@ -1752,7 +1752,7 @@ class Agent:
                         run_response=run_response,
                         **kwargs,
                     )
-                    resp = await generator.__anext__()
+                    resp = await run_response.__anext__()
 
                     # Do a final check confirming the content is in the response_model format
                     if isinstance(resp.content, self.response_model):
@@ -1777,7 +1777,7 @@ class Agent:
                 else:
                     # Pass the new run_response to _arun
                     if stream and self.is_streamable:
-                        async_generator = self._arun(
+                        resp = self._arun(
                             message=message,
                             stream=True,
                             user_id=user_id,
@@ -1791,9 +1791,9 @@ class Agent:
                             run_response=run_response,
                             **kwargs,
                         )
-                        return async_generator
+                        return resp
                     else:
-                        generator = self._arun(
+                        resp = self._arun(
                             message=message,
                             stream=False,
                             user_id=user_id,
@@ -1807,7 +1807,7 @@ class Agent:
                             run_response=run_response,
                             **kwargs,
                         )
-                        return await generator.__anext__()
+                        return await resp.__anext__()
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
