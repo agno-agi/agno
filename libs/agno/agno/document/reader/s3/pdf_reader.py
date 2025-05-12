@@ -1,5 +1,6 @@
 from io import BytesIO
 from typing import List
+from uuid import uuid4
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
@@ -30,7 +31,7 @@ class S3PDFReader(Reader):
             documents = [
                 Document(
                     name=doc_name,
-                    id=f"{doc_name}_{page_number}",
+                    id=str(uuid4()),
                     meta_data={"page": page_number},
                     content=page.extract_text(),
                 )

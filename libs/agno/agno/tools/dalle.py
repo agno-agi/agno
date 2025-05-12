@@ -85,14 +85,16 @@ class DalleTools(Toolkit):
 
             # Update the run response with the image URLs
             response_str = ""
-            for img in response.data:
-                agent.add_image(
-                    ImageArtifact(
-                        id=str(uuid4()), url=img.url, original_prompt=prompt, revised_prompt=img.revised_prompt
-                    )
-                )
-                response_str += f"Image has been generated at the URL {img.url}\n"
-            return response_str
+            if response.data:
+                for img in response.data:
+                    if img.url:
+                        agent.add_image(
+                            ImageArtifact(
+                                id=str(uuid4()), url=img.url, original_prompt=prompt, revised_prompt=img.revised_prompt
+                            )
+                        )
+                        response_str += f"Image has been generated at the URL {img.url}\n"
+            return response_str or "No images were generated"
         except Exception as e:
             logger.error(f"Failed to generate image: {e}")
             return f"Error: {e}"

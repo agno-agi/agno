@@ -2,8 +2,6 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Optional, Union
 
-from pydantic import BaseModel
-
 from agno.exceptions import ModelProviderError
 from agno.models.message import Citations, UrlCitation
 from agno.models.response import ModelResponse
@@ -30,8 +28,8 @@ class Perplexity(OpenAILike):
     Attributes:
         id (str): The model id. Defaults to "sonar".
         name (str): The model name. Defaults to "Perplexity".
-        provider (str): The provider name. Defaults to "Perplexity: " + id.
-        api_key (Optional[str]): The API key. Defaults to None.
+        provider (str): The provider name. Defaults to "Perplexity".
+        api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://api.perplexity.ai/chat/completions".
         max_tokens (int): The maximum number of tokens. Defaults to 1024.
     """
@@ -45,7 +43,8 @@ class Perplexity(OpenAILike):
     max_tokens: int = 1024
     top_k: Optional[float] = None
 
-    supports_native_structured_outputs: bool = True
+    supports_native_structured_outputs: bool = False
+    supports_json_schema_outputs: bool = True
 
     @property
     def request_kwargs(self) -> Dict[str, Any]:
@@ -65,15 +64,8 @@ class Perplexity(OpenAILike):
             "frequency_penalty": self.frequency_penalty,
         }
 
-        if (
-            self.response_format
-            and isinstance(self.response_format, type)
-            and issubclass(self.response_format, BaseModel)
-        ):
-            base_params["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {"schema": self.response_format.model_json_schema()},
-            }
+        if self.response_format is not None:
+            base_params["response_format"] = self.response_format
 
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
@@ -84,7 +76,7 @@ class Perplexity(OpenAILike):
 
     def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion]) -> ModelResponse:
         """
-        Parse the OpenAI response into a ModelResponse.
+        Parse the Perplexity response into a ModelResponse.
 
         Args:
             response: Response from invoke() method
@@ -103,19 +95,6 @@ class Perplexity(OpenAILike):
 
         # Get response message
         response_message = response.choices[0].message
-
-        # Parse structured outputs if enabled
-        try:
-            if (
-                self.response_format is not None
-                and self.structured_outputs
-                and issubclass(self.response_format, BaseModel)
-            ):
-                parsed_object = response_message.parsed  # type: ignore
-                if parsed_object is not None:
-                    model_response.parsed = parsed_object
-        except Exception as e:
-            log_warning(f"Error retrieving structured outputs: {e}")
 
         # Add role
         if response_message.role is not None:
@@ -145,10 +124,10 @@ class Perplexity(OpenAILike):
 
     def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
         """
-        Parse the OpenAI streaming response into a ModelResponse.
+        Parse the Perplexity streaming response into a ModelResponse.
 
         Args:
-            response_delta: Raw response chunk from OpenAI
+            response_delta: Raw response chunk from Perplexity
 
         Returns:
             ProviderResponse: Iterator of parsed response data

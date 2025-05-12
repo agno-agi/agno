@@ -119,7 +119,7 @@ class RunResponse:
             _dict["images"] = []
             for img in self.images:
                 if isinstance(img, ImageArtifact):
-                    _dict["images"].append(img.model_dump(exclude_none=True))
+                    _dict["images"].append(img.to_dict())
                 else:
                     _dict["images"].append(img)
 
@@ -127,7 +127,7 @@ class RunResponse:
             _dict["videos"] = []
             for vid in self.videos:
                 if isinstance(vid, VideoArtifact):
-                    _dict["videos"].append(vid.model_dump(exclude_none=True))
+                    _dict["videos"].append(vid.to_dict())
                 else:
                     _dict["videos"].append(vid)
 
@@ -135,7 +135,7 @@ class RunResponse:
             _dict["audio"] = []
             for aud in self.audio:
                 if isinstance(aud, AudioArtifact):
-                    _dict["audio"].append(aud.model_dump(exclude_none=True))
+                    _dict["audio"].append(aud.to_dict())
                 else:
                     _dict["audio"].append(aud)
 
