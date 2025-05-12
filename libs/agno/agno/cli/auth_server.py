@@ -16,24 +16,6 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
         * Fix the header and limit to only localhost or agno.com
     """
 
-    def _get_token_from_cookies(self) -> Optional[str]:
-        """Get the auth token from the cookies."""
-        cookies_header = self.headers.get("Cookie")
-        if not cookies_header:
-            return
-
-        cookies = {}
-        for cookie in cookies_header.split(";"):
-            if "=" in cookie:
-                name, value = cookie.strip().split("=", 1)
-                cookies[name] = value
-
-        auth_token = cookies.get(agno_cli_settings.auth_token_cookie)
-        if not auth_token:
-            return
-
-        return auth_token
-
     def _redirect_with_status(self, theme: str, redirect_uri, result: str, error_type: str = ""):
         """Render a simple HTML page with 'Authenticating...' and redirect with a loader."""
         redirect_url = f"{redirect_uri}?cli_auth={result}"
