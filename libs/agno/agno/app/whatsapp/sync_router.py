@@ -75,7 +75,7 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                     elif message.get("type") == "image":
                         try:
                             message_text = message["image"]["caption"]
-                        except:
+                        except Exception:
                             message_text = "Describe the image"
                         message_image = message["image"]["id"]
                         message_video = None
@@ -83,7 +83,7 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                     elif message.get("type") == "video":
                         try:
                             message_text = message["video"]["caption"]
-                        except:
+                        except Exception:
                             message_text = "Describe the video"
                         message_video = message["video"]["id"]
                         message_image = None
