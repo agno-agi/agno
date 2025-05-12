@@ -20,15 +20,3 @@ jobs:
           else
             echo "✅ PR Title format is valid."
           fi
-
-      - name: Check Linked Issue
-        run: |
-          BODY="${{ github.event.pull_request.body }}"
-          REGEX="(closes|fixes|resolves) #[0-9]+"
-          if [[ ! "$BODY" =~ $REGEX ]]; then
-            echo "❌ PR description does not link to an issue using 'fixes #<issue_number>', 'closes #<issue_number>', or 'resolves #<issue_number>'."
-            echo "   Please add the required keyword and issue number to the PR description."
-            exit 1
-          else
-            echo "✅ PR description links to an issue."
-          fi

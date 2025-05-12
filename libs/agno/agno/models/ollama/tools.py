@@ -4,7 +4,7 @@ from textwrap import dedent
 from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, Union
 
 from agno.models.message import Message, MessageMetrics
-from agno.models.ollama.chat import ChatResponse, Ollama, OllamaResponseUsage
+from agno.models.ollama.chat import ChatResponse, Ollama
 from agno.models.response import ModelResponse
 from agno.tools.function import FunctionCall
 from agno.utils.log import log_warning
@@ -13,6 +13,17 @@ from agno.utils.tools import (
     extract_tool_call_from_string,
     remove_tool_calls_from_string,
 )
+
+
+@dataclass
+class OllamaResponseUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    total_duration: int = 0
+    load_duration: int = 0
+    prompt_eval_duration: int = 0
+    eval_duration: int = 0
 
 
 @dataclass

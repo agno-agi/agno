@@ -58,7 +58,11 @@ def display_tool_calls(tool_calls_container, tools):
                 execution_time_str = "N/A"
                 try:
                     if metrics:
-                        execution_time = metrics.time
+                        execution_time = (
+                            metrics["time"]
+                            if isinstance(metrics, dict)
+                            else metrics.time
+                        )
                         if execution_time is not None:
                             execution_time_str = f"{execution_time:.2f}s"
                 except Exception as e:
@@ -138,7 +142,7 @@ def session_selector_widget(agent: Agent, model_id: str) -> None:
     """Display a session selector in the sidebar."""
     if agent.storage:
         agent_sessions = agent.storage.get_all_sessions()
-        # Get session names if available, otherwise use IDs.
+
         session_options = []
         for session in agent_sessions:
             session_id = session.session_id
@@ -150,13 +154,12 @@ def session_selector_widget(agent: Agent, model_id: str) -> None:
             display_name = session_name if session_name else session_id
             session_options.append({"id": session_id, "display": display_name})
 
-        # Display session selector.
         selected_session = st.sidebar.selectbox(
             "Session",
             options=[s["display"] for s in session_options],
             key="session_selector",
         )
-        # Find the selected session ID.
+
         selected_session_id = next(
             s["id"] for s in session_options if s["display"] == selected_session
         )
@@ -165,11 +168,84 @@ def session_selector_widget(agent: Agent, model_id: str) -> None:
             logger.info(
                 f"---*--- Loading {model_id} run: {selected_session_id} ---*---"
             )
-            st.session_state["sage"] = get_sage(
-                model_id=model_id,
-                session_id=selected_session_id,
-            )
-            st.rerun()
+
+            try:
+                new_agent = get_sage(
+                    model_id=model_id,
+                    session_id=selected_session_id,
+                )
+
+                st.session_state["sage"] = new_agent
+                st.session_state["sage_session_id"] = selected_session_id
+
+                st.session_state["messages"] = []
+
+                selected_session_obj = next(
+                    (s for s in agent_sessions if s.session_id == selected_session_id),
+                    None,
+                )
+
+                if (
+                    selected_session_obj
+                    and selected_session_obj.memory
+                    and "runs" in selected_session_obj.memory
+                ):
+                    seen_messages = set()
+
+                    for run in selected_session_obj.memory["runs"]:
+                        if "messages" in run:
+                            for msg in run["messages"]:
+                                msg_role = msg.get("role")
+                                msg_content = msg.get("content")
+
+                                if not msg_content or msg_role == "system":
+                                    continue
+
+                                msg_id = f"{msg_role}:{msg_content}"
+
+                                if msg_id in seen_messages:
+                                    continue
+
+                                seen_messages.add(msg_id)
+
+                                if msg_role == "assistant":
+                                    tool_calls = None
+                                    if "tool_calls" in msg:
+                                        tool_calls = msg["tool_calls"]
+                                    elif "metrics" in msg and msg.get("metrics"):
+                                        tools = run.get("tools")
+                                        if tools:
+                                            tool_calls = tools
+
+                                    add_message(msg_role, msg_content, tool_calls)
+                                else:
+                                    # For user and other messages
+                                    add_message(msg_role, msg_content)
+
+                        elif (
+                            "message" in run
+                            and isinstance(run["message"], dict)
+                            and "content" in run["message"]
+                        ):
+                            user_msg = run["message"]["content"]
+                            msg_id = f"user:{user_msg}"
+
+                            if msg_id not in seen_messages:
+                                seen_messages.add(msg_id)
+                                add_message("user", user_msg)
+
+                            if "content" in run and run["content"]:
+                                asst_msg = run["content"]
+                                msg_id = f"assistant:{asst_msg}"
+
+                                if msg_id not in seen_messages:
+                                    seen_messages.add(msg_id)
+                                    add_message("assistant", asst_msg, run.get("tools"))
+
+                st.rerun()
+            except Exception as e:
+                logger.error(f"Error switching sessions: {str(e)}")
+                st.sidebar.error(f"Error loading session: {str(e)}")
 
 
 def rename_session_widget(agent: Agent) -> None:
