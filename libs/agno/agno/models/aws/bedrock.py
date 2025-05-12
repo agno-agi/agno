@@ -1,7 +1,9 @@
 import json
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
+
+from pydantic import BaseModel
 
 from agno.exceptions import AgnoError, ModelProviderError
 from agno.models.base import MessageData, Model
@@ -83,20 +85,21 @@ class AwsBedrock(Model):
         )
         return self.client
 
-    def _format_tools_for_request(self) -> List[Dict[str, Any]]:
+    def _format_tools_for_request(self, tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         """
         Format the tools for the request.
 
         Returns:
             List[Dict[str, Any]]: The formatted tools.
         """
-        tools = []
-        if self._functions is not None:
-            for f_name, function in self._functions.items():
+        parsed_tools = []
+        if tools is not None:
+            for tool_def in tools:
+                func_def = tool_def.get("function", {})
                 properties = {}
                 required = []
 
-                for param_name, param_info in function.parameters.get("properties", {}).items():
+                for param_name, param_info in func_def.get("parameters", {}).get("properties", {}).items():
                     param_type = param_info.get("type")
                     if isinstance(param_type, list):
                         param_type = [t for t in param_type if t != "null"][0]
@@ -111,17 +114,17 @@ class AwsBedrock(Model):
                     ):
                         required.append(param_name)
 
-                tools.append(
+                parsed_tools.append(
                     {
                         "toolSpec": {
-                            "name": f_name,
-                            "description": function.description or "",
+                            "name": func_def.get("name") or "",
+                            "description": func_def.get("description") or "",
                             "inputSchema": {"json": {"type": "object", "properties": properties, "required": required}},
                         }
                     }
                 )
 
-        return tools
+        return parsed_tools
 
     def _get_inference_config(self) -> Dict[str, Any]:
         """
@@ -228,23 +231,23 @@ class AwsBedrock(Model):
         # TODO: Add caching: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-call.html
         return formatted_messages, system_message
 
-    def invoke(self, messages: List[Message]) -> Dict[str, Any]:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Invoke the Bedrock API.
-
-        Args:
-            messages (List[Message]): The messages to include in the request.
-
-        Returns:
-            Dict[str, Any]: The response from the Bedrock API.
         """
         try:
             formatted_messages, system_message = self._format_messages(messages)
 
             tool_config = None
-            if self._functions is not None:
-                tool_config = {"tools": self._format_tools_for_request()}
-
+            if tools is not None:
+                tool_config = {"tools": self._format_tools_for_request(tools)}
+                
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
@@ -263,23 +266,23 @@ class AwsBedrock(Model):
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[Dict[str, Any]]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Iterator[Dict[str, Any]]:
         """
         Invoke the Bedrock API with streaming.
-
-        Args:
-            messages (List[Message]): The messages to include in the request.
-
-        Returns:
-            Iterator[Dict[str, Any]]: The streamed response.
         """
         try:
             formatted_messages, system_message = self._format_messages(messages)
 
             tool_config = None
-            if self._functions is not None:
-                tool_config = {"tools": self._format_tools_for_request()}
-
+            if tools is not None:
+                tool_config = {"tools": self._format_tools_for_request(tools)}
+            
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
@@ -322,7 +325,7 @@ class AwsBedrock(Model):
 
             messages.append(Message(role="user", content=tool_result_content))
 
-    def parse_provider_response(self, response: Dict[str, Any]) -> ModelResponse:
+    def parse_provider_response(self, response: Dict[str, Any], **kwargs) -> ModelResponse:
         """
         Parse the provider response.
 
@@ -378,7 +381,13 @@ class AwsBedrock(Model):
         return model_response
 
     def process_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data: MessageData,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[ModelResponse]:
         """
         Process the synchronous response stream.
@@ -392,7 +401,9 @@ class AwsBedrock(Model):
         content = []
         tool_ids = []
 
-        for response_delta in self.invoke_stream(messages=messages):
+        for response_delta in self.invoke_stream(
+            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+        ):
             model_response = ModelResponse(role="assistant")
             should_yield = False
             if "contentBlockStart" in response_delta:
