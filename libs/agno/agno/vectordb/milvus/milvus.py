@@ -200,9 +200,9 @@ class Milvus(VectorDb):
             if self.search_type == SearchType.hybrid:
                 data.update(
                     {"dense_vector": document.embedding, "sparse_vector": self._get_sparse_vector(cleaned_content)}
-                )
+                )  # type: ignore
             else:
-                data["vector"] = document.embedding
+                data["vector"] = document.embedding # type: ignore
 
         return data
 
