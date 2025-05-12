@@ -49,6 +49,8 @@ class AzureAIFoundry(Model):
     name: str = "AzureAIFoundry"
     provider: str = "Azure"
 
+    supports_native_structured_outputs: bool = True
+
     # Request parameters
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
