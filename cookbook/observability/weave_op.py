@@ -7,7 +7,7 @@ Steps to get started with weave:
 3. Authentication:
  - Go to https://wandb.ai and copy your API key from https://wandb.ai/authorize
  - Enter your API key in terminal when prompted
- Or 
+ Or
  - Export your API key as an environment variable:
     - export WANDB_API_KEY=<your-api-key>
 """

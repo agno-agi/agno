@@ -19,7 +19,7 @@ class ApifyTools(Toolkit):
         """Initialize ApifyTools with specific Actors.
 
         Args:
-            actors (Union[str, List[str]]): Single Actor ID as string or list of Actor IDs to register as individual tools
+            actors (Optional[Union[str, List[str]]]): Single Actor ID as string or list of Actor IDs to register as individual tools
             apify_api_token (Optional[str]): Apify API token (defaults to APIFY_API_TOKEN env variable)
 
         Examples:

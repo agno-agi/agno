@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.4.5"
+version = "1.4.6"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -48,6 +48,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
 
+# Dependencies for Telemetry
+opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
+weave = ["weave"]
+openlit = ["openlit", "agno[opentelemetry]"]
+langfuse = ["langfuse"]
 # Dependencies for Models
 azure = ["azure-ai-inference", "aiohttp"]
 anthropic = ["anthropic"]
@@ -61,6 +66,7 @@ ibm = ["ibm-watsonx-ai"]
 lmstudio = ["lmstudio"]
 litellm = ["litellm"]
 meta = ["llama-api-client"]
+cerebras = ["cerebras-cloud-sdk"]
 
 # Dependencies for Tools
 apify = ["apify-client"]
@@ -135,7 +141,8 @@ models = [
   "agno[openai]",
   "agno[ibm]",
   "agno[litellm]",
-  "agno[meta]"
+  "agno[meta]",
+  "agno[cerebras]"
 ]
 
 # All tools
@@ -264,6 +271,8 @@ module = [
   "bson.*",
   "browserbase.*",
   "cassio.*",
+  "cerebras.*",
+  "cerebras_cloud_sdk.*",
   "chonkie.*",
   "chromadb.*",
   "clickhouse_connect.*",
@@ -296,7 +305,6 @@ module = [
   "lancedb.*",
   "langchain_core.*",
   "langchain.*",
-  "litellm.*",
   "llama_index.*",
   "llama_api_client.*",
   "litellm.*",
