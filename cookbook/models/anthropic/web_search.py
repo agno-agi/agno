@@ -16,5 +16,5 @@ agent = Agent(
 )
 
 agent.print_response(
-    "Please search the web for the latest news regarding Anthropic", stream=True
+    "What's the latest with Anthropic?", stream=True
 )
