@@ -40,7 +40,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[DuckDuckGoTools()],
     markdown=True,
-    debug_mode=True,
 )
 response = agent.run("What is currently trending on Twitter?")
 print(response.content)
