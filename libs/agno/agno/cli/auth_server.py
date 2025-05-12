@@ -96,7 +96,7 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
                     left: 0;
                     right: 0;
                     width: 100%;
-                    max-height: 600px;
+                    max-height: 50vh;
                     z-index: 0;
                 }}
                 @keyframes spin {{
