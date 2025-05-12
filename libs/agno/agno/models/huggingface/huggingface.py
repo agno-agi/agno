@@ -386,7 +386,11 @@ class HuggingFace(Model):
                     tool_call["function"]["arguments"] = json.dumps(tool_call["function"]["arguments"])
 
         try:
-            if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            if (
+                response_format is not None
+                and isinstance(response_format, type)
+                and issubclass(response_format, BaseModel)
+            ):
                 parsed_object = response_message.parsed  # type: ignore
                 if parsed_object is not None:
                     model_response.parsed = parsed_object

@@ -17,7 +17,13 @@ You can pass filters in the following ways:
 
 from agno.agent import Agent
 from agno.knowledge.json import JSONKnowledgeBase
+from agno.utils.media import download_knowledge_filters_sample_data
 from agno.vectordb.lancedb import LanceDb
+
+# Download all sample CVs and get their paths
+downloaded_cv_paths = download_knowledge_filters_sample_data(
+    num_files=5, file_extension="json"
+)
 
 # Initialize LanceDB
 # By default, it stores data in /tmp/lancedb
@@ -34,7 +40,7 @@ vector_db = LanceDb(
 knowledge_base = JSONKnowledgeBase(
     path=[
         {
-            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_1.json",
+            "path": downloaded_cv_paths[0],
             "metadata": {
                 "user_id": "jordan_mitchell",
                 "document_type": "cv",
@@ -42,7 +48,7 @@ knowledge_base = JSONKnowledgeBase(
             },
         },
         {
-            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_2.json",
+            "path": downloaded_cv_paths[1],
             "metadata": {
                 "user_id": "taylor_brooks",
                 "document_type": "cv",
@@ -50,7 +56,7 @@ knowledge_base = JSONKnowledgeBase(
             },
         },
         {
-            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_3.json",
+            "path": downloaded_cv_paths[2],
             "metadata": {
                 "user_id": "morgan_lee",
                 "document_type": "cv",
@@ -58,7 +64,7 @@ knowledge_base = JSONKnowledgeBase(
             },
         },
         {
-            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_4.json",
+            "path": downloaded_cv_paths[3],
             "metadata": {
                 "user_id": "casey_jordan",
                 "document_type": "cv",
@@ -66,7 +72,7 @@ knowledge_base = JSONKnowledgeBase(
             },
         },
         {
-            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_5.json",
+            "path": downloaded_cv_paths[4],
             "metadata": {
                 "user_id": "alex_rivera",
                 "document_type": "cv",

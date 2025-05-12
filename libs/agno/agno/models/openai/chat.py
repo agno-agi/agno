@@ -324,14 +324,16 @@ class OpenAIChat(Model):
         """
 
         try:
-            if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
-                    return self.get_client().beta.chat.completions.parse(
-                        model=self.id,
-                        messages=[self._format_message(m) for m in messages],  # type: ignore
-                        **self.get_request_kwargs(
-                            response_format=response_format, tools=tools, tool_choice=tool_choice
-                        ),
-                    )
+            if (
+                response_format is not None
+                and isinstance(response_format, type)
+                and issubclass(response_format, BaseModel)
+            ):
+                return self.get_client().beta.chat.completions.parse(
+                    model=self.id,
+                    messages=[self._format_message(m) for m in messages],  # type: ignore
+                    **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                )
 
             return self.get_client().chat.completions.create(
                 model=self.id,
