@@ -90,7 +90,7 @@ class MemorySummarizer(BaseModel):
 
         # Set response_format if it is not set on the Model
         if self.use_structured_outputs:
-            response_format = SessionSummary
+            response_format: Any = SessionSummary
         else:
             response_format = {"type": "json_object"}
 
