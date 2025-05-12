@@ -25,6 +25,7 @@ class RedisStorage(Storage):
         db: int = 0,
         password: Optional[str] = None,
         mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
+        ssl: Optional[bool] = False,
     ):
         """
         Initialize Redis storage for sessions.
@@ -45,6 +46,7 @@ class RedisStorage(Storage):
             db=db,
             password=password,
             decode_responses=True,  # Automatically decode responses to str
+            ssl=ssl,
         )
         log_debug(f"Created RedisStorage with prefix: '{self.prefix}'")
 
