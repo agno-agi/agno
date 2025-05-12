@@ -324,8 +324,7 @@ class OpenAIChat(Model):
         """
 
         try:
-            if response_format is not None:
-                if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
                     return self.get_client().beta.chat.completions.parse(
                         model=self.id,
                         messages=[self._format_message(m) for m in messages],  # type: ignore
@@ -333,8 +332,6 @@ class OpenAIChat(Model):
                             response_format=response_format, tools=tools, tool_choice=tool_choice
                         ),
                     )
-                else:
-                    raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
 
             return self.get_client().chat.completions.create(
                 model=self.id,

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.models.message import Message, MessageMetrics
 from agno.models.ollama.chat import ChatResponse, Ollama
 from agno.models.response import ModelResponse
-from agno.tools.function import FunctionCall
+from agno.tools.function import Function, FunctionCall
 from agno.utils.log import log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import (
@@ -179,6 +179,7 @@ class OllamaTools(Ollama):
         assistant_message: Message,
         messages: List[Message],
         model_response: ModelResponse,
+        functions: Optional[Dict[str, Function]] = None,
     ) -> List[FunctionCall]:
         """
         Prepare function calls from tool calls in the assistant message.
@@ -197,8 +198,8 @@ class OllamaTools(Ollama):
 
         model_response.content = str(remove_tool_calls_from_string(assistant_message.get_content_string()))
         model_response.content += "\n\n"
-        function_calls_to_run = self.get_function_calls_to_run(assistant_message, messages)
-
+        function_calls_to_run = self.get_function_calls_to_run(assistant_message, messages, functions)
+        
         return function_calls_to_run
 
     def process_response_stream(

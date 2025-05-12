@@ -49,8 +49,6 @@ class AzureAIFoundry(Model):
     name: str = "AzureAIFoundry"
     provider: str = "Azure"
 
-    supports_native_structured_outputs: bool = True
-
     # Request parameters
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
@@ -119,8 +117,6 @@ class AzureAIFoundry(Model):
                         strict=True,
                     ),
                 )
-            else:
-                raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
 
         request_params = {k: v for k, v in base_params.items() if v is not None}
         if self.request_params:
