@@ -477,6 +477,8 @@ class Agent:
         self.agent_session: Optional[AgentSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
+        self._tools_for_model: Optional[List[Dict[str, Any]]] = None
+        self._functions_for_model: Optional[Dict[str, Function]] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
@@ -613,14 +615,21 @@ class Agent:
 
         log_debug(f"Agent Run Start: {self.run_response.run_id}", center=True)
 
-        # 2. Update the Model and resolve context
-        self.update_model(
-            async_mode=False,
-            user_id=user_id,
+        # 2.1 Prepare arguments for the model
+        self.set_default_model()
+        response_format = self._get_response_format()
+        self.model = cast(Model, self.model)
+        self.determine_tools_for_model(
+            model=self.model,
             session_id=session_id,
+            user_id=user_id,
+            async_mode=False,
             knowledge_filters=knowledge_filters,
         )
+
         self.run_response.model = self.model.id if self.model is not None else None
+
+        # 2.2 Resolve context
         if self.context is not None and self.resolve_context:
             self.resolve_run_context()
 
@@ -669,7 +678,14 @@ class Agent:
         reasoning_time_taken = 0.0
         if self.stream:
             model_response = ModelResponse()
-            for model_response_chunk in self.model.response_stream(messages=run_messages.messages):
+            for model_response_chunk in self.model.response_stream(
+                messages=run_messages.messages,
+                response_format=response_format,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+            ):
                 # If the model response is an assistant_response, yield a RunResponse
                 if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
                     # Process content and thinking
@@ -825,7 +841,14 @@ class Agent:
                         )
         else:
             # Get the model response
-            model_response = self.model.response(messages=run_messages.messages)
+            model_response = self.model.response(
+                messages=run_messages.messages,
+                response_format=response_format,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+            )
             # Format tool calls if they exist
             if model_response.tool_calls:
                 self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
@@ -833,7 +856,7 @@ class Agent:
             # Handle structured outputs
             if self.response_model is not None and model_response.parsed is not None:
                 # We get native structured outputs from the model
-                if self.model.structured_outputs:
+                if self._model_should_return_structured_output():
                     # Update the run_response content with the structured output
                     self.run_response.content = model_response.parsed
                     # Update the run_response content_type with the structured output class name
@@ -1296,9 +1319,21 @@ class Agent:
 
         log_debug(f"Async Agent Run Start: {self.run_response.run_id}", center=True, symbol="*")
 
-        # 2. Update the Model and resolve context
-        self.update_model(async_mode=True, user_id=user_id, session_id=session_id, knowledge_filters=knowledge_filters)
+        # 2.1 Prepare arguments for the model
+        self.set_default_model()
+        response_format = self._get_response_format()
+        self.model = cast(Model, self.model)
+        self.determine_tools_for_model(
+            model=self.model,
+            session_id=session_id,
+            user_id=user_id,
+            async_mode=True,
+            knowledge_filters=knowledge_filters,
+        )
+
         self.run_response.model = self.model.id if self.model is not None else None
+
+        # 2.2 Resolve context
         if self.context is not None and self.resolve_context:
             await self.aresolve_run_context()
 
@@ -1348,7 +1383,14 @@ class Agent:
         self.model = cast(Model, self.model)
         if stream and self.is_streamable:
             model_response = ModelResponse(content="")
-            model_response_stream = self.model.aresponse_stream(messages=run_messages.messages)  # type: ignore
+            model_response_stream = self.model.aresponse_stream(
+                messages=run_messages.messages,
+                response_format=response_format,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+            )  # type: ignore
             async for model_response_chunk in model_response_stream:  # type: ignore
                 # If the model response is an assistant_response, yield a RunResponse
                 if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
@@ -1501,7 +1543,14 @@ class Agent:
                         )
         else:
             # Get the model response
-            model_response = await self.model.aresponse(messages=run_messages.messages)
+            model_response = await self.model.aresponse(
+                messages=run_messages.messages,
+                response_format=response_format,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+            )
             # Format tool calls if they exist
             if model_response.tool_calls:
                 self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
@@ -1509,7 +1558,7 @@ class Agent:
             # Handle structured outputs
             if self.response_model is not None and model_response.parsed is not None:
                 # We get native structured outputs from the model
-                if self.model.structured_outputs:
+                if self._model_should_return_structured_output():
                     # Update the run_response content with the structured output
                     self.run_response.content = model_response.parsed
                     # Update the run_response content_type with the structured output class name
@@ -2070,33 +2119,22 @@ class Agent:
 
         return agent_tools
 
-    def add_tools_to_model(
+    def determine_tools_for_model(
         self,
         model: Model,
         session_id: str,
-        async_mode: bool = False,
         user_id: Optional[str] = None,
+        async_mode: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> None:
         agent_tools = self.get_tools(
             session_id=session_id, async_mode=async_mode, user_id=user_id, knowledge_filters=knowledge_filters
         )
-        agent_tool_names = []
-        # Get all the tool names
-        if agent_tools is not None:
-            for tool in agent_tools:
-                if isinstance(tool, Function):
-                    agent_tool_names.append(tool.name)
-                elif isinstance(tool, Toolkit):
-                    agent_tool_names.extend([f for f in tool.functions.keys()])
-                elif callable(tool):
-                    agent_tool_names.append(tool.__name__)
-                else:
-                    agent_tool_names.append(str(tool))
 
-        # Create new functions if we don't have any set on the model OR if the list of tool names is different than what is set on the model
-        existing_model_functions = model.get_functions()
-        if existing_model_functions is None or set(existing_model_functions.keys()) != set(agent_tool_names):
+        if self._tools_for_model is None:
+            self._tools_for_model = []
+            self._functions_for_model = {}
+
             # Get Agent tools
             if agent_tools is not None and len(agent_tools) > 0:
                 log_debug("Processing tools for model")
@@ -2110,28 +2148,26 @@ class Agent:
                 ):
                     strict = True
 
-                _tools_for_model = []
-                _functions_for_model = {}
                 for tool in agent_tools:
                     if isinstance(tool, Dict):
                         # If a dict is passed, it is a builtin tool
                         # that is run by the model provider and not the Agent
-                        _tools_for_model.append(tool)
+                        self._tools_for_model.append(tool)
                         log_debug(f"Included builtin tool {tool}")
 
                     elif isinstance(tool, Toolkit):
                         # For each function in the toolkit and process entrypoint
                         for name, func in tool.functions.items():
                             # If the function does not exist in self.functions
-                            if name not in _functions_for_model:
+                            if name not in self._functions_for_model:
                                 func._agent = self
                                 func.process_entrypoint(strict=strict)
                                 if strict and func.strict is None:
                                     func.strict = True
                                 if self.tool_hooks is not None:
                                     func.tool_hooks = self.tool_hooks
-                                _functions_for_model[name] = func
-                                _tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                self._functions_for_model[name] = func
+                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added tool {name} from {tool.name}")
 
                         # Add instructions from the toolkit
@@ -2141,15 +2177,15 @@ class Agent:
                             self._tool_instructions.append(tool.instructions)
 
                     elif isinstance(tool, Function):
-                        if tool.name not in _functions_for_model:
+                        if tool.name not in self._functions_for_model:
                             tool._agent = self
                             tool.process_entrypoint(strict=strict)
                             if strict and tool.strict is None:
                                 tool.strict = True
                             if self.tool_hooks is not None:
                                 tool.tool_hooks = self.tool_hooks
-                            _functions_for_model[tool.name] = tool
-                            _tools_for_model.append({"type": "function", "function": tool.to_dict()})
+                            self._functions_for_model[tool.name] = tool
+                            self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
                             log_debug(f"Added tool {tool.name}")
 
                         # Add instructions from the Function
@@ -2161,57 +2197,48 @@ class Agent:
                     elif callable(tool):
                         try:
                             function_name = tool.__name__
-                            if function_name not in _functions_for_model:
+                            if function_name not in self._functions_for_model:
                                 func = Function.from_callable(tool, strict=strict)
                                 func._agent = self
                                 if strict:
                                     func.strict = True
                                 if self.tool_hooks is not None:
                                     func.tool_hooks = self.tool_hooks
-                                _functions_for_model[func.name] = func
-                                _tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                self._functions_for_model[func.name] = func
+                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added tool {func.name}")
                         except Exception as e:
                             log_warning(f"Could not add tool {tool}: {e}")
 
-                # Set tools on the model
-                model.set_tools(tools=_tools_for_model)
-                # Set functions on the model
-                model.set_functions(functions=_functions_for_model)
-
-    def update_model(
-        self,
-        session_id: str,
-        async_mode: bool = False,
-        user_id: Optional[str] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        self.set_default_model()
-
+    def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)
+        return bool(
+            self.model.supports_native_structured_outputs
+            and self.response_model is not None
+            and (not self.use_json_mode or self.structured_outputs)
+        )
 
-        # Update the response_format on the Model
+    def _get_response_format(self) -> Optional[Union[Dict, Type[BaseModel]]]:
+        self.model = cast(Model, self.model)
         if self.response_model is None:
-            self.model.response_format = None
+            return None
         else:
             json_response_format = {"type": "json_object"}
 
             if self.model.supports_native_structured_outputs:
-                if (not self.use_json_mode) or self.structured_outputs:
+                if not self.use_json_mode or self.structured_outputs:
                     log_debug("Setting Model.response_format to Agent.response_model")
-                    self.model.response_format = self.response_model
-                    self.model.structured_outputs = True
+                    return self.response_model
                 else:
                     log_debug(
                         "Model supports native structured outputs but it is not enabled. Using JSON mode instead."
                     )
-                    self.model.response_format = json_response_format
-                    self.model.structured_outputs = False
+                    return json_response_format
 
             elif self.model.supports_json_schema_outputs:
                 if self.use_json_mode or (not self.structured_outputs):
                     log_debug("Setting Model.response_format to JSON response mode")
-                    self.model.response_format = {
+                    return {
                         "type": "json_schema",
                         "json_schema": {
                             "name": self.response_model.__name__,
@@ -2219,34 +2246,11 @@ class Agent:
                         },
                     }
                 else:
-                    self.model.response_format = None
-                self.model.structured_outputs = False
+                    return None
 
             else:
                 log_debug("Model does not support structured or JSON schema outputs.")
-                self.model.response_format = json_response_format
-                self.model.structured_outputs = False
-
-        # Add tools to the Model
-        self.add_tools_to_model(
-            model=self.model,
-            session_id=session_id,
-            async_mode=async_mode,
-            user_id=user_id,
-            knowledge_filters=knowledge_filters,
-        )
-
-        # Set show_tool_calls on the Model
-        if self.show_tool_calls is not None:
-            self.model.show_tool_calls = self.show_tool_calls
-
-        # Set tool_choice on the Model
-        if self.tool_choice is not None:
-            self.model.tool_choice = self.tool_choice
-
-        # Set tool_call_limit on the Model
-        if self.tool_call_limit is not None:
-            self.model.tool_call_limit = self.tool_call_limit
+                return json_response_format
 
     def resolve_run_context(self) -> None:
         from inspect import signature
@@ -2734,7 +2738,7 @@ class Agent:
             elif isinstance(_instructions, list):
                 instructions.extend(_instructions)
         # 3.1.1 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model()
+        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
@@ -2873,7 +2877,7 @@ class Agent:
                     "You can add new memories using the `update_memory` tool.\n"
                     "If you use the `update_memory` tool, remember to pass on the response to the user.\n\n"
                 )
-            elif isinstance(self.memory, Memory) and (self.add_memory_references):
+            elif isinstance(self.memory, Memory) and self.add_memory_references:
                 if not user_id:
                     user_id = "default"
                 user_memories = self.memory.get_user_memories(user_id=user_id)  # type: ignore
@@ -2933,7 +2937,7 @@ class Agent:
                     )
 
         # 3.3.12 Add the system message from the Model
-        system_message_from_model = self.model.get_system_message_for_model()
+        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
@@ -4040,7 +4044,6 @@ class Agent:
                 return
             # Ensure the reasoning model and agent do not show tool calls
             reasoning_agent.show_tool_calls = False
-            reasoning_agent.model.show_tool_calls = False  # type: ignore
 
             step_count = 1
             next_action = NextAction.CONTINUE
@@ -4251,7 +4254,6 @@ class Agent:
                 return
             # Ensure the reasoning model and agent do not show tool calls
             reasoning_agent.show_tool_calls = False
-            reasoning_agent.model.show_tool_calls = False  # type: ignore
 
             step_count = 1
             next_action = NextAction.CONTINUE
@@ -4708,9 +4710,11 @@ class Agent:
             run_response_format = "markdown"
 
         functions = {}
-        if self.model is not None and self.model._functions is not None:
+        if self._functions_for_model is not None:
             functions = {
-                f_name: func.to_dict() for f_name, func in self.model._functions.items() if isinstance(func, Function)
+                f_name: func.to_dict()
+                for f_name, func in self._functions_for_model.items()
+                if isinstance(func, Function)
             }
 
         run_data: Dict[str, Any] = {

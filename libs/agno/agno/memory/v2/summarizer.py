@@ -1,7 +1,7 @@
 from copy import deepcopy
 from dataclasses import dataclass
 from textwrap import dedent
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel, Field
 
@@ -54,15 +54,12 @@ class SessionSummarizer:
         self.system_message = system_message
         self.additional_instructions = additional_instructions
 
-    def update_model(self, model: Model) -> None:
-        model = cast(Model, model)
-        model.reset_tools_and_functions()
+    def get_response_format(self, model: Model) -> Union[Dict[str, Any], Type[BaseModel]]:
         if model.supports_native_structured_outputs:
-            model.response_format = SessionSummaryResponse
-            model.structured_outputs = True
+            return SessionSummaryResponse
 
         elif model.supports_json_schema_outputs:
-            model.response_format = {
+            return {
                 "type": "json_schema",
                 "json_schema": {
                     "name": SessionSummaryResponse.__name__,
@@ -70,9 +67,11 @@ class SessionSummarizer:
                 },
             }
         else:
-            model.response_format = {"type": "json_object"}
+            return {"type": "json_object"}
 
-    def get_system_message(self, conversation: List[Message], model: Model) -> Message:
+    def get_system_message(
+        self, conversation: List[Message], response_format: Union[Dict[str, Any], Type[BaseModel]]
+    ) -> Message:
         if self.system_message is not None:
             return Message(role="system", content=self.system_message)
 
@@ -97,7 +96,7 @@ class SessionSummarizer:
         if self.additional_instructions:
             system_prompt += "\n" + self.additional_instructions
 
-        if model.response_format == {"type": "json_object"}:
+        if response_format == {"type": "json_object"}:
             system_prompt += "\n" + get_json_output_prompt(SessionSummaryResponse)  # type: ignore
 
         return Message(role="system", content=system_prompt)
@@ -117,17 +116,17 @@ class SessionSummarizer:
             return None
 
         model_copy = deepcopy(self.model)
-        self.update_model(model_copy)
+        response_format = self.get_response_format(model_copy)
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
-            self.get_system_message(conversation, model=model_copy),
+            self.get_system_message(conversation, response_format=response_format),
             # For models that require a non-system message
             Message(role="user", content="Provide the summary of the conversation."),
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = model_copy.response(messages=messages_for_model)
+        response = model_copy.response(messages=messages_for_model, response_format=response_format)
 
         if response.content is not None:
             self.summary_updated = True
@@ -174,17 +173,17 @@ class SessionSummarizer:
             return None
 
         model_copy = deepcopy(self.model)
-        self.update_model(model_copy)
+        response_format = self.get_response_format(model_copy)
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [
-            self.get_system_message(conversation, model=model_copy),
+            self.get_system_message(conversation, response_format=response_format),
             # For models that require a non-system message
             Message(role="user", content="Provide the summary of the conversation."),
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = await model_copy.aresponse(messages=messages_for_model)
+        response = await model_copy.aresponse(messages=messages_for_model, response_format=response_format)
 
         if response.content is not None:
             self.summary_updated = True
