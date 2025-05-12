@@ -528,6 +528,35 @@ jobs:
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/models/ibm/watsonx
 
+  # Run tests for Cerebras
+  test-cerebras:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true  # Stop all matrix jobs if one fails
+    env:
+      CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Run Cerebras tests
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/models/cerebras
+
   test-deepinfra:
     runs-on: ubuntu-latest
     strategy:
@@ -580,7 +609,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Run remaining integration tests
+      - name: Run agent integration tests
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -609,7 +638,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Run remaining integration tests
+      - name: Run teams integration tests
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -638,7 +667,7 @@ jobs:
         working-directory: .
         run: |
           ./scripts/dev_setup.sh
-      - name: Run remaining integration tests
+      - name: Run knowledge integration tests
         working-directory: .
         run: |
           source .venv/bin/activate
@@ -672,4 +701,4 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agents --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams ./libs/agno/tests/integration

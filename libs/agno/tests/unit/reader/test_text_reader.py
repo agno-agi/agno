@@ -57,7 +57,7 @@ def test_chunking():
 
     assert len(documents) == 2
     assert all(doc.name.startswith("test_chunk_") for doc in documents)
-    assert all(doc.id.startswith("test_chunk_") for doc in documents)
+    assert all(doc.id.endswith("_chunk_0") or doc.id.endswith("_chunk_1") for doc in documents)
     assert all("chunk" in doc.meta_data for doc in documents)
 
 
@@ -193,7 +193,11 @@ async def test_async_chunking():
 
     assert len(documents) == 2
     assert all(doc.name.startswith("test_chunk_") for doc in documents)
-    assert all(doc.id.startswith("test_chunk_") for doc in documents)
+    assert all(
+        doc.id.endswith("_chunk_0") or doc.id.endswith("_chunk_1")
+        # Check if the id ends with "_chunk_0" or "_chunk_1"
+        for doc in documents
+    )
     assert all("chunk" in doc.meta_data for doc in documents)
 
 
@@ -327,7 +331,7 @@ async def test_async_parallel_chunking():
         documents = await reader.async_read(text_bytes)
         assert len(documents) == 2  # Should return 2 chunks
         assert all(doc.name.startswith("test_chunk_") for doc in documents)
-        assert all(doc.id.startswith("test_chunk_") for doc in documents)
+        assert all(doc.id.endswith("_chunk_0") or doc.id.endswith("_chunk_1") for doc in documents)
         assert all("chunk" in doc.meta_data for doc in documents)
     finally:
         # Restore original processor

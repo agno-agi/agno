@@ -97,7 +97,7 @@ async def test_arxiv_knowledge_base_async_integration(setup_vector_db):
         search_knowledge=True,
         instructions=[
             "You are a helpful assistant that can answer questions.",
-            "You can use the async_search_knowledge_base tool to search the knowledge base of journal articles for information.",
+            "You can use the asearch_knowledge_base tool to search the knowledge base of journal articles for information.",
         ],
     )
     response = await agent.arun("What are the key capabilities of GPT-3?", markdown=True)
@@ -108,7 +108,7 @@ async def test_arxiv_knowledge_base_async_integration(setup_vector_db):
             tool_calls.extend(msg.tool_calls)
 
     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "async_search_knowledge_base" for call in function_calls)
+    assert any(call["function"]["name"] == "asearch_knowledge_base" for call in function_calls)
 
 
 def test_arxiv_knowledge_base_empty_query_integration(setup_vector_db):

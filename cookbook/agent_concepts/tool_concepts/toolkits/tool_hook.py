@@ -3,6 +3,7 @@
 from typing import Any, Callable, Dict
 
 from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils.log import logger
 
@@ -19,6 +20,8 @@ def logger_hook(function_name: str, function_call: Callable, arguments: Dict[str
     return result
 
 
-agent = Agent(tools=[DuckDuckGoTools()], tool_hooks=[logger_hook])
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"), tools=[DuckDuckGoTools()], tool_hooks=[logger_hook]
+)
 
-agent.print_response("What is currently trending on Twitter?")
+agent.print_response("What's happening in the world?", stream=True, markdown=True)

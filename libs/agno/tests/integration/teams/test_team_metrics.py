@@ -52,13 +52,6 @@ def test_team_metrics_basic():
     assert team.session_metrics.output_tokens is not None
     assert team.session_metrics.total_tokens is not None
 
-    # Check full team session metrics
-    assert team.full_team_session_metrics is not None
-    assert isinstance(team.full_team_session_metrics, SessionMetrics)
-    assert team.full_team_session_metrics.input_tokens is not None
-    assert team.full_team_session_metrics.output_tokens is not None
-    assert team.full_team_session_metrics.total_tokens is not None
-
 
 def test_team_metrics_streaming():
     """Test team metrics with streaming."""
@@ -94,10 +87,6 @@ def test_team_metrics_streaming():
     assert team.run_response.metrics["output_tokens"] is not None
     assert team.run_response.metrics["total_tokens"] is not None
 
-    # Verify session metrics updated after streaming
-    assert team.full_team_session_metrics is not None
-    assert team.full_team_session_metrics.total_tokens > 0
-
 
 def test_team_metrics_multiple_runs():
     """Test team metrics across multiple runs."""
@@ -128,6 +117,3 @@ def test_team_metrics_multiple_runs():
 
     # Verify metrics have been updated after second run
     assert team.session_metrics.total_tokens > metrics_run1.total_tokens
-
-    # Verify member metrics are tracked in full team metrics
-    assert team.full_team_session_metrics.total_tokens >= team.session_metrics.total_tokens

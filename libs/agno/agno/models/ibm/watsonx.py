@@ -1,57 +1,21 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Sequence
+from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional
 
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
+from agno.utils.models.watsonx import format_images_for_message
 
 try:
     from ibm_watsonx_ai import Credentials
     from ibm_watsonx_ai.foundation_models import ModelInference
 except ImportError:
     raise ImportError("`ibm-watsonx-ai` is not installed. Please install it using `pip install ibm-watsonx-ai`.")
-
-
-def _format_images_for_message(message: Message, images: Sequence[Image]) -> Message:
-    """
-    Format an image into the format expected by WatsonX.
-    """
-
-    # Create a default message content with text
-    message_content_with_image: List[Dict[str, Any]] = [{"type": "text", "text": message.content}]
-
-    # Add images to the message content
-    for image in images:
-        try:
-            if image.content is not None:
-                image_content = image.content
-            elif image.url is not None:
-                image_content = image.image_url_content
-            else:
-                log_warning(f"Unsupported image format: {image}")
-                continue
-
-            if image_content is not None:
-                import base64
-
-                base64_image = base64.b64encode(image_content).decode("utf-8")
-                image_url = f"data:image/jpeg;base64,{base64_image}"
-                image_payload = {"type": "image_url", "image_url": {"url": image_url}}
-                message_content_with_image.append(image_payload)
-
-        except Exception as e:
-            log_error(f"Failed to process image: {str(e)}")
-
-    # Update the message content with the images
-    if len(message_content_with_image) > 1:
-        message.content = message_content_with_image
-    return message
 
 
 @dataclass
@@ -167,7 +131,7 @@ class WatsonX(Model):
             Dict[str, Any]: The formatted message.
         """
         if message.images is not None and isinstance(message.content, str):
-            message = _format_images_for_message(message=message, images=message.images)
+            message = format_images_for_message(message=message, images=message.images)
 
         if message.audio is not None and len(message.audio) > 0:
             log_warning("Audio input is currently unsupported.")
