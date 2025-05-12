@@ -12,10 +12,10 @@ jobs:
       - name: Check PR Title Format
         run: |
           TITLE="${{ github.event.pull_request.title }}"
-          REGEX="^\[(feat|fix|docs|test|refactor|build|ci|chore|perf|style|revert)\]\\s*.+"
+          REGEX="^(\[(feat|fix|docs|test|refactor|build|ci|chore|perf|style|revert)\]\\s*.+|(feat|fix|docs|test|refactor|build|ci|chore|perf|style|revert):\\s*.+)"
           if [[ ! "$TITLE" =~ $REGEX ]]; then
-            echo "❌ PR Title '$TITLE' does not match the required format '[type] subject'."
-            echo "   Please start your PR title with a valid type like [feat], [fix], [docs], etc., followed by a space and the subject."
+            echo "❌ PR Title '$TITLE' does not match the required format '[type] subject' or 'type: subject'."
+            echo "   Please start your PR title with a valid type like [feat], [fix], feat:, fix:, etc., followed by a space and the subject."
             exit 1
           else
             echo "✅ PR Title format is valid."
