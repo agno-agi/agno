@@ -581,8 +581,6 @@ class Milvus(VectorDb):
             return []
 
         try:
-            log_info("Preparing hybrid search requests")
-
             # Create search request for dense vectors
             dense_search_param = {
                 "data": [dense_vector],
