@@ -173,17 +173,15 @@ class Milvus(VectorDb):
         return index_params
 
     def _prepare_document_data(
-        self,
-        document: Document,
-        include_vectors: bool = True
+        self, document: Document, include_vectors: bool = True
     ) -> Dict[str, Union[str, List[float], Dict[int, float], None]]:
         """
         Prepare document data for insertion.
-        
+
         Args:
             document: Document to prepare data for
             include_vectors: Whether to include vector data
-            
+
         Returns:
             Dictionary with document data where values can be strings, vectors (List[float]),
             sparse vectors (Dict[int, float]), or None
@@ -198,8 +196,7 @@ class Milvus(VectorDb):
         doc_id = md5(cleaned_content.encode()).hexdigest()
 
         # Convert dictionary fields to JSON strings
-        meta_data_str = json.dumps(
-            document.meta_data) if document.meta_data else "{}"
+        meta_data_str = json.dumps(document.meta_data) if document.meta_data else "{}"
         usage_str = json.dumps(document.usage) if document.usage else "{}"
 
         data: Dict[str, Union[str, List[float], Dict[int, float], None]] = {
@@ -213,10 +210,12 @@ class Milvus(VectorDb):
 
         if include_vectors:
             if self.search_type == SearchType.hybrid:
-                data.update({
-                    "dense_vector": document.embedding,  # List[float] or None # Dict[int, float]
-                    "sparse_vector": self._get_sparse_vector(cleaned_content)
-                })
+                data.update(
+                    {
+                        "dense_vector": document.embedding,  # List[float] or None # Dict[int, float]
+                        "sparse_vector": self._get_sparse_vector(cleaned_content),
+                    }
+                )
             else:
                 data["vector"] = document.embedding  # List[float] or None
 
