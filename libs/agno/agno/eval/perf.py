@@ -352,7 +352,7 @@ class PerfEval:
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.PERFORMANCE,
-                eval_run_name=self.name if self.name is not None else None,
+                name=self.name if self.name is not None else None,
                 evaluated_entity_name=self.func.__name__,
             )
 

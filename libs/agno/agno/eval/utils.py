@@ -10,7 +10,7 @@ def log_eval_run(
     run_data: dict,
     eval_type: EvalType,
     agent_id: Optional[str] = None,
-    eval_run_name: Optional[str] = None,
+    name: Optional[str] = None,
     evaluated_entity_name: Optional[str] = None,
     team_id: Optional[str] = None,
 ) -> None:
@@ -23,7 +23,7 @@ def log_eval_run(
                 type=eval_type,
                 data=run_data,
                 agent_id=agent_id,
-                eval_run_name=eval_run_name,
+                name=name,
                 evaluated_entity_name=evaluated_entity_name,
                 team_id=team_id,
             )
@@ -37,7 +37,7 @@ async def async_log_eval_run(
     run_data: dict,
     eval_type: EvalType,
     agent_id: Optional[str] = None,
-    eval_run_name: Optional[str] = None,
+    name: Optional[str] = None,
     evaluated_entity_name: Optional[str] = None,
     team_id: Optional[str] = None,
 ) -> None:
@@ -51,7 +51,7 @@ async def async_log_eval_run(
                 data=run_data,
                 agent_id=agent_id,
                 team_id=team_id,
-                eval_run_name=eval_run_name,
+                name=name,
                 evaluated_entity_name=evaluated_entity_name,
             )
         )

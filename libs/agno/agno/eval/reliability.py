@@ -146,7 +146,7 @@ class ReliabilityEval:
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
                 agent_id=self.agent_response.agent_id if self.agent_response is not None else None,
-                eval_run_name=self.name if self.name is not None else None,
+                name=self.name if self.name is not None else None,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
