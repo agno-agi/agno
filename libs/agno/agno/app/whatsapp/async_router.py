@@ -1,12 +1,12 @@
 from typing import Optional, cast
 import logging
-
+from agno.media import Image
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 from agno.agent.agent import Agent, RunResponse
 from agno.team.team import Team
 from .security import validate_webhook_signature
-from .wappreq import VERIFY_TOKEN
+from .wappreq import VERIFY_TOKEN,get_media
 from agno.tools.whatsapp import WhatsAppTools
 logger = logging.getLogger(__name__)
 def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
@@ -64,18 +64,21 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
                         continue
 
                     message = messages[0]
-                    if message.get("type") != "text":
-                        continue
-
+                    if message.get("type") == "text":
                     # Extract message details
+                        message_text = message["text"]["body"]
+                        message_image = None
+                    elif message.get("type") == "image":
+                        message_text = message["image"]["caption"]
+                        message_image=message["image"]["id"]
+                    else:
+                        continue
                     phone_number = message["from"]
-                    message_text = message["text"]["body"]
-
                     logger.info(f"Processing message from {phone_number}: {message_text}")
-
                     # Generate and send response
                     if agent:
-                        response = agent.run(message_text,user_id=phone_number)
+                        response = agent.run(message_text,user_id=phone_number,
+                                             images=[Image(content=get_media(message_image))] if message_image else None)
                     elif team:
                         response = team.run(message_text,user_id=phone_number)
                     WhatsAppTools().send_text_message_sync(
