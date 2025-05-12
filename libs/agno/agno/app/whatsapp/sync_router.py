@@ -1,9 +1,9 @@
-from typing import Optional, cast
+from typing import Optional
 import logging
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 from agno.media import Audio,Video,Image
-from agno.agent.agent import Agent, RunResponse
+from agno.agent.agent import Agent
 from agno.team.team import Team
 from agno.tools.whatsapp import WhatsAppTools
 

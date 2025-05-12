@@ -1,9 +1,9 @@
-from typing import Optional, cast
+from typing import Optional
 import logging
 from agno.media import Image, Video, Audio
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import PlainTextResponse
-from agno.agent.agent import Agent, RunResponse
+from agno.agent.agent import Agent
 from agno.team.team import Team
 from .security import validate_webhook_signature
 from .wappreq import VERIFY_TOKEN,get_media

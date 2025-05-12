@@ -1,15 +1,12 @@
 from dotenv import load_dotenv
 import os
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.media import Image,Video
-
+import requests
 
 load_dotenv()
 
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN")
 ACCESS_TOKEN= os.getenv("WHATSAPP_ACCESS_TOKEN")
-import requests
+
 
 def get_media(media_id):
     """
@@ -40,7 +37,7 @@ def get_media(media_id):
     try:
         response = requests.get(media_url, headers=headers)
         response.raise_for_status()  # Raise an HTTPError for bad responses (4xx and 5xx)
-        type = response.headers['Content-Type']
+        #type = response.headers['Content-Type']
         data= response.content
         return data
     except requests.exceptions.RequestException as e:
