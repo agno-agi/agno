@@ -50,7 +50,6 @@ junk
 tmp
 agents.db
 data.db
-build
 .ipynb_checkpoints
 
 audio_generations
