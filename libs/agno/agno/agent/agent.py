@@ -581,7 +581,7 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         stream_intermediate_steps: bool = False,
-        run_response: Optional[RunResponse] = None,
+        run_response: RunResponse,
         **kwargs: Any,
     ) -> Iterator[RunResponse]:
         """Run the Agent and yield the RunResponse.
@@ -613,22 +613,13 @@ class Agent:
         # 1.3 Create a run_id and RunResponse
         self.run_id = str(uuid4())
 
-        # If run_response is None, create a new one
-        if run_response is None:
-            # For backwards compatibility, still set self.run_response
-            self.run_response = RunResponse(run_id=self.run_id, session_id=session_id, agent_id=self.agent_id)
-            run_response = self.run_response
-        else:
-            # For backward compatibility, also set self.run_response
-            self.run_response = run_response
-
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # 2.1 Prepare arguments for the model
         self.set_default_model()
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
-        
+
         self.determine_tools_for_model(
             model=self.model,
             session_id=session_id,
@@ -1173,13 +1164,16 @@ class Agent:
                 # Create a new run_response for this attempt
                 run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id)
 
+                # for backward compatibility, set self.run_response
+                self.run_response = run_response
+
                 # If a response_model is set, return the response as a structured output
                 if self.response_model is not None and self.parse_response:
                     # Set stream=False and run the agent
                     if self.stream and self.stream is True:
                         log_debug("Setting stream=False as response_model is set")
                         self.stream = False
-                    run_response: RunResponse = next(
+                    rr: RunResponse = next(
                         self._run(
                             message=message,
                             stream=False,
@@ -1198,25 +1192,25 @@ class Agent:
                     )
 
                     # Do a final check confirming the content is in the response_model format
-                    if isinstance(run_response.content, self.response_model):
-                        return run_response
+                    if isinstance(rr.content, self.response_model):
+                        return rr
 
                     # Otherwise convert the response to the structured format
-                    if isinstance(run_response.content, str):
+                    if isinstance(rr.content, str):
                         try:
-                            structured_output = parse_response_model_str(run_response.content, self.response_model)
+                            structured_output = parse_response_model_str(rr.content, self.response_model)
 
                             # Update RunResponse
                             if structured_output is not None:
-                                run_response.content = structured_output
-                                run_response.content_type = self.response_model.__name__
+                                rr.content = structured_output
+                                rr.content_type = self.response_model.__name__
                             else:
                                 log_warning("Failed to convert response to response_model")
                         except Exception as e:
                             log_warning(f"Failed to convert response to output model: {e}")
                     else:
                         log_warning("Something went wrong. Run response content is not a string")
-                    return run_response
+                    return rr
                 else:
                     if stream and self.is_streamable:
                         resp = self._run(
@@ -1299,7 +1293,7 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: RunResponse,
         **kwargs: Any,
     ) -> AsyncIterator[RunResponse]:
         """Run the Agent and yield the RunResponse.
@@ -1329,15 +1323,6 @@ class Agent:
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
         # 1.3 Create a run_id and RunResponse
         self.run_id = str(uuid4())
-
-        # If run_response is None, create a new one
-        if run_response is None:
-            # For backwards compatibility, still set self.run_response
-            self.run_response = RunResponse(run_id=self.run_id, session_id=session_id, agent_id=self.agent_id)
-            run_response = self.run_response
-        else:
-            # For backward compatibility, also set self.run_response
-            self.run_response = run_response
 
         log_debug(f"Async Agent Run Start: {run_response.run_id}", center=True, symbol="*")
 
@@ -1848,6 +1833,9 @@ class Agent:
                 # Create a new run_response for this attempt
                 run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id)
 
+                # for backward compatibility, set self.run_response
+                self.run_response = run_response
+
                 # If a response_model is set, return the response as a structured output
                 if self.response_model is not None and self.parse_response:
                     # Set stream=False and run the agent
@@ -1855,7 +1843,7 @@ class Agent:
                         log_debug("Setting stream=False as response_model is set")
                         self.stream = False
 
-                    run_response = self._arun(
+                    rr = self._arun(
                         message=message,
                         stream=False,
                         user_id=user_id,
@@ -1870,7 +1858,7 @@ class Agent:
                         run_response=run_response,
                         **kwargs,
                     )
-                    resp = await run_response.__anext__()
+                    resp = await rr.__anext__()
 
                     # Do a final check confirming the content is in the response_model format
                     if isinstance(resp.content, self.response_model):
@@ -1909,7 +1897,7 @@ class Agent:
                             knowledge_filters=effective_filters,
                             run_response=run_response,
                             **kwargs,
-                        )
+                        )  # type: ignore[assignment]
                         return resp
                     else:
                         resp = self._arun(
@@ -1926,7 +1914,7 @@ class Agent:
                             knowledge_filters=effective_filters,
                             run_response=run_response,
                             **kwargs,
-                        )
+                        )  # type: ignore[assignment]
                         return await resp.__anext__()
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")

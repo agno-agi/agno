@@ -199,7 +199,7 @@ class OllamaTools(Ollama):
         model_response.content = str(remove_tool_calls_from_string(assistant_message.get_content_string()))
         model_response.content += "\n\n"
         function_calls_to_run = self.get_function_calls_to_run(assistant_message, messages, functions)
-        
+
         return function_calls_to_run
 
     def process_response_stream(
