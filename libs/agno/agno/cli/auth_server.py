@@ -27,11 +27,13 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
             text_color_large = "#FAFAFA"
             text_color_small = "#A1A1AA"
             loader_color = "#FAFAFA"
-        else:  # Default to light theme
+            auth_svg_link = "https://agno-public.s3.us-east-1.amazonaws.com/assets/Auth-darkmode.svg"
+        else:
             background_color = "#FFFFFF"
             text_color_large = "#18181B"
             text_color_small = "rgba(113, 113, 122, 1)"
             loader_color = "#18181B"
+            auth_svg_link = "https://agno-public.s3.us-east-1.amazonaws.com/assets/Auth-lightmode.svg"
 
         html = f"""
         <html>
@@ -43,11 +45,14 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
                 body {{
                     font-family: 'Inter', sans-serif;
                     display: flex;
-                    justify-content: center;
                     align-items: center;
+                    flex-direction: column;
                     height: 100vh;
+                    width: 100vw;
                     margin: 0;
                     background-color: {background_color};
+                    position: relative;
+                    overflow: hidden;
                 }}
                 .container {{
                     display: flex;
@@ -55,6 +60,8 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
                     align-items: center;
                     text-align: center;
                     gap: 12px;
+                    z-index: 1;
+                    margin-top: 120px;
                 }}
                 .message-large {{
                     font-weight: 500;
@@ -83,6 +90,15 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
                     animation: spin 0.8s linear infinite;
                     margin-bottom: 12px;
                 }}
+                .bottom-image {{
+                    position: absolute;
+                    bottom: 0;
+                    left: 0;
+                    right: 0;
+                    width: 100%;
+                    max-height: 600px;
+                    z-index: 0;
+                }}
                 @keyframes spin {{
                     0% {{ transform: rotate(0deg); }}
                     100% {{ transform: rotate(360deg); }}
@@ -95,9 +111,11 @@ class CliAuthRequestHandler(BaseHTTPRequestHandler):
                 <div class="message-large">Authenticating your workspace...</div>
                 <div class="message-small">You will be redirected shortly.</div>
             </div>
+            <img src={auth_svg_link} class="bottom-image" alt="Background Image" />
         </body>
         </html>
         """
+
         self._set_html_response(html, status_code=200)
         self.server.running = False  # type: ignore
 
