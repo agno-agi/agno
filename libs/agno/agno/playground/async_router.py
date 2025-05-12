@@ -143,7 +143,7 @@ def get_async_playground_router(
             if active_app_id == app_id:
                 return {"playground": "available"}
             else:
-                return {"playground": "unavailable"}
+                raise HTTPException(status_code=404, detail="Playground not available")
 
     @playground_router.get("/agents", response_model=List[AgentGetResponse])
     async def get_agents():
