@@ -2,7 +2,6 @@
 This example demonstrates how to use the Mem0Toolkit class to interact with memories stored in Mem0.
 """
 
-import time
 from textwrap import dedent
 
 from agno.agent import Agent

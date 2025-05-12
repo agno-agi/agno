@@ -38,18 +38,18 @@ class Mem0Toolkit(Toolkit):
         )
         self.api_key = api_key or getenv("MEM0_API_KEY")
         self.user_id = user_id
-        self.mem0client: Union[Memory, MemoryClient] = None
+        self.client: Union[Memory, MemoryClient]
 
         try:
             if self.api_key:
                 log_debug("Using Mem0 Platform API key.")
-                self.mem0client = MemoryClient(api_key=self.api_key)
+                self.client = MemoryClient(api_key=self.api_key)
             elif config is not None:
                 log_debug("Using Mem0 with config.")
-                self.mem0client = Memory.from_config(config)
+                self.client = Memory.from_config(config)
             else:
                 log_debug("Initializing Mem0 with default settings.")
-                self.mem0client = Memory()
+                self.client = Memory()
         except Exception as e:
             log_error(f"Failed to initialize Mem0 client: {e}")
             raise ConnectionError("Failed to initialize Mem0 client. Ensure API keys/config are set.") from e
@@ -90,7 +90,7 @@ class Mem0Toolkit(Toolkit):
                 log_error(f"Invalid type for messages: {type(messages)}. Expected str, dict, or list of dicts.")
                 return "Error: Invalid input type for messages. Expected str, dict, or list of dicts."
 
-            result = self.mem0client.add(
+            result = self.client.add(
                 messages_list,
                 user_id=resolved_user_id,
             )
@@ -115,7 +115,7 @@ class Mem0Toolkit(Toolkit):
             resolved_user_id = self._get_user_id("search_memory", user_id)
             log_debug(f"Searching memory for user_id: {resolved_user_id} with query '{query}'")
 
-            results = self.mem0client.search(query=query, user_id=resolved_user_id)
+            results = self.client.search(query=query, user_id=resolved_user_id)
 
             if isinstance(results, dict) and "results" in results:
                 search_results_list = results.get("results", [])
@@ -144,7 +144,7 @@ class Mem0Toolkit(Toolkit):
         """
         try:
             log_debug(f"Getting memory with ID: {memory_id}")
-            result = self.mem0client.get(memory_id=memory_id)
+            result = self.client.get(memory_id=memory_id)
             if result:
                 return json.dumps(result)
             else:
@@ -167,7 +167,7 @@ class Mem0Toolkit(Toolkit):
         """
         try:
             log_debug(f"Updating memory with ID: {memory_id}")
-            result = self.mem0client.update(memory_id=memory_id, data=data)
+            result = self.client.update(memory_id=memory_id, data=data)
             return (
                 json.dumps(result)
                 if result is not None
@@ -188,7 +188,7 @@ class Mem0Toolkit(Toolkit):
         """
         try:
             log_debug(f"Deleting memory with ID: {memory_id}")
-            self.mem0client.delete(memory_id=memory_id)
+            self.client.delete(memory_id=memory_id)
             return f"Memory with ID '{memory_id}' deleted successfully."
         except Exception as e:
             log_error(f"Error deleting memory {memory_id}: {e}")
@@ -205,7 +205,7 @@ class Mem0Toolkit(Toolkit):
         """
         try:
             log_debug(f"Getting history for memory ID: {memory_id}")
-            result = self.mem0client.history(memory_id=memory_id)
+            result = self.client.history(memory_id=memory_id)
             return json.dumps(result)
         except Exception as e:
             log_error(f"Error getting history for memory {memory_id}: {e}")
@@ -222,7 +222,7 @@ class Mem0Toolkit(Toolkit):
             resolved_user_id = self._get_user_id("get_all_memories", user_id)
             log_debug(f"Getting all memories for user_id: {resolved_user_id}, limit: {limit}")
 
-            results = self.mem0client.get_all(user_id=resolved_user_id)
+            results = self.client.get_all(user_id=resolved_user_id)
 
             if isinstance(results, dict) and "results" in results:
                 memories_list = results.get("results", [])
@@ -255,7 +255,7 @@ class Mem0Toolkit(Toolkit):
             resolved_user_id = self._get_user_id("delete_all_memories", user_id)
             log_debug(f"Attempting to delete ALL memories associated with user_id: {resolved_user_id}")
 
-            self.mem0client.delete_all(user_id=resolved_user_id)
+            self.client.delete_all(user_id=resolved_user_id)
             return f"Successfully deleted all memories associated with user_id: {resolved_user_id}."
         except Exception as e:
             log_error(f"Error deleting all memories: {e}")
