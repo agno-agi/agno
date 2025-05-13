@@ -1137,7 +1137,9 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         if stream_intermediate_steps is None:
-            stream_intermediate_steps = False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+            stream_intermediate_steps = (
+                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+            )
 
         # Can't have stream_intermediate_steps if stream is False
         if stream is False:
@@ -1338,6 +1340,7 @@ class Agent:
         self.set_default_model()
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
+        
         self.determine_tools_for_model(
             model=self.model,
             session_id=session_id,
@@ -1757,6 +1760,7 @@ class Agent:
                 reasoning_content=run_response.reasoning_content,
                 session_id=session_id,
                 event=RunEvent.run_completed,
+                run_response=run_response,
             )
 
         # Yield final response if not streaming so that run() can get the response
@@ -1775,7 +1779,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -1813,7 +1817,9 @@ class Agent:
             stream = False if self.stream is None else self.stream
 
         if stream_intermediate_steps is None:
-            stream_intermediate_steps = False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+            stream_intermediate_steps = (
+                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+            )
 
         # Can't have stream_intermediate_steps if stream is False
         if stream is False:

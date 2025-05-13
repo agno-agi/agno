@@ -1,5 +1,6 @@
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
@@ -37,18 +38,18 @@ def finance_agent(shared_model):
 
 
 def test_tools_available_to_agents(web_agent, finance_agent):
-    with patch.object(finance_agent.model, 'invoke', wraps=finance_agent.model.invoke) as mock_invoke:
+    with patch.object(finance_agent.model, "invoke", wraps=finance_agent.model.invoke) as mock_invoke:
         finance_agent.run("What is the current stock price of AAPL?")
-        
-        # Get the tools passed to invoke
-        tools = mock_invoke.call_args[1].get('tools', [])
-        tool_names = [tool['function']['name'] for tool in tools]
-        assert tool_names == ['get_current_stock_price']
 
-    with patch.object(web_agent.model, 'invoke', wraps=web_agent.model.invoke) as mock_invoke:
-        web_agent.run("What is currently happening in the news?")
-        
         # Get the tools passed to invoke
-        tools = mock_invoke.call_args[1].get('tools', [])
-        tool_names = [tool['function']['name'] for tool in tools]
-        assert tool_names == ['duckduckgo_search', 'duckduckgo_news']
+        tools = mock_invoke.call_args[1].get("tools", [])
+        tool_names = [tool["function"]["name"] for tool in tools]
+        assert tool_names == ["get_current_stock_price"]
+
+    with patch.object(web_agent.model, "invoke", wraps=web_agent.model.invoke) as mock_invoke:
+        web_agent.run("What is currently happening in the news?")
+
+        # Get the tools passed to invoke
+        tools = mock_invoke.call_args[1].get("tools", [])
+        tool_names = [tool["function"]["name"] for tool in tools]
+        assert tool_names == ["duckduckgo_search", "duckduckgo_news"]

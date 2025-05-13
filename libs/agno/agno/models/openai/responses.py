@@ -194,7 +194,6 @@ class OpenAIResponses(Model):
 
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
-
         if tools:
             request_params["tools"] = self._format_tool_params(messages=messages, tools=tools)
 
@@ -560,6 +559,7 @@ class OpenAIResponses(Model):
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
         """
+        
         try:
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
@@ -825,7 +825,7 @@ class OpenAIResponses(Model):
         """Process the asynchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
-        async for stream_event in self.ainvoke_stream(messages=messages):
+        async for stream_event in self.ainvoke_stream(messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice):
             model_response, tool_use = self._process_stream_response(
                 stream_event=stream_event,
                 assistant_message=assistant_message,
