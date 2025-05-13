@@ -11,8 +11,6 @@ Example prompts to try:
 Run `pip install openai agno` to install the necessary dependencies.
 """
 
-from pathlib import Path
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.openai import OpenAITools

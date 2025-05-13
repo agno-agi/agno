@@ -1,6 +1,15 @@
 from agno.agent import Agent
 from agno.knowledge.pdf import PDFKnowledgeBase
+from agno.utils.media import (
+    SampleDataFileExtension,
+    download_knowledge_filters_sample_data,
+)
 from agno.vectordb.mongodb import MongoDb
+
+# Download all sample CVs and get their paths
+downloaded_cv_paths = download_knowledge_filters_sample_data(
+    num_files=5, file_extension=SampleDataFileExtension.PDF
+)
 
 mdb_connection_string = "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
 
@@ -12,7 +21,7 @@ mdb_connection_string = "mongodb+srv://<username>:<password>@cluster0.mongodb.ne
 knowledge_base = PDFKnowledgeBase(
     path=[
         {
-            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_1.pdf",
+            "path": downloaded_cv_paths[0],
             "metadata": {
                 "user_id": "jordan_mitchell",
                 "document_type": "cv",
@@ -20,7 +29,7 @@ knowledge_base = PDFKnowledgeBase(
             },
         },
         {
-            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_2.pdf",
+            "path": downloaded_cv_paths[1],
             "metadata": {
                 "user_id": "taylor_brooks",
                 "document_type": "cv",
@@ -28,7 +37,7 @@ knowledge_base = PDFKnowledgeBase(
             },
         },
         {
-            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_3.pdf",
+            "path": downloaded_cv_paths[2],
             "metadata": {
                 "user_id": "morgan_lee",
                 "document_type": "cv",
@@ -36,7 +45,7 @@ knowledge_base = PDFKnowledgeBase(
             },
         },
         {
-            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_4.pdf",
+            "path": downloaded_cv_paths[3],
             "metadata": {
                 "user_id": "casey_jordan",
                 "document_type": "cv",
@@ -44,7 +53,7 @@ knowledge_base = PDFKnowledgeBase(
             },
         },
         {
-            "path": "cookbook/agent_concepts/knowledge/filters/data/cv_5.pdf",
+            "path": downloaded_cv_paths[4],
             "metadata": {
                 "user_id": "alex_rivera",
                 "document_type": "cv",
