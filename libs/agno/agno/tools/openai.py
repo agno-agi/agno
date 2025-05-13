@@ -32,6 +32,9 @@ class OpenAITools(Toolkit):
         text_to_speech_model: OpenAITTSModel = "tts-1",
         text_to_speech_format: OpenAITTSFormat = "mp3",
         image_model: Optional[str] = "dall-e-3",
+        image_quality: Optional[str] = None,
+        image_size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = None,
+        image_style: Optional[Literal["vivid", "natural"]] = None,
         **kwargs,
     ):
         super().__init__(name="openai_tools", **kwargs)
@@ -46,6 +49,9 @@ class OpenAITools(Toolkit):
         self.tts_model = text_to_speech_model
         self.tts_format = text_to_speech_format
         self.image_model = image_model
+        self.image_quality = image_quality
+        self.image_style = image_style
+        self.image_size = image_size
 
         if enable_transcription:
             self.register(self.transcribe_audio)
@@ -85,18 +91,27 @@ class OpenAITools(Toolkit):
             prompt (str): The text prompt to generate the image from.
         """
         try:
+            extra_params = {
+                "size": self.image_size,
+                "quality": self.image_quality,
+                "style": self.image_style,
+            }
+            extra_params = {k: v for k, v in extra_params.items() if v is not None}
+
             # gpt-image-1 by default outputs a base64 encoded image but other models do not
             # so we add a response_format parameter to have consistent output.
             if self.image_model and self.image_model.startswith("gpt-image"):
                 response = OpenAIClient().images.generate(
                     model=self.image_model,
                     prompt=prompt,
+                    **extra_params,
                 )
             else:
                 response = OpenAIClient().images.generate(
                     model=self.image_model,
                     prompt=prompt,
                     response_format="b64_json",
+                    **extra_params,
                 )
             data = None
             if hasattr(response, "data") and response.data:

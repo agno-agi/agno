@@ -31,7 +31,7 @@ def test_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = agent.run("What's happening in France?", stream=True)
+    response_stream = agent.run("What's happening in France?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -76,7 +76,7 @@ async def test_async_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What's happening in France?", stream=True)
+    response_stream = await agent.arun("What's happening in France?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
