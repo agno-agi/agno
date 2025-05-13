@@ -1,4 +1,3 @@
-import warnings
 from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass
 from datetime import timedelta
@@ -8,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_warning, logger
 from agno.utils.mcp import get_entrypoint_for_tool
 
 try:
@@ -16,57 +15,30 @@ try:
     from mcp.client.sse import sse_client
     from mcp.client.stdio import stdio_client
     from mcp.client.streamable_http import streamablehttp_client
+    from mcp.shared.exceptions import McpError
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
 
 
-class ToDictParamsMixin:
-    """Mixin for converting dataclass parameters to dictionary with optional filtering."""
-
-    def to_dict(self, filter_none_params: Optional[set[str]] = None) -> Dict[str, Any]:
-        """Convert dataclass to dictionary, optionally filtering out None values for specified parameters.
-        Especially useful to use with default values from the MCP Python SDK.
-
-        Args:
-            filter_none_params: Set of parameter names to exclude if their value is None.
-                              If None, no parameters are filtered.
-
-        Returns:
-            Dict[str, Any]: Dictionary of parameters
-        """
-        if filter_none_params is None:
-            return asdict(self)
-
-        return {k: v for k, v in asdict(self).items() if v is not None or k not in filter_none_params}
-
-
 @dataclass
-class SSEClientParams(ToDictParamsMixin):
+class SSEClientParams:
     """Parameters for SSE client connection."""
 
     url: str
     headers: Optional[Dict[str, Any]] = None
-    timeout: Optional[float] = None
-    sse_read_timeout: Optional[float] = None
-
-    def to_dict_without_none_timeout_params(self) -> Dict[str, Any]:
-        """Convert parameters to dictionary, filtering out None values for timeout parameters, so MCP python SDK parameters can be used."""
-        return self.to_dict(filter_none_params={"timeout", "sse_read_timeout"})
+    timeout: Optional[float] = 5
+    sse_read_timeout: Optional[float] = 60 * 5
 
 
 @dataclass
-class StreamableHTTPClientParams(ToDictParamsMixin):
+class StreamableHTTPClientParams:
     """Parameters for Streamable HTTP client connection."""
 
     url: str
     headers: Optional[Dict[str, Any]] = None
-    timeout: Optional[float] = None
-    sse_read_timeout: Optional[float] = None
+    timeout: Optional[timedelta] = timedelta(seconds=30)
+    sse_read_timeout: Optional[timedelta] = timedelta(seconds=60 * 5)
     terminate_on_close: Optional[bool] = None
-
-    def to_dict_without_none_timeout_params(self) -> Dict[str, Any]:
-        """Convert parameters to dictionary, filtering out None values for timeout parameters, so MCP python SDK parameters can be used."""
-        return self.to_dict(filter_none_params={"timeout", "sse_read_timeout"})
 
 
 class MCPTools(Toolkit):
@@ -74,11 +46,10 @@ class MCPTools(Toolkit):
     A toolkit for integrating Model Context Protocol (MCP) servers with Agno agents.
     This allows agents to access tools, resources, and prompts exposed by MCP servers.
 
-    Can be used in four ways:
+    Can be used in three ways:
     1. Direct initialization with a ClientSession
     2. As an async context manager with StdioServerParameters
-    3. As an async context manager with SSE endpoints
-    4. As an async context manager with Streamable HTTP endpoints
+    3. As an async context manager with SSE or Streamable HTTP client parameters
     """
 
     def __init__(
@@ -189,22 +160,18 @@ class MCPTools(Toolkit):
                 await self.initialize()
             return self
 
-        # Create a new session using stdio_client or sse_client based on transport
+        # Create a new session using stdio_client, sse_client or streamablehttp_client based on transport
         if self.transport == "sse":
-            sse_args = (
-                self.server_params.to_dict_without_none_timeout_params() if self.server_params is not None else {}
-            )  # type: ignore
-            if "url" not in sse_args:
-                sse_args["url"] = self.url
-            self._context = sse_client(**sse_args)  # type: ignore
+            sse_params = asdict(self.server_params) if self.server_params is not None else {}
+            if "url" not in sse_params:
+                sse_params["url"] = self.url
+            self._context = sse_client(**sse_params)
         elif self.transport == "streamable-http":
-            streamable_http_args = (
-                self.server_params.to_dict_without_none_timeout_params() if self.server_params is not None else {}
-            )  # type: ignore
-            if "url" not in streamable_http_args:
-                streamable_http_args["url"] = self.url
-            self._context = streamablehttp_client(**streamable_http_args)  # type: ignore
-        else:
+            streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}
+            if "url" not in streamable_http_params:
+                streamable_http_params["url"] = self.url
+            self._context = streamablehttp_client(**streamable_http_params)
+        elif self.transport == "stdio":
             if self.server_params is None:
                 raise ValueError("server_params must be provided when using stdio transport.")
             self._context = stdio_client(self.server_params)  # type: ignore
@@ -297,17 +264,14 @@ class MultiMCPTools(Toolkit):
     Can be used in three ways:
     1. Direct initialization with a ClientSession
     2. As an async context manager with StdioServerParameters
-    3. As an async context manager with SSE endpoints
-    4. As an async context manager with Streamable HTTP endpoints
+    3. As an async context manager with SSE or Streamable HTTP endpoints
     """
 
     def __init__(
         self,
         commands: Optional[List[str]] = None,
         urls: Optional[List[str]] = None,
-        urls_transport: Optional[
-            Union[List[Literal["sse", "streamable-http"]], Literal["sse", "streamable-http"]]
-        ] = None,
+        urls_transports: Optional[List[Literal["sse", "streamable-http"]]] = None,
         *,
         env: Optional[dict[str, str]] = None,
         server_params_list: Optional[
@@ -324,8 +288,8 @@ class MultiMCPTools(Toolkit):
 
         Args:
             commands: List of commands to run to start the servers. Should be used in conjunction with env.
-            urls: List of URLs for SSE or Streamable HTTP endpoints.
-            urls_transport: List of transport protocols to use for the URLs, either "sse" or "streamable-http" or string "sse" or "streamable-http".
+            urls: List of URLs for SSE and/or Streamable HTTP endpoints.
+            urls_transports: List of transports to use for the given URLs.
             server_params_list: List of StdioServerParameters or SSEClientParams or StreamableHTTPClientParams for creating new sessions.
             env: The environment variables to pass to the servers. Should be used in conjunction with commands.
             client: The underlying MCP client (optional, used to prevent garbage collection).
@@ -335,17 +299,14 @@ class MultiMCPTools(Toolkit):
         """
         super().__init__(name="MultiMCPTools", **kwargs)
 
-        if urls is not None and urls_transport is None:
-            warnings.warn(
-                "The default transport 'sse' will be changed to 'streamable-http' in future releases as advised in https://modelcontextprotocol.io/specification/2025-03-26/changelog#major-changes"
-                "Please explicitly set urls_transport='streamable-http' to future-proof your code.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            urls_transport = "sse"
-
-        if urls is not None and isinstance(urls_transport, str):
-            urls_transport = len(urls) * [urls_transport]
+        if urls is not None:
+            if urls_transports is None:
+                log_warning(
+                    "The default transport 'sse' will be used. You can explicitly set the transports by providing the urls_transports parameter."
+                )
+            else:
+                if len(urls) != len(urls_transports):
+                    raise ValueError("urls and urls_transports must be of the same length")
 
         # Set these after `__init__` to bypass the `_check_tools_filters`
         # beacuse tools are not available until `initialize()` is called.
@@ -361,7 +322,6 @@ class MultiMCPTools(Toolkit):
         self.timeout_seconds = timeout_seconds
         self.commands: Optional[List[str]] = commands
         self.urls: Optional[List[str]] = urls
-        self.urls_transport: Optional[List[Literal["sse", "streamable-http"]]] = urls_transport
         # Merge provided env with system env
         if env is not None:
             env = {
@@ -383,11 +343,15 @@ class MultiMCPTools(Toolkit):
                 self.server_params_list.append(StdioServerParameters(command=cmd, args=arguments, env=env))
 
         if urls is not None:
-            for url, transport in zip(urls, self.urls_transport):
-                if transport == "sse":
+            if urls_transports is not None:
+                for url, transport in zip(urls, urls_transports):
+                    if transport == "streamable-http":
+                        self.server_params_list.append(StreamableHTTPClientParams(url=url))
+                    else:
+                        self.server_params_list.append(SSEClientParams(url=url))
+            else:
+                for url in urls:
                     self.server_params_list.append(SSEClientParams(url=url))
-                elif transport == "streamable-http":
-                    self.server_params_list.append(StreamableHTTPClientParams(url=url))
 
         self._async_exit_stack = AsyncExitStack()
 
@@ -405,22 +369,21 @@ class MultiMCPTools(Toolkit):
                     ClientSession(read, write, read_timeout_seconds=timedelta(seconds=self.timeout_seconds))
                 )
                 await self.initialize(session)
-
             # Handle SSE connections
-            if isinstance(server_params, SSEClientParams):
-                sse_args = server_params.to_dict_without_none_timeout_params()
-                sse_transport = await self._async_exit_stack.enter_async_context(sse_client(**sse_args))
-                read, write = sse_transport
+            elif isinstance(server_params, SSEClientParams):
+                client_connection = await self._async_exit_stack.enter_async_context(
+                    sse_client(**asdict(server_params))
+                )
+                read, write = client_connection
                 session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
                 await self.initialize(session)
 
             # Handle Streamable HTTP connections
-            if isinstance(server_params, StreamableHTTPClientParams):
-                streamable_http_args = server_params.to_dict_without_none_timeout_params()
-                streamable_http_transport = await self._async_exit_stack.enter_async_context(
-                    streamablehttp_client(**streamable_http_args)
+            elif isinstance(server_params, StreamableHTTPClientParams):
+                client_connection = await self._async_exit_stack.enter_async_context(
+                    streamablehttp_client(**asdict(server_params))
                 )
-                read, write, _ = streamable_http_transport
+                read, write = client_connection[0:2]
                 session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
                 await self.initialize(session)
 
