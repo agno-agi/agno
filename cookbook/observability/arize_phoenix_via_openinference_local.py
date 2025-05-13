@@ -2,12 +2,9 @@
 This example shows how to instrument your agno agent with OpenInference and send traces to Arize Phoenix.
 
 1. Install dependencies: pip install arize-phoenix openai openinference-instrumentation-agno opentelemetry-sdk opentelemetry-exporter-otlp
-2. Setup your Arize Phoenix account and get your API key: https://phoenix.arize.com/.
-3. Set your Arize Phoenix API key as an environment variable:
-  - export ARIZE_PHOENIX_API_KEY=<your-key>
+2. Run `phoenix serve` to start the local collector.
 """
 
-import asyncio
 import os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -15,8 +12,7 @@ from agno.tools.yfinance import YFinanceTools
 
 from phoenix.otel import register
 
-os.environ["PHOENIX_CLIENT_HEADERS"] = f"api_key={os.getenv('ARIZE_PHOENIX_API_KEY')}";
-os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "https://app.phoenix.arize.com";
+os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:6006";
 
 # configure the Phoenix tracer
 tracer_provider = register(
