@@ -1843,7 +1843,7 @@ class Agent:
                         log_debug("Setting stream=False as response_model is set")
                         self.stream = False
 
-                    rr = self._arun(
+                    resp = await self._arun(
                         message=message,
                         stream=False,
                         user_id=user_id,
@@ -1857,8 +1857,7 @@ class Agent:
                         knowledge_filters=effective_filters,
                         run_response=run_response,
                         **kwargs,
-                    )
-                    resp = await rr.__anext__()
+                    ).__anext__()
 
                     # Do a final check confirming the content is in the response_model format
                     if isinstance(resp.content, self.response_model):
@@ -1900,7 +1899,7 @@ class Agent:
                         )  # type: ignore[assignment]
                         return resp
                     else:
-                        resp = self._arun(
+                        return await self._arun(
                             message=message,
                             stream=False,
                             user_id=user_id,
@@ -1914,8 +1913,7 @@ class Agent:
                             knowledge_filters=effective_filters,
                             run_response=run_response,
                             **kwargs,
-                        )  # type: ignore[assignment]
-                        return await resp.__anext__()
+                        ).__anext__()  # type: ignore[assignment]
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -2505,7 +2503,7 @@ class Agent:
         # If we haven't instantiated the memory yet, set it to the memory from the database
         if self.memory is None:
             self.memory = session.memory  # type: ignore
-        
+
         if not (isinstance(self.memory, AgentMemory) or isinstance(self.memory, Memory)):
             # Is it a dict of `AgentMemory`?
             if isinstance(self.memory, dict) and "create_user_memories" in self.memory:
