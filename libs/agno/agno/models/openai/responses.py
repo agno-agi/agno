@@ -559,7 +559,6 @@ class OpenAIResponses(Model):
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
         """
-        
         try:
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
@@ -802,7 +801,7 @@ class OpenAIResponses(Model):
         """Process the synchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
-        for stream_event in self.invoke_stream(messages=messages):
+        for stream_event in self.invoke_stream(messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice):
             model_response, tool_use = self._process_stream_response(
                 stream_event=stream_event,
                 assistant_message=assistant_message,
