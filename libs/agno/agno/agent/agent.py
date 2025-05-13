@@ -2460,12 +2460,17 @@ class Agent:
         # If we haven't instantiated the memory yet, set it to the memory from the database
         if self.memory is None:
             self.memory = session.memory  # type: ignore
-
+        
         if not (isinstance(self.memory, AgentMemory) or isinstance(self.memory, Memory)):
             # Is it a dict of `AgentMemory`?
             if isinstance(self.memory, dict) and "create_user_memories" in self.memory:
                 # Convert dict to AgentMemory
                 self.memory = AgentMemory(**self.memory)
+                # Convert dict to Memory
+            elif isinstance(self.memory, dict):
+                memory_dict = self.memory
+                memory_dict.pop("runs")
+                self.memory = Memory(**memory_dict)
             else:
                 raise TypeError(f"Expected memory to be a dict or AgentMemory, but got {type(self.memory)}")
 
