@@ -247,7 +247,7 @@ class AwsBedrock(Model):
             tool_config = None
             if tools is not None:
                 tool_config = {"tools": self._format_tools_for_request(tools)}
-                
+
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
@@ -282,7 +282,7 @@ class AwsBedrock(Model):
             tool_config = None
             if tools is not None:
                 tool_config = {"tools": self._format_tools_for_request(tools)}
-            
+
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
