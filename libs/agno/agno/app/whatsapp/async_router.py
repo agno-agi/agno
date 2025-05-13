@@ -1,6 +1,6 @@
 from typing import Optional
 import logging
-from agno.media import Image, Video, Audio
+from agno.media import Image, Video, Audio, File
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 from agno.agent.agent import Agent
@@ -64,33 +64,36 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
                         continue
 
                     message = messages[0]
+                    message_image = None
+                    message_video=None
+                    message_audio=None
+                    message_doc=None
                     if message.get("type") == "text":
                     # Extract message details
                         message_text = message["text"]["body"]
-                        message_image = None
-                        message_video=None
-                        message_audio=None
+                        
                     elif message.get("type") == "image":
                         try:
                             message_text = message["image"]["caption"]
                         except Exception:
                             message_text="Describe the image"
                         message_image=message["image"]["id"]
-                        message_video = None
-                        message_audio=None
+
                     elif message.get("type") == "video":
                         try:
                             message_text = message["video"]["caption"]
                         except Exception:
                             message_text="Describe the video"
                         message_video=message["video"]["id"]
-                        message_image=None
-                        message_audio=None
+
                     elif message.get("type") == "audio":
                         message_text="reply to audio"
                         message_audio=message["audio"]["id"]
-                        message_image=None
-                        message_video=None
+ 
+                    elif message.get("type") == "document":
+                        message_text="Process the document"
+                        message_doc=message["document"]["id"]
+                        logger.info(message_doc)
                     else:
                         continue
                     phone_number = message["from"]
@@ -99,13 +102,16 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
                     if agent:
                         response = agent.run(message_text,user_id=phone_number,
                                              images=[Image(content=get_media(message_image))] if message_image else None,
+                                             files=[File(content=get_media(message_doc))] if message_doc else None,
                                              videos=[Video(content=get_media(message_video))] if message_video else None,
                                              audio=[Audio(content=get_media(message_audio))] if message_audio else None,)
                     elif team:
                         response = team.run(message_text,user_id=phone_number,
+                                            files=[File(content=get_media(message_doc))] if message_doc else None,
                                              images=[Image(content=get_media(message_image))] if message_image else None,
                                              videos=[Video(content=get_media(message_video))] if message_video else None,
-                                             audio=[Audio(content=get_media(message_audio))] if message_audio else None,)
+                                             audio=[Audio(content=get_media(message_audio))] if message_audio else None,
+                                             )
                     WhatsAppTools().send_text_message_sync(
                         recipient=phone_number, text=response.content
                     )
