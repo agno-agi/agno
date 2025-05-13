@@ -801,7 +801,9 @@ class OpenAIResponses(Model):
         """Process the synchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
-        for stream_event in self.invoke_stream(messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice):
+        for stream_event in self.invoke_stream(
+            messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice
+        ):
             model_response, tool_use = self._process_stream_response(
                 stream_event=stream_event,
                 assistant_message=assistant_message,
@@ -824,7 +826,9 @@ class OpenAIResponses(Model):
         """Process the asynchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
-        async for stream_event in self.ainvoke_stream(messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice):
+        async for stream_event in self.ainvoke_stream(
+            messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice
+        ):
             model_response, tool_use = self._process_stream_response(
                 stream_event=stream_event,
                 assistant_message=assistant_message,

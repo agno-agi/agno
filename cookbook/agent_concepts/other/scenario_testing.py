@@ -5,9 +5,7 @@ Prerequisites:
 - Install scenario: `pip install scenario`
 """
 
-
 import pytest
-
 from scenario import Scenario, TestingAgent, scenario_cache
 
 Scenario.configure(testing_agent=TestingAgent(model="openai/gpt-4o-mini"))
@@ -57,7 +55,12 @@ class VegetarianRecipeAgent:
     def run(self, message: str):
         self.history.append({"role": "user", "content": message})
 
-        agent = Agent(model=OpenAIChat(id="gpt-4o"), markdown=True, debug_mode=True, instructions="You are a vegetarian recipe agent")
+        agent = Agent(
+            model=OpenAIChat(id="gpt-4o"),
+            markdown=True,
+            debug_mode=True,
+            instructions="You are a vegetarian recipe agent",
+        )
 
         response = agent.run(message)
         result = response.content
