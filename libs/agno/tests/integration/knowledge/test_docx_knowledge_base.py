@@ -189,7 +189,7 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
         "Tell me about Jordan Mitchell's experience?", knowledge_filters={"user_id": "jordan_mitchell"}, markdown=True
     )
 
-    assert "Jordan" in response.content.lower()
+    assert "jordan" in response.content.lower()
 
 
 @pytest.mark.asyncio
