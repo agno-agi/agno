@@ -34,6 +34,7 @@ class Milvus(VectorDb):
         token: Optional[str] = None,
         search_type: SearchType = SearchType.vector,
         reranker: Optional[Reranker] = None,
+        sparse_vector_dimensions: int = 10000,
         **kwargs,
     ):
         """
@@ -79,6 +80,7 @@ class Milvus(VectorDb):
         self._async_client: Optional[AsyncMilvusClient] = None
         self.search_type: SearchType = search_type
         self.reranker: Optional[Reranker] = reranker
+        self.sparse_vector_dimensions = sparse_vector_dimensions
         self.kwargs = kwargs
 
     @property
@@ -130,7 +132,7 @@ class Milvus(VectorDb):
         # Create sparse vector (word_id: tf-idf_score)
         sparse_vector = {}
         for word, count in word_counts.items():
-            word_id = hash(word) % 10000  # Limit to 10000 dimensions
+            word_id = hash(word) % self.sparse_vector_dimensions
             # Simple tf-idf-like score
             score = count * np.log(1 + len(words))
             sparse_vector[word_id] = float(score)
@@ -234,7 +236,8 @@ class Milvus(VectorDb):
                     }
                 )
             else:
-                data["vector"] = document.embedding  # List[float] or None
+                vector_data: Optional[List[float]] = document.embedding
+                data["vector"] = vector_data
 
         return data
 
@@ -259,20 +262,23 @@ class Milvus(VectorDb):
         )
 
     def create(self) -> None:
-        """Create a collection based on search type."""
-        if not self.exists():
-            if self.search_type == SearchType.hybrid:
-                self._create_hybrid_collection()
-            else:
-                _distance = self._get_metric_type()
-                log_debug(f"Creating collection: {self.collection}")
-                self.client.create_collection(
-                    collection_name=self.collection,
-                    dimension=self.dimensions,
-                    metric_type=_distance,
-                    id_type="string",
-                    max_length=65_535,
-                )
+        """Create a collection based on search type if it doesn't exist."""
+        if self.exists():
+            return
+
+        if self.search_type == SearchType.hybrid:
+            self._create_hybrid_collection()
+            return
+
+        _distance = self._get_metric_type()
+        log_debug(f"Creating collection: {self.collection}")
+        self.client.create_collection(
+            collection_name=self.collection,
+            dimension=self.dimensions,
+            metric_type=_distance,
+            id_type="string",
+            max_length=65_535,
+        )
 
     async def async_create(self) -> None:
         """Create collection asynchronously based on search type."""
@@ -612,12 +618,15 @@ class Milvus(VectorDb):
             return []
 
         try:
+            # Refer to docs for details- https://milvus.io/docs/multi-vector-search.md
+
             # Create search request for dense vectors
             dense_search_param = {
                 "data": [dense_vector],
                 "anns_field": "dense_vector",
                 "param": {"metric_type": self._get_metric_type(), "params": {"nprobe": 10}},
-                "limit": limit * 2,  # Get more results for reranking
+                "limit": limit
+                * 2,  # Fetch more candidates for better reranking quality - each vector search returns 2x results which are then merged and reranked
             }
 
             # Create search request for sparse vectors
@@ -625,7 +634,7 @@ class Milvus(VectorDb):
                 "data": [sparse_vector],
                 "anns_field": "sparse_vector",
                 "param": {"metric_type": "IP", "params": {"drop_ratio_build": 0.2}},
-                "limit": limit * 2,
+                "limit": limit * 2,  # Match dense search limit to ensure balanced candidate pool for reranking
             }
 
             # Create search requests
