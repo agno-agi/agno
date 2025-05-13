@@ -4,8 +4,10 @@ This example demonstrates how to use the Supabase MCP server to create create pr
 
 Setup:
 1. Install Python dependencies:
-   ```bash
-   pip install agno mcp-sdk
+
+```bash
+pip install agno mcp-sdk
+```
 
 2. Create a Supabase Access Token: https://supabase.com/dashboard/account/tokens and set it as the SUPABASE_ACCESS_TOKEN environment variable.
 """
@@ -18,6 +20,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
 from agno.tools.reasoning import ReasoningTools
+from agno.utils.log import log_error, log_exception, log_info
 
 
 async def run_agent(task: str) -> None:
