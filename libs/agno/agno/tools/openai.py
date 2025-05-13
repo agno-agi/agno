@@ -32,6 +32,9 @@ class OpenAITools(Toolkit):
         text_to_speech_model: OpenAITTSModel = "tts-1",
         text_to_speech_format: OpenAITTSFormat = "mp3",
         image_model: Optional[str] = "dall-e-3",
+        image_quality: Optional[Literal["standard", "hd"]] = "hd",  # "standard" or "hd"
+        image_size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = "1024x1024",
+        image_style: Optional[Literal["vivid", "natural"]] = "vivid",
         **kwargs,
     ):
         super().__init__(name="openai_tools", **kwargs)
@@ -46,6 +49,9 @@ class OpenAITools(Toolkit):
         self.tts_model = text_to_speech_model
         self.tts_format = text_to_speech_format
         self.image_model = image_model
+        self.image_quality = image_quality
+        self.image_style = image_style
+        self.image_size = image_size
 
         if enable_transcription:
             self.register(self.transcribe_audio)
