@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agno.agent import Agent
-from agno.tools.azure_openai import AzureOpenAITools
+from agno.tools.models.azure_openai import AzureOpenAITools
 
 
 @pytest.fixture
