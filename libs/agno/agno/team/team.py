@@ -584,8 +584,9 @@ class Team:
 
         self.initialize_team(session_id=session_id)
 
-        effective_filters = {}
-        # Handle knowledge filters
+        effective_filters = knowledge_filters
+        
+        # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
             """
                 initialize metadata (specially required in case when load is commented out)
