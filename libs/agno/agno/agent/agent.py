@@ -1098,7 +1098,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -1134,6 +1134,13 @@ class Agent:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
+
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+
+        # Can't have stream_intermediate_steps if stream is False
+        if stream is False:
+            stream_intermediate_steps = False
 
         # Use the default user_id and session_id when necessary
         if user_id is None:
@@ -1803,6 +1810,13 @@ class Agent:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
+
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+
+        # Can't have stream_intermediate_steps if stream is False
+        if stream is False:
+            stream_intermediate_steps = False
 
         # Use the default user_id and session_id when necessary
         if user_id is None:
