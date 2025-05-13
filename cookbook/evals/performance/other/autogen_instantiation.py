@@ -2,10 +2,9 @@
 
 from typing import Literal
 
+from agno.eval.performance import PerformanceEval
 from autogen_agentchat.agents import AssistantAgent
 from autogen_ext.models.openai import OpenAIChatCompletionClient
-
-from agno.eval.perf import PerfEval
 
 
 def get_weather(city: Literal["nyc", "sf"]):
@@ -31,13 +30,14 @@ def instantiate_agent():
                 "function_calling": True,
                 "json_output": False,
                 "family": "gpt-4o",
+                "structured_output": True,
             },
         ),
         tools=tools,
     )
 
 
-autogen_instantiation = PerfEval(func=instantiate_agent, num_iterations=1000)
+autogen_instantiation = PerformanceEval(func=instantiate_agent, num_iterations=1000)
 
 if __name__ == "__main__":
-    autogen_instantiation.run(print_results=True)
+    autogen_instantiation.run(print_results=True, print_summary=True)
