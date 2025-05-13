@@ -9,10 +9,10 @@ This example shows how to use langfuse via OpenLIT to trace model calls.
 
 import base64
 import os
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
+
 
 LANGFUSE_AUTH = base64.b64encode(
     f"{os.getenv('LANGFUSE_PUBLIC_KEY')}:{os.getenv('LANGFUSE_SECRET_KEY')}".encode()
@@ -42,7 +42,6 @@ trace.set_tracer_provider(trace_provider)
 tracer = trace.get_tracer(__name__)
 
 import openlit
-
 # Initialize OpenLIT instrumentation. The disable_batch flag is set to true to process traces immediately.
 openlit.init(tracer=tracer, disable_batch=True)
 
@@ -53,4 +52,4 @@ agent = Agent(
     debug_mode=True,
 )
 
-agent.run("What is currently trending on Twitter?")
+agent.print_response("What is currently trending on Twitter?")
