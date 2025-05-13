@@ -15,6 +15,4 @@ agent = Agent(
     markdown=True,
 )
 
-agent.print_response(
-    "Please search the web for the latest news regarding Anthropic", stream=True
-)
+agent.print_response("What's the latest with Anthropic?", stream=True)

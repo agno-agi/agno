@@ -26,7 +26,7 @@ class MovieScript(BaseModel):
 
 
 agent = Agent(
-    model=AzureAIFoundry(id="Phi-4"),
+    model=AzureAIFoundry(id="gpt-4o"),
     description="You help people write movie scripts.",
     response_model=MovieScript,
     # debug_mode=True,

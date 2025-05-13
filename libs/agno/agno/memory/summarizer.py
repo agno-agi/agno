@@ -26,13 +26,6 @@ class MemorySummarizer(BaseModel):
                 exit(1)
             self.model = OpenAIChat(id="gpt-4o")
 
-        # Set response_format if it is not set on the Model
-        if self.use_structured_outputs:
-            self.model.response_format = SessionSummary
-            self.model.structured_outputs = True
-        else:
-            self.model.response_format = {"type": "json_object"}
-
     def get_system_message(self, messages_for_summarization: List[Dict[str, str]]) -> Message:
         # -*- Return a system message for summarization
         system_prompt = dedent("""\
@@ -95,6 +88,12 @@ class MemorySummarizer(BaseModel):
         # Update the Model (set defaults, add logit etc.)
         self.update_model()
 
+        # Set response_format if it is not set on the Model
+        if self.use_structured_outputs:
+            response_format: Any = SessionSummary
+        else:
+            response_format = {"type": "json_object"}
+
         # Convert the message pairs to a list of dictionaries
         messages_for_summarization: List[Dict[str, str]] = []
         for message_pair in message_pairs:
@@ -115,7 +114,7 @@ class MemorySummarizer(BaseModel):
 
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
-        response = self.model.response(messages=messages_for_model)
+        response = self.model.response(messages=messages_for_model, response_format=response_format)
         log_debug("*********** MemorySummarizer End ***********")
 
         # If the model natively supports structured outputs, the parsed value is already in the structured format

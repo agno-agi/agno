@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.message import Citations, UrlCitation
@@ -46,13 +48,14 @@ class Perplexity(OpenAILike):
     supports_native_structured_outputs: bool = False
     supports_json_schema_outputs: bool = True
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_kwargs(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
-
-        Returns:
-            Dict[str, Any]: A dictionary of keyword arguments for API requests.
         """
         # Define base request parameters
         base_params: Dict[str, Any] = {
@@ -64,8 +67,8 @@ class Perplexity(OpenAILike):
             "frequency_penalty": self.frequency_penalty,
         }
 
-        if self.response_format is not None:
-            base_params["response_format"] = self.response_format
+        if response_format is not None:
+            base_params["response_format"] = response_format
 
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
@@ -74,7 +77,7 @@ class Perplexity(OpenAILike):
             request_params.update(self.request_params)
         return request_params
 
-    def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion]) -> ModelResponse:
+    def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion], **kwargs) -> ModelResponse:
         """
         Parse the Perplexity response into a ModelResponse.
 
