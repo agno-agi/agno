@@ -3528,18 +3528,19 @@ class Agent:
         from agno.document import Document
 
         # Validate the filters against known valid filter keys
-        valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+        if self.knowledge is not None:
+            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
 
-        # Warn about invalid filter keys
-        if invalid_keys:
-            # type: ignore
-            log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-            log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+            # Warn about invalid filter keys
+            if invalid_keys:
+                # type: ignore
+                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
 
-            # Only use valid filters
-            filters = valid_filters
-            if not filters:
-                log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                # Only use valid filters
+                filters = valid_filters
+                if not filters:
+                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
         if self.retriever is not None and callable(self.retriever):
             from inspect import signature
@@ -3586,17 +3587,18 @@ class Agent:
         from agno.document import Document
 
         # Validate the filters against known valid filter keys
-        valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+        if self.knowledge is not None:
+            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
 
-        # Warn about invalid filter keys
-        if invalid_keys:  # type: ignore
-            log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-            log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+            # Warn about invalid filter keys
+            if invalid_keys:  # type: ignore
+                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
 
-            # Only use valid filters
-            filters = valid_filters
-            if not filters:
-                log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                # Only use valid filters
+                filters = valid_filters
+                if not filters:
+                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
         if self.retriever is not None and callable(self.retriever):
             from inspect import isawaitable, signature
