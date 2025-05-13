@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
+
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import MessageData, Model
@@ -81,8 +83,11 @@ class Cohere(Model):
         self.async_client = CohereAsyncClient(**_client_params)
         return self.async_client  # type: ignore
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_kwargs(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         _request_params: Dict[str, Any] = {}
         if self.temperature:
             _request_params["temperature"] = self.temperature
@@ -101,11 +106,11 @@ class Cohere(Model):
         if self.presence_penalty:
             _request_params["presence_penalty"] = self.presence_penalty
 
-        if self.response_format:
-            _request_params["response_format"] = self.response_format
+        if response_format:
+            _request_params["response_format"] = response_format
 
-        if self._tools is not None and len(self._tools) > 0:
-            _request_params["tools"] = self._tools
+        if tools is not None and len(tools) > 0:
+            _request_params["tools"] = tools
             # Fix optional parameters where the "type" is [type, null]
             for tool in _request_params["tools"]:  # type: ignore
                 if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
@@ -119,18 +124,18 @@ class Cohere(Model):
             _request_params.update(self.request_params)
         return _request_params
 
-    def invoke(self, messages: List[Message]) -> ChatResponse:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> ChatResponse:
         """
         Invoke a non-streamed chat response from the Cohere API.
-
-        Args:
-            messages (List[Message]): The list of messages.
-
-        Returns:
-            ChatResponse: The chat response.
         """
 
-        request_kwargs = self.request_kwargs
+        request_kwargs = self.get_request_kwargs(response_format=response_format, tools=tools)
 
         try:
             return self.get_client().chat(model=self.id, messages=format_messages(messages), **request_kwargs)  # type: ignore
@@ -138,17 +143,17 @@ class Cohere(Model):
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[StreamedChatResponseV2]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Iterator[StreamedChatResponseV2]:
         """
         Invoke a streamed chat response from the Cohere API.
-
-        Args:
-            messages (List[Message]): The list of messages.
-
-        Returns:
-            Iterator[StreamedChatResponseV2]: An iterator of streamed chat responses.
         """
-        request_kwargs = self.request_kwargs
+        request_kwargs = self.get_request_kwargs(response_format=response_format, tools=tools)
 
         try:
             return self.get_client().chat_stream(
@@ -160,17 +165,17 @@ class Cohere(Model):
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message]) -> ChatResponse:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> ChatResponse:
         """
         Asynchronously invoke a non-streamed chat response from the Cohere API.
-
-        Args:
-            messages (List[Message]): The list of messages.
-
-        Returns:
-            ChatResponse: The chat response.
         """
-        request_kwargs = self.request_kwargs
+        request_kwargs = self.get_request_kwargs(response_format=response_format, tools=tools)
 
         try:
             return await self.get_async_client().chat(
@@ -182,17 +187,17 @@ class Cohere(Model):
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[StreamedChatResponseV2]:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> AsyncIterator[StreamedChatResponseV2]:
         """
         Asynchronously invoke a streamed chat response from the Cohere API.
-
-        Args:
-            messages (List[Message]): The list of messages.
-
-        Returns:
-            AsyncIterator[StreamedChatResponseV2]: An async iterator of streamed chat responses.
         """
-        request_kwargs = self.request_kwargs
+        request_kwargs = self.get_request_kwargs(response_format=response_format, tools=tools)
 
         try:
             async for response in self.get_async_client().chat_stream(
@@ -205,7 +210,7 @@ class Cohere(Model):
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def parse_provider_response(self, response: ChatResponse) -> ModelResponse:
+    def parse_provider_response(self, response: ChatResponse, **kwargs) -> ModelResponse:
         """
         Parse the model provider response.
 
@@ -310,12 +315,20 @@ class Cohere(Model):
         return model_response, tool_use
 
     def process_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data: MessageData,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[ModelResponse]:
         """Process the synchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
-        for response in self.invoke_stream(messages=messages):
+        for response in self.invoke_stream(
+            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+        ):
             model_response, tool_use = self._process_stream_response(
                 response=response, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
             )
@@ -323,12 +336,20 @@ class Cohere(Model):
                 yield model_response
 
     async def aprocess_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data: MessageData,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[ModelResponse]:
         """Process the asynchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
-        async for response in self.ainvoke_stream(messages=messages):
+        async for response in self.ainvoke_stream(
+            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+        ):
             model_response, tool_use = self._process_stream_response(
                 response=response, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
             )

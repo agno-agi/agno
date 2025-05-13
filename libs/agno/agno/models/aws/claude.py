@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.anthropic import Claude as AnthropicClaude
@@ -76,10 +78,8 @@ class Claude(AnthropicClaude):
         Returns:
             AnthropicBedrock: The Bedrock client.
         """
-        if self.client is not None:
+        if self.client is not None and not self.client.is_closed():
             return self.client
-
-        client_params = {}
 
         if self.session:
             credentials = self.session.get_credentials()
@@ -117,8 +117,6 @@ class Claude(AnthropicClaude):
         """
         if self.async_client is not None:
             return self.async_client
-
-        client_params = {}
 
         if self.session:
             credentials = self.session.get_credentials()
@@ -166,25 +164,20 @@ class Claude(AnthropicClaude):
             _request_params.update(self.request_params)
         return _request_params
 
-    def invoke(self, messages: List[Message]) -> AnthropicMessage:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> AnthropicMessage:
         """
         Send a request to the Anthropic API to generate a response.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            AnthropicMessage: The response from the model.
-
-        Raises:
-            APIConnectionError: If there are network connectivity issues
-            RateLimitError: If the API rate limit is exceeded
-            APIStatusError: For other API-related errors
         """
 
         try:
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             return self.get_client().messages.create(
                 model=self.id,
@@ -206,7 +199,13 @@ class Claude(AnthropicClaude):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Any:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Any:
         """
         Stream a response from the Anthropic API.
 
@@ -223,7 +222,7 @@ class Claude(AnthropicClaude):
         """
 
         chat_messages, system_message = format_messages(messages)
-        request_kwargs = self._prepare_request_kwargs(system_message)
+        request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
         try:
             return (
@@ -250,25 +249,20 @@ class Claude(AnthropicClaude):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message]) -> AnthropicMessage:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> AnthropicMessage:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            AnthropicMessage: The response from the model.
-
-        Raises:
-            APIConnectionError: If there are network connectivity issues
-            RateLimitError: If the API rate limit is exceeded
-            APIStatusError: For other API-related errors
         """
 
         try:
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             return await self.get_async_client().messages.create(
                 model=self.id,
@@ -290,7 +284,13 @@ class Claude(AnthropicClaude):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> AsyncIterator[Any]:
         """
         Stream an asynchronous response from the Anthropic API.
 
