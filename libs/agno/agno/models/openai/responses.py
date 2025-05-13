@@ -65,10 +65,6 @@ class OpenAIResponses(Model):
     client: Optional[OpenAI] = None
     async_client: Optional[AsyncOpenAI] = None
 
-    # Internal parameters. Not used for API requests
-    # Whether to use the structured outputs with this Model.
-    structured_outputs: bool = False
-
     # The role to map the message role to.
     role_map = {
         "system": "developer",

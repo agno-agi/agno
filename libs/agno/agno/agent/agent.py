@@ -1042,6 +1042,7 @@ class Agent:
                 reasoning_content=run_response.reasoning_content,
                 session_id=session_id,
                 event=RunEvent.run_completed,
+                run_response=run_response,
             )
 
         # Yield final response if not streaming so that run() can get the response

@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 
 from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
@@ -55,17 +56,18 @@ def route_team(web_agent, finance_agent, analysis_agent, shared_model):
 
 
 def test_tools_available_to_agents(route_team, shared_model):
-    route_team.run("What is the current stock price of AAPL?")
+    with patch.object(shared_model, 'invoke', wraps=shared_model.invoke) as mock_invoke:
+        route_team.run("What is the current stock price of AAPL?")
+        
+        # Get the tools passed to invoke
+        tools = mock_invoke.call_args[1].get('tools', [])
+        tool_names = [tool['function']['name'] for tool in tools]
+        assert tool_names == ['get_current_stock_price']
 
-    # Since the finance model was called last, the model should only have the finance functions
-    assert list(shared_model._functions.keys()) == [
-        "get_current_stock_price",
-    ]
-
-    route_team.run("What is currently happening in the news?")
-
-    # Since the web model was called last, the model should only have the web functions
-    assert list(shared_model._functions.keys()) == [
-        "duckduckgo_search",
-        "duckduckgo_news",
-    ]
+    with patch.object(shared_model, 'invoke', wraps=shared_model.invoke) as mock_invoke:
+        route_team.run("What is currently happening in the news?")
+        
+        # Get the tools passed to invoke
+        tools = mock_invoke.call_args[1].get('tools', [])
+        tool_names = [tool['function']['name'] for tool in tools]
+        assert tool_names == ['duckduckgo_search', 'duckduckgo_news']
