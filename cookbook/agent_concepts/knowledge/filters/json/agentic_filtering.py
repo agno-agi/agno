@@ -2,12 +2,15 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.knowledge.json import JSONKnowledgeBase
-from agno.utils.media import download_knowledge_filters_sample_data
+from agno.utils.media import (
+    SampleDataFileExtension,
+    download_knowledge_filters_sample_data,
+)
 from agno.vectordb.lancedb import LanceDb
 
 # Download all sample CVs and get their paths
 downloaded_cv_paths = download_knowledge_filters_sample_data(
-    num_files=5, file_extension="json"
+    num_files=5, file_extension=SampleDataFileExtension.JSON
 )
 
 # Initialize LanceDB

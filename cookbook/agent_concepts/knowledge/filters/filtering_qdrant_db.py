@@ -1,11 +1,14 @@
 from agno.agent import Agent
 from agno.knowledge.pdf import PDFKnowledgeBase
-from agno.utils.media import download_knowledge_filters_sample_data
+from agno.utils.media import (
+    SampleDataFileExtension,
+    download_knowledge_filters_sample_data,
+)
 from agno.vectordb.qdrant import Qdrant
 
 # Download all sample CVs and get their paths
 downloaded_cv_paths = download_knowledge_filters_sample_data(
-    num_files=5, file_extension="pdf"
+    num_files=5, file_extension=SampleDataFileExtension.PDF
 )
 
 COLLECTION_NAME = "filtering-cv"
