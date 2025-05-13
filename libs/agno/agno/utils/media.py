@@ -131,7 +131,7 @@ def download_knowledge_filters_sample_data(
 
     for i in range(1, num_files + 1):
         filename = f"cv_{i}.{file_extension.value}"
-        download_path = root_path / "data" / filename
+        download_path = root_path / "cookbook" / "data" / filename
         download_path.parent.mkdir(parents=True, exist_ok=True)
 
         download_file(
