@@ -486,9 +486,9 @@ class PgVector(VectorDb):
             # Build the base statement
             stmt = select(*columns)
 
-            # Apply filters if provided
-            if filters is not None:
-                stmt = stmt.where(self.table.c.filters.contains(filters))
+            # # Apply filters if provided
+            # if filters is not None:
+            #     stmt = stmt.where(self.table.c.filters.contains(filters))
 
             # Order the results based on the distance metric
             if self.distance == Distance.l2:
@@ -595,9 +595,9 @@ class PgVector(VectorDb):
             text_rank = func.ts_rank_cd(ts_vector, ts_query)
 
             # Apply filters if provided
-            if filters is not None:
-                # Use the contains() method for JSONB columns to check if the filters column contains the specified filters
-                stmt = stmt.where(self.table.c.filters.contains(filters))
+            # if filters is not None:
+            #     # Use the contains() method for JSONB columns to check if the filters column contains the specified filters
+            #     stmt = stmt.where(self.table.c.filters.contains(filters))
 
             # Order by the relevance rank
             stmt = stmt.order_by(text_rank.desc())
@@ -715,9 +715,9 @@ class PgVector(VectorDb):
             # Add the full-text search condition
             # stmt = stmt.where(ts_vector.op("@@")(ts_query))
 
-            # Apply filters if provided
-            if filters is not None:
-                stmt = stmt.where(self.table.c.filters.contains(filters))
+            # # Apply filters if provided
+            # if filters is not None:
+            #     stmt = stmt.where(self.table.c.filters.contains(filters))
 
             # Order the results by the hybrid score in descending order
             stmt = stmt.order_by(desc("hybrid_score"))
