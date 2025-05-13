@@ -1,7 +1,16 @@
 import base64
+from enum import Enum
 from pathlib import Path
+from typing import List
 
 import httpx
+
+
+class SampleDataFileExtension(str, Enum):
+    DOCX = "docx"
+    PDF = "pdf"
+    TXT = "txt"
+    JSON = "json"
 
 
 def download_image(url: str, output_path: str) -> bool:
@@ -102,3 +111,31 @@ def save_base64_data(base64_data: str, output_path: str) -> bool:
         return True
     except Exception as e:
         raise Exception(f"An unexpected error occurred while saving data to '{output_path}': {e}")
+
+
+def download_knowledge_filters_sample_data(
+    num_files: int = 5, file_extension: SampleDataFileExtension = SampleDataFileExtension.DOCX
+) -> List[str]:
+    """
+    Download sample data files with configurable file extension.
+
+    Args:
+        num_files (int): Number of files to download
+        file_extension (SampleDataFileExtension): File extension type (DOCX, PDF, TXT, JSON)
+
+    Returns:
+        List[str]: List of paths to downloaded files
+    """
+    file_paths = []
+    root_path = Path.cwd()
+
+    for i in range(1, num_files + 1):
+        filename = f"cv_{i}.{file_extension.value}"
+        download_path = root_path / "cookbook" / "data" / filename
+        download_path.parent.mkdir(parents=True, exist_ok=True)
+
+        download_file(
+            f"https://agno-public.s3.us-east-1.amazonaws.com/demo_data/filters/{filename}", str(download_path)
+        )
+        file_paths.append(str(download_path))
+    return file_paths

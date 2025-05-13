@@ -1,6 +1,7 @@
 """Run `pip install smolagents` to install dependencies."""
-from agno.eval.perf import PerfEval
-from smolagents import ToolCallingAgent, HfApiModel, Tool
+
+from agno.eval.performance import PerformanceEval
+from smolagents import HfApiModel, Tool, ToolCallingAgent
 
 
 class WeatherTool(Tool):
@@ -25,11 +26,14 @@ class WeatherTool(Tool):
             raise AssertionError("Unknown city")
 
 
-
 def instantiate_agent():
-    return ToolCallingAgent(tools=[WeatherTool()], model=HfApiModel(model_id="meta-llama/Llama-3.3-70B-Instruct"))
+    return ToolCallingAgent(
+        tools=[WeatherTool()],
+        model=HfApiModel(model_id="meta-llama/Llama-3.3-70B-Instruct"),
+    )
 
-smolagents_instantiation = PerfEval(func=instantiate_agent, num_iterations=1000)
+
+smolagents_instantiation = PerformanceEval(func=instantiate_agent, num_iterations=1000)
 
 if __name__ == "__main__":
-    smolagents_instantiation.run(print_results=True)
+    smolagents_instantiation.run(print_results=True, print_summary=True)
