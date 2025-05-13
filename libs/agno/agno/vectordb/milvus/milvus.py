@@ -17,6 +17,12 @@ from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
+MILVUS_DISTANCE_MAP = {
+    Distance.cosine: "COSINE",
+    Distance.l2: "L2",
+    Distance.max_inner_product: "IP",
+}
+
 
 class Milvus(VectorDb):
     def __init__(
@@ -488,15 +494,13 @@ class Milvus(VectorDb):
         log_debug(f"Upserted {len(documents)} documents asynchronously in parallel")
 
     def _get_metric_type(self) -> str:
-        """Convert Distance enum to Milvus metric type string."""
-        if self.distance == Distance.cosine:
-            return "COSINE"
-        elif self.distance == Distance.l2:
-            return "L2"
-        elif self.distance == Distance.max_inner_product:
-            return "IP"
-        else:
-            return "COSINE"  # Default
+        """
+        Get the Milvus metric type string for the current distance setting.
+
+        Returns:
+            Milvus metric type string, defaults to "COSINE" if distance not found
+        """
+        return MILVUS_DISTANCE_MAP.get(self.distance, "COSINE")
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
@@ -633,7 +637,6 @@ class Milvus(VectorDb):
             ranker = RRFRanker(60)  # Default k=60
 
             log_info("Performing hybrid search")
-            # Perform hybrid search
             results = self._client.hybrid_search(
                 collection_name=self.collection, reqs=reqs, ranker=ranker, limit=limit, output_fields=["*"]
             )

@@ -15,9 +15,9 @@ environment variables set.
 Run `pip install agno` to install dependencies.
 """
 
-from pathlib import Path
-from os import getenv
 import sys
+from os import getenv
+from pathlib import Path
 
 from agno.agent import Agent
 from agno.models.azure import AzureOpenAI
