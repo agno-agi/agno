@@ -39,4 +39,4 @@ class ApiRoutes:
     PLAYGROUND_APP_DEPLOY: str = "/v1/playground/app/deploy"
 
     # Eval paths
-    EVAL_RUN_CREATE: str = "/v2/eval_runs"
+    EVAL_RUN_CREATE: str = "/v2/eval-runs"

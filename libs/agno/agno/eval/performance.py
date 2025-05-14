@@ -1,11 +1,12 @@
 import gc
 import tracemalloc
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from os import getenv
 from typing import TYPE_CHECKING, Callable, List, Optional
 from uuid import uuid4
 
-from agno.eval.utils import store_result_in_file
+from agno.api.schemas.evals import EvalType
+from agno.eval.utils import log_eval_run, store_result_in_file
 from agno.utils.log import logger
 from agno.utils.timer import Timer
 

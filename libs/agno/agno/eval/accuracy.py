@@ -336,6 +336,17 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
         if self.print_summary or print_summary:
             self.result.print_summary(console)
 
+        # Log results to the Agno platform if requested
+        if self.monitoring:
+            log_eval_run(
+                run_id=self.eval_id,  # type: ignore
+                run_data=asdict(self.result),
+                eval_type=EvalType.ACCURACY,
+                agent_id=self.agent.agent_id if self.agent is not None else None,
+                name=self.name if self.name is not None else None,
+                evaluated_entity_name=self.agent.name if self.agent is not None else None,
+            )
+
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
         return self.result
 
