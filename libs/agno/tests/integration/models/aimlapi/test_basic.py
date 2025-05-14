@@ -107,6 +107,7 @@ def test_response_model():
     agent = Agent(
         model=AIMLApi(id="gpt-4o-mini"),
         markdown=True,
+        # use_json_mode=True, if gemini-like / deepseek
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,
@@ -153,6 +154,7 @@ def test_structured_outputs_deprecated():
     agent = Agent(
         model=AIMLApi(id="gpt-4o-mini"),
         structured_outputs=False,  # They don't support native structured outputs
+        # use_json_mode=True, if gemini-like / deepseek
         telemetry=False,
         monitoring=False,
         response_model=MovieScript,
