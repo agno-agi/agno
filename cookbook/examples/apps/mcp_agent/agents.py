@@ -1,6 +1,7 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 from textwrap import dedent
-from typing import List, Optional
+from typing import AsyncGenerator, List, Optional
 
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
@@ -12,6 +13,8 @@ from agno.models.openai import OpenAIChat
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.tools.mcp import MCPTools
 from agno.vectordb.lancedb import LanceDb, SearchType
+from mcp import StdioServerParameters
+from mcp_client import MCPServerConfig
 
 # ************* Setup Paths *************
 # Define the current working directory
@@ -45,16 +48,17 @@ agent_knowledge = UrlKnowledge(
 
 def get_mcp_agent(
     user_id: Optional[str] = None,
-    model_str: str = "openai:gpt-4o",
+    model_id: str = "openai:gpt-4o",
     session_id: Optional[str] = None,
     num_history_responses: int = 5,
     mcp_tools: Optional[List[MCPTools]] = None,
     mcp_server_ids: Optional[List[str]] = None,
     debug_mode: bool = True,
 ) -> Agent:
-    model = get_model_for_provider(model_str)
+    model = get_model_for_provider(model_id)
 
-    description = dedent("""\
+    description = dedent(
+        """\
         You are UAgI, a universal MCP (Model Context Protocol) agent designed to interact with MCP servers.
         You can connect to various MCP servers to access resources and execute tools.
 
@@ -73,7 +77,8 @@ def get_mcp_agent(
         - If you encounter errors with an MCP server, explain the issue and suggest alternatives
         - Always cite sources when providing information retrieved through MCP servers
         </critical>\
-    """)
+    """
+    )
 
     if mcp_server_ids:
         description += dedent(
@@ -83,7 +88,8 @@ def get_mcp_agent(
         """.format("\n".join([f"- {server_id}" for server_id in mcp_server_ids]))
         )
 
-    instructions = dedent("""\
+    instructions = dedent(
+        """\
         Here's how you should fulfill a user request:
 
         1. Understand the user's request
@@ -110,7 +116,8 @@ def get_mcp_agent(
         - You have access to a knowledge base of MCP documentation
         - To answer questions about MCP, use the knowledge base
         - If you don't know the answer or can't find the information in the knowledge base, say so\
-    """)
+    """
+    )
 
     return Agent(
         name="UAgI: The Universal MCP Agent",
@@ -137,6 +144,42 @@ def get_mcp_agent(
         # Respond in markdown format
         markdown=True,
     )
+
+
+@asynccontextmanager
+async def get_mcp_agent_with_tools(
+    user_id: Optional[str] = None,
+    model_id: str = "openai:gpt-4o",
+    session_id: Optional[str] = None,
+    num_history_responses: int = 5,
+    mcp_tools: Optional[List[MCPTools]] = None,
+    mcp_server_ids: Optional[List[str]] = None,
+    debug_mode: bool = True,
+    server_config: Optional[MCPServerConfig] = None,
+) -> AsyncGenerator[Agent, None]:
+    # Define server parameters
+    server_params = StdioServerParameters(
+        command=server_config.command,
+        args=server_config.args,
+    )
+
+    async with MCPTools(server_params=server_params) as tools:
+        agent = get_mcp_agent(
+            user_id=user_id,
+            model_id=model_id,
+            session_id=session_id,
+            num_history_responses=num_history_responses,
+            mcp_tools=[tools],
+            mcp_server_ids=mcp_server_ids,
+            debug_mode=debug_mode,
+        )
+
+        try:
+            # Perform any setup or initialization here
+            yield agent
+        finally:
+            # Perform cleanup if necessary
+            pass
 
 
 def get_model_for_provider(model_str: str):
