@@ -7,7 +7,7 @@ from agno.media import ImageArtifact
 from agno.models.nebius import Nebius
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_warning
-
+import base64
 
 class NebiusTools(Toolkit):
     """Tools for interacting with Nebius AI Studio's text-to-image API"""
@@ -52,7 +52,6 @@ class NebiusTools(Toolkit):
         self.register(self.generate_image)
 
     def _get_client(self):
-        """Lazy initialization of the Nebius client."""
         if self._nebius_client is None:
             self._nebius_client = Nebius(api_key=self.api_key, base_url=self.base_url, id=self.image_model).get_client()
         return self._nebius_client
@@ -66,7 +65,7 @@ class NebiusTools(Toolkit):
 
         Args:
             agent: The agent instance for adding images
-            prompt: The text prompt to generate images from.
+            prompt366: The text prompt to generate images from.
 
         Returns:
             A message indicating success or failure.
@@ -96,9 +95,10 @@ class NebiusTools(Toolkit):
                 return "Failed to generate image: No data received from API."
             if hasattr(data, "b64_json") and data.b64_json:
                 image_base64 = data.b64_json
+                image_content_bytes = base64.b64decode(image_base64)
                 media_id = str(uuid4())
                 agent.add_image(
-                    ImageArtifact(id=media_id, content=image_base64, mime_type="image/png", original_prompt=prompt)
+                    ImageArtifact(id=media_id, content=image_content_bytes, mime_type="image/png", original_prompt=prompt)
                 )
                 return "Image generated successfully."
             return "Failed to generate image: No content received from API."
