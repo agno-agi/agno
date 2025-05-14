@@ -1340,7 +1340,7 @@ class Agent:
         self.set_default_model()
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
-        
+
         self.determine_tools_for_model(
             model=self.model,
             session_id=session_id,
