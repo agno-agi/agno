@@ -64,7 +64,7 @@ class NebiusTools(Toolkit):
 
         Args:
             agent: The agent instance for adding images
-            prompt366: The text prompt to generate images from.
+            prompt: The text prompt to generate images from.
 
         Returns:
             A message indicating success or failure.
