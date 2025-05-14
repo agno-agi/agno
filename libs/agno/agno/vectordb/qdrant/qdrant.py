@@ -300,6 +300,14 @@ class Qdrant(VectorDb):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
 
+            vector = {}
+            if self.search_type in [SearchType.vector, SearchType.hybrid]:
+                document.embed(embedder=self.embedder)
+                vector[self.dense_vector_name] = document.embedding
+
+            if self.search_type in [SearchType.keyword, SearchType.hybrid]:
+                vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
+
             # Create payload with document properties
             payload = {
                 "name": document.name,
@@ -318,7 +326,7 @@ class Qdrant(VectorDb):
             points.append(
                 models.PointStruct(
                     id=doc_id,
-                    vector=document.embedding,
+                    vector=vector,
                     payload=payload,
                 )
             )
@@ -341,6 +349,15 @@ class Qdrant(VectorDb):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
 
+            vector = {}
+
+            if self.search_type in [SearchType.vector, SearchType.hybrid]:
+                document.embed(embedder=self.embedder)
+                vector[self.dense_vector_name] = document.embedding
+
+            if self.search_type in [SearchType.keyword, SearchType.hybrid]:
+                vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
+
             # Create payload with document properties
             payload = {
                 "name": document.name,
@@ -359,7 +376,7 @@ class Qdrant(VectorDb):
             log_debug(f"Inserted document asynchronously: {document.name} ({document.meta_data})")
             return models.PointStruct(
                 id=doc_id,
-                vector=document.embedding,
+                vector=vector,
                 payload=payload,
             )
 
@@ -381,12 +398,12 @@ class Qdrant(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
         log_debug("Redirecting the request to insert")
-        self.insert(documents)
+        self.insert(documents, filters)
 
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents asynchronously."""
         log_debug("Redirecting the async request to async_insert")
-        await self.async_insert(documents)
+        await self.async_insert(documents, filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
@@ -397,6 +414,7 @@ class Qdrant(VectorDb):
             limit (int): Number of search results to return
             filters (Optional[Dict[str, Any]]): Filters to apply while searching
         """
+        filters = self._format_filters(filters)
         if self.search_type == SearchType.vector:
             results = self._run_vector_search_sync(query, limit, filters)
         elif self.search_type == SearchType.keyword:
@@ -411,6 +429,7 @@ class Qdrant(VectorDb):
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
+        filters = self._format_filters(filters)
         if self.search_type == SearchType.vector:
             results = await self._run_vector_search_async(query, limit, filters)
         elif self.search_type == SearchType.keyword:
@@ -567,6 +586,31 @@ class Qdrant(VectorDb):
             search_results = self.reranker.rerank(query=query, documents=search_results)
 
         return search_results
+
+    def _format_filters(self, filters: Optional[Dict[str, Any]]) -> Optional[models.Filter]:
+        if filters:
+            filter_conditions = []
+            for key, value in filters.items():
+                # If key contains a dot already, assume it's in the correct format
+                # Otherwise, assume it's a metadata field and add the prefix
+                if "." not in key and not key.startswith("meta_data."):
+                    # This is a simple field name, assume it's metadata
+                    key = f"meta_data.{key}"
+
+                if isinstance(value, dict):
+                    # Handle nested dictionaries
+                    for sub_key, sub_value in value.items():
+                        filter_conditions.append(
+                            models.FieldCondition(key=f"{key}.{sub_key}", match=models.MatchValue(value=sub_value))
+                        )
+                else:
+                    # Handle direct key-value pairs
+                    filter_conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=value)))
+
+            if filter_conditions:
+                return models.Filter(must=filter_conditions)
+
+        return None
 
     def drop(self) -> None:
         if self.exists():

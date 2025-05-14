@@ -160,7 +160,7 @@ def test_upsert_documents(qdrant_db, sample_documents, mock_qdrant_client):
     # Since upsert calls insert, just ensure insert is called
     with patch.object(qdrant_db, "insert") as mock_insert:
         qdrant_db.upsert(sample_documents)
-        mock_insert.assert_called_once_with(sample_documents)
+        mock_insert.assert_called_once_with(sample_documents, None)
 
 
 def test_search(qdrant_db, mock_qdrant_client):
