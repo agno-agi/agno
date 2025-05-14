@@ -144,7 +144,7 @@ class RunResponse:
                 self.response_audio.to_dict() if isinstance(self.response_audio, AudioResponse) else self.response_audio
             )
 
-        if isinstance(self.content, BaseModel):
+        if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
         if self.citations is not None:
@@ -164,7 +164,11 @@ class RunResponse:
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
-        return cls(messages=messages, **data)
+        citations = data.pop("citations", None)
+        if citations is not None and not isinstance(citations, Citations):
+            citations = Citations.model_validate(citations)
+
+        return cls(messages=messages, citations=citations, **data)
 
     def get_content_as_string(self, **kwargs) -> str:
         import json
