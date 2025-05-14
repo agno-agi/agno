@@ -11,3 +11,7 @@ agent = Agent(
     markdown=True,
 )
 agent.print_response("Whats happening in France?", stream=True)
+
+run_response = agent.run("Whats happening in France?", stream=True)
+for chunk in run_response:
+    print(chunk.tools)
