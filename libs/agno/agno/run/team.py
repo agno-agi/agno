@@ -75,7 +75,7 @@ class TeamRunResponse:
         if self.citations is not None:
             _dict["citations"] = self.citations.model_dump(exclude_none=True)
 
-        if isinstance(self.content, BaseModel):
+        if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
         return _dict
@@ -117,6 +117,10 @@ class TeamRunResponse:
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
+        citations = data.pop("citations", None)
+        if citations is not None and not isinstance(citations, Citations):
+            citations = Citations.model_validate(citations)
+
         return cls(
             messages=messages,
             member_responses=parsed_member_responses,
@@ -125,6 +129,7 @@ class TeamRunResponse:
             videos=videos,
             audio=audio,
             response_audio=response_audio,
+            citations=citations,
             **data,
         )
 
