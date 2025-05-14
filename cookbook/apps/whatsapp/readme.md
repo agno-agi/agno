@@ -40,15 +40,35 @@ The WhatsApp API module provides integration between WhatsApp Business API and A
 
 ### Prerequisites
 - Python 3.7+
-- Meta Developer Account
-- WhatsApp Business API access
+- A Meta Developer Account
+- A Meta Business Account
+- A valid Facebook account
 - ngrok (for development)
 
 ### Getting WhatsApp Credentials
+1. **Create a Meta App**
+	1.	Go to [Meta for Developers](https://developers.facebook.com/) and verify your account
+   2. Create a new app at [Meta Apps Dashboard](https://developers.facebook.com/apps/)
+   3. Under "Use Case", select "Other"
+	4.	Choose "Business" as the app type
+	5.	Provide:
+	•	App name
+	•	Contact email
+	6.	Click Create App
+
+2: **Set Up a Meta Business Account**
+	1.	Navigate to [Meta Business Manager](https://business.facebook.com/).
+	2.	Create a new business account or use an existing one.
+   3. Verify your business by clicking on the email link.
+	3. Go to your App page, go to "App settings / Basic" and click "Start Verification" undate "Business Verification".
+   1. Associate the app with your business account and click Create App.
+
 
 1. **Create Meta Developer Account**:
    - Go to [Meta Developer Portal](https://developers.facebook.com/) and create an account
+   - 
    - Create a new app at [Meta Apps Dashboard](https://developers.facebook.com/apps/)
+     - Go to "App Settings / Advanced" and toggle "Desktop App". 
    - Enable WhatsApp integration for your app
 
 2. **Set Up WhatsApp Business API**:
