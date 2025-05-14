@@ -4337,9 +4337,7 @@ class Team:
             else:
                 log_warning("Context is not a dict")
 
-    def determine_tools_for_model(
-        self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]
-    ) -> None:
+    def determine_tools_for_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
         if self._tools_for_model is None:
             self._functions_for_model = {}
             self._tools_for_model = []

@@ -65,10 +65,6 @@ class OpenAIResponses(Model):
     client: Optional[OpenAI] = None
     async_client: Optional[AsyncOpenAI] = None
 
-    # Internal parameters. Not used for API requests
-    # Whether to use the structured outputs with this Model.
-    structured_outputs: bool = False
-
     # The role to map the message role to.
     role_map = {
         "system": "developer",
@@ -198,7 +194,6 @@ class OpenAIResponses(Model):
 
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
-
         if tools:
             request_params["tools"] = self._format_tool_params(messages=messages, tools=tools)
 
@@ -806,7 +801,9 @@ class OpenAIResponses(Model):
         """Process the synchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
-        for stream_event in self.invoke_stream(messages=messages):
+        for stream_event in self.invoke_stream(
+            messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice
+        ):
             model_response, tool_use = self._process_stream_response(
                 stream_event=stream_event,
                 assistant_message=assistant_message,
@@ -829,7 +826,9 @@ class OpenAIResponses(Model):
         """Process the asynchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
-        async for stream_event in self.ainvoke_stream(messages=messages):
+        async for stream_event in self.ainvoke_stream(
+            messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice
+        ):
             model_response, tool_use = self._process_stream_response(
                 stream_event=stream_event,
                 assistant_message=assistant_message,

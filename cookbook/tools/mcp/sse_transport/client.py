@@ -1,6 +1,5 @@
 """
 Show how to connect to MCP servers that use the SSE transport using our MCPTools and MultiMCPTools classes.
-
 Check the README.md file for instructions on how to run these examples.
 """
 
@@ -8,7 +7,7 @@ import asyncio
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.mcp import MCPTools, MultiMCPTools, SSEClientParams
+from agno.tools.mcp import MCPTools, MultiMCPTools
 
 # This is the URL of the MCP server we want to use.
 server_url = "http://localhost:8000/sse"
@@ -30,6 +29,7 @@ async def run_agent_with_multimcp(message: str) -> None:
     async with MultiMCPTools(
         commands=["npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt"],
         urls=[server_url],
+        urls_transports=["sse"],
     ) as mcp_tools:
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),

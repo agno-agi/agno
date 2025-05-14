@@ -48,21 +48,21 @@ class MemoryManager:
         self._functions_for_model: Optional[Dict[str, Function]] = None
 
     def determine_tools_for_model(self, tools: List[Callable]) -> None:
-        if self._tools_for_model is None:
-            self._tools_for_model = []
-            self._functions_for_model = {}
+        # Have to reset each time, because of different user IDs
+        self._tools_for_model = []
+        self._functions_for_model = {}
 
-            for tool in tools:
-                try:
-                    function_name = tool.__name__
-                    if function_name not in self._functions_for_model:
-                        func = Function.from_callable(tool, strict=True)  # type: ignore
-                        func.strict = True
-                        self._functions_for_model[func.name] = func
-                        self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                        log_debug(f"Added function {func.name}")
-                except Exception as e:
-                    log_warning(f"Could not add function {tool}: {e}")
+        for tool in tools:
+            try:
+                function_name = tool.__name__
+                if function_name not in self._functions_for_model:
+                    func = Function.from_callable(tool, strict=True)  # type: ignore
+                    func.strict = True
+                    self._functions_for_model[func.name] = func
+                    self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                    log_debug(f"Added function {func.name}")
+            except Exception as e:
+                log_warning(f"Could not add function {tool}: {e}")
 
     def get_system_message(
         self,
