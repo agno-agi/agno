@@ -13,12 +13,21 @@ The WhatsApp API module provides integration between WhatsApp Business API and A
 - `serve_whatsapp_app`: Function to serve the WhatsApp application
 
 ### Example Implementations
-1. **Basic WhatsApp Agent** (`basicwhatsapp.py`)
+1. **Basic WhatsApp Agent** (`basic.py`)
    - Simple implementation with basic agent configuration
    - Uses GPT-4 model
    - Includes message history and datetime features
 
-2. **User Memory Agent** (`usermemoryagent.py`)
+2. **Reasoning Agent** (`reasoning_agent.py`)
+   - Uses Claude
+   - Can reason about financial questions and write reports comparing companies
+
+3.  **Media Agent** (`agent_with_media.py`)
+   - Uses Gemini
+   - Can analyse images and videos
+   - Can respond to audio messages
+
+4. **User Memory Agent** (`agent_with_user_memory.py`)
    - Enhanced implementation with persistent memory
    - Uses SQLite for storage
    - Captures and utilizes user information
@@ -27,7 +36,7 @@ The WhatsApp API module provides integration between WhatsApp Business API and A
      - Hobbies and interests tracking
      - Personalized responses
 
-3. **Study Buddy Agent** (`whatsappstudyfriend.py`)
+5. **Study Buddy Agent** (`study_buddy.py`)
    - Specialized educational assistant
    - Features:
      - Memory-based learning
@@ -92,9 +101,18 @@ The WhatsApp API module provides integration between WhatsApp Business API and A
    5. Run your app locally with `python <my-app>.py` and click "Verify and save".
    6. Subscribe to the 'messages' webhook field.
    
-Note: Initially, you can only send messages to numbers registered in your test environment
-Note: For production, you'll need to submit your app for review
+6. **Development Mode**
+   1. `export APP_ENV=development`
 
+7. **Production Mode** 
+   1. `export APP_ENV=production`
+   2. You need a secret to sign messages.`export WHATSAPP_APP_SECRET=any_secret_you_choose`
+
+## Limitations
+- Initially, you can only send messages to numbers registered in your test environment
+- For production, you'll need to submit your app for review
+- Messages are limited to 4096 characters. Messages are sent back in batches of 4096 characters.
+- Whatsapp Business API cannot send messages to groups.
 
 ## Agent Configuration
 

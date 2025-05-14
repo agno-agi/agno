@@ -3,8 +3,8 @@ from agno.app.whatsapp.app import WhatsappAPI
 from agno.app.whatsapp.serve import serve_whatsapp_app
 from agno.models.google import Gemini
 
-basic_agent = Agent(
-    name="Basic Agent",
+media_agent = Agent(
+    name="Media Agent",
     model=Gemini(id="gemini-2.0-flash"),
     add_history_to_messages=True,
     num_history_responses=3,
@@ -13,7 +13,7 @@ basic_agent = Agent(
 )
 
 app = WhatsappAPI(
-    agent=basic_agent,
+    agent=media_agent,
 ).get_app()
 
 if __name__ == "__main__":

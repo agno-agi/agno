@@ -40,7 +40,7 @@ personal_agent = Agent(
     add_datetime_to_instructions=True,
     markdown=True,
     memory=memory,
-    enable_user_memories=True,
+    enable_agentic_memory=True,
     instructions=dedent("""
         You are a personal AI friend of the user, your purpose is to chat with the user about things and make them feel good.
         First introduce yourself and ask for their name then, ask about themeselves, their hobbies, what they like to do and what they like to talk about.
@@ -55,4 +55,4 @@ app = WhatsappAPI(
 ).get_app()
 
 if __name__ == "__main__":
-    serve_whatsapp_app("friendly_agent:app", port=8000, reload=True)
+    serve_whatsapp_app("agent_with_user_memory:app", port=8000, reload=True)

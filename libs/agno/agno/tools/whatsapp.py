@@ -139,7 +139,7 @@ class WhatsAppTools(Toolkit):
         response.raise_for_status()
         return response.json()
 
-    def send_text_message_sync(self, text: str = "", recipient: Optional[str] = None, preview_url: bool = False) -> str:
+    def send_text_message_sync(self, text: str = "", recipient: Optional[str] = None, preview_url: bool = False, recipient_type: str = "individual") -> str:
         """Send a text message to a WhatsApp user (synchronous version).
 
         Args:
@@ -162,7 +162,7 @@ class WhatsAppTools(Toolkit):
 
         data = {
             "messaging_product": "whatsapp",
-            "recipient_type": "individual",
+            "recipient_type": recipient_type,
             "to": recipient,
             "type": "text",
             "text": {"preview_url": preview_url, "body": text},
@@ -226,7 +226,7 @@ class WhatsAppTools(Toolkit):
             raise
 
     async def send_text_message_async(
-        self, text: str = "", recipient: Optional[str] = None, preview_url: bool = False
+        self, text: str = "", recipient: Optional[str] = None, preview_url: bool = False, recipient_type: str = "individual", 
     ) -> str:
         """Send a text message to a WhatsApp user (asynchronous version).
 
@@ -250,7 +250,7 @@ class WhatsAppTools(Toolkit):
 
         data = {
             "messaging_product": "whatsapp",
-            "recipient_type": "individual",
+            "recipient_type": recipient_type,
             "to": recipient,
             "type": "text",
             "text": {"preview_url": preview_url, "body": text},

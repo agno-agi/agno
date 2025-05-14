@@ -15,11 +15,7 @@ def get_app_secret() -> str:
     app_secret = os.getenv('WHATSAPP_APP_SECRET')
 
     if not app_secret:
-        if is_development_mode():
-            app_secret = 'dummy_secret_for_local_development'
-            print("WARNING: Using dummy secret for local development. Do not use in production!")
-        else:
-            raise ValueError('WHATSAPP_APP_SECRET environment variable is not set in production mode')
+        raise ValueError('WHATSAPP_APP_SECRET environment variable is not set in production mode')
 
     return app_secret
 
