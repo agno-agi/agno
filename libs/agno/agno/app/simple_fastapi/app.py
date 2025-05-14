@@ -1,5 +1,6 @@
-from typing import Optional, Set
 import logging
+from typing import Optional, Set
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRouter
@@ -12,8 +13,8 @@ from agno.app.simple_fastapi.async_router import get_async_router
 from agno.app.simple_fastapi.sync_router import get_sync_router
 from agno.app.utils import generate_id
 from agno.team.team import Team
-logger = logging.getLogger(__name__)
 
+logger = logging.getLogger(__name__)
 
 
 class SimpleFastAPI:

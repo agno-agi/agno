@@ -1,3 +1,5 @@
+from textwrap import dedent
+
 from agno.agent import Agent
 from agno.app.whatsapp.app import WhatsappAPI
 from agno.app.whatsapp.serve import serve_whatsapp_app
@@ -7,7 +9,6 @@ from agno.memory.v2.memory import Memory
 from agno.models.google import Gemini
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
-from textwrap import dedent
 
 agent_storage = SqliteStorage(
     table_name="agent_sessions", db_file="tmp/persistent_memory.db"

@@ -1,14 +1,16 @@
 from typing import Optional
-import logging
-from agno.media import Image, Video, Audio, File
-from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import PlainTextResponse
+
 from agno.agent.agent import Agent
+from agno.media import Audio, File, Image, Video
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_error, log_info, log_warning
-from .security import validate_webhook_signature
-from .wappreq import VERIFY_TOKEN,get_media
 from agno.tools.whatsapp import WhatsAppTools
+from agno.utils.log import log_error, log_info, log_warning
+
+from .security import validate_webhook_signature
+from .wappreq import VERIFY_TOKEN, get_media
 
 
 def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
@@ -52,9 +54,7 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
 
             # Validate webhook data
             if body.get("object") != "whatsapp_business_account":
-                log_warning(
-                    f"Received non-WhatsApp webhook object: {body.get('object')}"
-                )
+                log_warning(f"Received non-WhatsApp webhook object: {body.get('object')}")
                 return {"status": "ignored"}
 
             # Process messages in background
@@ -81,7 +81,7 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
             message_video = None
             message_audio = None
             message_doc = None
-            
+
             if message.get("type") == "text":
                 message_text = message["text"]["body"]
             elif message.get("type") == "image":
@@ -130,17 +130,19 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
 
             if response.reasoning_content:
                 await _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
-            
+
             await _send_whatsapp_message(phone_number, response.content)
 
         except Exception as e:
             log_error(f"Error processing message: {str(e)}")
             # Optionally send an error message to the user
             try:
-                await _send_whatsapp_message(phone_number, "Sorry, there was an error processing your message. Please try again later.")
+                await _send_whatsapp_message(
+                    phone_number, "Sorry, there was an error processing your message. Please try again later."
+                )
             except Exception as send_error:
                 log_error(f"Error sending error message: {str(send_error)}")
-                
+
     async def _send_whatsapp_message(recipient: str, message: str, italics: bool = False):
         if len(message) <= 4096:
             if italics:
@@ -150,10 +152,10 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
             else:
                 await WhatsAppTools().send_text_message_async(recipient=recipient, text=message)
             return
-        
+
         # Split message into batches of 4000 characters (WhatsApp message limit is 4096)
-        message_batches = [message[i:i+4000] for i in range(0, len(message), 4000)]
-        
+        message_batches = [message[i : i + 4000] for i in range(0, len(message), 4000)]
+
         # Add a prefix with the batch number
         for i, batch in enumerate(message_batches, 1):
             batch_message = f"[{i}/{len(message_batches)}] {batch}"
