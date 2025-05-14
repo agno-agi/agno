@@ -26,9 +26,6 @@ class Nebius(OpenAILike):
     api_key: Optional[str] = getenv("NEBIUS_API_KEY")
     base_url: str = "https://api.studio.nebius.com/v1"
 
-    
-    supports_native_structured_outputs: bool = False 
-    supports_json_schema_outputs: bool = True  
 
     def _get_client_params(self) -> Dict[str, Any]:
         if not self.api_key:

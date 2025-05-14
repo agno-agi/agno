@@ -36,7 +36,7 @@ class NebiusTools(Toolkit):
             image_style: Optional style preset to apply.
             **kwargs: Additional arguments to pass to Toolkit.
         """
-        super().__init__(name="nebius_tools", **kwargs)
+        super().__init__(name="nebius_tools", tools=[self.generate_image], **kwargs)
 
         self.api_key = api_key or getenv("NEBIUS_API_KEY")
         if not self.api_key:
@@ -49,7 +49,6 @@ class NebiusTools(Toolkit):
         self.image_style = image_style
         self._nebius_client = None
 
-        self.register(self.generate_image)
 
     def _get_client(self):
         if self._nebius_client is None:
