@@ -4,10 +4,8 @@ from agno.app.whatsapp.serve import serve_whatsapp_app
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.manager import MemoryManager
 from agno.memory.v2.memory import Memory
-from agno.models.google import Gemini
+from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
-from agno.tools.googlesearch import GoogleSearchTools
-from textwrap import dedent
 
 agent_storage = SqliteStorage(
     table_name="agent_sessions", db_file="tmp/persistent_memory.db"
@@ -19,11 +17,9 @@ memory = Memory(
     memory_manager=MemoryManager(
         memory_capture_instructions="""\
                         Collect User's name,
-                        Collect Information about user's passion and hobbies,
-                        Collect Information about the users likes and dislikes,
-                        Collect information about what the user is doing with their life right now
+                        Collect 
+                        Information about user's passion and hobbies, 
                     """,
-        model=Gemini(id="gemini-2.0-flash"),
     ),
 )
 
@@ -33,19 +29,16 @@ memory.clear()
 
 personal_agent = Agent(
     name="Basic Agent",
-    model=Gemini(id="gemini-2.0-flash"),
-    tools=[GoogleSearchTools()],
+    model=OpenAIChat(id="gpt-4o"),
     add_history_to_messages=True,
     num_history_responses=3,
     add_datetime_to_instructions=True,
     markdown=True,
     memory=memory,
     enable_user_memories=True,
-    instructions=dedent("""
-        You are a personal AI friend of the user, your purpose is to chat with the user about things and make them feel good.
-        First introduce yourself and ask for their name then, ask about themeselves, their hobbies, what they like to do and what they like to talk about.
-        Use Google Search tool to find latest infromation about things in the conversations
-                        """),
+    instructions=(
+        "You are a personal agent get to know about the user and personalise your response for them"
+    ),
     debug_mode=True,
 )
 
@@ -55,4 +48,4 @@ app = WhatsappAPI(
 ).get_app()
 
 if __name__ == "__main__":
-    serve_whatsapp_app("friendlyagent:app", port=8000, reload=True)
+    serve_whatsapp_app("user_memory_agent:app", port=8000, reload=True)

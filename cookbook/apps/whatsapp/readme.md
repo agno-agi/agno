@@ -60,54 +60,41 @@ The WhatsApp API module provides integration between WhatsApp Business API and A
 	1.	Navigate to [Meta Business Manager](https://business.facebook.com/).
 	2.	Create a new business account or use an existing one.
    3. Verify your business by clicking on the email link.
-	3. Go to your App page, go to "App settings / Basic" and click "Start Verification" undate "Business Verification".
-   1. Associate the app with your business account and click Create App.
+	4. Go to your App page, go to "App settings / Basic" and click "Start Verification" under "Business Verification".  You'll have to complete the verification process for production.
+   5. Associate the app with your business account and click Create App.
 
+3. **Setup WhatsApp Business API**
+   1. Go to your app's WhatsApp Setup page
+   2. Click on "Start using the API" (API Setup).
+   3. Generate a Access Token.
+   4. Copy your Phone Number ID.
+   5. Copy your WhatsApp Business Account ID.
+   6. Add a "To" number that you will use for testing (probably your personal number).
 
-1. **Create Meta Developer Account**:
-   - Go to [Meta Developer Portal](https://developers.facebook.com/) and create an account
-   - 
-   - Create a new app at [Meta Apps Dashboard](https://developers.facebook.com/apps/)
-     - Go to "App Settings / Advanced" and toggle "Desktop App". 
-   - Enable WhatsApp integration for your app
+4. **Setup environment variables**
+   1. Create a `.envrc` file with:
+   ```bash
+   export WHATSAPP_ACCESS_TOKEN=your_whatsapp_access_token
+   export WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
+   export WHATSAPP_WEBHOOK_URL=your_webhook_url
+   export WHATSAPP_VERIFY_TOKEN=your_verify_token
 
-2. **Set Up WhatsApp Business API**:
-   - Go to your app's WhatsApp Setup page
-   - Find your WhatsApp Business Account ID in Business Settings
-   - Get your Phone Number ID from the WhatsApp > Getting Started page
-   - Generate a permanent access token in App Dashboard > WhatsApp > API Setup
+5. **Setup Webhook**
+   1. For local testing with Agno's WhatsappApp and agents, we recommend using ngrok to create a secure tunnel to your local server. It is also easier if you get a static url from ngrok.
+   2. Run ngrok:
+   ```bash
+   ngrok http --url=your-url.ngrok-free.app http://localhost:8000
+   ```
+   3. Click on "Configure a webhook".
+   4. Configure the webhook:
+      - URL: Your ngrok URL + "/webhook" (e.g., https://your-domain.ngrok-free.app/webhook)
+      - Verify Token: Same as WHATSAPP_VERIFY_TOKEN in your .envrc
+   5. Run your app locally with `python <my-app>.py` and click "Verify and save".
+   6. Subscribe to the 'messages' webhook field.
+   
+Note: Initially, you can only send messages to numbers registered in your test environment
+Note: For production, you'll need to submit your app for review
 
-3. **Test Environment Setup**:
-   - Note: Initially, you can only send messages to numbers registered in your test environment
-   - For production, you'll need to submit your app for review
-
-### Environment Variables
-Create a `.envrc` file with:
-```bash
-export WHATSAPP_ACCESS_TOKEN=your_whatsapp_access_token
-export WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
-export WHATSAPP_WEBHOOK_URL=your_webhook_url
-export WHATSAPP_VERIFY_TOKEN=your_verify_token
-```
-
-### Running the Application
-1. Start ngrok:
-```bash
-ngrok http --domain=your-domain.ngrok-free.app 8000
-```
-
-2. Start the WhatsApp API endpoints:
-```bash
-python <agent_file>.py
-```
-
-### WhatsApp Business Setup
-1. Go to Meta Developer Portal
-2. Set up your WhatsApp Business account
-3. Configure the webhook:
-   - URL: Your ngrok URL + "/webhook" (e.g., https://your-domain.ngrok-free.app/webhook)
-   - Verify Token: Same as WHATSAPP_VERIFY_TOKEN in your .envrc
-   - Subscribe to the 'messages' webhook field
 
 ## Agent Configuration
 

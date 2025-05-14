@@ -1,13 +1,12 @@
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.app.whatsapp.app import WhatsappAPI
-from agno.app.whatsapp.serve import serve_whatsapp_app
+from agno.app.simple_fastapi.app import SimpleFastAPI
+from agno.app.simple_fastapi.serve import serve_fastapi_app
 from agno.memory import memory
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
-from agno.memory.v2.manager import MemoryManager
 from agno.memory.v2.memory import Memory
-from agno.models.google import Gemini
+from agno.models.openai import OpenAIChat
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -15,23 +14,13 @@ from agno.tools.youtube import YouTubeTools
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
-memory = Memory(
-    db=memory_db,
-    memory_manager=MemoryManager(
-        memory_capture_instructions="""\
-                    - Collect Information about the user's career and acaedemic goals
-                    - Collect Information about the user's previous acaedemic and learning experiences
-                    - Collect Information about the user's current knowledge
-                    - Collect Information about the user's hobbies and passions
-                    - Collect Information about the user's likes and dislikes
-                    """,
-    ),
-)
+memory = Memory(db=memory_db)
+
 
 StudyBuddy = Agent(
     name="StudyBuddy",
     memory=memory,
-    model=Gemini("gemini-2.0-flash"),
+    model=OpenAIChat("gpt-4o-mini"),
     enable_user_memories=True,
     storage=SqliteStorage(
         table_name="agent_sessions", db_file="tmp/persistent_memory.db"
@@ -98,9 +87,9 @@ StudyBuddy = Agent(
     markdown=True,
 )
 
-app = WhatsappAPI(
+app = SimpleFastAPI(
     agent=StudyBuddy,
 ).get_app()
 
 if __name__ == "__main__":
-    serve_whatsapp_app("whatsappstudyfriend:app", port=8000, reload=True)
+    serve_fastapi_app("studyfriend:app", port=8001, reload=True)
