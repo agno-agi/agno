@@ -12,14 +12,14 @@ class Nebius(OpenAILike):
     A class for interacting with Nebius AI Studio models.
 
     Attributes:
-        id (str): The model id. Defaults to "nebius.ai/chatgpt".
+        id (str): The model id. Defaults to "Qwen/Qwen3-235B-A22B"".
         name (str): The model name. Defaults to "Nebius".
         provider (str): The provider name. Defaults to "Nebius".
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://api.studio.nebius.com/v1".
     """
 
-    id: str = "nebius.ai/chatgpt"  # Default model for chat
+    id: str ="Qwen/Qwen3-235B-A22B" # Default model for chat
     name: str = "Nebius"
     provider: str = "Nebius"
 
