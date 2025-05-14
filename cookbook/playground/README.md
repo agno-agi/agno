@@ -29,7 +29,7 @@ pip install -U openai exa_py duckduckgo-search yfinance pypdf sqlalchemy 'fastap
 ### Authenticate with agno.app
 
 ```
-ag auth
+ag setup
 ```
 
 ## Connect your Agents to the Agent UI

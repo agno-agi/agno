@@ -3,7 +3,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info
 from agno.vectordb.base import VectorDb
 from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 

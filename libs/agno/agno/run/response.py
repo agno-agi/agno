@@ -104,7 +104,8 @@ class RunResponse:
         _dict = {
             k: v
             for k, v in asdict(self).items()
-            if v is not None and k not in ["messages", "extra_data", "images", "videos", "audio", "response_audio"]
+            if v is not None
+            and k not in ["messages", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
         }
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
@@ -115,13 +116,28 @@ class RunResponse:
             )
 
         if self.images is not None:
-            _dict["images"] = [img.model_dump(exclude_none=True) for img in self.images]
+            _dict["images"] = []
+            for img in self.images:
+                if isinstance(img, ImageArtifact):
+                    _dict["images"].append(img.to_dict())
+                else:
+                    _dict["images"].append(img)
 
         if self.videos is not None:
-            _dict["videos"] = [vid.model_dump(exclude_none=True) for vid in self.videos]
+            _dict["videos"] = []
+            for vid in self.videos:
+                if isinstance(vid, VideoArtifact):
+                    _dict["videos"].append(vid.to_dict())
+                else:
+                    _dict["videos"].append(vid)
 
         if self.audio is not None:
-            _dict["audio"] = [aud.model_dump(exclude_none=True) for aud in self.audio]
+            _dict["audio"] = []
+            for aud in self.audio:
+                if isinstance(aud, AudioArtifact):
+                    _dict["audio"].append(aud.to_dict())
+                else:
+                    _dict["audio"].append(aud)
 
         if self.response_audio is not None:
             _dict["response_audio"] = (
@@ -130,6 +146,9 @@ class RunResponse:
 
         if isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
+
+        if self.citations is not None:
+            _dict["citations"] = self.citations.model_dump(exclude_none=True)
 
         return _dict
 

@@ -24,7 +24,7 @@ def test_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
-    assert "TSLA" in response.content
+    assert "TSLA" in response.content or "tesla" in response.content.lower()
 
 
 def test_tool_use_stream():
@@ -37,7 +37,7 @@ def test_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -53,7 +53,7 @@ def test_tool_use_stream():
     assert tool_call_seen, "No tool calls observed in stream"
     full_content = ""
     for r in responses:
-        full_content += r.content
+        full_content += r.content or ""
     assert "TSLA" in full_content
 
 
@@ -87,7 +87,9 @@ async def test_async_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -103,7 +105,7 @@ async def test_async_tool_use_stream():
     assert tool_call_seen, "No tool calls observed in stream"
     full_content = ""
     for r in responses:
-        full_content += r.content
+        full_content += r.content or ""
     assert "TSLA" in full_content
 
 

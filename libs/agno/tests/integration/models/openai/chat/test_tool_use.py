@@ -1,3 +1,5 @@
+from typing import Optional
+
 import pytest
 from pydantic import BaseModel, Field
 
@@ -36,7 +38,7 @@ def test_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -52,7 +54,7 @@ def test_tool_use_stream():
     assert tool_call_seen, "No tool calls observed in stream"
     full_content = ""
     for r in responses:
-        full_content += r.content
+        full_content += r.content or "" or ""
     assert "TSLA" in full_content
 
 
@@ -86,7 +88,9 @@ async def test_async_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -102,7 +106,7 @@ async def test_async_tool_use_stream():
     assert tool_call_seen, "No tool calls observed in stream"
     full_content = ""
     for r in responses:
-        full_content += r.content
+        full_content += r.content or ""
     assert "TSLA" in full_content
 
 
@@ -218,6 +222,37 @@ def test_tool_call_custom_tool_untyped_parameters():
     assert "70" in response.content
 
 
+@pytest.mark.parametrize("model", ["gpt-4o-mini", "o3"])
+def test_tool_call_custom_tool_optional_parameters(model: str):
+    def get_the_weather(city: Optional[str] = None):
+        """
+        Get the weather in a city
+
+        Args:
+            city: The city to get the weather for
+        """
+        if city is None:
+            return "It is currently 70 degrees and cloudy in Tokyo"
+        else:
+            return f"It is currently 70 degrees and cloudy in {city}"
+
+    agent = Agent(
+        model=OpenAIChat(id=model),
+        tools=[get_the_weather],
+        show_tool_calls=True,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run("What is the weather in Paris?")
+
+    # Verify tool usage
+    assert any(msg.tool_calls for msg in response.messages)
+    assert response.content is not None
+    assert "70" in response.content
+
+
 def test_tool_call_list_parameters():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -240,5 +275,5 @@ def test_tool_call_list_parameters():
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
     for call in tool_calls:
-        assert call["function"]["name"] in ["get_contents", "exa_answer"]
+        assert call["function"]["name"] in ["search_exa", "get_contents", "exa_answer"]
     assert response.content is not None

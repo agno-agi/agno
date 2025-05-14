@@ -37,7 +37,9 @@ except Exception as e:
 
 if not txt_file:
     print("Uploading txt file...")
-    txt_file = client.files.upload(file=path_to_txt_file, config=dict(name=remote_file_name))
+    txt_file = client.files.upload(
+        file=path_to_txt_file, config=dict(name=remote_file_name)
+    )
 
     # Wait for the file to finish processing
     while txt_file.state.name == "PROCESSING":
@@ -51,7 +53,7 @@ if not txt_file:
 cache = client.caches.create(
     model="gemini-2.0-flash-001",
     config={
-        "system_instruction": 'You are an expert at analyzing transcripts.',
+        "system_instruction": "You are an expert at analyzing transcripts.",
         "contents": [txt_file],
         "ttl": "300s",
     },
@@ -63,8 +65,7 @@ if __name__ == "__main__":
         model=Gemini(id="gemini-2.0-flash-001", cached_content=cache.name),
     )
     agent.print_response(
-        'Find a lighthearted moment from this transcript',  # No need to pass the txt file
+        "Find a lighthearted moment from this transcript",  # No need to pass the txt file
     )
 
     print("Metrics: ", agent.run_response.metrics)
-    

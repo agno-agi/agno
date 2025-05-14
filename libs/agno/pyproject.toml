@@ -1,12 +1,19 @@
 [project]
 name = "agno"
-version = "1.3.4"
+version = "1.5.0"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
   {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
+]
+keywords = [
+  "agent",
+  "reasoning",
+  "llm",
+  "large-language-model",
+  "framework",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -39,7 +46,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
+dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
+
+# Dependencies for Telemetry
+opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
+weave = ["weave"]
+openlit = ["openlit", "agno[opentelemetry]"]
+arize = ["arize-phoenix", "agno[opentelemetry]", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-distro"]
+langfuse = ["langfuse"]
 
 # Dependencies for Models
 azure = ["azure-ai-inference", "aiohttp"]
@@ -53,8 +67,12 @@ ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
 lmstudio = ["lmstudio"]
 litellm = ["litellm"]
+meta = ["llama-api-client"]
+cerebras = ["cerebras-cloud-sdk"]
 
 # Dependencies for Tools
+apify = ["apify-client"]
+cartesia = ["cartesia"]
 exa = ["exa_py"]
 yfinance = ["yfinance"]
 ddg = ["duckduckgo-search"]
@@ -73,6 +91,7 @@ mcp = ["mcp"]
 browserbase = ["browserbase", "playwright"]
 agentql = ["agentql"]
 confluence = ["atlassian-python-api"]
+zep = ["zep-cloud"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -92,6 +111,7 @@ singlestore = ["sqlalchemy"]
 weaviate = ["weaviate-client"]
 milvusdb = ["pymilvus"]
 clickhouse = ["clickhouse-connect"]
+pinecone = ["pinecone==5.4.2"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -122,12 +142,16 @@ models = [
   "agno[ollama]",
   "agno[openai]",
   "agno[ibm]",
-  "agno[litellm]"
+  "agno[litellm]",
+  "agno[meta]",
+  "agno[cerebras]"
 ]
 
 # All tools
 tools = [
+  "agno[apify]",
   "agno[exa]",
+  "agno[cartesia]",
   "agno[ddg]",
   "agno[duckdb]",
   "agno[newspaper]",
@@ -145,6 +169,7 @@ tools = [
   "agno[agentql]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
+  "agno[zep]"
 ]
 
 # All storage
@@ -167,7 +192,8 @@ vectordbs = [
   "agno[singlestore]",
   "agno[weaviate]",
   "agno[milvusdb]",
-  "agno[clickhouse]"
+  "agno[clickhouse]",
+  "agno[pinecone]"
 ]
 
 # All knowledge
@@ -233,6 +259,7 @@ exclude = ["tests*"]
 [[tool.mypy.overrides]]
 module = [
   "agentql.*",
+  "aiofiles.*",
   "altair.*",
   "anthropic.*",
   "apify_client.*",
@@ -246,6 +273,8 @@ module = [
   "bson.*",
   "browserbase.*",
   "cassio.*",
+  "cerebras.*",
+  "cerebras_cloud_sdk.*",
   "chonkie.*",
   "chromadb.*",
   "clickhouse_connect.*",
@@ -278,8 +307,8 @@ module = [
   "lancedb.*",
   "langchain_core.*",
   "langchain.*",
-  "litellm.*",
   "llama_index.*",
+  "llama_api_client.*",
   "litellm.*",
   "mem0.*",
   "mcp.*",
@@ -340,6 +369,6 @@ module = [
   "wikipedia.*",
   "yfinance.*",
   "youtube_transcript_api.*",
-  "aiofiles.*",
+  "zep_cloud.*"
 ]
 ignore_missing_imports = true

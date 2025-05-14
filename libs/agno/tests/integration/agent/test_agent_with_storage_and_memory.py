@@ -129,6 +129,7 @@ async def test_multi_user_multi_session_chat(chat_agent, agent_storage, memory):
     assert len(user_3_sessions) == 1
     assert user_3_session_1_id in [session.session_id for session in user_3_sessions]
 
+    print(memory.memories)
     # Verify memory DB has the right memories
     user_1_memories = memory.get_user_memories(user_id=user_1_id)
     assert len(user_1_memories) >= 1  # At least 1 memory for user 1

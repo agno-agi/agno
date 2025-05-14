@@ -4,7 +4,6 @@ import uuid
 
 import pytest
 
-from agno.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.anthropic.claude import Claude
@@ -64,49 +63,54 @@ def memory(memory_db):
 
 
 @pytest.fixture
-def web_agent():
-    """Create a web agent for testing."""
-    from agno.tools.duckduckgo import DuckDuckGoTools
-
-    return Agent(
-        name="Web Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        role="Search the web for information",
-        tools=[DuckDuckGoTools(cache_results=True)],
-    )
-
-
-@pytest.fixture
-def finance_agent():
-    """Create a finance agent for testing."""
-    from agno.tools.yfinance import YFinanceTools
-
-    return Agent(
-        name="Finance Agent",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        role="Get financial data",
-        tools=[YFinanceTools(stock_price=True)],
-    )
-
-
-@pytest.fixture
-def analysis_agent():
-    """Create an analysis agent for testing."""
-    return Agent(name="Analysis Agent", model=OpenAIChat(id="gpt-4o-mini"), role="Analyze data and provide insights")
-
-
-@pytest.fixture
-def route_team(web_agent, finance_agent, analysis_agent, team_storage, memory):
+def route_team(team_storage, memory):
     """Create a route team with storage and memory for testing."""
     return Team(
         name="Route Team",
         mode="route",
         model=OpenAIChat(id="gpt-4o-mini"),
-        members=[web_agent, finance_agent, analysis_agent],
+        members=[],
         storage=team_storage,
         memory=memory,
         enable_user_memories=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_run_history_persistence(route_team, team_storage, memory):
+    """Test that all runs within a session are persisted in storage."""
+    user_id = "john@example.com"
+    session_id = "session_123"
+    num_turns = 5
+
+    # Clear memory for this specific test case
+    memory.clear()
+
+    # Perform multiple turns
+    conversation_messages = [
+        "What's the weather like today?",
+        "What about tomorrow?",
+        "Any recommendations for indoor activities?",
+        "Search for nearby museums.",
+        "Which one has the best reviews?",
+    ]
+
+    assert len(conversation_messages) == num_turns
+
+    for msg in conversation_messages:
+        await route_team.arun(msg, user_id=user_id, session_id=session_id)
+
+    # Verify the stored session data after all turns
+    team_session = team_storage.read(session_id=session_id)
+
+    stored_memory_data = team_session.memory
+    assert stored_memory_data is not None, "Memory data not found in stored session."
+
+    stored_runs = stored_memory_data["runs"]
+    assert isinstance(stored_runs, list), "Stored runs data is not a list."
+
+    first_user_message_content = stored_runs[0]["messages"][1]["content"]
+    assert first_user_message_content == conversation_messages[0]
 
 
 @pytest.mark.asyncio

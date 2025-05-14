@@ -48,7 +48,8 @@ class TeamRunResponse:
         _dict = {
             k: v
             for k, v in asdict(self).items()
-            if v is not None and k not in ["messages", "extra_data", "images", "videos", "audio", "response_audio"]
+            if v is not None
+            and k not in ["messages", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
         }
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
@@ -57,19 +58,22 @@ class TeamRunResponse:
             _dict["extra_data"] = self.extra_data.to_dict()
 
         if self.images is not None:
-            _dict["images"] = [img.model_dump(exclude_none=True) for img in self.images]
+            _dict["images"] = [img.to_dict() for img in self.images]
 
         if self.videos is not None:
-            _dict["videos"] = [vid.model_dump(exclude_none=True) for vid in self.videos]
+            _dict["videos"] = [vid.to_dict() for vid in self.videos]
 
         if self.audio is not None:
-            _dict["audio"] = [aud.model_dump(exclude_none=True) for aud in self.audio]
+            _dict["audio"] = [aud.to_dict() for aud in self.audio]
 
         if self.response_audio is not None:
             _dict["response_audio"] = self.response_audio.to_dict()
 
         if self.member_responses:
             _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
+
+        if self.citations is not None:
+            _dict["citations"] = self.citations.model_dump(exclude_none=True)
 
         if isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)

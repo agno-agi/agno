@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 from typing import IO, Any, List, Optional, Union
+from uuid import uuid4
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
@@ -42,7 +43,7 @@ def process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
     # Append the document
     return Document(
         name=doc_name,
-        id=f"{doc_name}_{page_number}",
+        id=str(uuid4()),
         meta_data={"page": page_number},
         content=content,
     )
@@ -76,7 +77,7 @@ async def async_process_image_page(doc_name: str, page_number: int, page: Any) -
 
     return Document(
         name=doc_name,
-        id=f"{doc_name}_{page_number}",
+        id=str(uuid4()),
         meta_data={"page": page_number},
         content=content,
     )
@@ -115,7 +116,7 @@ class PDFReader(BasePDFReader):
             documents.append(
                 Document(
                     name=doc_name,
-                    id=f"{doc_name}_{page_number}",
+                    id=str(uuid4()),
                     meta_data={"page": page_number},
                     content=page.extract_text(),
                 )
@@ -144,7 +145,7 @@ class PDFReader(BasePDFReader):
         async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
             return Document(
                 name=doc_name,
-                id=f"{doc_name}_{page_number}",
+                id=str(uuid4()),
                 meta_data={"page": page_number},
                 content=page.extract_text(),
             )
@@ -208,7 +209,7 @@ class PDFUrlReader(BasePDFReader):
         log_info(f"Reading: {url}")
 
         client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             response = await async_fetch_with_retry(url, client=client)
 
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
@@ -332,7 +333,7 @@ class PDFUrlImageReader(BasePDFReader):
         log_info(f"Reading: {url}")
 
         client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             response = await client.get(url)
             response.raise_for_status()
 

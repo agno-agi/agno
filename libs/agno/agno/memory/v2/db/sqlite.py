@@ -88,7 +88,7 @@ class SqliteMemoryDb(MemoryDb):
             self.table_name,
             self.metadata,
             Column("id", String, primary_key=True),
-            Column("user_id", String),
+            Column("user_id", String, index=True),
             Column("memory", String),
             Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
             Column(
@@ -198,9 +198,10 @@ class SqliteMemoryDb(MemoryDb):
 
     def clear(self) -> bool:
         with self.Session() as session:
-            stmt = delete(self.table)
-            session.execute(stmt)
-            session.commit()
+            if self.table_exists():
+                stmt = delete(self.table)
+                session.execute(stmt)
+                session.commit()
         return True
 
     def __del__(self):

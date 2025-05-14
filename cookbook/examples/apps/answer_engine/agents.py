@@ -64,6 +64,7 @@ tmp_dir.mkdir(parents=True, exist_ok=True)
 agent_storage = SqliteAgentStorage(
     table_name="answer_engine_sessions",  # Table to store agent sessions
     db_file=str(tmp_dir.joinpath("agents.db")),  # SQLite database file
+    auto_upgrade_schema=True,
 )
 # *************************************
 

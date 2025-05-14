@@ -3,7 +3,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Type, Union
 
 from pydantic import BaseModel, Field
 
@@ -374,6 +374,10 @@ class Memory:
         if refresh_from_db:
             self.refresh_from_db(user_id=user_id)
 
+        if memory_id not in self.memories[user_id]:  # type: ignore
+            log_warning(f"Memory {memory_id} not found for user {user_id}")
+            return None
+
         del self.memories[user_id][memory_id]  # type: ignore
         if self.db:
             self._delete_db_memory(memory_id=memory_id)
@@ -536,7 +540,6 @@ class Memory:
 
     def update_memory_task(self, task: str, user_id: Optional[str] = None) -> str:
         """Updates the memory with a task"""
-        self.set_log_level()
         if not self.memory_manager:
             raise ValueError("Memory manager not initialized")
 
@@ -670,6 +673,7 @@ class Memory:
         """Adds a RunResponse to the runs list."""
         if not self.runs:
             self.runs = {}
+
         self.runs.setdefault(session_id, []).append(run)
         log_debug("Added RunResponse to Memory")
 
@@ -683,7 +687,7 @@ class Memory:
         """Returns the messages from the last_n runs, excluding previously tagged history messages.
         Args:
             session_id: The session id to get the messages from.
-            last_n: The number of runs to return from the end of the conversation.
+            last_n: The number of runs to return from the end of the conversation. Defaults to all runs.
             skip_role: Skip messages with this role.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
         Returns:
@@ -695,7 +699,7 @@ class Memory:
         session_runs = self.runs.get(session_id, [])
         runs_to_process = session_runs[-last_n:] if last_n is not None else session_runs
         messages_from_history = []
-
+        system_message = None
         for run_response in runs_to_process:
             if not (run_response and run_response.messages):
                 continue
@@ -707,8 +711,13 @@ class Memory:
                 # Skip messages that were tagged as history in previous runs
                 if hasattr(message, "from_history") and message.from_history and skip_history_messages:
                     continue
-
-                messages_from_history.append(message)
+                if message.role == "system":
+                    # Only add the system message once
+                    if system_message is None:
+                        system_message = message
+                        messages_from_history.append(system_message)
+                else:
+                    messages_from_history.append(message)
 
         log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
@@ -780,24 +789,21 @@ class Memory:
         else:  # Default to last_n
             return self._get_last_n_memories(user_id=user_id, limit=limit)
 
-    def _update_model_for_agentic_search(self) -> None:
+    def get_response_format(self) -> Union[Dict[str, Any], Type[BaseModel]]:
         model = self.get_model()
         if model.supports_native_structured_outputs:
-            model.response_format = MemorySearchResponse
-            model.structured_outputs = True
+            return MemorySearchResponse
 
         elif model.supports_json_schema_outputs:
-            model.response_format = {
+            return {
                 "type": "json_schema",
                 "json_schema": {
                     "name": MemorySearchResponse.__name__,
                     "schema": MemorySearchResponse.model_json_schema(),
                 },
             }
-            model.structured_outputs = False
         else:
-            model.response_format = {"type": "json_object"}
-            model.structured_outputs = False
+            return {"type": "json_object"}
 
     def _search_user_memories_agentic(self, user_id: str, query: str, limit: Optional[int] = None) -> List[UserMemory]:
         """Search through user memories using agentic search."""
@@ -806,7 +812,7 @@ class Memory:
 
         model = self.get_model()
 
-        self._update_model_for_agentic_search()
+        response_format = self.get_response_format()
 
         log_debug("Searching for memories", center=True)
 
@@ -824,7 +830,7 @@ class Memory:
         system_message_str += "\n</user_memories>\n\n"
         system_message_str += "REMEMBER: Only return the IDs of the memories that are related to the query."
 
-        if model.response_format == {"type": "json_object"}:
+        if response_format == {"type": "json_object"}:
             system_message_str += "\n" + get_json_output_prompt(MemorySearchResponse)  # type: ignore
 
         messages_for_model = [
@@ -836,7 +842,7 @@ class Memory:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = model.response(messages=messages_for_model)
+        response = model.response(messages=messages_for_model, response_format=response_format)
         log_debug("Search for memories complete", center=True)
 
         memory_search: Optional[MemorySearchResponse] = None

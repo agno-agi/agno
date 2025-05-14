@@ -300,24 +300,26 @@ class Qdrant(VectorDb):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
 
-            vector = {}
-            if self.search_type in [SearchType.vector, SearchType.hybrid]:
-                document.embed(embedder=self.embedder)
-                vector[self.dense_vector_name] = document.embedding
+            # Create payload with document properties
+            payload = {
+                "name": document.name,
+                "meta_data": document.meta_data,
+                "content": cleaned_content,
+                "usage": document.usage,
+            }
 
-            if self.search_type in [SearchType.keyword, SearchType.hybrid]:
-                vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
+            # Add filters as metadata if provided
+            if filters:
+                # Merge filters with existing metadata
+                if "meta_data" not in payload:
+                    payload["meta_data"] = {}
+                payload["meta_data"].update(filters)  # type: ignore
 
             points.append(
                 models.PointStruct(
                     id=doc_id,
-                    vector=vector,
-                    payload={
-                        "name": document.name,
-                        "meta_data": document.meta_data,
-                        "content": cleaned_content,
-                        "usage": document.usage,
-                    },
+                    vector=document.embedding,
+                    payload=payload,
                 )
             )
             log_debug(f"Inserted document: {document.name} ({document.meta_data})")
@@ -326,30 +328,39 @@ class Qdrant(VectorDb):
         log_debug(f"Upsert {len(points)} documents")
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Insert documents asynchronously."""
+        """
+        Insert documents asynchronously.
+
+        Args:
+            documents (List[Document]): List of documents to insert
+            filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
+        """
         log_debug(f"Inserting {len(documents)} documents asynchronously")
 
         async def process_document(document):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
 
-            vector = {}
-            if self.search_type in [SearchType.vector, SearchType.hybrid]:
-                document.embed(embedder=self.embedder)
-                vector[self.dense_vector_name] = document.embedding
+            # Create payload with document properties
+            payload = {
+                "name": document.name,
+                "meta_data": document.meta_data,
+                "content": cleaned_content,
+                "usage": document.usage,
+            }
 
-            if self.search_type in [SearchType.keyword, SearchType.hybrid]:
-                vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
+            # Add filters as metadata if provided
+            if filters:
+                # Merge filters with existing metadata
+                if "meta_data" not in payload:
+                    payload["meta_data"] = {}
+                payload["meta_data"].update(filters)
 
+            log_debug(f"Inserted document asynchronously: {document.name} ({document.meta_data})")
             return models.PointStruct(
                 id=doc_id,
-                vector=vector,
-                payload={
-                    "name": document.name,
-                    "meta_data": document.meta_data,
-                    "content": cleaned_content,
-                    "usage": document.usage,
-                },
+                vector=document.embedding,
+                payload=payload,
             )
 
         import asyncio

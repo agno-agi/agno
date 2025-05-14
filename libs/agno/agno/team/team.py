@@ -54,6 +54,7 @@ from agno.utils.log import (
     use_agent_logger,
     use_team_logger,
 )
+from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.message import get_text_from_message
 from agno.utils.response import (
     check_if_run_cancelled,
@@ -170,6 +171,8 @@ class Team:
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
+    # A list of hooks to be called before and after the tool call
+    tool_hooks: Optional[List[Callable]] = None
 
     # --- Structured output ---
     # Response model for the team response
@@ -257,6 +260,7 @@ class Team:
         show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        tool_hooks: Optional[List[Callable]] = None,
         response_model: Optional[Type[BaseModel]] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
@@ -321,31 +325,22 @@ class Team:
         self.show_tool_calls = show_tool_calls
         self.tool_choice = tool_choice
         self.tool_call_limit = tool_call_limit
+        self.tool_hooks = tool_hooks
 
         self.response_model = response_model
         self.use_json_mode = use_json_mode
         self.parse_response = parse_response
 
         self.memory = memory
-
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
-        if add_memory_references is None:
-            self.add_memory_references = enable_user_memories or enable_agentic_memory
-        else:
-            self.add_memory_references = add_memory_references
-
+        self.add_memory_references = add_memory_references
         self.enable_session_summaries = enable_session_summaries
-        if add_session_summary_references is None:
-            self.add_session_summary_references = enable_session_summaries
-        else:
-            self.add_session_summary_references = add_session_summary_references
+        self.add_session_summary_references = add_session_summary_references
 
         self.enable_team_history = enable_team_history
         self.num_of_interactions_from_history = num_of_interactions_from_history
         self.num_history_runs = num_history_runs
-        if num_of_interactions_from_history is not None:
-            self.num_history_runs = num_of_interactions_from_history
 
         self.storage = storage
         self.extra_data = extra_data
@@ -380,9 +375,9 @@ class Team:
         # Team session
         self.team_session: Optional[TeamSession] = None
 
-        self._tools_for_model: Optional[List[Dict]] = None
-        self._functions_for_model: Optional[Dict[str, Function]] = None
         self._tool_instructions: Optional[List[str]] = None
+        self._functions_for_model: Optional[Dict[str, Function]] = None
+        self._tools_for_model: Optional[List[Dict[str, Any]]] = None
 
         # True if we should parse a member response model
         self._member_response_model: Optional[Type[BaseModel]] = None
@@ -401,7 +396,7 @@ class Team:
         else:
             set_log_level_to_info(source_type="team")
 
-    def _set_storage_mode(self):
+    def _set_storage_mode(self) -> None:
         if self.storage is not None:
             self.storage.mode = "team"
 
@@ -417,7 +412,7 @@ class Team:
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
-    def _initialize_member(self, member: Union["Team", Agent], session_id: Optional[str] = None):
+    def _initialize_member(self, member: Union["Team", Agent], session_id: Optional[str] = None) -> None:
         # Set debug mode for all members
         if self.debug_mode:
             member.debug_mode = True
@@ -429,12 +424,26 @@ class Team:
         if session_id is not None:
             member.team_session_id = session_id
 
-        member.team_id = self.team_id
+        # Set the team session state on members
+        if self.session_state is not None:
+            if isinstance(member, Agent):
+                if member.team_session_state is None:
+                    member.team_session_state = self.session_state
+                else:
+                    merge_dictionaries(member.team_session_state, self.session_state)
+            elif isinstance(member, Team):
+                if member.session_state is None:
+                    member.session_state = self.session_state
+                else:
+                    merge_dictionaries(member.session_state, self.session_state)
+
+        if isinstance(member, Agent):
+            member.team_id = self.team_id
 
         if member.name is None:
             log_warning("Team member name is undefined.")
 
-    def _set_default_model(self):
+    def _set_default_model(self) -> None:
         # Set the default model
         if self.model is None:
             try:
@@ -450,21 +459,28 @@ class Team:
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
 
-    def initialize_team(self, session_id: Optional[str] = None) -> None:
-        self._set_default_model()
+    def _set_defaults(self) -> None:
+        if self.add_memory_references is None:
+            self.add_memory_references = self.enable_user_memories or self.enable_agentic_memory
 
+        if self.add_session_summary_references is None:
+            self.add_session_summary_references = self.enable_session_summaries
+
+        if self.num_of_interactions_from_history is not None:
+            self.num_history_runs = self.num_of_interactions_from_history
+
+    def initialize_team(self, session_id: Optional[str] = None) -> None:
+        self._set_defaults()
+        self._set_default_model()
         self._set_storage_mode()
 
         # Set debug mode
         self._set_debug()
 
-        # Make sure for the team, we are using the team logger
-        use_team_logger()
-
         # Set monitoring and telemetry
         self._set_monitoring()
 
-        # Set the team ID if not yet set
+        # Set the team ID if not set
         self._set_team_id()
 
         log_debug(f"Team ID: {self.team_id}", center=True)
@@ -475,6 +491,13 @@ class Team:
 
         for member in self.members:
             self._initialize_member(member, session_id=session_id)
+
+        # Make sure for the team, we are using the team logger
+        use_team_logger()
+
+    @property
+    def is_streamable(self) -> bool:
+        return self.response_model is None
 
     @overload
     def run(
@@ -546,18 +569,18 @@ class Team:
 
         session_id = cast(str, session_id)
 
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
+
         log_debug(f"Session ID: {session_id}", center=True)
 
         self.initialize_team(session_id=session_id)
-
-        show_tool_calls = self.show_tool_calls
 
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
 
         # Initialize memory if not yet set
         if self.memory is None:
-            self.memory = TeamMemory()
+            self.memory = Memory()
 
         # Default to the team's model if no model is provided
         if isinstance(self.memory, Memory):
@@ -574,7 +597,7 @@ class Team:
             log_debug("Disabling stream as response_model is set")
 
         # Configure the model for runs
-        self._configure_model(show_tool_calls=show_tool_calls)
+        self._set_default_model()
 
         # Run the team
         last_exception = None
@@ -663,7 +686,8 @@ class Team:
                 if self.get_member_information_tool:
                     _tools.append(self.get_member_information)
 
-            self._add_tools_to_model(self.model, tools=_tools)  # type: ignore
+            self.model = cast(Model, self.model)
+            self.determine_tools_for_model(model=self.model, tools=_tools)
 
             # Run the team
             try:
@@ -766,6 +790,9 @@ class Team:
             self.memory = cast(Memory, self.memory)
         self.model = cast(Model, self.model)
 
+        # Configure parameters for the model
+        response_format = self._get_response_format()
+
         # 1. Reason about the task(s) if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._reason(
@@ -780,7 +807,14 @@ class Team:
         index_of_last_user_message = len(run_messages.messages)
 
         # 2. Get the model response for the team leader
-        model_response = self.model.response(messages=run_messages.messages)  # type: ignore
+        model_response = self.model.response(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        )  # type: ignore
 
         # 3. Update TeamRunResponse
         # Handle structured outputs
@@ -836,7 +870,7 @@ class Team:
             tool_name = tool_call.get("tool_name", "")
             if tool_name.lower() in ["think", "analyze"]:
                 tool_args = tool_call.get("tool_args", {})
-                self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+                self.update_reasoning_content_from_tool_call(run_response, tool_name, tool_args)
 
         # 4. Update Team Memory
         if isinstance(self.memory, TeamMemory):
@@ -877,7 +911,7 @@ class Team:
             self._make_memories_and_summaries(run_messages, session_id, user_id)
 
             session_messages: List[Message] = []
-            for run in self.memory.runs[session_id]:  # type: ignore
+            for run in self.memory.runs.get(session_id, []):  # type: ignore
                 if run.messages is not None:
                     for m in run.messages:
                         session_messages.append(m)
@@ -954,8 +988,11 @@ class Team:
 
         self.model = cast(Model, self.model)
 
+        # Configure parameters for the model
+        response_format = self._get_response_format()
+
         reasoning_started = False
-        reasoning_time_taken = 0
+        reasoning_time_taken = 0.0
 
         # 1. Reason about the task(s) if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
@@ -978,7 +1015,14 @@ class Team:
 
         # 2. Get a response from the model
         full_model_response = ModelResponse()
-        model_stream = self.model.response_stream(messages=run_messages.messages)  # type: ignore
+        model_stream = self.model.response_stream(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        )  # type: ignore
         for model_response_chunk in model_stream:
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
@@ -1063,7 +1107,7 @@ class Team:
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
-                reasoning_step: ReasoningStep = None
+                reasoning_step: Optional[ReasoningStep] = None
                 new_tool_calls_list = model_response_chunk.tool_calls
                 if new_tool_calls_list is not None:
                     # Update the existing tool call in the run_response
@@ -1089,10 +1133,13 @@ class Team:
                         if tool_name.lower() in ["think", "analyze"]:
                             tool_args = tool_call.get("tool_args", {})
 
-                            reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+                            reasoning_step = self.update_reasoning_content_from_tool_call(
+                                run_response, tool_name, tool_args
+                            )
 
                             metrics = tool_call.get("metrics")
-                            reasoning_time_taken = reasoning_time_taken + float(metrics.time)
+                            if metrics is not None:
+                                reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if stream_intermediate_steps:
                         if reasoning_step is not None:
@@ -1108,7 +1155,7 @@ class Team:
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,
                                 event=RunEvent.reasoning_step,
-                                reasoning_content=self.run_response.reasoning_content,
+                                reasoning_content=run_response.reasoning_content,
                                 session_id=session_id,
                             )
 
@@ -1138,16 +1185,16 @@ class Team:
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
 
         if stream_intermediate_steps and reasoning_started:
-            all_reasoning_steps = []
+            all_reasoning_steps: List[ReasoningStep] = []
             if (
                 self.run_response
                 and self.run_response.extra_data
                 and hasattr(self.run_response.extra_data, "reasoning_steps")
             ):
-                all_reasoning_steps = self.run_response.extra_data.reasoning_steps
+                all_reasoning_steps = cast(List[ReasoningStep], self.run_response.extra_data.reasoning_steps)
 
             if all_reasoning_steps:
-                self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
+                self._add_reasoning_metrics_to_extra_data(run_response, reasoning_time_taken)
                 yield self._create_run_response(
                     content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__class__.__name__,
@@ -1195,7 +1242,7 @@ class Team:
             self._make_memories_and_summaries(run_messages, session_id, user_id)
 
             session_messages: List[Message] = []
-            for run in self.memory.runs[session_id]:  # type: ignore
+            for run in self.memory.runs.get(session_id, []):  # type: ignore
                 if run.messages is not None:
                     for m in run.messages:
                         session_messages.append(m)
@@ -1213,7 +1260,7 @@ class Team:
             yield self._create_run_response(
                 from_run_response=run_response,
                 event=RunEvent.run_completed,
-                reasoning_content=self.run_response.reasoning_content,
+                reasoning_content=run_response.reasoning_content,
                 session_id=session_id,
             )
 
@@ -1289,18 +1336,18 @@ class Team:
 
         session_id = cast(str, session_id)
 
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
+
         log_debug(f"Session ID: {session_id}", center=True)
 
         self.initialize_team(session_id=session_id)
-
-        show_tool_calls = self.show_tool_calls
 
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
 
         # Initialize memory if not yet set
         if self.memory is None:
-            self.memory = TeamMemory()
+            self.memory = Memory()
 
         # Default to the team's model if no model is provided
         if isinstance(self.memory, Memory):
@@ -1317,7 +1364,7 @@ class Team:
             log_debug("Disabling stream as response_model is set")
 
         # Configure the model for runs
-        self._configure_model(show_tool_calls=show_tool_calls)
+        self._set_default_model()
 
         # Run the team
         last_exception = None
@@ -1403,7 +1450,8 @@ class Team:
                 if self.enable_agentic_context:
                     _tools.append(self.get_set_shared_context_function(session_id=session_id))
 
-            self._add_tools_to_model(self.model, tools=_tools)  # type: ignore
+            self.model = cast(Model, self.model)
+            self.determine_tools_for_model(model=self.model, tools=_tools)
 
             # Run the team
             try:
@@ -1501,6 +1549,9 @@ class Team:
         self.memory = cast(TeamMemory, self.memory)
         self.model = cast(Model, self.model)
 
+        # Configure parameters for the model
+        response_format = self._get_response_format()
+
         # 1. Reason about the task(s) if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self._areason(
@@ -1516,7 +1567,14 @@ class Team:
         index_of_last_user_message = len(run_messages.messages)
 
         # 2. Get the model response for the team leader
-        model_response = await self.model.aresponse(messages=run_messages.messages)  # type: ignore
+        model_response = await self.model.aresponse(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        )  # type: ignore
 
         # 3. Update TeamRunResponse
         # Handle structured outputs
@@ -1570,7 +1628,7 @@ class Team:
             tool_name = tool_call.get("tool_name", "")
             if tool_name.lower() in ["think", "analyze"]:
                 tool_args = tool_call.get("tool_args", {})
-                self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+                self.update_reasoning_content_from_tool_call(run_response, tool_name, tool_args)
 
         # 4. Update Team Memory
         if isinstance(self.memory, TeamMemory):
@@ -1614,7 +1672,7 @@ class Team:
             await self._amake_memories_and_summaries(run_messages, session_id, user_id)
 
             session_messages: List[Message] = []
-            for run in self.memory.runs[session_id]:
+            for run in self.memory.runs.get(session_id, []):
                 for m in run.messages:
                     session_messages.append(m)
 
@@ -1690,8 +1748,11 @@ class Team:
 
         self.model = cast(Model, self.model)
 
+        # Configure parameters for the model
+        response_format = self._get_response_format()
+
         reasoning_started = False
-        reasoning_time_taken = 0
+        reasoning_time_taken = 0.0
 
         # 1. Reason about the task(s) if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
@@ -1715,7 +1776,14 @@ class Team:
 
         # 2. Get a response from the model
         full_model_response = ModelResponse()
-        model_stream = self.model.aresponse_stream(messages=run_messages.messages)
+        model_stream = self.model.aresponse_stream(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        )  # type: ignore
         async for model_response_chunk in model_stream:
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
@@ -1800,7 +1868,7 @@ class Team:
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
-                reasoning_step: ReasoningStep = None
+                reasoning_step: Optional[ReasoningStep] = None
                 new_tool_calls_list = model_response_chunk.tool_calls
                 if new_tool_calls_list is not None:
                     # Update the existing tool call in the run_response
@@ -1826,10 +1894,13 @@ class Team:
                         if tool_name.lower() in ["think", "analyze"]:
                             tool_args = tool_call.get("tool_args", {})
 
-                            reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+                            reasoning_step = self.update_reasoning_content_from_tool_call(
+                                run_response, tool_name, tool_args
+                            )
 
                             metrics = tool_call.get("metrics")
-                            reasoning_time_taken = reasoning_time_taken + float(metrics.time)
+                            if metrics is not None:
+                                reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
                     if stream_intermediate_steps:
                         if reasoning_step is not None:
@@ -1845,7 +1916,7 @@ class Team:
                                 content=reasoning_step,
                                 content_type=reasoning_step.__class__.__name__,
                                 event=RunEvent.reasoning_step,
-                                reasoning_content=self.run_response.reasoning_content,
+                                reasoning_content=run_response.reasoning_content,
                                 session_id=session_id,
                             )
 
@@ -1881,16 +1952,16 @@ class Team:
         run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
 
         if stream_intermediate_steps and reasoning_started:
-            all_reasoning_steps = []
+            all_reasoning_steps: List[ReasoningStep] = []
             if (
                 self.run_response
                 and self.run_response.extra_data
                 and hasattr(self.run_response.extra_data, "reasoning_steps")
             ):
-                all_reasoning_steps = self.run_response.extra_data.reasoning_steps
+                all_reasoning_steps = cast(List[ReasoningStep], self.run_response.extra_data.reasoning_steps)
 
             if all_reasoning_steps:
-                self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
+                self._add_reasoning_metrics_to_extra_data(run_response, reasoning_time_taken)
                 yield self._create_run_response(
                     content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__class__.__name__,
@@ -1939,7 +2010,7 @@ class Team:
             await self._amake_memories_and_summaries(run_messages, session_id, user_id)
 
             session_messages: List[Message] = []
-            for run in self.memory.runs[session_id]:  # type: ignore
+            for run in self.memory.runs.get(session_id, []):  # type: ignore
                 if run.messages is not None:
                     for m in run.messages:
                         session_messages.append(m)
@@ -1957,18 +2028,28 @@ class Team:
             yield self._create_run_response(
                 from_run_response=run_response,
                 event=RunEvent.run_completed,
-                reasoning_content=self.run_response.reasoning_content,
+                reasoning_content=run_response.reasoning_content,
                 session_id=session_id,
             )
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
+    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
+        self.session_state = self.session_state or {}
+        if user_id is not None:
+            self.session_state["current_user_id"] = user_id
+        if session_id is not None:
+            self.session_state["current_session_id"] = session_id
+
     def _make_memories_and_summaries(
         self, run_messages: RunMessages, session_id: str, user_id: Optional[str] = None
     ) -> None:
         self.memory = cast(Memory, self.memory)
-        if self.enable_user_memories and run_messages.user_message is not None:
-            self.memory.create_user_memories(message=run_messages.user_message.get_content_string(), user_id=user_id)
+        user_message_str = (
+            run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+        )
+        if self.enable_user_memories and user_message_str is not None and user_message_str:
+            self.memory.create_user_memories(message=user_message_str, user_id=user_id)
 
         # Update the session summary if needed
         if self.enable_session_summaries:
@@ -1978,14 +2059,49 @@ class Team:
         self, run_messages: RunMessages, session_id: str, user_id: Optional[str] = None
     ) -> None:
         self.memory = cast(Memory, self.memory)
-        if self.enable_user_memories and run_messages.user_message is not None:
-            await self.memory.acreate_user_memories(
-                message=run_messages.user_message.get_content_string(), user_id=user_id
-            )
+        user_message_str = (
+            run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+        )
+        if self.enable_user_memories and user_message_str is not None and user_message_str:
+            await self.memory.acreate_user_memories(message=user_message_str, user_id=user_id)
 
         # Update the session summary if needed
         if self.enable_session_summaries:
             await self.memory.acreate_session_summary(session_id=session_id, user_id=user_id)
+
+    def _get_response_format(self) -> Optional[Union[Dict, Type[BaseModel]]]:
+        self.model = cast(Model, self.model)
+        if self.response_model is None:
+            return None
+        else:
+            json_response_format = {"type": "json_object"}
+
+            if self.model.supports_native_structured_outputs:
+                if not self.use_json_mode:
+                    log_debug("Setting Model.response_format to Agent.response_model")
+                    return self.response_model
+                else:
+                    log_debug(
+                        "Model supports native structured outputs but it is not enabled. Using JSON mode instead."
+                    )
+                    return json_response_format
+
+            elif self.model.supports_json_schema_outputs:
+                if self.use_json_mode:
+                    log_debug("Setting Model.response_format to JSON response mode")
+                    return {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": self.response_model.__name__,
+                            "schema": self.response_model.model_json_schema(),
+                        },
+                    }
+                else:
+                    return None
+
+            else:
+                log_debug("Model does not support structured or JSON schema outputs.")
+                return json_response_format
 
     ###########################################################################
     # Print Response
@@ -3715,7 +3831,6 @@ class Team:
     def _calculate_full_team_session_metrics(self, messages: List[Message], session_id: str) -> SessionMetrics:
         current_session_metrics = self.session_metrics or self._calculate_session_metrics(messages)
         current_session_metrics = replace(current_session_metrics)
-
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
         # Get metrics of the team-agent's messages
@@ -3747,7 +3862,7 @@ class Team:
             model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode
         )
 
-    def _format_reasoning_step_content(self, reasoning_step: ReasoningStep) -> str:
+    def _format_reasoning_step_content(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> str:
         """Format content for a reasoning step without changing any existing logic."""
         step_content = ""
         if reasoning_step.title:
@@ -3762,8 +3877,8 @@ class Team:
 
         # Get the current reasoning_content and append this step
         current_reasoning_content = ""
-        if hasattr(self.run_response, "reasoning_content") and self.run_response.reasoning_content:  # type: ignore
-            current_reasoning_content = self.run_response.reasoning_content  # type: ignore
+        if hasattr(run_response, "reasoning_content") and run_response.reasoning_content:
+            current_reasoning_content = run_response.reasoning_content
 
         # Create updated reasoning_content
         updated_reasoning_content = current_reasoning_content + step_content
@@ -3791,7 +3906,9 @@ class Team:
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
-            reasoning_model = self.model.__class__(id=self.model.id)  # type: ignore
+            from copy import deepcopy
+
+            reasoning_model = deepcopy(self.model)
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
@@ -3849,12 +3966,12 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-            if stream_intermediate_steps:
-                yield self.create_run_response(
-                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
-                    session_id=session_id,
-                    event=RunEvent.reasoning_completed,
-                )
+                if stream_intermediate_steps:
+                    yield self._create_run_response(
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
+                        session_id=session_id,
+                        event=RunEvent.reasoning_completed,
+                    )
         else:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
@@ -3897,7 +4014,9 @@ class Team:
                     # Yield reasoning steps
                     if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
-                            updated_reasoning_content = self._format_reasoning_step_content(reasoning_step)
+                            updated_reasoning_content = self._format_reasoning_step_content(
+                                run_response, reasoning_step
+                            )
 
                             yield self._create_run_response(
                                 content=reasoning_step,
@@ -3968,7 +4087,9 @@ class Team:
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
         if reasoning_model is None and self.model is not None:
-            reasoning_model = self.model.__class__(id=self.model.id)  # type: ignore
+            from copy import deepcopy
+
+            reasoning_model = deepcopy(self.model)
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
@@ -4026,12 +4147,12 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-            if stream_intermediate_steps:
-                yield self._create_run_response(
-                    content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
-                    session_id=session_id,
-                    event=RunEvent.reasoning_completed,
-                )
+                if stream_intermediate_steps:
+                    yield self._create_run_response(
+                        content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
+                        session_id=session_id,
+                        event=RunEvent.reasoning_completed,
+                    )
         else:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
@@ -4074,7 +4195,9 @@ class Team:
                     # Yield reasoning steps
                     if stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
-                            updated_reasoning_content = self._format_reasoning_step_content(reasoning_step)
+                            updated_reasoning_content = self._format_reasoning_step_content(
+                                run_response, reasoning_step
+                            )
 
                             yield self._create_run_response(
                                 content=reasoning_step,
@@ -4214,131 +4337,87 @@ class Team:
             else:
                 log_warning("Context is not a dict")
 
-    def _configure_model(self, show_tool_calls: bool = False) -> None:
-        self._set_default_model()
+    def determine_tools_for_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
+        if self._tools_for_model is None:
+            self._functions_for_model = {}
+            self._tools_for_model = []
 
-        self.model = cast(Model, self.model)
+            # Get Agent tools
+            if len(tools) > 0:
+                log_debug("Processing tools for model")
 
-        # Update the response_format on the Model
-        if self.response_model is None:
-            self.model.response_format = None
-        else:
-            json_response_format = {"type": "json_object"}
+                # Check if we need strict mode for the model
+                strict = False
+                if (
+                    self.response_model is not None
+                    and not self.use_json_mode
+                    and model.supports_native_structured_outputs
+                ):
+                    strict = True
 
-            if self.model.supports_native_structured_outputs:
-                if self.use_json_mode:
-                    self.model.response_format = json_response_format
-                    self.model.structured_outputs = False
-                else:
-                    log_debug("Setting Model.response_format to Agent.response_model")
-                    self.model.response_format = self.response_model
-                    self.model.structured_outputs = True
+                for tool in tools:
+                    if isinstance(tool, Dict):
+                        # If a dict is passed, it is a builtin tool
+                        # that is run by the model provider and not the Agent
+                        self._tools_for_model.append(tool)
+                        log_debug(f"Included builtin tool {tool}")
 
-            elif self.model.supports_json_schema_outputs:
-                if self.use_json_mode:
-                    log_debug("Setting Model.response_format to JSON response mode")
-                    self.model.response_format = {
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": self.response_model.__name__,
-                            "schema": self.response_model.model_json_schema(),
-                        },
-                    }
-                else:
-                    self.model.response_format = None
-                self.model.structured_outputs = False
+                    elif isinstance(tool, Toolkit):
+                        # For each function in the toolkit and process entrypoint
+                        for name, func in tool.functions.items():
+                            # If the function does not exist in self.functions
+                            if name not in self._functions_for_model:
+                                func._agent = self
+                                func._team = self
+                                func.process_entrypoint(strict=strict)
+                                if strict:
+                                    func.strict = True
+                                if self.tool_hooks:
+                                    func.tool_hooks = self.tool_hooks
+                                self._functions_for_model[name] = func
+                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                log_debug(f"Added tool {name} from {tool.name}")
 
-            else:
-                log_debug("Model does not support structured or JSON schema outputs.")
-                self.model.response_format = json_response_format if self.use_json_mode else None
-                self.model.structured_outputs = False
+                        # Add instructions from the toolkit
+                        if tool.add_instructions and tool.instructions is not None:
+                            if self._tool_instructions is None:
+                                self._tool_instructions = []
+                            self._tool_instructions.append(tool.instructions)
 
-            log_debug(f"Structured outputs: {self.model.structured_outputs}")
+                    elif isinstance(tool, Function):
+                        if tool.name not in self._functions_for_model:
+                            tool._agent = self
+                            tool._team = self
+                            tool.process_entrypoint(strict=strict)
+                            if strict and tool.strict is None:
+                                tool.strict = True
+                            if self.tool_hooks:
+                                tool.tool_hooks = self.tool_hooks
+                            self._functions_for_model[tool.name] = tool
+                            self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
+                            log_debug(f"Added tool {tool.name}")
 
-        # Set show_tool_calls on the Model
-        self.model.show_tool_calls = show_tool_calls
+                        # Add instructions from the Function
+                        if tool.add_instructions and tool.instructions is not None:
+                            if self._tool_instructions is None:
+                                self._tool_instructions = []
+                            self._tool_instructions.append(tool.instructions)
 
-        # Set tool_choice on the Model
-        if self.tool_choice is not None:
-            self.model.tool_choice = self.tool_choice
-
-        # Set tool_call_limit on the Model
-        if self.tool_call_limit is not None:
-            self.model.tool_call_limit = self.tool_call_limit
-
-    def _add_tools_to_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
-        # We have to reset for every run, because we will have new images/audio/video to attach
-        self._functions_for_model = {}
-        self._tools_for_model = []
-
-        # Get Agent tools
-        if len(tools) > 0:
-            log_debug("Processing tools for model")
-
-            # Check if we need strict mode for the model
-            strict = False
-            if self.response_model is not None and not self.use_json_mode and model.supports_native_structured_outputs:
-                strict = True
-
-            for tool in tools:
-                if isinstance(tool, Dict):
-                    # If a dict is passed, it is a builtin tool
-                    # that is run by the model provider and not the Agent
-                    self._tools_for_model.append(tool)
-                    log_debug(f"Included builtin tool {tool}")
-
-                elif isinstance(tool, Toolkit):
-                    # For each function in the toolkit and process entrypoint
-                    for name, func in tool.functions.items():
-                        # If the function does not exist in self.functions
-                        if name not in self._functions_for_model:
+                    elif callable(tool):
+                        # We add the tools, which are callable functions
+                        try:
+                            func = Function.from_callable(tool, strict=strict)
                             func._agent = self
-                            func.process_entrypoint(strict=strict)
+                            func._team = self
                             if strict:
                                 func.strict = True
-                            self._functions_for_model[name] = func
+                            if self.tool_hooks:
+                                func.tool_hooks = self.tool_hooks
+                            self._functions_for_model[func.name] = func
                             self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                            log_debug(f"Added function {name} from {tool.name}")
-
-                    # Add instructions from the toolkit
-                    if tool.add_instructions and tool.instructions is not None:
-                        if self._tool_instructions is None:
-                            self._tool_instructions = []
-                        self._tool_instructions.append(tool.instructions)
-
-                elif isinstance(tool, Function):
-                    if tool.name not in self._functions_for_model:
-                        tool._agent = self
-                        tool.process_entrypoint(strict=strict)
-                        if strict and tool.strict is None:
-                            tool.strict = True
-                        self._functions_for_model[tool.name] = tool
-                        self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                        log_debug(f"Added function {tool.name}")
-
-                    # Add instructions from the Function
-                    if tool.add_instructions and tool.instructions is not None:
-                        if self._tool_instructions is None:
-                            self._tool_instructions = []
-                        self._tool_instructions.append(tool.instructions)
-
-                elif callable(tool):
-                    # We add the tools, which are callable functions
-                    try:
-                        func = Function.from_callable(tool, strict=strict)
-                        func._agent = self
-                        if strict:
-                            func.strict = True
-                        self._functions_for_model[func.name] = func
-                        self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                        log_debug(f"Added function {func.name}")
-                    except Exception as e:
-                        log_warning(f"Could not add function {tool}: {e}")
-
-            # Set tools on the model
-            model.set_tools(tools=self._tools_for_model)
-            # Set functions on the model
-            model.set_functions(functions=self._functions_for_model)
+                            log_debug(f"Added tool {func.name}")
+                        except Exception as e:
+                            log_warning(f"Could not add tool {tool}: {e}")
 
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
@@ -4396,7 +4475,7 @@ class Team:
                 instructions.extend(_instructions)
 
         # 1.2 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model()
+        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
@@ -4566,7 +4645,7 @@ class Team:
         if self.add_state_in_messages:
             system_message_content = self._format_message_with_state_variables(system_message_content, user_id=user_id)
 
-        system_message_from_model = self.model.get_system_message_for_model()
+        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
@@ -4823,7 +4902,7 @@ class Team:
         json_output_prompt += "\nMake sure it only contains valid JSON."
         return json_output_prompt
 
-    def _update_team_state(self, run_response: Union[TeamRunResponse, RunResponse]) -> None:
+    def _update_team_media(self, run_response: Union[TeamRunResponse, RunResponse]) -> None:
         """Update the team state with the run response."""
         if run_response.images is not None:
             if self.images is None:
@@ -4961,6 +5040,18 @@ class Team:
 
         return set_shared_context
 
+    def _update_team_session_state(self, member_agent: Union[Agent, "Team"]) -> None:
+        if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
+            if self.session_state is None:
+                self.session_state = member_agent.team_session_state
+            else:
+                merge_dictionaries(self.session_state, member_agent.team_session_state)
+        elif isinstance(member_agent, Team) and member_agent.session_state is not None:
+            if self.session_state is None:
+                self.session_state = member_agent.session_state
+            else:
+                merge_dictionaries(self.session_state, member_agent.session_state)
+
     def get_run_member_agents_function(
         self,
         session_id: str,
@@ -5040,6 +5131,7 @@ class Team:
                 member_agent_task += f"\n\n{team_member_interactions_str}"
 
             for member_agent_index, member_agent in enumerate(self.members):
+                self._initialize_member(member_agent, session_id=session_id)
                 if stream:
                     member_agent_run_response_stream = member_agent.run(
                         member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True
@@ -5104,8 +5196,11 @@ class Team:
                 self.run_response = cast(TeamRunResponse, self.run_response)
                 self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-                # Update the team state
-                self._update_team_state(member_agent.run_response)  # type: ignore
+                # Update team session state
+                self._update_team_session_state(member_agent)
+
+                # Update the team media
+                self._update_team_media(member_agent.run_response)  # type: ignore
 
             # Afterward, switch back to the team logger
             use_team_logger()
@@ -5177,6 +5272,7 @@ class Team:
                 # We cannot stream responses with async gather
                 current_agent = member_agent  # Create a reference to the current agent
                 current_index = member_agent_index  # Create a reference to the current index
+                self._initialize_member(current_agent, session_id=session_id)
 
                 async def run_member_agent(agent=current_agent, idx=current_index) -> str:
                     response = await agent.arun(
@@ -5204,8 +5300,11 @@ class Team:
                     self.run_response = cast(TeamRunResponse, self.run_response)
                     self.run_response.add_member_run(agent.run_response)
 
-                    # Update the team state
-                    self._update_team_state(agent.run_response)
+                    # Update team session state
+                    self._update_team_session_state(current_agent)
+
+                    # Update the team media
+                    self._update_team_media(agent.run_response)
 
                     if response.content is None and (response.tools is None or len(response.tools) == 0):
                         return f"Agent {member_name}: No response from the member agent."
@@ -5408,8 +5507,11 @@ class Team:
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-            # Update the team state
-            self._update_team_state(member_agent.run_response)  # type: ignore
+            # Update team session state
+            self._update_team_session_state(member_agent)
+
+            # Update the team media
+            self._update_team_media(member_agent.run_response)  # type: ignore
 
         async def atransfer_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
@@ -5549,8 +5651,11 @@ class Team:
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-            # Update the team state
-            self._update_team_state(member_agent.run_response)  # type: ignore
+            # Update team session state
+            self._update_team_session_state(member_agent)
+
+            # Update the team media
+            self._update_team_media(member_agent.run_response)  # type: ignore
 
         if async_mode:
             transfer_function = atransfer_task_to_member  # type: ignore
@@ -5580,7 +5685,7 @@ class Team:
         Recursively search through team members and subteams to find an agent by name.
 
         Args:
-            agent_name (str): Name of the agent to find
+            member_id (str): ID of the agent to find
 
         Returns:
             Optional[Tuple[int, Union[Agent, "Team"], Optional[str]]]: Tuple containing:
@@ -5716,8 +5821,11 @@ class Team:
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-            # Update the team state
-            self._update_team_state(member_agent.run_response)  # type: ignore
+            # Update team session state
+            self._update_team_session_state(member_agent)
+
+            # Update the team media
+            self._update_team_media(member_agent.run_response)  # type: ignore
 
         async def aforward_task_to_member(member_id: str, expected_output: Optional[str] = None) -> AsyncIterator[str]:
             """Use this function to forward a message to the selected team member.
@@ -5814,8 +5922,11 @@ class Team:
             self.run_response = cast(TeamRunResponse, self.run_response)
             self.run_response.add_member_run(member_agent.run_response)  # type: ignore
 
-            # Update the team state
-            self._update_team_state(member_agent.run_response)  # type: ignore
+            # Update team session state
+            self._update_team_session_state(member_agent)
+
+            # Update the team media
+            self._update_team_media(member_agent.run_response)  # type: ignore
 
         if async_mode:
             forward_function = aforward_task_to_member  # type: ignore
@@ -5963,11 +6074,9 @@ class Team:
             if isinstance(self.memory, dict) and "create_user_memories" in self.memory:
                 # Convert dict to TeamMemory
                 self.memory = TeamMemory(**self.memory)
-            elif isinstance(self.memory, dict):
-                # Convert dict to Memory
-                self.memory = Memory(**self.memory)
             else:
-                raise TypeError(f"Expected memory to be a dict or TeamMemory, but got {type(self.memory)}")
+                # Default to base memory
+                self.memory = Memory()
 
         if session.memory is not None:
             if isinstance(self.memory, TeamMemory):
@@ -6007,13 +6116,13 @@ class Team:
                     try:
                         if self.memory.runs is None:
                             self.memory.runs = {}
+                        self.memory.runs[session.session_id] = []
                         for run in session.memory["runs"]:
-                            session_id = run["session_id"]
-                            self.memory.runs[session_id] = []
+                            run_session_id = run["session_id"]
                             if "team_id" in run:
-                                self.memory.runs[session_id].append(TeamRunResponse.from_dict(run))
+                                self.memory.runs[run_session_id].append(TeamRunResponse.from_dict(run))
                             else:
-                                self.memory.runs[session_id].append(RunResponse.from_dict(run))
+                                self.memory.runs[run_session_id].append(RunResponse.from_dict(run))
                     except Exception as e:
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "team_context" in session.memory:
@@ -6114,7 +6223,7 @@ class Team:
         if isinstance(self.memory, AgentMemory):
             return self.memory.messages
         elif isinstance(self.memory, Memory):
-            return self.memory.get_messages_for_session(session_id=_session_id)
+            return self.memory.get_messages_from_last_n_runs(session_id=_session_id)
         else:
             return []
 
@@ -6193,7 +6302,7 @@ class Team:
         return self.audio
 
     def update_reasoning_content_from_tool_call(
-        self, tool_name: str, tool_args: Dict[str, Any]
+        self, run_response: TeamRunResponse, tool_name: str, tool_args: Dict[str, Any]
     ) -> Optional[ReasoningStep]:
         """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
 
@@ -6214,7 +6323,7 @@ class Team:
             )
 
             # Add the step to the run response
-            self._add_reasoning_step_to_extra_data(reasoning_step)
+            self._add_reasoning_step_to_extra_data(run_response, reasoning_step)
 
             formatted_content = f"## {title}\n{thought}\n"
             if action:
@@ -6223,7 +6332,7 @@ class Team:
                 formatted_content += f"Confidence: {confidence}\n"
             formatted_content += "\n"
 
-            self._append_to_reasoning_content(formatted_content)
+            self._append_to_reasoning_content(run_response, formatted_content)
             return reasoning_step
 
         # Case 2: ReasoningTools.analyze (has title, result, analysis, optional next_action and confidence)
@@ -6251,7 +6360,7 @@ class Team:
             )
 
             # Add the step to the run response
-            self._add_reasoning_step_to_extra_data(reasoning_step)
+            self._add_reasoning_step_to_extra_data(run_response, reasoning_step)
 
             formatted_content = f"## {title}\n"
             if result:
@@ -6264,7 +6373,7 @@ class Team:
                 formatted_content += f"Confidence: {confidence}\n"
             formatted_content += "\n"
 
-            self._append_to_reasoning_content(formatted_content)
+            self._append_to_reasoning_content(run_response, formatted_content)
             return reasoning_step
 
         # Case 3: ThinkingTools.think (simple format, just has 'thought')
@@ -6276,67 +6385,50 @@ class Team:
                 confidence=None,
             )
             formatted_content = f"## Thinking\n{thought}\n\n"
-            self._add_reasoning_step_to_extra_data(reasoning_step)
-            self._append_to_reasoning_content(formatted_content)
+            self._add_reasoning_step_to_extra_data(run_response, reasoning_step)
+            self._append_to_reasoning_content(run_response, formatted_content)
             return reasoning_step
 
         return None
 
-    def _append_to_reasoning_content(self, content: str) -> None:
+    def _append_to_reasoning_content(self, run_response: TeamRunResponse, content: str) -> None:
         """Helper to append content to the reasoning_content field."""
-        if not hasattr(self.run_response, "reasoning_content") or not self.run_response.reasoning_content:  # type: ignore
-            self.run_response.reasoning_content = content  # type: ignore
+        if not hasattr(run_response, "reasoning_content") or not run_response.reasoning_content:  # type: ignore
+            run_response.reasoning_content = content  # type: ignore
         else:
-            self.run_response.reasoning_content += content  # type: ignore
+            run_response.reasoning_content += content  # type: ignore
 
-    def _add_reasoning_step_to_extra_data(self, reasoning_step: ReasoningStep) -> None:
-        if hasattr(self, "run_response") and self.run_response is not None:
-            if self.run_response.extra_data is None:
+    def _add_reasoning_step_to_extra_data(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> None:
+        if run_response.extra_data is None:
+            from agno.run.response import RunResponseExtraData
+
+            run_response.extra_data = RunResponseExtraData()
+
+        if run_response.extra_data.reasoning_steps is None:
+            run_response.extra_data.reasoning_steps = []
+
+        run_response.extra_data.reasoning_steps.append(reasoning_step)
+
+    def _add_reasoning_metrics_to_extra_data(self, run_response: TeamRunResponse, reasoning_time_taken: float) -> None:
+        try:
+            if run_response.extra_data is None:
                 from agno.run.response import RunResponseExtraData
 
-                self.run_response.extra_data = RunResponseExtraData()
+                run_response.extra_data = RunResponseExtraData()
 
-        if self.run_response.extra_data.reasoning_steps is None:
-            self.run_response.extra_data.reasoning_steps = []
+            # Initialize reasoning_messages if it doesn't exist
+            if run_response.extra_data.reasoning_messages is None:
+                run_response.extra_data.reasoning_messages = []
 
-        self.run_response.extra_data.reasoning_steps.append(reasoning_step)
+            metrics_message = Message(
+                role="assistant",
+                content=run_response.reasoning_content,
+                metrics={"time": reasoning_time_taken},
+            )
 
-    def _add_reasoning_metrics_to_extra_data(self, reasoning_time_taken: float) -> None:
-        try:
-            if hasattr(self, "run_response") and self.run_response is not None:
-                if self.run_response.extra_data is None:
-                    from agno.run.response import RunResponseExtraData
-
-                    self.run_response.extra_data = RunResponseExtraData()
-
-                # Initialize reasoning_messages if it doesn't exist
-                if self.run_response.extra_data.reasoning_messages is None:
-                    self.run_response.extra_data.reasoning_messages = []
-
-                try:
-                    # First attempt: Create a Message object with the metrics
-                    from agno.models.message import Message
-
-                    metrics_message = Message(
-                        role="assistant",
-                        content=self.run_response.reasoning_content,
-                        metrics={"time": reasoning_time_taken},
-                    )
-
-                    # Add the metrics message to the reasoning_messages
-                    self.run_response.extra_data.reasoning_messages.append(metrics_message)
-                except Exception:
-                    # Fallback: If Message object fails, try with a simple dictionary
-                    metrics_dict = {
-                        "role": "assistant",
-                        "content": str(self.run_response.reasoning_content),
-                        "metrics": {"time": reasoning_time_taken},
-                    }
-                    self.run_response.extra_data.reasoning_messages.append(metrics_dict)
+            # Add the metrics message to the reasoning_messages
+            run_response.extra_data.reasoning_messages.append(metrics_message)
         except Exception as e:
-            # Log the error but don't crash
-            from agno.utils.log import log_error
-
             log_error(f"Failed to add reasoning metrics to extra_data: {str(e)}")
 
     ###########################################################################
@@ -6488,9 +6580,11 @@ class Team:
             run_response_format = "markdown"
 
         functions = {}
-        if self.model is not None and self.model._functions is not None:
+        if self._functions_for_model:
             functions = {
-                f_name: func.to_dict() for f_name, func in self.model._functions.items() if isinstance(func, Function)
+                f_name: func.to_dict()
+                for f_name, func in self._functions_for_model.items()
+                if isinstance(func, Function)
             }
 
         run_data: Dict[str, Any] = {
@@ -6530,17 +6624,18 @@ class Team:
         if self.session_metrics is not None:
             session_data["session_metrics"] = asdict(self.session_metrics) if self.session_metrics is not None else None
         if self.images is not None:
-            session_data["images"] = [img.model_dump() for img in self.images]  # type: ignore
+            session_data["images"] = [img.to_dict() for img in self.images]  # type: ignore
         if self.videos is not None:
-            session_data["videos"] = [vid.model_dump() for vid in self.videos]  # type: ignore
+            session_data["videos"] = [vid.to_dict() for vid in self.videos]  # type: ignore
         if self.audio is not None:
-            session_data["audio"] = [aud.model_dump() for aud in self.audio]  # type: ignore
+            session_data["audio"] = [aud.to_dict() for aud in self.audio]  # type: ignore
         return session_data
 
     def _get_team_session(self, session_id: str, user_id: Optional[str] = None) -> TeamSession:
         from time import time
 
         """Get an TeamMemory object, which can be saved to the database"""
+        memory_dict = None
         if self.memory is not None:
             if isinstance(self.memory, TeamMemory):
                 self.memory = cast(TeamMemory, self.memory)
@@ -6553,8 +6648,6 @@ class Team:
                     run_responses = self.memory.runs.get(session_id)
                     if run_responses is not None:
                         memory_dict["runs"] = [rr.to_dict() for rr in run_responses]
-        else:
-            memory_dict = None
 
         return TeamSession(
             session_id=session_id,
