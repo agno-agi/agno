@@ -1,8 +1,11 @@
 name: PR Lint
 
 on:
-  pull_request:
-    types: [opened, edited, synchronize]
+    pull_request:
+        types:
+            - opened
+            - edited
+            - synchronize
 
 jobs:
   lint-pr:
@@ -12,8 +15,9 @@ jobs:
       - name: Check PR Title Format
         run: |
           TITLE="${{ github.event.pull_request.title }}"
+          TITLE_LOWER=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]')
           REGEX="^(\[(feat|fix|docs|test|refactor|build|ci|chore|perf|style|revert)\]\\s*.+|(feat|fix|docs|test|refactor|build|ci|chore|perf|style|revert):\\s*.+)"
-          if [[ ! "$TITLE" =~ $REGEX ]]; then
+          if [[ ! "$TITLE_LOWER" =~ $REGEX ]]; then
             echo "❌ PR Title '$TITLE' does not match the required format '[type] subject' or 'type: subject'."
             echo "   Please start your PR title with a valid type like [feat], [fix], feat:, fix:, etc., followed by a space and the subject."
             exit 1
