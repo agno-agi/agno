@@ -819,6 +819,15 @@ class Agent:
                                 if metrics is not None and metrics.time is not None:
                                     reasoning_time_taken = reasoning_time_taken + float(metrics.time)
 
+                    # Yield the tool call
+                    if run_response.tools is not None:
+                        yield self.create_run_response(
+                            content=model_response_chunk.content,
+                            created_at=model_response_chunk.created_at,
+                            session_id=session_id,
+                            run_response=run_response,
+                        )
+
                     if self.stream_intermediate_steps:
                         if reasoning_step is not None:
                             if not reasoning_started:
@@ -1340,7 +1349,7 @@ class Agent:
         self.set_default_model()
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
-        
+
         self.determine_tools_for_model(
             model=self.model,
             session_id=session_id,
