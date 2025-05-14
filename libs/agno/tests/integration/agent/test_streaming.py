@@ -70,6 +70,7 @@ def test_tool_streaming():
     assert len(chunks) > 0
     assert tool_calls
 
+
 async def test_async_tool_streaming():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -110,7 +111,6 @@ def test_streaming_with_intermediate_steps():
     run_started: bool = False
     run_response: bool = False
     run_completed: bool = False
-
 
     for chunk in response:
         chunks.append(chunk)
