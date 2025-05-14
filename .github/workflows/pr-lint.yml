@@ -1,11 +1,11 @@
 name: PR Lint
 
 on:
-    pull_request:
-        types:
-            - opened
-            - edited
-            - synchronize
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
 
 jobs:
   lint-pr:
@@ -16,10 +16,10 @@ jobs:
         run: |
           TITLE="${{ github.event.pull_request.title }}"
           TITLE_LOWER=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]')
-          REGEX="^(\[(feat|fix|docs|test|refactor|build|ci|chore|perf|style|revert)\]\\s*.+|(feat|fix|docs|test|refactor|build|ci|chore|perf|style|revert):\\s*.+)"
+          REGEX="^(\[(feat|fix|cookbook|test|refactor|build|ci|chore|perf|style|revert)\]\\s*.+|(feat|fix|cookbook|test|refactor|build|ci|chore|perf|style|revert):\\s*.+)(\\s+[#a-zA-Z0-9_-]+)?$"
           if [[ ! "$TITLE_LOWER" =~ $REGEX ]]; then
-            echo "❌ PR Title '$TITLE' does not match the required format '[type] subject' or 'type: subject'."
-            echo "   Please start your PR title with a valid type like [feat], [fix], feat:, fix:, etc., followed by a space and the subject."
+            echo "❌ PR Title '$TITLE' does not match the required format '[type] subject' or 'type: subject', with optional trailing reference like #1234."
+            echo "   Please start your PR title with a valid type like [feat], [fix], feat:, fix:, etc., followed by the subject."
             exit 1
           else
             echo "✅ PR Title format is valid."
