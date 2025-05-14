@@ -15,6 +15,4 @@ agent = Agent(
     markdown=True,
 )
 
-agent.print_response(
-    "What's the latest with Anthropic?", stream=True
-)
+agent.print_response("What's the latest with Anthropic?", stream=True)
