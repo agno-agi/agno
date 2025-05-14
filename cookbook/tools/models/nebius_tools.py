@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.tools.nebius import NebiusTools
+from agno.tools.models.nebius import NebiusTools
 from agno.utils.media import save_base64_data
 
 # Create an Agent with the Nebius text-to-image tool

@@ -12,14 +12,14 @@ class Nebius(OpenAILike):
     A class for interacting with Nebius AI Studio models.
 
     Attributes:
-        id (str): The model id. Defaults to "black-forest-labs/flux-schnell".
+        id (str): The model id. Defaults to "nebius.ai/chatgpt".
         name (str): The model name. Defaults to "Nebius".
         provider (str): The provider name. Defaults to "Nebius".
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://api.studio.nebius.com/v1".
     """
 
-    id: str = "black-forest-labs/flux-schnell"  # Default model for image generation
+    id: str = "nebius.ai/chatgpt"  # Default model for chat
     name: str = "Nebius"
     provider: str = "Nebius"
 

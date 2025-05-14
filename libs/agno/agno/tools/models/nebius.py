@@ -47,10 +47,15 @@ class NebiusTools(Toolkit):
         self.image_quality = image_quality
         self.image_size = image_size
         self.image_style = image_style
-
-        self.nebius = Nebius(api_key=self.api_key, base_url=self.base_url, id=self.image_model)
+        self._nebius_client = None
 
         self.register(self.generate_image)
+
+    def _get_client(self):
+        """Lazy initialization of the Nebius client."""
+        if self._nebius_client is None:
+            self._nebius_client = Nebius(api_key=self.api_key, base_url=self.base_url, id=self.image_model).get_client()
+        return self._nebius_client
 
     def generate_image(
         self,
@@ -74,7 +79,7 @@ class NebiusTools(Toolkit):
             }
             extra_params = {k: v for k, v in extra_params.items() if v is not None}
 
-            client = self.nebius.get_client()
+            client = self._get_client()
 
             response = client.images.generate(
                 model=self.image_model,
