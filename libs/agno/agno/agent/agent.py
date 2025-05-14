@@ -1042,6 +1042,7 @@ class Agent:
                 reasoning_content=run_response.reasoning_content,
                 session_id=session_id,
                 event=RunEvent.run_completed,
+                run_response=run_response,
             )
 
         # Yield final response if not streaming so that run() can get the response
@@ -1098,7 +1099,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -1134,6 +1135,15 @@ class Agent:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
+
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = (
+                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+            )
+
+        # Can't have stream_intermediate_steps if stream is False
+        if stream is False:
+            stream_intermediate_steps = False
 
         # Use the default user_id and session_id when necessary
         if user_id is None:
@@ -1330,6 +1340,7 @@ class Agent:
         self.set_default_model()
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
+
         self.determine_tools_for_model(
             model=self.model,
             session_id=session_id,
@@ -1749,6 +1760,7 @@ class Agent:
                 reasoning_content=run_response.reasoning_content,
                 session_id=session_id,
                 event=RunEvent.run_completed,
+                run_response=run_response,
             )
 
         # Yield final response if not streaming so that run() can get the response
@@ -1767,7 +1779,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -1803,6 +1815,15 @@ class Agent:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
+
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = (
+                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+            )
+
+        # Can't have stream_intermediate_steps if stream is False
+        if stream is False:
+            stream_intermediate_steps = False
 
         # Use the default user_id and session_id when necessary
         if user_id is None:
@@ -3513,18 +3534,19 @@ class Agent:
         from agno.document import Document
 
         # Validate the filters against known valid filter keys
-        valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+        if self.knowledge is not None:
+            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
 
-        # Warn about invalid filter keys
-        if invalid_keys:
-            # type: ignore
-            log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-            log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+            # Warn about invalid filter keys
+            if invalid_keys:
+                # type: ignore
+                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
 
-            # Only use valid filters
-            filters = valid_filters
-            if not filters:
-                log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                # Only use valid filters
+                filters = valid_filters
+                if not filters:
+                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
         if self.retriever is not None and callable(self.retriever):
             from inspect import signature
@@ -3571,17 +3593,18 @@ class Agent:
         from agno.document import Document
 
         # Validate the filters against known valid filter keys
-        valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+        if self.knowledge is not None:
+            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
 
-        # Warn about invalid filter keys
-        if invalid_keys:  # type: ignore
-            log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-            log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+            # Warn about invalid filter keys
+            if invalid_keys:  # type: ignore
+                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
 
-            # Only use valid filters
-            filters = valid_filters
-            if not filters:
-                log_warning("No valid filters remain after validation. Search will proceed without filters.")
+                # Only use valid filters
+                filters = valid_filters
+                if not filters:
+                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
         if self.retriever is not None and callable(self.retriever):
             from inspect import isawaitable, signature

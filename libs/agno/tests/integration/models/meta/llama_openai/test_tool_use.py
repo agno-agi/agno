@@ -34,7 +34,7 @@ def test_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -79,7 +79,9 @@ async def test_async_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
+    )
 
     responses = []
     tool_call_seen = False

@@ -11,23 +11,27 @@ This example shows how to instrument your agno agent with OpenInference and send
 """
 
 import os
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
-
-
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry import trace as trace_api
 from openinference.instrumentation.agno import AgnoInstrumentor
+from opentelemetry import trace as trace_api
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 endpoint = "https://eu.api.smith.langchain.com/otel/v1/traces"
-headers = {"x-api-key": os.getenv('LANGSMITH_API_KEY'), "Langsmith-Project": os.getenv('LANGSMITH_PROJECT')}
+headers = {
+    "x-api-key": os.getenv("LANGSMITH_API_KEY"),
+    "Langsmith-Project": os.getenv("LANGSMITH_PROJECT"),
+}
 
 
 tracer_provider = TracerProvider()
-tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter(endpoint=endpoint, headers=headers)))
+tracer_provider.add_span_processor(
+    SimpleSpanProcessor(OTLPSpanExporter(endpoint=endpoint, headers=headers))
+)
 trace_api.set_tracer_provider(tracer_provider=tracer_provider)
 
 # Start instrumenting agno

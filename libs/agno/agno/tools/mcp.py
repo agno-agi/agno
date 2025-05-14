@@ -15,7 +15,6 @@ try:
     from mcp.client.sse import sse_client
     from mcp.client.stdio import stdio_client
     from mcp.client.streamable_http import streamablehttp_client
-    from mcp.shared.exceptions import McpError
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
 

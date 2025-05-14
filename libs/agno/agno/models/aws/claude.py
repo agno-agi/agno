@@ -308,7 +308,7 @@ class Claude(AnthropicClaude):
 
         try:
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message)
+            request_kwargs = self._prepare_request_kwargs(system_message, tools)
             async with self.get_async_client().messages.stream(
                 model=self.id,
                 messages=chat_messages,  # type: ignore

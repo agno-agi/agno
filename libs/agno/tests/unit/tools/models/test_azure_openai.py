@@ -81,7 +81,7 @@ def test_tools_registration(azure_openai_tools):
     assert "generate_image" in function_names
 
 
-@patch("agno.tools.azure_openai.post")
+@patch("agno.tools.models.azure_openai.post")
 def test_generate_image_success(mock_post, azure_openai_tools, mock_agent):
     """Test successful image generation."""
     # Configure the mock response
@@ -118,7 +118,7 @@ def test_generate_image_success(mock_post, azure_openai_tools, mock_agent):
     assert "https://test-image-url.com/image.png" in result
 
 
-@patch("agno.tools.azure_openai.post")
+@patch("agno.tools.models.azure_openai.post")
 def test_generate_image_with_custom_parameters(mock_post, azure_openai_tools, mock_agent):
     """Test image generation with custom parameters."""
     # Configure the mock response
@@ -149,7 +149,7 @@ def test_generate_image_with_custom_parameters(mock_post, azure_openai_tools, mo
     assert kwargs["json"]["n"] == 1  # Default for dall-e-3
 
 
-@patch("agno.tools.azure_openai.post")
+@patch("agno.tools.models.azure_openai.post")
 def test_generate_image_failure(mock_post, azure_openai_tools, mock_agent):
     """Test image generation failure handling."""
     # Configure the mock response for a failed API call
@@ -173,7 +173,7 @@ def test_generate_image_failure(mock_post, azure_openai_tools, mock_agent):
 def test_invalid_parameters(azure_openai_tools, mock_agent):
     """Test automatic correction of invalid parameters."""
     # Setup mock response for successful API call
-    with patch("agno.tools.azure_openai.post") as mock_post:
+    with patch("agno.tools.models.azure_openai.post") as mock_post:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {

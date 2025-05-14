@@ -6,18 +6,17 @@ This example shows how to instrument your agno agent with OpenInference and send
 """
 
 import os
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
-
 from phoenix.otel import register
 
-os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:6006";
-
+os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:6006"
 # configure the Phoenix tracer
 tracer_provider = register(
-  project_name="agno-stock-price-agent", # Default is 'default'
-  auto_instrument=True # Automatically use the installed OpenInference instrumentation
+    project_name="agno-stock-price-agent",  # Default is 'default'
+    auto_instrument=True,  # Automatically use the installed OpenInference instrumentation
 )
 
 agent = Agent(

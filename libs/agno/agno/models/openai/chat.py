@@ -78,14 +78,6 @@ class OpenAIChat(Model):
     http_client: Optional[httpx.Client] = None
     client_params: Optional[Dict[str, Any]] = None
 
-    # OpenAI clients
-    client: Optional[OpenAIClient] = None
-    async_client: Optional[AsyncOpenAIClient] = None
-
-    # Internal parameters. Not used for API requests
-    # Whether to use the structured outputs with this Model.
-    structured_outputs: bool = False
-
     # The role to map the message role to.
     role_map = {
         "system": "developer",
@@ -128,16 +120,10 @@ class OpenAIChat(Model):
         Returns:
             OpenAIClient: An instance of the OpenAI client.
         """
-        # There is a bug in OpenAI preventing the reuse of the same client for multiple requests in some cases.
-        # So we need to create a new client for each request.
-        if self.client:
-            return self.client
-
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client is not None:
             client_params["http_client"] = self.http_client
-        self.client = OpenAIClient(**client_params)
-        return self.client
+        return OpenAIClient(**client_params)
 
     def get_async_client(self) -> AsyncOpenAIClient:
         """
@@ -146,9 +132,6 @@ class OpenAIChat(Model):
         Returns:
             AsyncOpenAIClient: An instance of the asynchronous OpenAI client.
         """
-        if self.async_client and not self.async_client.is_closed():
-            return self.async_client
-
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
             client_params["http_client"] = self.http_client
@@ -395,17 +378,16 @@ class OpenAIChat(Model):
             ChatCompletion: The chat completion response from the API.
         """
         try:
-            if response_format is not None:
-                if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-                    return await self.get_async_client().beta.chat.completions.parse(
-                        model=self.id,
-                        messages=[self._format_message(m) for m in messages],  # type: ignore
-                        **self.get_request_kwargs(
-                            response_format=response_format, tools=tools, tool_choice=tool_choice
-                        ),
-                    )
-                else:
-                    raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
+            if (
+                response_format is not None
+                and isinstance(response_format, type)
+                and issubclass(response_format, BaseModel)
+            ):
+                return await self.get_async_client().beta.chat.completions.parse(
+                    model=self.id,
+                    messages=[self._format_message(m) for m in messages],  # type: ignore
+                    **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                )
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
