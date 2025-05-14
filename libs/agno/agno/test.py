@@ -1,23 +1,28 @@
+from os import getenv
+
 from agno.agent import Agent
 from agno.knowledge.pdf import PDFKnowledgeBase
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.vectordb.chroma import ChromaDb
+from agno.vectordb.search import SearchType
+from agno.vectordb.weaviate import Distance, VectorIndex, Weaviate
 
 # Download all sample CVs and get their paths
-downloaded_cv_paths = download_knowledge_filters_sample_data(
-    num_files=5, file_extension=SampleDataFileExtension.PDF
-)
-
-# Initialize ChromaDB
-vector_db = ChromaDb(collection="recipes", path="tmp/chromadb", persistent_client=True)
+downloaded_cv_paths = download_knowledge_filters_sample_data(num_files=5, file_extension=SampleDataFileExtension.PDF)
 
 # Step 1: Initialize knowledge base with documents and metadata
 # ------------------------------------------------------------------------------
 # When initializing the knowledge base, we can attach metadata that will be used for filtering
 # This metadata can include user IDs, document types, dates, or any other attributes
+
+vector_db = Weaviate(
+    collection="recipes",
+    vector_index=VectorIndex.HNSW,
+    distance=Distance.COSINE,
+    local=False,  # Set to False if using Weaviate Cloud and True if using local instance
+)
 
 knowledge_base = PDFKnowledgeBase(
     path=[
@@ -80,6 +85,6 @@ agent = Agent(
 
 agent.print_response(
     "Tell me about Jordan Mitchell's experience and skills",
-    knowledge_filters={"user_id": "jordan_mitchell"},
+    knowledge_filters={"user_id": "hi"},
     markdown=True,
 )

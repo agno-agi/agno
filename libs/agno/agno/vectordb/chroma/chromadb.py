@@ -157,12 +157,12 @@ class ChromaDb(VectorDb):
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
-            
+
             # Handle metadata and filters
             metadata = document.meta_data or {}
             if filters:
                 metadata.update(filters)
-            
+
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
             ids.append(doc_id)
@@ -282,13 +282,13 @@ class ChromaDb(VectorDb):
 
         if self.reranker:
             search_results = self.reranker.rerank(query=query, documents=search_results)
-            
+
         log_info(f"Found {len(search_results)} documents")
         return search_results
 
     def _convert_filters(self, filters: Dict[str, Any]) -> Dict[str, Any]:
         """Convert simple filters to ChromaDB's filter format.
-        
+
         Handles conversion of simple key-value filters to ChromaDB's operator format
         when needed.
         """
@@ -296,7 +296,7 @@ class ChromaDb(VectorDb):
             return {}
 
         # If filters already use ChromaDB operators ($eq, $ne, etc.), return as is
-        if any(key.startswith('$') for key in filters.keys()):
+        if any(key.startswith("$") for key in filters.keys()):
             return filters
 
         # Convert simple key-value pairs to ChromaDB's format
