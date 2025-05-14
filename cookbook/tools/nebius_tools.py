@@ -59,7 +59,7 @@ response = high_quality_agent.run(
 
 # Save the generated image
 if response.images:
-    image_path = Path("tmp") / "nebius_cyberpunk_character_{uuid4()}.png"
+    image_path = Path("tmp") / f"nebius_cyberpunk_character_{uuid4()}.png"
     Path("tmp").mkdir(exist_ok=True)
     save_base64_data(response.images[0].content, image_path)
     print(f"High-quality image saved to {image_path}")
@@ -84,7 +84,7 @@ response = sdxl_agent.run(
 
 # Save the generated image
 if response.images:
-    image_path = Path("tmp") / "nebius_fantasy_landscape_{uuid4()}.png"
+    image_path = Path("tmp") / f"nebius_fantasy_landscape_{uuid4()}.png"
     Path("tmp").mkdir(exist_ok=True)
     save_base64_data(response.images[0].content, image_path)
     print(f"SDXL image saved to {image_path}")
