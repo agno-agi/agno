@@ -1,5 +1,3 @@
-from os import getenv
-
 from agno.agent import Agent
 from agno.knowledge.pdf import PDFKnowledgeBase
 from agno.utils.media import (
@@ -11,7 +9,8 @@ from agno.vectordb.weaviate import Distance, VectorIndex, Weaviate
 
 # Download all sample CVs and get their paths
 downloaded_cv_paths = download_knowledge_filters_sample_data(
-    num_files=5, file_extension=SampleDataFileExtension.PDF)
+    num_files=5, file_extension=SampleDataFileExtension.PDF
+)
 
 # Step 1: Initialize knowledge base with documents and metadata
 # ------------------------------------------------------------------------------

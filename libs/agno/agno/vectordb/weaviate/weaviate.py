@@ -397,9 +397,9 @@ class Weaviate(VectorDb):
         if self.search_type == SearchType.vector:
             return self.vector_search(query, limit, filters)
         elif self.search_type == SearchType.keyword:
-            return self.keyword_search(query, limit)
+            return self.keyword_search(query, limit, filters)
         elif self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit)
+            return self.hybrid_search(query, limit, filters)
         else:
             logger.error(f"Invalid search type '{self.search_type}'.")
             return []
@@ -419,27 +419,16 @@ class Weaviate(VectorDb):
             List[Document]: List of matching documents.
         """
         if self.search_type == SearchType.vector:
-            return await self.async_vector_search(query, limit)
+            return await self.async_vector_search(query, limit, filters)
         elif self.search_type == SearchType.keyword:
-            return await self.async_keyword_search(query, limit)
+            return await self.async_keyword_search(query, limit, filters)
         elif self.search_type == SearchType.hybrid:
-            return await self.async_hybrid_search(query, limit)
+            return await self.async_hybrid_search(query, limit, filters)
         else:
             logger.error(f"Invalid search type '{self.search_type}'.")
             return []
 
     def vector_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
-        """
-        Perform a vector search in Weaviate.
-
-        Args:
-            query (str): The search query.
-            limit (int): Maximum number of results to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
-
-        Returns:
-            List[Document]: List of matching documents.
-        """
         try:
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
@@ -447,39 +436,7 @@ class Weaviate(VectorDb):
                 return []
 
             collection = self.get_client().collections.get(self.collection)
-
-            # Build filter expression if filters are provided
-            filter_expr = None
-            if filters:
-                try:
-                    # Create a filter for each key-value pair
-                    filter_conditions = []
-                    for key, value in filters.items():
-                        # Create a pattern to match in the JSON string
-                        if isinstance(value, (list, tuple)):
-                            # For list values
-                            pattern = f'"{key}": {json.dumps(value)}'
-                        else:
-                            # For single values
-                            pattern = f'"{key}": "{value}"'
-                        
-                        # Add the filter condition using like operator
-                        filter_conditions.append(
-                            Filter.by_property("meta_data").like(f"*{pattern}*")
-                        )
-                    
-                    # If we have multiple conditions, combine them
-                    if len(filter_conditions) > 1:
-                        # Use the first condition as base and chain the rest
-                        filter_expr = filter_conditions[0]
-                        for condition in filter_conditions[1:]:
-                            filter_expr = filter_expr & condition
-                    elif filter_conditions:
-                        filter_expr = filter_conditions[0]
-
-                except Exception as e:
-                    logger.error(f"Error building filter expression: {e}")
-                    return []
+            filter_expr = self._build_filter_expression(filters)
 
             response = collection.query.near_vector(
                 near_vector=query_embedding,
@@ -495,7 +452,7 @@ class Weaviate(VectorDb):
                 search_results = self.reranker.rerank(query=query, documents=search_results)
 
             log_info(f"Found {len(search_results)} documents")
-            
+
             self.get_client().close()
             return search_results
 
@@ -503,9 +460,11 @@ class Weaviate(VectorDb):
             logger.error(f"Error searching for documents: {e}")
             return []
 
-    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
+    async def async_vector_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
-        Perform a keyword search in Weaviate.
+        Perform a vector search in Weaviate asynchronously.
 
         Args:
             query (str): The search query.
@@ -514,24 +473,70 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
-        collection = self.get_client().collections.get(self.collection)
-        response = collection.query.bm25(
-            query=query,
-            query_properties=["content"],
-            limit=limit,
-            return_properties=["name", "content", "meta_data"],
-            include_vector=True,
-        )
+        query_embedding = self.embedder.get_embedding(query)
+        if query_embedding is None:
+            logger.error(f"Error getting embedding for query: {query}")
+            return []
 
-        search_results: List[Document] = self.get_search_results(response)
+        search_results = []
+        client = await self.get_async_client()
+        try:
+            collection = client.collections.get(self.collection)
+            filter_expr = self._build_filter_expression(filters)
 
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
+            response = await collection.query.near_vector(
+                near_vector=query_embedding,
+                limit=limit,
+                return_properties=["name", "content", "meta_data"],
+                include_vector=True,
+                filters=filter_expr,
+            )
 
-        self.get_client().close()
-        return search_results
+            search_results = self.get_search_results(response)
 
-    async def async_keyword_search(self, query: str, limit: int = 5) -> List[Document]:
+            if self.reranker:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
+
+            log_info(f"Found {len(search_results)} documents")
+
+            await client.close()
+            return search_results
+
+        except Exception as e:
+            logger.error(f"Error searching for documents: {e}")
+            return []
+
+    def keyword_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        try:
+            collection = self.get_client().collections.get(self.collection)
+            filter_expr = self._build_filter_expression(filters)
+
+            response = collection.query.bm25(
+                query=query,
+                query_properties=["content"],
+                limit=limit,
+                return_properties=["name", "content", "meta_data"],
+                include_vector=True,
+                filters=filter_expr,
+            )
+
+            search_results: List[Document] = self.get_search_results(response)
+
+            if self.reranker:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
+
+            log_info(f"Found {len(search_results)} documents")
+
+            self.get_client().close()
+            return search_results
+
+        except Exception as e:
+            logger.error(f"Error searching for documents: {e}")
+            return []
+
+    async def async_keyword_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
         Perform a keyword search in Weaviate asynchronously.
 
@@ -546,59 +551,69 @@ class Weaviate(VectorDb):
         client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
+
+            filter_expr = self._build_filter_expression(filters)
             response = await collection.query.bm25(
                 query=query,
                 query_properties=["content"],
                 limit=limit,
                 return_properties=["name", "content", "meta_data"],
                 include_vector=True,
+                filters=filter_expr,
             )
 
             search_results = self.get_search_results(response)
 
             if self.reranker:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
-        finally:
+
+            log_info(f"Found {len(search_results)} documents")
+
             await client.close()
+            return search_results
 
-        return search_results
-
-    def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
-        """
-        Perform a hybrid search combining vector and keyword search in Weaviate.
-
-        Args:
-            query (str): The keyword query.
-            limit (int): Maximum number of results to return.
-
-        Returns:
-            List[Document]: List of matching documents.
-        """
-        query_embedding = self.embedder.get_embedding(query)
-        if query_embedding is None:
-            logger.error(f"Error getting embedding for query: {query}")
+        except Exception as e:
+            logger.error(f"Error searching for documents: {e}")
             return []
 
-        collection = self.get_client().collections.get(self.collection)
-        response = collection.query.hybrid(
-            query=query,
-            vector=query_embedding,
-            limit=limit,
-            return_properties=["name", "content", "meta_data"],
-            include_vector=True,
-            query_properties=["content"],
-            alpha=self.hybrid_search_alpha,
-        )
+    def hybrid_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        try:
+            query_embedding = self.embedder.get_embedding(query)
+            if query_embedding is None:
+                logger.error(f"Error getting embedding for query: {query}")
+                return []
 
-        search_results: List[Document] = self.get_search_results(response)
+            collection = self.get_client().collections.get(self.collection)
+            filter_expr = self._build_filter_expression(filters)
 
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
+            response = collection.query.hybrid(
+                query=query,
+                vector=query_embedding,
+                limit=limit,
+                return_properties=["name", "content", "meta_data"],
+                include_vector=True,
+                query_properties=["content"],
+                alpha=self.hybrid_search_alpha,
+                filters=filter_expr,
+            )
 
-        self.get_client().close()
-        return search_results
+            search_results: List[Document] = self.get_search_results(response)
 
-    async def async_hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
+            if self.reranker:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
+
+            log_info(f"Found {len(search_results)} documents")
+
+            self.get_client().close()
+            return search_results
+
+        except Exception as e:
+            logger.error(f"Error searching for documents: {e}")
+            return []
+
+    async def async_hybrid_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
         Perform a hybrid search combining vector and keyword search in Weaviate asynchronously.
 
@@ -618,6 +633,8 @@ class Weaviate(VectorDb):
         client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
+
+            filter_expr = self._build_filter_expression(filters)
             response = await collection.query.hybrid(
                 query=query,
                 vector=query_embedding,
@@ -626,16 +643,22 @@ class Weaviate(VectorDb):
                 include_vector=True,
                 query_properties=["content"],
                 alpha=self.hybrid_search_alpha,
+                filters=filter_expr,
             )
 
             search_results = self.get_search_results(response)
 
             if self.reranker:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
-        finally:
-            await client.close()
 
-        return search_results
+            log_info(f"Found {len(search_results)} documents")
+
+            await client.close()
+            return search_results
+
+        except Exception as e:
+            logger.error(f"Error searching for documents: {e}")
+            return []
 
     def exists(self) -> bool:
         """Check if the collection exists in Weaviate."""
@@ -729,3 +752,47 @@ class Weaviate(VectorDb):
     def upsert_available(self) -> bool:
         """Indicate that upsert functionality is available."""
         return True
+
+    def _build_filter_expression(self, filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
+        """
+        Build a filter expression for Weaviate queries.
+
+        Args:
+            filters (Optional[Dict[str, Any]]): Dictionary of filters to apply.
+
+        Returns:
+            Optional[Filter]: The constructed filter expression, or None if no filters provided.
+        """
+        if not filters:
+            return None
+
+        try:
+            # Create a filter for each key-value pair
+            filter_conditions = []
+            for key, value in filters.items():
+                # Create a pattern to match in the JSON string
+                if isinstance(value, (list, tuple)):
+                    # For list values
+                    pattern = f'"{key}": {json.dumps(value)}'
+                else:
+                    # For single values
+                    pattern = f'"{key}": "{value}"'
+
+                # Add the filter condition using like operator
+                filter_conditions.append(Filter.by_property("meta_data").like(f"*{pattern}*"))
+
+            # If we have multiple conditions, combine them
+            if len(filter_conditions) > 1:
+                # Use the first condition as base and chain the rest
+                filter_expr = filter_conditions[0]
+                for condition in filter_conditions[1:]:
+                    filter_expr = filter_expr & condition
+                return filter_expr
+            elif filter_conditions:
+                return filter_conditions[0]
+
+        except Exception as e:
+            logger.error(f"Error building filter expression: {e}")
+            return None
+
+        return None
