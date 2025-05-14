@@ -118,8 +118,7 @@ class TeamRunResponse:
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
         citations = data.pop("citations", None)
-        if citations is not None and not isinstance(citations, Citations):
-            citations = Citations.model_validate(citations)
+        citations = Citations.model_validate(citations) if citations else None
 
         return cls(
             messages=messages,
