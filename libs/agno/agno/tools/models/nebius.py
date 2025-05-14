@@ -47,7 +47,7 @@ class NebiusTools(Toolkit):
         self.image_quality = image_quality
         self.image_size = image_size
         self.image_style = image_style
-        self._nebius_client = None
+        self._nebius_client: Optional[Nebius] = None
 
 
     def _get_client(self):
