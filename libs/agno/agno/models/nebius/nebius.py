@@ -59,4 +59,4 @@ class Nebius(OpenAILike):
         # Add additional client params if provided
         if self.client_params:
             client_params.update(self.client_params)
-        return client_params 
+        return client_params

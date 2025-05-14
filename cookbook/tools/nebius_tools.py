@@ -13,13 +13,15 @@ from agno.utils.media import save_base64_data
 
 # Create an Agent with the Nebius text-to-image tool
 agent = Agent(
-    tools=[NebiusTools(
-        # You can provide your API key here or set the NEBIUS_API_KEY environment variable
-        api_key=os.getenv("NEBIUS_API_KEY"),
-        image_model="black-forest-labs/flux-schnell",  # Fastest model
-        image_size="1024x1024",
-        image_quality="standard",
-    )],
+    tools=[
+        NebiusTools(
+            # You can provide your API key here or set the NEBIUS_API_KEY environment variable
+            api_key=os.getenv("NEBIUS_API_KEY"),
+            image_model="black-forest-labs/flux-schnell",  # Fastest model
+            image_size="1024x1024",
+            image_quality="standard",
+        )
+    ],
     name="Nebius Image Generator",
     show_tool_calls=True,
     markdown=True,
@@ -38,12 +40,14 @@ if response.images:
 
 # Example 2: Generate an image with the higher quality model
 high_quality_agent = Agent(
-    tools=[NebiusTools(
-        api_key=os.getenv("NEBIUS_API_KEY"),
-        image_model="black-forest-labs/flux-dev",  # Better quality model
-        image_size="1024x1024",
-        image_quality="hd",  # Higher quality setting
-    )],
+    tools=[
+        NebiusTools(
+            api_key=os.getenv("NEBIUS_API_KEY"),
+            image_model="black-forest-labs/flux-dev",  # Better quality model
+            image_size="1024x1024",
+            image_quality="hd",  # Higher quality setting
+        )
+    ],
     name="Nebius High-Quality Image Generator",
     show_tool_calls=True,
     markdown=True,
@@ -62,11 +66,13 @@ if response.images:
 
 # Example 3: Generate an image with the SDXL (Stability Diffusion XL model) model
 sdxl_agent = Agent(
-    tools=[NebiusTools(
-        api_key=os.getenv("NEBIUS_API_KEY"),
-        image_model="stability-ai/sdxl",  # Stability Diffusion XL model
-        image_size="1024x1024",
-    )],
+    tools=[
+        NebiusTools(
+            api_key=os.getenv("NEBIUS_API_KEY"),
+            image_model="stability-ai/sdxl",  # Stability Diffusion XL model
+            image_size="1024x1024",
+        )
+    ],
     name="Nebius SDXL Image Generator",
     show_tool_calls=True,
     markdown=True,
@@ -81,4 +87,4 @@ if response.images:
     image_path = Path("tmp") / "nebius_fantasy_landscape_{uuid4()}.png"
     Path("tmp").mkdir(exist_ok=True)
     save_base64_data(response.images[0].content, image_path)
-    print(f"SDXL image saved to {image_path}") 
+    print(f"SDXL image saved to {image_path}")

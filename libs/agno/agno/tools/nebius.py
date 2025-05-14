@@ -6,7 +6,7 @@ from agno.agent import Agent
 from agno.media import ImageArtifact
 from agno.models.nebius import Nebius
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_error, log_warning
 
 
 class NebiusTools(Toolkit):
@@ -47,12 +47,8 @@ class NebiusTools(Toolkit):
         self.image_quality = image_quality
         self.image_size = image_size
         self.image_style = image_style
-        
-        self.nebius = Nebius(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            id=self.image_model
-        )
+
+        self.nebius = Nebius(api_key=self.api_key, base_url=self.base_url, id=self.image_model)
 
         self.register(self.generate_image)
 
@@ -97,15 +93,10 @@ class NebiusTools(Toolkit):
                 image_base64 = data.b64_json
                 media_id = str(uuid4())
                 agent.add_image(
-                    ImageArtifact(
-                        id=media_id,
-                        content=image_base64,
-                        mime_type="image/png",
-                        original_prompt=prompt
-                    )
+                    ImageArtifact(id=media_id, content=image_base64, mime_type="image/png", original_prompt=prompt)
                 )
                 return "Image generated successfully."
             return "Failed to generate image: No content received from API."
         except Exception as e:
             log_error(f"Failed to generate image using {self.image_model}: {e}")
-            return f"Failed to generate image: {e}" 
+            return f"Failed to generate image: {e}"
