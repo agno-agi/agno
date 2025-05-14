@@ -1,7 +1,9 @@
 import json
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
@@ -17,8 +19,12 @@ class CerebrasOpenAI(OpenAILike):
     base_url: str = "https://api.cerebras.ai/v1"
     api_key: Optional[str] = getenv("CEREBRAS_API_KEY", None)
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_kwargs(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -26,10 +32,12 @@ class CerebrasOpenAI(OpenAILike):
             Dict[str, Any]: A dictionary of keyword arguments for API requests.
         """
         # Get base request kwargs from the parent class
-        request_params = super().request_kwargs
+        request_params = super().get_request_kwargs(
+            response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
 
         # Add tools with proper formatting
-        if self._tools is not None and len(self._tools) > 0:
+        if tools is not None and len(tools) > 0:
             request_params["tools"] = [
                 {
                     "type": "function",
@@ -40,7 +48,7 @@ class CerebrasOpenAI(OpenAILike):
                         "parameters": tool["function"]["parameters"],
                     },
                 }
-                for tool in self._tools
+                for tool in tools
             ]
             # Cerebras requires parallel_tool_calls=False for llama-4-scout-17b-16e-instruct
             request_params["parallel_tool_calls"] = self.parallel_tool_calls

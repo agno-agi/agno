@@ -38,7 +38,7 @@ def test_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -54,7 +54,7 @@ def test_tool_use_stream():
     assert tool_call_seen, "No tool calls observed in stream"
     full_content = ""
     for r in responses:
-        full_content += r.content
+        full_content += r.content or ""
     assert "TSLA" in full_content
 
 
@@ -90,7 +90,9 @@ async def test_async_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -106,7 +108,7 @@ async def test_async_tool_use_stream():
     assert tool_call_seen, "No tool calls observed in stream"
     full_content = ""
     for r in responses:
-        full_content += r.content
+        full_content += r.content or ""
     assert "TSLA" in full_content
 
 
@@ -257,7 +259,11 @@ def test_web_search_built_in_tool_stream():
         monitoring=False,
     )
 
-    response_stream = agent.run("What was the most recent Olympic Games and who won the most medals?", stream=True)
+    response_stream = agent.run(
+        "What was the most recent Olympic Games and who won the most medals?",
+        stream=True,
+        stream_intermediate_steps=True,
+    )
 
     responses = list(response_stream)
     assert len(responses) > 0
