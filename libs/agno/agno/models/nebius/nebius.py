@@ -19,13 +19,12 @@ class Nebius(OpenAILike):
         base_url (str): The base URL. Defaults to "https://api.studio.nebius.com/v1".
     """
 
-    id: str ="Qwen/Qwen3-235B-A22B" # Default model for chat
+    id: str = "Qwen/Qwen3-235B-A22B"  # Default model for chat
     name: str = "Nebius"
     provider: str = "Nebius"
 
     api_key: Optional[str] = getenv("NEBIUS_API_KEY")
     base_url: str = "https://api.studio.nebius.com/v1"
-
 
     def _get_client_params(self) -> Dict[str, Any]:
         if not self.api_key:

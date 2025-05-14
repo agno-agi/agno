@@ -1,3 +1,4 @@
+import base64
 from unittest.mock import MagicMock, patch
 from uuid import UUID
 
@@ -6,7 +7,7 @@ import pytest
 from agno.agent import Agent
 from agno.media import ImageArtifact
 from agno.tools.models.nebius import NebiusTools
-import base64
+
 
 # Fixture for mock agent
 @pytest.fixture
@@ -30,7 +31,7 @@ def mock_nebius_tools(mock_client):
         mock_nebius_instance = MagicMock()
         mock_nebius_instance.get_client.return_value = mock_client
         mock_nebius.return_value = mock_nebius_instance
-        
+
         nebius_tools = NebiusTools(api_key="fake_test_key")
         nebius_tools._nebius_client = mock_client
         return nebius_tools
@@ -115,15 +116,15 @@ def test_get_client_lazy_initialization():
         mock_client = MagicMock()
         mock_nebius_instance.get_client.return_value = mock_client
         mock_nebius_cls.return_value = mock_nebius_instance
-        
+
         nebius_tools = NebiusTools(api_key="test_api_key")
-        
+
         # Client should not be initialized yet
         assert nebius_tools._nebius_client is None
-        
+
         # Get client should initialize it
         client = nebius_tools._get_client()
-        
+
         assert client == mock_client
         assert nebius_tools._nebius_client == mock_client
         mock_nebius_instance.get_client.assert_called_once()
@@ -137,7 +138,7 @@ def test_generate_image_success(mock_nebius_tools, mock_agent, mock_successful_r
 
     with patch("agno.tools.models.nebius.uuid4", return_value=UUID("12345678-1234-5678-1234-567812345678")):
         prompt = "A picture of a cat"
-        
+
         result = mock_nebius_tools.generate_image(mock_agent, prompt)
 
         assert result == "Image generated successfully."
@@ -152,7 +153,7 @@ def test_generate_image_success(mock_nebius_tools, mock_agent, mock_successful_r
         mock_agent.add_image.assert_called_once()
         call_args = mock_agent.add_image.call_args[0]
         image_artifact = call_args[0]
-        
+
         assert isinstance(image_artifact, ImageArtifact)
         assert image_artifact.id == "12345678-1234-5678-1234-567812345678"
         assert image_artifact.original_prompt == prompt
@@ -166,7 +167,7 @@ def test_generate_image_no_data(mock_nebius_tools, mock_agent, mock_failed_respo
     mock_client.images.generate.return_value = mock_failed_response_no_data
 
     prompt = "A picture of a cat"
-    
+
     result = mock_nebius_tools.generate_image(mock_agent, prompt)
 
     assert result == "Failed to generate image: No data received from API."
@@ -181,7 +182,7 @@ def test_generate_image_api_error(mock_nebius_tools, mock_agent):
     mock_client.images.generate.side_effect = Exception(error_message)
 
     prompt = "A picture of a cat"
-    
+
     result = mock_nebius_tools.generate_image(mock_agent, prompt)
 
     expected_error = f"Failed to generate image: {error_message}"
@@ -200,30 +201,30 @@ def test_generate_image_with_custom_params():
         mock_data.b64_json = "fake_image_base64"
         mock_response = MagicMock()
         mock_response.data = [mock_data]
-        
+
         mock_client.images.generate.return_value = mock_response
         mock_nebius_instance.get_client.return_value = mock_client
         mock_nebius_cls.return_value = mock_nebius_instance
-        
+
         custom_model = "custom-model"
         custom_quality = "hd"
         custom_size = "2048x2048"
         custom_style = "vivid"
-        
+
         nebius_tools = NebiusTools(
             api_key="test_key",
             image_model=custom_model,
             image_quality=custom_quality,
             image_size=custom_size,
-            image_style=custom_style
+            image_style=custom_style,
         )
-        
+
         mock_agent = MagicMock(spec=Agent)
         prompt = "A picture of a dog"
-        
+
         with patch("agno.tools.models.nebius.uuid4", return_value=UUID("12345678-1234-5678-1234-567812345678")):
             nebius_tools.generate_image(mock_agent, prompt)
-            
+
             mock_client.images.generate.assert_called_once_with(
                 model=custom_model,
                 prompt=prompt,
@@ -231,4 +232,4 @@ def test_generate_image_with_custom_params():
                 size=custom_size,
                 quality=custom_quality,
                 style=custom_style,
-            ) 
+            )

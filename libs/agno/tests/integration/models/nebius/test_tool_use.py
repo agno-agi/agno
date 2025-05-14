@@ -56,7 +56,6 @@ def test_tool_use_stream():
     assert any("TSLA" in r.content for r in responses if r.content)
 
 
-
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
