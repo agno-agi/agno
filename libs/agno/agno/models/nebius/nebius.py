@@ -26,21 +26,17 @@ class Nebius(OpenAILike):
     api_key: Optional[str] = getenv("NEBIUS_API_KEY")
     base_url: str = "https://api.studio.nebius.com/v1"
 
-    # Feature flags based on current knowledge of Nebius capabilities
-    supports_native_structured_outputs: bool = False  # Set this to True if Nebius supports structured outputs
-    supports_json_schema_outputs: bool = True  # Set this to True if Nebius supports JSON schema outputs
+    
+    supports_native_structured_outputs: bool = False 
+    supports_json_schema_outputs: bool = True  
 
     def _get_client_params(self) -> Dict[str, Any]:
-        # Fetch API key from env if not already set
         if not self.api_key:
-            self.api_key = getenv("NEBIUS_API_KEY")
-            if not self.api_key:
-                # Raise error immediately if key is missing
-                raise ModelProviderError(
-                    message="NEBIUS_API_KEY not set. Please set the NEBIUS_API_KEY environment variable.",
-                    model_name=self.name,
-                    model_id=self.id,
-                )
+            raise ModelProviderError(
+                message="NEBIUS_API_KEY not set. Please set the NEBIUS_API_KEY environment variable.",
+                model_name=self.name,
+                model_id=self.id,
+            )
 
         # Define base client params
         base_params = {
