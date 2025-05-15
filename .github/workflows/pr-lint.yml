@@ -16,8 +16,7 @@ jobs:
         run: |
           TITLE="${{ github.event.pull_request.title }}"
           TITLE_LOWER=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]')
-          REGEX="^(\[(feat|fix|cookbook|test|refactor|build|ci|chore|perf|style|revert)\]\\s*.+|(feat|fix|cookbook|test|refactor|build|ci|chore|perf|style|revert):\\s*.+)(\\s+[#a-zA-Z0-9_-]+)?$"
-          if [[ ! "$TITLE_LOWER" =~ $REGEX ]]; then
+          REGEX="^(\\[(feat|fix|cookbook|test|refactor|build|ci|chore|perf|style|revert)\\]\\s*.+|(feat|fix|cookbook|test|refactor|build|ci|chore|perf|style|revert):\\s*.+|(feat|fix|cookbook|test|refactor|build|ci|chore|perf|style|revert)-[a-z0-9-]+)$"          if [[ ! "$TITLE_LOWER" =~ $REGEX ]]; then
             echo "❌ PR Title '$TITLE' does not match the required format '[type] subject' or 'type: subject', with optional trailing reference like #1234."
             echo "   Please start your PR title with a valid type like [feat], [fix], feat:, fix:, etc., followed by the subject."
             exit 1
