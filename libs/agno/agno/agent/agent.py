@@ -775,24 +775,14 @@ class Agent:
                         # Format tool calls whenever new ones are added during streaming
                         run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
 
-                    # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
-                    if self.stream_intermediate_steps:
-                        yield self.create_run_response(
-                            content=model_response_chunk.content,
-                            event=RunEvent.tool_call_started,
-                            run_response=run_response,
-                            session_id=session_id,
+                    # Yield a RunResponse with the tool_call_started event
+                    yield self.create_run_response(
+                        content=model_response_chunk.content,
+                        created_at=model_response_chunk.created_at,
+                        event=RunEvent.tool_call_started,
+                        session_id=session_id,
+                        run_response=run_response,
                         )
-                    else:
-                        # Yield tool call request
-                        if run_response.tools is not None:
-                            yield self.create_run_response(
-                                content=model_response_chunk.content,
-                                created_at=model_response_chunk.created_at,
-                                event=RunEvent.tool_call_started,
-                                session_id=session_id,
-                                run_response=run_response,
-                            )
 
                 # If the model response is a tool_call_completed, update the existing tool call in the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
@@ -845,23 +835,14 @@ class Agent:
                                 reasoning_content=run_response.reasoning_content,
                             )
 
-                        yield self.create_run_response(
-                            content=model_response_chunk.content,
-                            event=RunEvent.tool_call_completed,
-                            run_response=run_response,
-                            session_id=session_id,
-                        )
-
-                    else:
-                        # Yield tool call result
-                        if run_response.tools is not None:
-                            yield self.create_run_response(
-                                content=model_response_chunk.content,
-                                event=RunEvent.tool_call_completed,
-                                created_at=model_response_chunk.created_at,
-                                session_id=session_id,
-                                run_response=run_response,
-                            )
+                    # Yield a RunResponse with the tool_call_completed event
+                    yield self.create_run_response(
+                        content=model_response_chunk.content,
+                        event=RunEvent.tool_call_completed,
+                        created_at=model_response_chunk.created_at,
+                        session_id=session_id,
+                        run_response=run_response,
+                    )
 
         else:
             # Get the model response
@@ -1518,24 +1499,14 @@ class Agent:
                         # Format tool calls whenever new ones are added during streaming
                         run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
 
-                    # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
-                    if self.stream_intermediate_steps:
-                        yield self.create_run_response(
-                            content=model_response_chunk.content,
-                            event=RunEvent.tool_call_started,
-                            run_response=run_response,
-                            session_id=session_id,
-                        )
-                    else:
-                        # Yield tool call request
-                        if run_response.tools is not None:
-                            yield self.create_run_response(
-                                content=model_response_chunk.content,
-                                event=RunEvent.tool_call_started,
-                                created_at=model_response_chunk.created_at,
-                                session_id=session_id,
-                                run_response=run_response,
-                            )
+                    # Yield a RunResponse with the tool_call_started event
+                    yield self.create_run_response(
+                        content=model_response_chunk.content,
+                        event=RunEvent.tool_call_started,
+                        created_at=model_response_chunk.created_at,
+                        session_id=session_id,
+                        run_response=run_response,
+                    )
 
                 # If the model response is a tool_call_completed, update the existing tool call in the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
@@ -1587,23 +1558,14 @@ class Agent:
                                 reasoning_content=run_response.reasoning_content,
                             )
 
-                        yield self.create_run_response(
-                            content=model_response_chunk.content,
-                            event=RunEvent.tool_call_completed,
-                            run_response=run_response,
-                            session_id=session_id,
-                        )
-
-                    else:
-                        # Yield tool call result
-                        if run_response.tools is not None:
-                            yield self.create_run_response(
-                                content=model_response_chunk.content,
-                                event=RunEvent.tool_call_completed,
-                                created_at=model_response_chunk.created_at,
-                                session_id=session_id,
-                                run_response=run_response,
-                            )
+                    # Yield a RunResponse with the tool_call_completed event
+                    yield self.create_run_response(
+                        content=model_response_chunk.content,
+                        event=RunEvent.tool_call_completed,
+                        created_at=model_response_chunk.created_at,
+                        session_id=session_id,
+                        run_response=run_response,
+                    )
 
         else:
             # Get the model response
