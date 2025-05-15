@@ -24,7 +24,7 @@ class Nebius(OpenAILike):
     provider: str = "Nebius"
 
     api_key: Optional[str] = getenv("NEBIUS_API_KEY")
-    base_url: str = "https://api.studio.nebius.com/v1"
+    base_url: str = "https://api.studio.nebius.com/v1/"
 
     def _get_client_params(self) -> Dict[str, Any]:
         if not self.api_key:
