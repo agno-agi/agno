@@ -37,6 +37,7 @@ class RedisStorage(Storage):
             db (int): Redis database number
             password (Optional[str]): Redis password if authentication is required
             mode (Optional[Literal["agent", "team", "workflow"]]): Storage mode
+            ssl (Optional[bool]): Whether to use SSL for Redis connection
         """
         super().__init__(mode)
         self.prefix = prefix
