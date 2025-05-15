@@ -2,14 +2,14 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.mem0 import Mem0Toolkit
+from agno.tools.mem0_toolkit import Mem0Toolkit
 
 # Define a User ID for the session
 USER_ID = "john_billings"
 SESSION_ID = "session1"
 
 agent = Agent(
-    model=OpenAIChat(id="o4-mini"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[Mem0Toolkit()],
     user_id=USER_ID,
     session_id=SESSION_ID,
@@ -18,26 +18,10 @@ agent = Agent(
     instructions=dedent(
         """
         You are a helpful assistant interacting with user: {current_user_id}.
-        You MUST use the `Mem0Toolkit` to manage memories effectively.
-        The user's identifier is: {current_user_id}
-
-        **Tool Usage Guidelines:**
-
-        1.  **`add_memory`**: After each new user message, call `add_memory(messages=[{'role': 'user', 'content': ...}], user_id='{current_user_id}')` to save it.
-        2.  **`search_memory`**: When asking about past info, call `search_memory(query=..., user_id='{current_user_id}')`.
-        3.  **`get_memory`**: Retrieve a specific memory via `get_memory(memory_id='...')`.
-        4.  **`update_memory`**: Modify an existing memory: `update_memory(memory_id='...', data='...')`.
-        5.  **`delete_memory`**: Delete a specific memory: `delete_memory(memory_id='...')`.
-        6.  **`get_all_memories`**: List all memories: `get_all_memories(user_id='{current_user_id}')`.
-        7.  **`delete_all_memories`**: Delete all memories: `delete_all_memories(user_id='{current_user_id}')`.
-        8.  **`get_memory_history`**: View history: `get_memory_history(memory_id='...')`.
-
-        **Workflow:**
-        - Use `user_id='{current_user_id}'` in all tool calls.
-        - Use returned `memory_id` for specific operations.
+        You MUST use the `Mem0Toolkit` which has gives you access to a bunch of tools to help you manage memories. The user's identifier is: {current_user_id}
         """
     ),
-    show_tool_calls=True,
+    debug_mode=True,
 )
 
 # User Alice, Session A1
