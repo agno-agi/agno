@@ -51,7 +51,7 @@ def test_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    full_response = ''.join(r.content for r in responses if r.content)
+    full_response = "".join(r.content for r in responses if r.content)
     assert "TSLA" in full_response
 
 
@@ -99,8 +99,9 @@ async def test_async_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    full_response = ''.join(r.content for r in responses if r.content)
+    full_response = "".join(r.content for r in responses if r.content)
     assert "TSLA" in full_response
+
 
 def test_multiple_tool_calls():
     agent = Agent(

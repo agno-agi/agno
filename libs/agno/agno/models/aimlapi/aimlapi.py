@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
@@ -40,6 +40,6 @@ class AIMLApi(OpenAILike):
         """
         formatted: dict = super()._format_message(message)
 
-        formatted['content'] = '' if formatted.get('content') is None else formatted['content']
+        formatted["content"] = "" if formatted.get("content") is None else formatted["content"]
 
         return formatted
