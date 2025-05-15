@@ -53,7 +53,8 @@ integration-tests = [
     "exa_py",
     "duckduckgo-search",
     "yfinance",
-    "sqlalchemy"
+    "sqlalchemy",
+    "Pillow",
 ]
 
 # Dependencies for Telemetry

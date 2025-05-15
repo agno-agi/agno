@@ -29,7 +29,7 @@ if [ -z "$1" ]; then
     echo "- deepseek"
     echo "- google"
     echo "- groq"
-    echo "- ibm-watsonx"
+    echo "- ibm"
     echo "- mistral"
     echo "- nvidia"
     echo "- openai"
@@ -117,6 +117,92 @@ case $MODEL_NAME in
         fi
         if [ -z "${AWS_REGION}" ]; then
             print_heading "Error: AWS_REGION environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "cohere")
+        if [ -z "${CO_API_KEY}" ]; then
+            print_heading "Error: CO_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "deepseek")
+        if [ -z "${DEEPSEEK_API_KEY}" ]; then
+            print_heading "Error: DEEPSEEK_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "groq")
+        if [ -z "${GROQ_API_KEY}" ]; then
+            print_heading "Error: GROQ_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "mistral")
+        if [ -z "${MISTRAL_API_KEY}" ]; then
+            print_heading "Error: MISTRAL_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "nvidia")
+        if [ -z "${NVIDIA_API_KEY}" ]; then
+            print_heading "Error: NVIDIA_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "openrouter")
+        if [ -z "${OPENROUTER_API_KEY}" ]; then
+            print_heading "Error: OPENROUTER_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "perplexity")
+        if [ -z "${PERPLEXITY_API_KEY}" ]; then
+            print_heading "Error: PERPLEXITY_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "sambanova")
+        if [ -z "${SAMBANOVA_API_KEY}" ]; then
+            print_heading "Error: SAMBANOVA_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "together")
+        if [ -z "${TOGETHER_API_KEY}" ]; then
+            print_heading "Error: TOGETHER_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "xai")
+        if [ -z "${XAI_API_KEY}" ]; then
+            print_heading "Error: XAI_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "ibm")
+        if [ -z "${IBM_WATSONX_PROJECT_ID}" ]; then
+            print_heading "Error: IBM_WATSONX_PROJECT_ID environment variable is not set"
+            exit 1
+        fi
+        if [ -z "${IBM_WATSONX_API_KEY}" ]; then
+            print_heading "Error: IBM_WATSONX_API_KEY environment variable is not set"
+            exit 1
+        fi
+        if [ -z "${IBM_WATSONX_URL}" ]; then
+            print_heading "Error: IBM_WATSONX_URL environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "cerebras")
+        if [ -z "${CEREBRAS_API_KEY}" ]; then
+            print_heading "Error: CEREBRAS_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "deepinfra")
+        if [ -z "${DEEPINFRA_API_KEY}" ]; then
+            print_heading "Error: DEEPINFRA_API_KEY environment variable is not set"
             exit 1
         fi
         ;;
