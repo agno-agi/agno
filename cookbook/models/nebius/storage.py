@@ -8,7 +8,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 agent = Agent(
-    model=Nebius(id="Qwen/Qwen3-235B-A22B"),
+    model=Nebius(),
     storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
     tools=[DuckDuckGoTools()],
     debug_mode=True,

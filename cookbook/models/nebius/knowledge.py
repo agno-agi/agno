@@ -14,7 +14,7 @@ knowledge_base = PDFUrlKnowledgeBase(
 knowledge_base.load(recreate=True)  # Comment out after first run
 
 agent = Agent(
-    model=Nebius(id="Qwen/Qwen3-235B-A22B"),
+    model=Nebius(id="Qwen/Qwen3-30B-A3B"),
     knowledge=knowledge_base,
     show_tool_calls=True,
 )

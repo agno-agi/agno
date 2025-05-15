@@ -2,7 +2,7 @@ from agno.agent import Agent
 from agno.models.nebius import Nebius
 
 agent = Agent(
-    model=Nebius(id="Qwen/Qwen3-235B-A22B"),
+    model=Nebius(),
     show_tool_calls=True,
     markdown=True,
     debug_mode=True,

@@ -8,7 +8,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
-NEBIUS_MODEL_ID = "Qwen/Qwen3-235B-A22B"
+NEBIUS_MODEL_ID = "Qwen/Qwen3-30B-A3B"
 
 
 def test_tool_use():

@@ -5,7 +5,7 @@ from agno.agent import Agent, RunResponse  # noqa
 from agno.models.nebius import Nebius
 from agno.storage.sqlite import SqliteStorage
 
-NEBIUS_MODEL_ID = "Qwen/Qwen3-235B-A22B"
+NEBIUS_MODEL_ID = "Qwen/Qwen3-4B-fast"
 
 
 def _assert_metrics(response: RunResponse):
