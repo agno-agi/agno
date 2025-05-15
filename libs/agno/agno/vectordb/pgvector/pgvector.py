@@ -493,7 +493,7 @@ class PgVector(VectorDb):
 
             # Apply filters if provided
             if filters is not None:
-                stmt = stmt.where(self.table.c.filters.contains(filters))
+                stmt = stmt.where(self.table.c.meta_data.contains(filters))
 
             # Order the results based on the distance metric
             if self.distance == Distance.l2:
@@ -545,6 +545,7 @@ class PgVector(VectorDb):
             if self.reranker:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
 
+            log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
             logger.error(f"Error during vector search: {e}")
@@ -602,7 +603,7 @@ class PgVector(VectorDb):
             # Apply filters if provided
             if filters is not None:
                 # Use the contains() method for JSONB columns to check if the filters column contains the specified filters
-                stmt = stmt.where(self.table.c.filters.contains(filters))
+                stmt = stmt.where(self.table.c.meta_data.contains(filters))
 
             # Order by the relevance rank
             stmt = stmt.order_by(text_rank.desc())
@@ -638,6 +639,7 @@ class PgVector(VectorDb):
                     )
                 )
 
+            log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
             logger.error(f"Error during keyword search: {e}")
@@ -722,7 +724,7 @@ class PgVector(VectorDb):
 
             # Apply filters if provided
             if filters is not None:
-                stmt = stmt.where(self.table.c.filters.contains(filters))
+                stmt = stmt.where(self.table.c.meta_data.contains(filters))
 
             # Order the results by the hybrid score in descending order
             stmt = stmt.order_by(desc("hybrid_score"))
@@ -761,6 +763,7 @@ class PgVector(VectorDb):
                     )
                 )
 
+            log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
             logger.error(f"Error during hybrid search: {e}")
