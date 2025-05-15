@@ -789,6 +789,7 @@ class Agent:
                             yield self.create_run_response(
                                 content=model_response_chunk.content,
                                 created_at=model_response_chunk.created_at,
+                                event=RunEvent.tool_call_started,
                                 session_id=session_id,
                                 run_response=run_response,
                             )
@@ -856,6 +857,7 @@ class Agent:
                         if run_response.tools is not None:
                             yield self.create_run_response(
                                 content=model_response_chunk.content,
+                                event=RunEvent.tool_call_completed,
                                 created_at=model_response_chunk.created_at,
                                 session_id=session_id,
                                 run_response=run_response,
@@ -1529,10 +1531,12 @@ class Agent:
                         if run_response.tools is not None:
                             yield self.create_run_response(
                                 content=model_response_chunk.content,
+                                event=RunEvent.tool_call_started,
                                 created_at=model_response_chunk.created_at,
                                 session_id=session_id,
                                 run_response=run_response,
                             )
+
                 # If the model response is a tool_call_completed, update the existing tool call in the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
                     reasoning_step: Optional[ReasoningStep] = None
@@ -1595,6 +1599,7 @@ class Agent:
                         if run_response.tools is not None:
                             yield self.create_run_response(
                                 content=model_response_chunk.content,
+                                event=RunEvent.tool_call_completed,
                                 created_at=model_response_chunk.created_at,
                                 session_id=session_id,
                                 run_response=run_response,
