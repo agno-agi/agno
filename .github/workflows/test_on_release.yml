@@ -62,15 +62,10 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Run dev setup
+      - name: Run dev setup and OpenAI tests
         working-directory: .
         run: |
-          ./scripts/model_tests_setup.sh openai
-      - name: Run OpenAI tests
-        working-directory: .
-        run: |
-          source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/models/openai
+          ./scripts/run_model_tests.sh openai
 
   # Run tests for Google
   test-google:
@@ -93,15 +88,10 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Run dev setup
+      - name: Run dev setup and Google tests
         working-directory: .
         run: |
-          ./scripts/model_tests_setup.sh google
-      - name: Run Google tests
-        working-directory: .
-        run: |
-          source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/models/google
+          ./scripts/run_model_tests.sh google
 
   # Run tests for Anthropic
   test-anthropic:
@@ -123,15 +113,10 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Run dev setup
+      - name: Run dev setup and Anthropic tests
         working-directory: .
         run: |
-          ./scripts/model_tests_setup.sh anthropic
-      - name: Run Anthropic tests
-        working-directory: .
-        run: |
-          source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/models/anthropic
+          ./scripts/run_model_tests.sh anthropic
 
   # Run tests for AWS
   test-aws:
@@ -155,15 +140,10 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Run dev setup
+      - name: Run dev setup and AWS tests
         working-directory: .
         run: |
-          ./scripts/model_tests_setup.sh aws
-      - name: Run AWS tests
-        working-directory: .
-        run: |
-          source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/models/aws
+          ./scripts/run_model_tests.sh aws
 
   # Run tests for Cohere
   test-cohere:

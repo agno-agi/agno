@@ -7,28 +7,19 @@
 # - Example: ./model_tests_setup.sh openai
 ############################################################################
 
-# Color codes for pretty printing
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
 # Print functions
 print_heading() {
-    echo "${BLUE}=== $1 ===${NC}"
+    echo ""
+    echo "=== $1 ==="
 }
 
-print_success() {
-    echo "${GREEN}✓ $1${NC}"
-}
-
-print_error() {
-    echo "${RED}✗ $1${NC}"
+print_info() {
+    echo "$1"
 }
 
 # Validate input
 if [ -z "$1" ]; then
-    print_error "Please provide a model name (e.g. openai, anthropic, google)"
+    print_heading "Error: Please provide a model name"
     echo "Available models:"
     echo "- anthropic"
     echo "- aws"
@@ -60,8 +51,10 @@ source ${VENV_NAME}/bin/activate
 
 # Install minimal dependencies
 print_heading "Installing core dependencies"
+print_info "pip install --upgrade pip"
 pip install --upgrade pip
 
+print_info "Installing base packages..."
 pip install \
     docstring-parser \
     gitpython \
@@ -77,6 +70,7 @@ pip install \
     typing-extensions
 
 print_heading "Installing test dependencies"
+print_info "Installing pytest packages..."
 pip install \
     pytest \
     pytest-asyncio \
@@ -85,78 +79,76 @@ pip install \
 # Change to agno directory
 cd libs/agno
 
-# Determine additional dependencies based on model
-ADDITIONAL_DEPS=""
 case $MODEL_NAME in
     "openai")
-        ADDITIONAL_DEPS="openai,exa,sqlite,ddg,yfinance"
         if [ -z "${OPENAI_API_KEY}" ]; then
-            print_error "OPENAI_API_KEY environment variable is not set"
+            print_heading "Error: OPENAI_API_KEY environment variable is not set"
             exit 1
         fi
         if [ -z "${EXA_API_KEY}" ]; then
-            print_error "EXA_API_KEY environment variable is not set"
+            print_heading "Error: EXA_API_KEY environment variable is not set"
             exit 1
         fi
         ;;
     "google")
-        ADDITIONAL_DEPS="google,sqlite,ddg,yfinance"
         if [ -z "${GOOGLE_API_KEY}" ]; then
-            print_error "GOOGLE_API_KEY environment variable is not set"
+            print_heading "Error: GOOGLE_API_KEY environment variable is not set"
             exit 1
         fi
         if [ -z "${GOOGLE_CLOUD_PROJECT}" ]; then
-            print_error "GOOGLE_CLOUD_PROJECT environment variable is not set"
+            print_heading "Error: GOOGLE_CLOUD_PROJECT environment variable is not set"
             exit 1
         fi
         ;;
     "anthropic")
-        ADDITIONAL_DEPS="anthropic,sqlite,yfinance,ddg,exa"
         if [ -z "${ANTHROPIC_API_KEY}" ]; then
-            print_error "ANTHROPIC_API_KEY environment variable is not set"
+            print_heading "Error: ANTHROPIC_API_KEY environment variable is not set"
             exit 1
         fi
         ;;
     "aws")
-        ADDITIONAL_DEPS="aws,sqlite,yfinance,ddg,exa,anthropic"
         if [ -z "${AWS_ACCESS_KEY_ID}" ]; then
-            print_error "AWS_ACCESS_KEY_ID environment variable is not set"
+            print_heading "Error: AWS_ACCESS_KEY_ID environment variable is not set"
             exit 1
         fi
         if [ -z "${AWS_SECRET_ACCESS_KEY}" ]; then
-            print_error "AWS_SECRET_ACCESS_KEY environment variable is not set"
+            print_heading "Error: AWS_SECRET_ACCESS_KEY environment variable is not set"
             exit 1
         fi
         if [ -z "${AWS_REGION}" ]; then
-            print_error "AWS_REGION environment variable is not set"
+            print_heading "Error: AWS_REGION environment variable is not set"
             exit 1
         fi
         ;;
     *)
-        print_error "Unknown model: ${MODEL_NAME}"
+        print_heading "Error: Unknown model ${MODEL_NAME}"
         exit 1
         ;;
 esac
 
-# Install the package with model-specific dependencies
+# Install agno with model and integration test dependencies
 print_heading "Installing agno with ${MODEL_NAME} dependencies"
-if [ -n "$ADDITIONAL_DEPS" ]; then
-    pip install ".[${MODEL_NAME},${ADDITIONAL_DEPS}]"
+print_info "pip install -e .[${MODEL_NAME},integration-tests]"
+pip install -e ".[${MODEL_NAME},integration-tests]"
+
+# Run the tests
+print_heading "Running ${MODEL_NAME} tests"
+TEST_PATH="tests/integration/models/${MODEL_NAME}"
+if [ -d "$TEST_PATH" ]; then
+    print_info "Running tests in ${TEST_PATH}"
+    python -m pytest ${TEST_PATH} -v
+    TEST_EXIT_CODE=$?
 else
-    pip install ".[${MODEL_NAME}]"
+    print_heading "Error: No tests found for ${MODEL_NAME} at ${TEST_PATH}"
+    TEST_EXIT_CODE=1
 fi
 
+# Final status
+print_heading "Test Results"
+if [ $TEST_EXIT_CODE -eq 0 ]; then
+    print_info "All ${MODEL_NAME} tests completed successfully!"
+else
+    print_info "Tests failed for ${MODEL_NAME}"
+fi
 
-#Run the tests- I used this to test locally, but we already run test in test_on_release.yml so this should not be needed.
-#Uncomment to test locally
-# print_heading "Running ${MODEL_NAME} tests"
-# TEST_PATH="tests/integration/models/${MODEL_NAME}"
-# if [ -d "$TEST_PATH" ]; then
-#     python -m pytest ${TEST_PATH} -v
-#     TEST_EXIT_CODE=$?
-# else
-#     print_error "No tests found for ${MODEL_NAME} at ${TEST_PATH}"
-#     TEST_EXIT_CODE=1
-# fi
-
-print_success "Setup completed successfully for ${MODEL_NAME}"
+exit $TEST_EXIT_CODE
