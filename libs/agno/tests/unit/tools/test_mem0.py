@@ -96,9 +96,9 @@ class TestMem0Toolkit:
         # branch is taken, calling Memory.from_config(config).
         assert toolkit_config is not None
 
-        # Check the *instance* of mem0client is the mock returned by Memory.from_config
-        assert isinstance(toolkit_config.mem0client, MagicMock)
-        assert toolkit_config.mem0client == mock_memory_instance  # Check it's the correct mock
+        # Check the *instance* of client is the mock returned by Memory.from_config
+        assert isinstance(toolkit_config.client, MagicMock)
+        assert toolkit_config.client == mock_memory_instance  # Check it's the correct mock
 
         # Check the CLASS method MockMemory.from_config was called once
         MockMemory.from_config.assert_called_once_with({})  # Called with config={}
@@ -113,9 +113,9 @@ class TestMem0Toolkit:
 
     def test_init_with_api_key(self, toolkit_api_key, mock_memory_client_instance):
         assert toolkit_api_key is not None
-        # Check the *instance* of mem0client is the mock returned by MemoryClient constructor
-        assert isinstance(toolkit_api_key.mem0client, MagicMock)
-        assert toolkit_api_key.mem0client == mock_memory_client_instance  # Check it's the correct mock
+        # Check the *instance* of client is the mock returned by MemoryClient constructor
+        assert isinstance(toolkit_api_key.client, MagicMock)
+        assert toolkit_api_key.client == mock_memory_client_instance  # Check it's the correct mock
         # Check the class constructor was called
         MockMemoryClient.assert_called_once_with(api_key="fake-api-key")
         MockMemory.from_config.assert_not_called()  # Ensure Memory.from_config wasn't called
@@ -126,9 +126,9 @@ class TestMem0Toolkit:
         assert user_id == "arg_user"
 
     def test_get_user_id_no_id_provided(self, toolkit_config):
-        # Use an existing toolkit instance, doesn't matter which one
-        with pytest.raises(ValueError, match="user_id must be provided in the method call"):
-            toolkit_config._get_user_id("test_method", user_id=None)
+        # Use an existing toolkit instance, ensure missing user_id returns error message
+        result = toolkit_config._get_user_id("test_method", user_id=None)
+        assert result == "Error in test_method: A user_id must be provided in the method call."
 
     # -- Add Memory Tests (Corrected) --
     def test_add_memory_success_arg_id(self, toolkit_config, mock_memory_instance):

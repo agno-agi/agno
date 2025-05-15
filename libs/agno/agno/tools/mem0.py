@@ -61,7 +61,7 @@ class Mem0Toolkit(Toolkit):
         if not resolved_user_id:
             error_msg = f"Error in {method_name}: A user_id must be provided in the method call."
             log_error(error_msg)
-            raise ValueError(error_msg)
+            return error_msg
         return resolved_user_id
 
     def add_memory(
@@ -76,8 +76,11 @@ class Mem0Toolkit(Toolkit):
         Returns:
             str: JSON string of the result from Mem0, or an error message.
         """
+        resolved_user_id = self._get_user_id("add_memory", user_id)
+        # Early-return on missing user_id error
+        if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in add_memory:"):
+            return resolved_user_id
         try:
-            resolved_user_id = self._get_user_id("add_memory", user_id)
             log_debug(f"Adding memory for user_id: {resolved_user_id}")
 
             if isinstance(messages, dict):
@@ -111,8 +114,11 @@ class Mem0Toolkit(Toolkit):
         Returns:
             str: JSON string containing a list of relevant memories found, or an error message.
         """
+        resolved_user_id = self._get_user_id("search_memory", user_id)
+        # Early-return on missing user_id error
+        if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in search_memory:"):
+            return resolved_user_id
         try:
-            resolved_user_id = self._get_user_id("search_memory", user_id)
             log_debug(f"Searching memory for user_id: {resolved_user_id} with query '{query}'")
 
             results = self.client.search(query=query, user_id=resolved_user_id)
@@ -218,8 +224,11 @@ class Mem0Toolkit(Toolkit):
         Returns:
             str: JSON string containing a list of all memories found, or an error message.
         """
+        resolved_user_id = self._get_user_id("get_all_memories", user_id)
+        # Early-return on missing user_id error
+        if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in get_all_memories:"):
+            return resolved_user_id
         try:
-            resolved_user_id = self._get_user_id("get_all_memories", user_id)
             log_debug(f"Getting all memories for user_id: {resolved_user_id}, limit: {limit}")
 
             results = self.client.get_all(user_id=resolved_user_id)
@@ -251,8 +260,13 @@ class Mem0Toolkit(Toolkit):
         Returns:
             str: Confirmation message or error string.
         """
+        resolved_user_id = self._get_user_id("delete_all_memories", user_id)
+        # Early-return on missing user_id error with prefix
+        if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in delete_all_memories:"):
+            error_msg = resolved_user_id
+            log_error(error_msg)
+            return f"Error deleting all memories: {error_msg}"
         try:
-            resolved_user_id = self._get_user_id("delete_all_memories", user_id)
             log_debug(f"Attempting to delete ALL memories associated with user_id: {resolved_user_id}")
 
             self.client.delete_all(user_id=resolved_user_id)

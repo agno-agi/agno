@@ -10,6 +10,7 @@ from agno.tools.mem0 import Mem0Toolkit
 
 # Define a User ID for the session
 USER_ID = "john_billings"
+SESSION_ID = "session1"
 
 # -----------------------------------------------------------------------------------------------
 # Example 1: Basic Usage
@@ -18,111 +19,46 @@ USER_ID = "john_billings"
 agent = Agent(
     model=OpenAIChat(id="o4-mini"),
     tools=[Mem0Toolkit()],
+    user_id=USER_ID,
+    session_id=SESSION_ID,
+    add_state_in_messages=True,
+    markdown=True,
     instructions=dedent(
-        f"""
-        You are a helpful assistant interacting with user: {USER_ID}.
+        """
+        You are a helpful assistant interacting with user: {current_user_id}.
         You MUST use the `Mem0Toolkit` to manage memories effectively.
-        The user's identifier is: {USER_ID}
+        The user's identifier is: {current_user_id}
 
         **Tool Usage Guidelines:**
 
-        1.  **`add_memory`**: Call this after processing each user message containing new information to save it. You MUST include `user_id='{USER_ID}'`. The tool returns a result containing the `memory_id` of the added memory. Example: `add_memory(messages=[{{'role': 'user', 'content': 'I like pizza'}}], user_id='{USER_ID}')`
-        2.  **`search_memory`**: Call this when the user asks about past information or when you need context. You MUST include `user_id='{USER_ID}'`. The tool returns a list of relevant memories, each including its `memory_id`. Example: `search_memory(query='favorite food', user_id='{USER_ID}')`
-        3.  **`get_memory`**: Use this to retrieve the exact content of a *specific* memory if you know its `memory_id` (obtained from `add_memory` or `search_memory` results). Example: `get_memory(memory_id='some-abc-123')`
-        4.  **`update_memory`**: Use this to modify an *existing* memory. First, use `search_memory` to find the relevant memory and get its `memory_id`. Then, call this tool. Example: `update_memory(memory_id='some-abc-123', data='User now likes pasta')`
-        5.  **`delete_memory`**: Use this to delete a *specific* memory. First, use `search_memory` to find the relevant memory and get its `memory_id`. Then, call this tool. Example: `delete_memory(memory_id='some-abc-123')`
-        6.  **`get_all_memories`**: Use this when the user asks to list *all* memories you have about them. You MUST include `user_id='{USER_ID}'`. Example: `get_all_memories(user_id='{USER_ID}')`
-        7.  **`delete_all_memories`**: Use this ONLY if the user explicitly asks to delete *all* their memories. Be cautious. You MUST include `user_id='{USER_ID}'`. Example: `delete_all_memories(user_id='{USER_ID}')`
-        8.  **`get_memory_history`**: Use this to see the change history of a *specific* memory if you know its `memory_id` (obtained from `add_memory` or `search_memory` results). Example: `get_memory_history(memory_id='some-abc-123')`
+        1.  **`add_memory`**: Call this after processing each user message containing new information to save it. You MUST include `user_id='{current_user_id}'`. Example: `add_memory(messages=[{'role': 'user', 'content': 'I like pizza'}], user_id='{current_user_id}')`
+        2.  **`search_memory`**: Call this when the user asks about past information or when you need context. You MUST include `user_id='{current_user_id}'`. Example: `search_memory(query='favorite food', user_id='{current_user_id}')`
+        3.  **`get_memory`**: Use this to retrieve the exact content of a *specific* memory if you know its `memory_id`. Example: `get_memory(memory_id='some-abc-123')`
+        4.  **`update_memory`**: Use this to modify an *existing* memory. Example: `update_memory(memory_id='some-abc-123', data='User now likes pasta')`
+        5.  **`delete_memory`**: Use this to delete a *specific* memory. Example: `delete_memory(memory_id='some-abc-123')`
+        6.  **`get_all_memories`**: Use this to list *all* memories for the user: `get_all_memories(user_id='{current_user_id}')`
+        7.  **`delete_all_memories`**: Use this to delete *all* memories: `delete_all_memories(user_id='{current_user_id}')`
+        8.  **`get_memory_history`**: Use this to see the history of a memory: `get_memory_history(memory_id='some-abc-123')`
 
         **Workflow:**
-        - **Always add context:** Call `add_memory` after user turns with new info.
-        - **Search before answering questions:** Call `search_memory` to retrieve relevant facts before answering user questions about past information.
-        - **Use IDs for specific operations:** Parse results from `add_memory` and `search_memory` to get `memory_id`s required for `get_memory`, `update_memory`, `delete_memory`, and `get_memory_history`.
-        - **Prioritize recalled memories:** Base your answers about the user on information retrieved using
+        - Call `add_memory` with `user_id='{current_user_id}'` after new info.
+        - Call `search_memory` with `user_id='{current_user_id}'` to get past info.
+        - Use returned `memory_id` for specific operations.
         """
     ),
     show_tool_calls=True,
 )
 
-agent.print_response("My name is John Billings")
 agent.print_response("I live in NYC")
+agent.print_response("NYC is a big city")
+agent.print_response("NYC has a famous Brooklyn Bridge")
 agent.print_response("Delete all memories")
 agent.print_response("I'm going to a concert tomorrow")
 
 agent.print_response("What do you know about me?")
 
 # -----------------------------------------------------------------------------------------------
-# Example 2: Advanced Usage - Demonstrating All Tools
-# -----------------------------------------------------------------------------------------------
-
-# Note: For a real application, you might pass a default user_id to the toolkit initialization
-
-# agent_advanced = Agent(
-#     model=OpenAIChat(id="o4-mini"),
-#     tools=[Mem0Toolkit(user_id=USER_ID)], # Use the toolkit instance for this example
-#     instructions=dedent(
-#         f"""
-#         You are a helpful assistant interacting with user: {USER_ID}.
-#         You MUST use the `Mem0Toolkit` to manage memories effectively.
-#         The user's identifier is: {USER_ID}
-
-#         **Tool Usage Guidelines:**
-
-#         1.  **`add_memory`**: Call this after processing each user message containing new information to save it. You MUST include `user_id='{USER_ID}'`. The tool returns a result containing the `memory_id` of the added memory. Example: `add_memory(messages=[{{'role': 'user', 'content': 'I like pizza'}}], user_id='{USER_ID}')`
-#         2.  **`search_memory`**: Call this when the user asks about past information or when you need context. You MUST include `user_id='{USER_ID}'`. The tool returns a list of relevant memories, each including its `memory_id`. Example: `search_memory(query='favorite food', user_id='{USER_ID}')`
-#         3.  **`get_memory`**: Use this to retrieve the exact content of a *specific* memory if you know its `memory_id` (obtained from `add_memory` or `search_memory` results). Example: `get_memory(memory_id='some-abc-123')`
-#         4.  **`update_memory`**: Use this to modify an *existing* memory. First, use `search_memory` to find the relevant memory and get its `memory_id`. Then, call this tool. Example: `update_memory(memory_id='some-abc-123', data='User now likes pasta')`
-#         5.  **`delete_memory`**: Use this to delete a *specific* memory. First, use `search_memory` to find the relevant memory and get its `memory_id`. Then, call this tool. Example: `delete_memory(memory_id='some-abc-123')`
-#         6.  **`get_all_memories`**: Use this when the user asks to list *all* memories you have about them. You MUST include `user_id='{USER_ID}'`. Example: `get_all_memories(user_id='{USER_ID}')`
-#         7.  **`delete_all_memories`**: Use this ONLY if the user explicitly asks to delete *all* their memories. Be cautious. You MUST include `user_id='{USER_ID}'`. Example: `delete_all_memories(user_id='{USER_ID}')`
-#         8.  **`get_memory_history`**: Use this to see the change history of a *specific* memory if you know its `memory_id` (obtained from `add_memory` or `search_memory` results). Example: `get_memory_history(memory_id='some-abc-123')`
-
-#         **Workflow:**
-#         - **Always add context:** Call `add_memory` after user turns with new info.
-#         - **Search before answering questions:** Call `search_memory` to retrieve relevant facts before answering user questions about past information.
-#         - **Use IDs for specific operations:** Parse results from `add_memory` and `search_memory` to get `memory_id`s required for `get_memory`, `update_memory`, `delete_memory`, and `get_memory_history`.
-#         - **Prioritize recalled memories:** Base your answers about the user on information retrieved using the tools.
-#         """
-#     ),
-#     show_tool_calls=True,
-# )
-
-# print("\n--- Starting Example 2: Advanced Usage ---")
-# # Add initial memories
-# agent_advanced.print_response("I like dogs.")
-# agent_advanced.print_response("My favorite food is pizza.")
-
-# # Search for a memory
-# agent_advanced.print_response("What pets do I like?")
-
-# # Update a memory (Agent needs to search first to get ID, then update)
-# agent_advanced.print_response("Actually, change that, I like cats now.")
-
-# # Get history of the updated memory (Agent needs ID again)
-# agent_advanced.print_response("Show me the history of the memory about my pet preference.")
-
-# # Get a specific memory (Agent needs to search first to get ID)
-# agent_advanced.print_response("What was that specific memory about my favorite food?")
-
-# # Get all memories
-# agent_advanced.print_response("List all memories you have about me.")
-
-# # Delete a specific memory (Agent needs to search first to get ID)
-# agent_advanced.print_response("Forget about my favorite food.")
-
-# # Verify deletion
-# agent_advanced.print_response("What do you know about me now?")
-
-# # Delete all memories
-# agent_advanced.print_response("Delete all my memories permanently.")
-
-# # Verify final deletion
-# agent_advanced.print_response("Is there anything left you know about me?")
-
-
-# -----------------------------------------------------------------------------------------------
-# Example 3: Custom embedding model
+# Example 2: Custom embedding model
 # -----------------------------------------------------------------------------------------------
 # Make sure to set GROQ_API_KEY
 # config = {
