@@ -322,3 +322,85 @@ class WhatsAppTools(Toolkit):
         except httpx.HTTPStatusError as e:
             logger.error(f"Failed to send WhatsApp template message: {e}")
             raise
+    async def send_image_message_async(self, image: any = None, text: Optional[str] = None, recipient: Optional[str] = None) -> str:
+        """Send an image message to a WhatsApp user (asynchronous version).
+
+        Args:
+            image: The media id or file reference for the image to send
+            text: Caption for the image
+            recipient: Recipient's WhatsApp ID or phone number (e.g., "+1234567890"). If not provided, uses default_recipient
+
+        Returns:
+            Success message with message ID
+        """
+        # Use default recipient if none provided
+        if recipient is None:
+            if not self.default_recipient:
+                raise ValueError("No recipient provided and no default recipient set")
+            recipient = self.default_recipient
+            logger.debug(f"Using default recipient: {recipient}")
+
+        logger.debug(f"Sending WhatsApp image to {recipient}: {text}")
+        logger.debug(f"Current config - Phone Number ID: {self.phone_number_id}, Version: {self.version}")
+
+        data = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": recipient,
+            "type": "image",
+            "image": {"id": image, "caption": text},
+        }
+
+        try:
+            response = await self._send_message_async(data)
+            message_id = response.get("messages", [{}])[0].get("id", "unknown")
+            logger.debug(f"Full API response: {json.dumps(response, indent=2)}")
+            return f"Message sent successfully! Message ID: {message_id}"
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Failed to send WhatsApp image message: {e}")
+            logger.error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error sending WhatsApp image message: {str(e)}")
+            raise
+    def send_image_message_sync(self, image:str = None, text: Optional[str] = None, recipient: Optional[str] = None) -> str:
+        """Send an image message to a WhatsApp user (synchronous version).
+
+        Args:
+            image: The media id or file reference for the image to send
+            text: Caption for the image
+            recipient: Recipient's WhatsApp ID or phone number (e.g., "+1234567890"). If not provided, uses default_recipient
+
+        Returns:
+            Success message with message ID
+        """
+        # Use default recipient if none provided
+        if recipient is None:
+            if not self.default_recipient:
+                raise ValueError("No recipient provided and no default recipient set")
+            recipient = self.default_recipient
+            logger.debug(f"Using default recipient: {recipient}")
+
+        logger.debug(f"Sending WhatsApp image to {recipient}: {text}")
+        logger.debug(f"Current config - Phone Number ID: {self.phone_number_id}, Version: {self.version}")
+
+        data = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": recipient,
+            "type": "image",
+            "image": {"id": image, "caption": text},
+        }
+
+        try:
+            response = self._send_message_sync(data)
+            message_id = response.get("messages", [{}])[0].get("id", "unknown")
+            logger.debug(f"Full API response: {json.dumps(response, indent=2)}")
+            return f"Message sent successfully! Message ID: {message_id}"
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Failed to send WhatsApp image message: {e}")
+            logger.error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error sending WhatsApp image message: {str(e)}")
+            raise

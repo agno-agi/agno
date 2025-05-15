@@ -8,9 +8,10 @@ from agno.media import Audio, File, Image, Video
 from agno.team.team import Team
 from agno.tools.whatsapp import WhatsAppTools
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.media import save_base64_data
 
 from .security import validate_webhook_signature
-from .wappreq import VERIFY_TOKEN, get_media
+from .wappreq import VERIFY_TOKEN, get_media,send_media
 
 
 def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
@@ -130,6 +131,9 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
 
             if response.reasoning_content:
                 _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
+            if response.images:
+                save_base64_data(response.images[0].content, "tmp/image.png")
+                WhatsAppTools.send_image_message_sync(image=send_media("tmp/image.png","image/png"),recipient=phone_number)
 
             _send_whatsapp_message(phone_number, response.content)
 
