@@ -51,7 +51,7 @@ if [ -z "$1" ]; then
 fi
 
 MODEL_NAME=$1
-VENV_NAME=".venv-test-${MODEL_NAME}"
+VENV_NAME=".venv"
 
 # Create and activate virtual environment
 print_heading "Creating test environment for ${MODEL_NAME}"
@@ -129,10 +129,6 @@ case $MODEL_NAME in
         fi
         if [ -z "${AWS_REGION}" ]; then
             print_error "AWS_REGION environment variable is not set"
-            exit 1
-        fi
-        if [ -z "${ANTHROPIC_API_KEY}" ]; then
-            print_error "ANTHROPIC_API_KEY environment variable is not set"
             exit 1
         fi
         ;;
