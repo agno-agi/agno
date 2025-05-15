@@ -1132,6 +1132,8 @@ class Model(ABC):
                 assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
             if "cached_tokens" in response_usage:
                 assistant_message.metrics.cached_tokens = response_usage.get("cached_tokens", 0)
+            if "cache_creation_input_tokens" in response_usage:
+                assistant_message.metrics.cache_creation_input_tokens = response_usage.get("cache_creation_input_tokens", 0)
             else:
                 assistant_message.metrics.total_tokens = (
                     assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
@@ -1151,6 +1153,8 @@ class Model(ABC):
                 assistant_message.metrics.total_tokens = response_usage.total_tokens
             if hasattr(response_usage, "cached_tokens") and response_usage.cached_tokens is not None:
                 assistant_message.metrics.cached_tokens = response_usage.cached_tokens
+            if hasattr(response_usage, "cache_creation_input_tokens") and response_usage.cache_creation_input_tokens is not None:
+                assistant_message.metrics.cache_creation_input_tokens = response_usage.cache_creation_input_tokens
             else:
                 assistant_message.metrics.total_tokens = (
                     assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
