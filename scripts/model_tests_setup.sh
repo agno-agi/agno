@@ -150,11 +150,9 @@ else
     pip install ".[${MODEL_NAME}]"
 fi
 
-"""
-Run the tests- I used this to test locally, but we already run test in test_on_release.yml so this should not be needed.
 
-Uncomment to test locally
-"""
+#Run the tests- I used this to test locally, but we already run test in test_on_release.yml so this should not be needed.
+#Uncomment to test locally
 # print_heading "Running ${MODEL_NAME} tests"
 # TEST_PATH="tests/integration/models/${MODEL_NAME}"
 # if [ -d "$TEST_PATH" ]; then
@@ -165,17 +163,4 @@ Uncomment to test locally
 #     TEST_EXIT_CODE=1
 # fi
 
-# Cleanup
-print_heading "Cleaning up"
-deactivate
-cd ../..
-rm -rf ${VENV_NAME}
-
-# Final status
-if [ $TEST_EXIT_CODE -eq 0 ]; then
-    print_success "All ${MODEL_NAME} tests completed successfully!"
-else
-    print_error "Tests failed for ${MODEL_NAME}"
-fi
-
-exit $TEST_EXIT_CODE
+print_success "Setup completed successfully for ${MODEL_NAME}"
