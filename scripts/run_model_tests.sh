@@ -119,6 +119,8 @@ case $MODEL_NAME in
             print_heading "Error: AWS_REGION environment variable is not set"
             exit 1
         fi
+        print_info "Installing anthropic package for AWS-- required in tests"
+        pip install anthropic
         ;;
     "cohere")
         if [ -z "${CO_API_KEY}" ]; then
@@ -143,6 +145,8 @@ case $MODEL_NAME in
             print_heading "Error: MISTRAL_API_KEY environment variable is not set"
             exit 1
         fi
+        print_info "Installing groq package for Mistral-- required in tests"
+        pip install groq
         ;;
     "nvidia")
         if [ -z "${NVIDIA_API_KEY}" ]; then
