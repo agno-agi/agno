@@ -6,10 +6,9 @@ This example shows how to instrument your agno agent with Langtrace.
 3. Set your Langtrace API key as an environment variables:
   - export LANGTRACE_API_KEY=<your-key>
 """
-
-
-from langtrace_python_sdk import langtrace  # Must precede other imports
-from langtrace_python_sdk.utils.with_root_span import with_langtrace_root_span
+# Must precede other imports
+from langtrace_python_sdk import langtrace   # type: ignore
+from langtrace_python_sdk.utils.with_root_span import with_langtrace_root_span   # type: ignore
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat

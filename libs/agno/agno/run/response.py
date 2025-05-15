@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message, MessageReferences
 from agno.reasoning.step import ReasoningStep
+from agno.utils.log import logger
 
 
 class RunEvent(str, Enum):
@@ -140,22 +141,30 @@ class RunResponse:
                     _dict["audio"].append(aud)
 
         if self.response_audio is not None:
-            _dict["response_audio"] = (
-                self.response_audio.to_dict() if isinstance(self.response_audio, AudioResponse) else self.response_audio
-            )
-
-        if isinstance(self.content, BaseModel):
-            _dict["content"] = self.content.model_dump(exclude_none=True)
+            if isinstance(self.response_audio, AudioResponse):
+                _dict["response_audio"] = self.response_audio.to_dict()
+            else:
+                _dict["response_audio"] = self.response_audio
 
         if self.citations is not None:
-            _dict["citations"] = self.citations.model_dump(exclude_none=True)
+            if isinstance(self.citations, Citations):
+                _dict["citations"] = self.citations.model_dump(exclude_none=True)
+            else:
+                _dict["citations"] = self.citations
+
+        if self.content and isinstance(self.content, BaseModel):
+            _dict["content"] = self.content.model_dump(exclude_none=True)
 
         return _dict
 
     def to_json(self) -> str:
         import json
 
-        _dict = self.to_dict()
+        try:
+            _dict = self.to_dict()
+        except Exception:
+            logger.error("Failed to convert response to json", exc_info=True)
+            raise
 
         return json.dumps(_dict, indent=2)
 
