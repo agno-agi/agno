@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional
+from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -40,7 +40,6 @@ class WatsonX(Model):
     top_p: Optional[float] = None
     logprobs: Optional[int] = None
     top_logprobs: Optional[int] = None
-    response_format: Optional[Any] = None
 
     request_params: Optional[Dict[str, Any]] = None
 
@@ -92,7 +91,12 @@ class WatsonX(Model):
 
         return self.model_client
 
-    def _get_request_params(self) -> Dict[str, Any]:
+    def _get_request_params(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         params = {
             "frequency_penalty": self.frequency_penalty,
             "presence_penalty": self.presence_penalty,
@@ -101,7 +105,7 @@ class WatsonX(Model):
             "top_p": self.top_p,
             "logprobs": self.logprobs,
             "top_logprobs": self.top_logprobs,
-            "response_format": self.response_format,
+            "response_format": response_format,
         }
         # Filter out None values
         params = {k: v for k, v in params.items() if v is not None}
@@ -111,10 +115,10 @@ class WatsonX(Model):
             request_params["params"] = params
 
         # Add tools
-        if self._tools is not None:
-            request_params["tools"] = self._tools  # type: ignore
-            if self.tool_choice is not None:
-                request_params["tool_choice"] = self.tool_choice  # type: ignore
+        if tools is not None:
+            request_params["tools"] = tools  # type: ignore
+            if tool_choice is not None:
+                request_params["tool_choice"] = tool_choice  # type: ignore
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
@@ -144,21 +148,23 @@ class WatsonX(Model):
 
         return message.to_dict()
 
-    def invoke(self, messages: List[Message]) -> Any:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Any:
         """
         Send a chat completion request to the WatsonX API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Any: The chat completion response from the API.
         """
         try:
             client = self.get_client()
 
             formatted_messages = [self._format_message(m) for m in messages]
-            request_params = self._get_request_params()
+            request_params = self._get_request_params(
+                response_format=response_format, tools=tools, tool_choice=tool_choice
+            )
 
             # Call chat method
             response = client.chat(messages=formatted_messages, **request_params)
@@ -168,21 +174,23 @@ class WatsonX(Model):
             log_error(f"Error calling WatsonX API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message]) -> Any:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Any:
         """
         Sends an asynchronous chat completion request to the WatsonX API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Any: The chat completion response from the API.
         """
         try:
             client = self.get_client()
             formatted_messages = [self._format_message(m) for m in messages]
 
-            request_params = self._get_request_params()
+            request_params = self._get_request_params(
+                response_format=response_format, tools=tools, tool_choice=tool_choice
+            )
 
             return await client.achat(messages=formatted_messages, **request_params)
 
@@ -190,21 +198,23 @@ class WatsonX(Model):
             log_error(f"Error calling WatsonX API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Iterator[Any]:
         """
         Send a streaming chat completion request to the WatsonX API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Iterator[Any]: An iterator of chat completion chunks.
         """
         try:
             client = self.get_client()
             formatted_messages = [self._format_message(m) for m in messages]
 
-            request_params = self._get_request_params()
+            request_params = self._get_request_params(
+                response_format=response_format, tools=tools, tool_choice=tool_choice
+            )
 
             yield from client.chat_stream(messages=formatted_messages, **request_params)
 
@@ -212,22 +222,24 @@ class WatsonX(Model):
             log_error(f"Error calling WatsonX API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> AsyncGenerator[Any, None]:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> AsyncGenerator[Any, None]:
         """
         Sends an asynchronous streaming chat completion request to the WatsonX API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            AsyncGenerator[Any, None]: An asynchronous iterator of chat completion chunks.
         """
         try:
             client = self.get_client()
             formatted_messages = [self._format_message(m) for m in messages]
 
             # Get parameters for chat
-            request_params = self._get_request_params()
+            request_params = self._get_request_params(
+                response_format=response_format, tools=tools, tool_choice=tool_choice
+            )
 
             async_stream = await client.achat_stream(messages=formatted_messages, **request_params)
             async for chunk in async_stream:
@@ -278,15 +290,13 @@ class WatsonX(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(self, response: Dict[str, Any]) -> ModelResponse:
+    def parse_provider_response(
+        self,
+        response: Dict[str, Any],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> ModelResponse:
         """
         Parse the WatsonX response into a ModelResponse.
-
-        Args:
-            response: Response from invoke() method
-
-        Returns:
-            ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
 
@@ -295,9 +305,9 @@ class WatsonX(Model):
         # Parse structured outputs if enabled
         try:
             if (
-                self.response_format is not None
-                and self.structured_outputs
-                and issubclass(self.response_format, BaseModel)
+                response_format is not None
+                and isinstance(response_format, type)
+                and issubclass(response_format, BaseModel)
             ):
                 parsed_object = response_message.parsed  # type: ignore
                 if parsed_object is not None:
@@ -328,12 +338,6 @@ class WatsonX(Model):
     def parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:
         """
         Parse the OpenAI streaming response into a ModelResponse.
-
-        Args:
-            response_delta: Raw response chunk from OpenAI
-
-        Returns:
-            ProviderResponse: Iterator of parsed response data
         """
         model_response = ModelResponse()
 

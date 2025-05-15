@@ -62,9 +62,6 @@ class LlamaOpenAI(OpenAILike):
 
     def get_async_client(self):
         """Override to provide custom httpx client that properly handles redirects"""
-        if self.async_client:
-            return self.async_client
-
         client_params = self._get_client_params()
 
         # Llama gives a 307 redirect error, so we need to set up a custom client to allow redirects
@@ -74,5 +71,4 @@ class LlamaOpenAI(OpenAILike):
             timeout=httpx.Timeout(30.0),
         )
 
-        self.async_client = AsyncOpenAIClient(**client_params)
-        return self.async_client
+        return AsyncOpenAIClient(**client_params)
