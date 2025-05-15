@@ -214,12 +214,8 @@ class LiteLLM(Model):
                     }
                 )
 
-        if hasattr(response, "usage"):
-            model_response.response_usage = {
-                "input_tokens": response.usage.prompt_tokens,
-                "output_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            }
+        if response.usage is not None:
+            model_response.response_usage = response.usage
 
         return model_response
 
