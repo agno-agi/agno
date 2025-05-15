@@ -146,14 +146,14 @@ class RunResponse:
             else:
                 _dict["response_audio"] = self.response_audio
 
-        if isinstance(self.content, BaseModel):
-            _dict["content"] = self.content.model_dump(exclude_none=True)
-
         if self.citations is not None:
             if isinstance(self.citations, Citations):
                 _dict["citations"] = self.citations.model_dump(exclude_none=True)
             else:
                 _dict["citations"] = self.citations
+
+        if self.content and isinstance(self.content, BaseModel):
+            _dict["content"] = self.content.model_dump(exclude_none=True)
 
         return _dict
 
