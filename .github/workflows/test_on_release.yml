@@ -65,7 +65,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/model_tests_setup.sh openai
       - name: Run OpenAI tests
         working-directory: .
         run: |
@@ -96,7 +96,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/model_tests_setup.sh google
       - name: Run Google tests
         working-directory: .
         run: |
@@ -126,7 +126,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/model_tests_setup.sh anthropic
       - name: Run Anthropic tests
         working-directory: .
         run: |
@@ -158,7 +158,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/model_tests_setup.sh aws
       - name: Run AWS tests
         working-directory: .
         run: |
