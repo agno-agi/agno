@@ -1,5 +1,7 @@
+from os import getenv
 from typing import Optional
 
+from agno.utils.whatsapp import get_media, send_image_message, upload_media
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
@@ -11,7 +13,6 @@ from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.media import save_base64_data
 
 from .security import validate_webhook_signature
-from .wappreq import VERIFY_TOKEN, get_media,send_media
 
 
 def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
@@ -30,8 +31,12 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
         mode = request.query_params.get("hub.mode")
         token = request.query_params.get("hub.verify_token")
         challenge = request.query_params.get("hub.challenge")
+        
+        verify_token = getenv("WHATSAPP_VERIFY_TOKEN")
+        if not verify_token:
+            raise HTTPException(status_code=500, detail="WHATSAPP_VERIFY_TOKEN is not set")
 
-        if mode == "subscribe" and token == VERIFY_TOKEN:
+        if mode == "subscribe" and token == verify_token:
             if not challenge:
                 raise HTTPException(status_code=400, detail="No challenge received")
             return PlainTextResponse(content=challenge)
@@ -131,9 +136,12 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
 
             if response.reasoning_content:
                 _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
+                
             if response.images:
-                save_base64_data(response.images[0].content, "tmp/image.png")
-                WhatsAppTools.send_image_message_sync(image=send_media("tmp/image.png","image/png"),recipient=phone_number)
+                from io import BytesIO
+                image_buffer = BytesIO(response.images[0].content)
+                media_id = upload_media(file_data=image_buffer, mime_type="image/png", filename="image.png")
+                send_image_message(image=media_id,recipient=phone_number)
 
             _send_whatsapp_message(phone_number, response.content)
 

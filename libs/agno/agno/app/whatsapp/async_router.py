@@ -1,5 +1,7 @@
 from typing import Optional
 
+from os import getenv
+from agno.utils.whatsapp import get_media_async, send_image_message_async, upload_media_async
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
@@ -8,10 +10,8 @@ from agno.media import Audio, File, Image, Video
 from agno.team.team import Team
 from agno.tools.whatsapp import WhatsAppTools
 from agno.utils.log import log_error, log_info, log_warning
-from agno.utils.media import save_base64_data
 
 from .security import validate_webhook_signature
-from .wappreq import VERIFY_TOKEN, get_media, send_media
 
 
 def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
@@ -30,8 +30,12 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
         mode = request.query_params.get("hub.mode")
         token = request.query_params.get("hub.verify_token")
         challenge = request.query_params.get("hub.challenge")
+        
+        verify_token = getenv("WHATSAPP_VERIFY_TOKEN")
+        if not verify_token:
+            raise HTTPException(status_code=500, detail="WHATSAPP_VERIFY_TOKEN is not set")
 
-        if mode == "subscribe" and token == VERIFY_TOKEN:
+        if mode == "subscribe" and token == verify_token:
             if not challenge:
                 raise HTTPException(status_code=400, detail="No challenge received")
             return PlainTextResponse(content=challenge)
@@ -114,26 +118,31 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
                 response = await agent.arun(
                     message_text,
                     user_id=phone_number,
-                    images=[Image(content=get_media(message_image))] if message_image else None,
-                    files=[File(content=get_media(message_doc))] if message_doc else None,
-                    videos=[Video(content=get_media(message_video))] if message_video else None,
-                    audio=[Audio(content=get_media(message_audio))] if message_audio else None,
+                    images=[Image(content=await get_media_async(message_image))] if message_image else None,
+                    files=[File(content=await get_media_async(message_doc))] if message_doc else None,
+                    videos=[Video(content=await get_media_async(message_video))] if message_video else None,
+                    audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
                 )
             elif team:
                 response = await team.arun(
                     message_text,
                     user_id=phone_number,
-                    files=[File(content=get_media(message_doc))] if message_doc else None,
-                    images=[Image(content=get_media(message_image))] if message_image else None,
-                    videos=[Video(content=get_media(message_video))] if message_video else None,
-                    audio=[Audio(content=get_media(message_audio))] if message_audio else None,
+                    files=[File(content=await get_media_async(message_doc))] if message_doc else None,
+                    images=[Image(content=await get_media_async(message_image))] if message_image else None,
+                    videos=[Video(content=await get_media_async(message_video))] if message_video else None,
+                    audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
                 )
 
             if response.reasoning_content:
                 await _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
+                
             if response.images:
-                save_base64_data(response.images[0].content, "tmp/image.png")
-                await WhatsAppTools.send_image_message_async(image=send_media("tmp/image.png","image/png"),recipient=phone_number)
+                from io import BytesIO
+                # Convert content to buffer
+                image_buffer = BytesIO(response.images[0].content)
+                media_id = await upload_media_async(file_data=image_buffer, mime_type="image/png", filename="image.png")
+                await send_image_message_async(image=media_id,recipient=phone_number)
+                
             await _send_whatsapp_message(phone_number, response.content)
 
         except Exception as e:

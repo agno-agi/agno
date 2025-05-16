@@ -4,8 +4,8 @@ from agno.app.whatsapp.serve import serve_whatsapp_app
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.openai import OpenAITools
-from agno.utils.media import save_base64_data
-from agno.models.google import Gemini
+
+
 image_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[OpenAITools(image_model="gpt-image-1")],

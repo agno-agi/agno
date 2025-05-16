@@ -27,7 +27,10 @@ The WhatsApp API module provides integration between WhatsApp Business API and A
    - Can analyse images and videos
    - Can respond to audio messages
 
-4. **User Memory Agent** (`agent_with_user_memory.py`)
+4. **Image Generation Agent** (`image_generation_agent.py`)
+   - Can generate images
+
+5. **User Memory Agent** (`agent_with_user_memory.py`)
    - Enhanced implementation with persistent memory
    - Uses SQLite for storage
    - Captures and utilizes user information
@@ -36,7 +39,7 @@ The WhatsApp API module provides integration between WhatsApp Business API and A
      - Hobbies and interests tracking
      - Personalized responses
 
-5. **Study Buddy Agent** (`study_buddy.py`)
+6. **Study Buddy Agent** (`study_buddy.py`)
    - Specialized educational assistant
    - Features:
      - Memory-based learning
