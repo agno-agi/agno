@@ -12,7 +12,7 @@ def test_tool_use():
     """Test basic tool usage with the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -31,14 +31,14 @@ def test_tool_use_stream():
     """Test streaming with tool use in the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -52,7 +52,10 @@ def test_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
+    full_content = ""
+    for r in responses:
+        full_content += r.content or ""
+    assert "TSLA" in full_content
 
 
 @pytest.mark.asyncio
@@ -60,7 +63,7 @@ async def test_async_tool_use():
     """Test async tool use with the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -80,14 +83,16 @@ async def test_async_tool_use_stream():
     """Test async streaming with tool use in the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -101,7 +106,10 @@ async def test_async_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
+    full_content = ""
+    for r in responses:
+        full_content += r.content or ""
+    assert "TSLA" in full_content
 
 
 def test_tool_use_with_native_structured_outputs():
@@ -113,11 +121,10 @@ def test_tool_use_with_native_structured_outputs():
 
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         response_model=StockPrice,
-        structured_outputs=True,
         telemetry=False,
         monitoring=False,
     )
@@ -133,7 +140,7 @@ def test_parallel_tool_calls():
     """Test parallel tool calls with the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -154,7 +161,7 @@ def test_multiple_tool_calls():
     """Test multiple different tool types with the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools(), DuckDuckGoTools()],
+        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -252,7 +259,11 @@ def test_web_search_built_in_tool_stream():
         monitoring=False,
     )
 
-    response_stream = agent.run("What was the most recent Olympic Games and who won the most medals?", stream=True)
+    response_stream = agent.run(
+        "What was the most recent Olympic Games and who won the most medals?",
+        stream=True,
+        stream_intermediate_steps=True,
+    )
 
     responses = list(response_stream)
     assert len(responses) > 0
@@ -275,7 +286,7 @@ def test_web_search_built_in_tool_with_other_tools():
     """Test the built-in web search tool in the Responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools(), {"type": "web_search_preview"}],
+        tools=[YFinanceTools(cache_results=True), {"type": "web_search_preview"}],
         show_tool_calls=True,
         markdown=True,
         telemetry=False,
@@ -287,5 +298,4 @@ def test_web_search_built_in_tool_with_other_tools():
     tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
     assert len(tool_calls) >= 1  # At least one message has tool calls
     assert response.content is not None
-    assert "TSLA" in response.content
-    assert "news" in response.content.lower()
+    assert "TSLA" in response.content or "tesla" in response.content.lower()

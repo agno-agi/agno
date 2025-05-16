@@ -88,7 +88,6 @@ class StartupIdeaValidator(Workflow):
         add_history_to_messages=True,
         add_datetime_to_instructions=True,
         response_model=IdeaClarification,
-        structured_outputs=True,
         debug_mode=False,
     )
 
@@ -104,8 +103,6 @@ class StartupIdeaValidator(Workflow):
         add_history_to_messages=True,
         add_datetime_to_instructions=True,
         response_model=MarketResearch,
-        structured_outputs=True,
-        debug_mode=False,
     )
 
     competitor_analysis_agent: Agent = Agent(

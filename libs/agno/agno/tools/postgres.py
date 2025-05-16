@@ -8,7 +8,7 @@ except ImportError:
     )
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info
 
 
 class PostgresTools(Toolkit):
@@ -27,8 +27,9 @@ class PostgresTools(Toolkit):
         summarize_tables: bool = True,
         export_tables: bool = False,
         table_schema: str = "public",
+        **kwargs,
     ):
-        super().__init__(name="postgres_tools")
+        super().__init__(name="postgres_tools", **kwargs)
         self._connection: Optional[psycopg2.extensions.connection] = connection
         self.db_name: Optional[str] = db_name
         self.user: Optional[str] = user
@@ -82,7 +83,7 @@ class PostgresTools(Toolkit):
         """
         stmt = f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{self.table_schema}';"
         tables = self.run_query(stmt)
-        logger.debug(f"Tables: {tables}")
+        log_debug(f"Tables: {tables}")
         return tables
 
     def describe_table(self, table: str) -> str:
@@ -94,7 +95,7 @@ class PostgresTools(Toolkit):
         stmt = f"SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = '{table}' AND table_schema = '{self.table_schema}';"
         table_description = self.run_query(stmt)
 
-        logger.debug(f"Table description: {table_description}")
+        log_debug(f"Table description: {table_description}")
         return f"{table}\n{table_description}"
 
     def summarize_table(self, table: str) -> str:
@@ -163,7 +164,7 @@ class PostgresTools(Toolkit):
         """
         table_summary = self.run_query(stmt)
 
-        logger.debug(f"Table summary: {table_summary}")
+        log_debug(f"Table summary: {table_summary}")
         return table_summary
 
     def inspect_query(self, query: str) -> str:
@@ -175,7 +176,7 @@ class PostgresTools(Toolkit):
         stmt = f"EXPLAIN {query};"
         explain_plan = self.run_query(stmt)
 
-        logger.debug(f"Explain plan: {explain_plan}")
+        log_debug(f"Explain plan: {explain_plan}")
         return explain_plan
 
     def export_table_to_path(self, table: str, path: Optional[str] = None) -> str:
@@ -189,7 +190,7 @@ class PostgresTools(Toolkit):
         :return: None
         """
 
-        logger.debug(f"Exporting Table {table} as CSV to path {path}")
+        log_debug(f"Exporting Table {table} as CSV to path {path}")
         if path is None:
             path = f"{table}.csv"
         else:
@@ -197,7 +198,7 @@ class PostgresTools(Toolkit):
 
         export_statement = f"COPY {self.table_schema}.{table} TO '{path}' DELIMITER ',' CSV HEADER;"
         result = self.run_query(export_statement)
-        logger.debug(f"Exported {table} to {path}/{table}")
+        log_debug(f"Exported {table} to {path}/{table}")
 
         return result
 
@@ -215,7 +216,7 @@ class PostgresTools(Toolkit):
         formatted_sql = formatted_sql.split(";")[0]
 
         try:
-            logger.info(f"Running: {formatted_sql}")
+            log_info(f"Running: {formatted_sql}")
 
             cursor = self.connection.cursor()
             cursor.execute(query)
@@ -237,7 +238,7 @@ class PostgresTools(Toolkit):
                 except AttributeError:
                     result_output = str(query_result)
 
-            logger.debug(f"Query result: {result_output}")
+            log_debug(f"Query result: {result_output}")
 
             return result_output
         except Exception as e:

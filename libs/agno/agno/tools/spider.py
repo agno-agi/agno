@@ -8,7 +8,7 @@ except ImportError:
 from typing import Optional
 
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 
 class SpiderTools(Toolkit):
@@ -17,8 +17,9 @@ class SpiderTools(Toolkit):
         max_results: Optional[int] = None,
         url: Optional[str] = None,
         optional_params: Optional[dict] = None,
+        **kwargs,
     ):
-        super().__init__(name="spider")
+        super().__init__(name="spider", **kwargs)
         self.max_results = max_results
         self.url = url
         self.optional_params = optional_params or {}
@@ -58,7 +59,7 @@ class SpiderTools(Toolkit):
 
     def _search(self, query: str, max_results: int = 1) -> str:
         app = ExternalSpider()
-        logger.info(f"Fetching results from spider for query: {query} with max_results: {max_results}")
+        log_info(f"Fetching results from spider for query: {query} with max_results: {max_results}")
         try:
             options = {"fetch_page_content": False, "num": max_results, **self.optional_params}
             results = app.search(query, options)
@@ -69,7 +70,7 @@ class SpiderTools(Toolkit):
 
     def _scrape(self, url: str) -> str:
         app = ExternalSpider()
-        logger.info(f"Fetching content from spider for url: {url}")
+        log_info(f"Fetching content from spider for url: {url}")
         try:
             options = {"return_format": "markdown", **self.optional_params}
             results = app.scrape_url(url, options)
@@ -80,7 +81,7 @@ class SpiderTools(Toolkit):
 
     def _crawl(self, url: str, limit: Optional[int] = None) -> str:
         app = ExternalSpider()
-        logger.info(f"Fetching content from spider for url: {url}")
+        log_info(f"Fetching content from spider for url: {url}")
         try:
             if limit is None:
                 limit = 10

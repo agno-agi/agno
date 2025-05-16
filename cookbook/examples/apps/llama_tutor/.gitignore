@@ -1,0 +1,5 @@
+output
+agents.db
+.venv/
+*.env
+**/__pycache__/**

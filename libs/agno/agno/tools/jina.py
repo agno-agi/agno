@@ -5,7 +5,7 @@ import httpx
 from pydantic import BaseModel, Field, HttpUrl
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 
 class JinaReaderToolsConfig(BaseModel):
@@ -26,8 +26,9 @@ class JinaReaderTools(Toolkit):
         timeout: Optional[int] = None,
         read_url: bool = True,
         search_query: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="jina_reader_tools")
+        super().__init__(name="jina_reader_tools", **kwargs)
 
         self.config: JinaReaderToolsConfig = JinaReaderToolsConfig(
             api_key=api_key,
@@ -45,7 +46,7 @@ class JinaReaderTools(Toolkit):
     def read_url(self, url: str) -> str:
         """Reads a URL and returns the truncated content using Jina Reader API."""
         full_url = f"{self.config.base_url}{url}"
-        logger.info(f"Reading URL: {full_url}")
+        log_info(f"Reading URL: {full_url}")
         try:
             response = httpx.get(full_url, headers=self._get_headers())
             response.raise_for_status()
@@ -59,7 +60,7 @@ class JinaReaderTools(Toolkit):
     def search_query(self, query: str) -> str:
         """Performs a web search using Jina Reader API and returns the truncated results."""
         full_url = f"{self.config.search_url}{query}"
-        logger.info(f"Performing search: {full_url}")
+        log_info(f"Performing search: {full_url}")
         try:
             response = httpx.get(full_url, headers=self._get_headers())
             response.raise_for_status()

@@ -2,18 +2,6 @@
 Tic Tac Toe Battle
 ---------------------------------
 This example shows how to build a Tic Tac Toe game where two AI agents play against each other.
-The game features a referee agent coordinating between two player agents using different
-language models.
-
-Usage Examples:
----------------
-1. Quick game with default settings:
-   referee_agent = get_tic_tac_toe_referee()
-   play_tic_tac_toe()
-
-2. Game with debug mode off:
-   referee_agent = get_tic_tac_toe_referee(debug_mode=False)
-   play_tic_tac_toe(debug_mode=False)
 
 The game integrates:
   - Multiple AI models (Claude, GPT-4, etc.)
@@ -30,7 +18,7 @@ from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIChat, OpenAIResponses
 
 project_root = str(Path(__file__).parent.parent.parent.parent)
 if project_root not in sys.path:
@@ -52,7 +40,10 @@ def get_model_for_provider(provider: str, model_name: str):
         ValueError: If the provider is not supported
     """
     if provider == "openai":
-        return OpenAIChat(id=model_name)
+        if model_name == "o1-pro":
+            return OpenAIResponses(id=model_name)
+        else:
+            return OpenAIChat(id=model_name)
     elif provider == "google":
         return Gemini(id=model_name)
     elif provider == "anthropic":
@@ -129,6 +120,10 @@ def get_tic_tac_toe_players(
         - Pay attention to the valid moves and avoid illegal moves
         """),
         model=model_x,
+        # Gemini models have a rate limit of 5 requests per minute
+        retries=3,
+        # Make sure to wait 30 seconds between retries
+        delay_between_retries=30,
         debug_mode=debug_mode,
     )
 
@@ -159,6 +154,10 @@ def get_tic_tac_toe_players(
         - Pay attention to the valid moves and avoid illegal moves
         """),
         model=model_o,
+        # Gemini models have a rate limit of 5 requests per minute
+        retries=3,
+        # Make sure to wait 30 seconds between retries
+        delay_between_retries=30,
         debug_mode=debug_mode,
     )
 

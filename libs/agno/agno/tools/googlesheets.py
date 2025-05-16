@@ -98,6 +98,7 @@ class GoogleSheetsTools(Toolkit):
         create: bool = False,
         update: bool = False,
         duplicate: bool = False,
+        **kwargs,
     ):
         """Initialize GoogleSheetsTools with the specified configuration.
 
@@ -113,7 +114,7 @@ class GoogleSheetsTools(Toolkit):
             update (bool): Enable update operations. Defaults to False.
             duplicate (bool): Enable duplicate operations. Defaults to False.
         """
-        super().__init__(name="google_tools")
+        super().__init__(name="google_sheets_tools", **kwargs)
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
         self.creds = creds

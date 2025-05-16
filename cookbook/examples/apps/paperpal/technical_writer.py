@@ -72,7 +72,6 @@ Focus on terms that are:
 Provide the search terms as a list of strings like ["xyz", "abc", ...]
 """,
     response_model=SearchTerms,
-    structured_outputs=True,
 )
 
 arxiv_search_agent = Agent(
@@ -100,7 +99,6 @@ Ensure the selected research papers directly address the topic and offer valuabl
 """,
     tools=[arxiv_toolkit],
     response_model=ArxivSearchResults,
-    structured_outputs=True,
 )
 
 exa_search_agent = Agent(
@@ -124,7 +122,6 @@ Ensure the selected articles are credible, relevant, and provide significant ins
 """,
     tools=[ExaTools()],
     response_model=WebSearchResults,
-    structured_outputs=True,
 )
 
 research_editor = Agent(

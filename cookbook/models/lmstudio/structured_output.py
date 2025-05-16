@@ -31,7 +31,6 @@ structured_output_agent = Agent(
     model=LMStudio(id="qwen2.5-7b-instruct-1m"),
     description="You write movie scripts.",
     response_model=MovieScript,
-    structured_outputs=True,
 )
 
 # Run the agent synchronously

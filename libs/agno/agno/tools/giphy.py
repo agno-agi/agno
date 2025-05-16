@@ -1,11 +1,12 @@
 import os
 import uuid
-from typing import Optional
+from typing import Optional, Union
 
 import httpx
 
 from agno.agent import Agent
 from agno.media import ImageArtifact
+from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
@@ -15,8 +16,9 @@ class GiphyTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         limit: int = 1,
+        **kwargs,
     ):
-        super().__init__(name="giphy_tools")
+        super().__init__(name="giphy_tools", **kwargs)
 
         self.api_key = api_key or os.getenv("GIPHY_API_KEY")
         if not self.api_key:
@@ -26,7 +28,7 @@ class GiphyTools(Toolkit):
 
         self.register(self.search_gifs)
 
-    def search_gifs(self, agent: Agent, query: str) -> str:
+    def search_gifs(self, agent: Union[Agent, Team], query: str) -> str:
         """Find a GIPHY gif
 
         Args:

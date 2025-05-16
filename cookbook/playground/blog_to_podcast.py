@@ -36,7 +36,9 @@ blog_to_podcast_agent = Agent(
     debug_mode=True,
     add_history_to_messages=True,
     storage=SqliteStorage(
-        table_name="blog_to_podcast_agent", db_file=image_agent_storage_file
+        table_name="blog_to_podcast_agent",
+        db_file=image_agent_storage_file,
+        auto_upgrade_schema=True,
     ),
 )
 

@@ -1,16 +1,20 @@
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
 
 
-class TeamSchema(BaseModel):
-    """Schema for team data returned by the API."""
+class TeamSessionCreate(BaseModel):
+    """Data sent to API to create an Team Session"""
 
-    id_team: str
-    name: str
-    url: str
+    session_id: str
+    team_data: Optional[Dict[str, Any]] = None
 
 
-class TeamIdentifier(BaseModel):
-    id_team: Optional[str] = None
-    team_url: Optional[str] = None
+class TeamRunCreate(BaseModel):
+    """Data sent to API to create an Team Run"""
+
+    session_id: str
+    team_session_id: Optional[str] = None
+    run_id: Optional[str] = None
+    run_data: Optional[Dict[str, Any]] = None
+    team_data: Optional[Dict[str, Any]] = None

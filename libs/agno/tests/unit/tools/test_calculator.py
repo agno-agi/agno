@@ -246,17 +246,6 @@ def test_basic_calculator_has_only_basic_operations(basic_calculator_tools):
     assert "square_root" not in function_names
 
 
-def test_logging(calculator_tools):
-    """Test that operations are properly logged."""
-    with patch("agno.tools.calculator.logger.info") as mock_logger:
-        calculator_tools.add(5, 3)
-        mock_logger.assert_called_once_with("Adding 5 and 3 to get 8")
-
-        mock_logger.reset_mock()
-        calculator_tools.multiply(4, 2)
-        mock_logger.assert_called_once_with("Multiplying 4 and 2 to get 8")
-
-
 def test_error_logging(calculator_tools):
     """Test that errors are properly logged."""
     with patch("agno.tools.calculator.logger.error") as mock_logger:

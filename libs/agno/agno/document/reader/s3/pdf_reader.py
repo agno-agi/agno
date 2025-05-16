@@ -1,9 +1,10 @@
 from io import BytesIO
 from typing import List
+from uuid import uuid4
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import logger
+from agno.utils.log import log_info
 
 try:
     from agno.aws.resource.s3.object import S3Object  # type: ignore
@@ -21,7 +22,7 @@ class S3PDFReader(Reader):
 
     def read(self, s3_object: S3Object) -> List[Document]:
         try:
-            logger.info(f"Reading: {s3_object.uri}")
+            log_info(f"Reading: {s3_object.uri}")
 
             object_resource = s3_object.get_resource()
             object_body = object_resource.get()["Body"]
@@ -30,7 +31,7 @@ class S3PDFReader(Reader):
             documents = [
                 Document(
                     name=doc_name,
-                    id=f"{doc_name}_{page_number}",
+                    id=str(uuid4()),
                     meta_data={"page": page_number},
                     content=page.extract_text(),
                 )

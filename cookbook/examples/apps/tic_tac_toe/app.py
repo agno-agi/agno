@@ -45,13 +45,15 @@ def main():
         st.markdown("### Game Controls")
         model_options = {
             "gpt-4o": "openai:gpt-4o",
+            "gpt-4o-mini": "openai:gpt-4o-mini",
             "gpt-4.5": "openai:gpt-4.5-preview",
+            "o1-pro": "openai:o1-pro",
             "o3-mini": "openai:o3-mini",
             "claude-3.5": "anthropic:claude-3-5-sonnet",
             "claude-3.7": "anthropic:claude-3-7-sonnet",
             "claude-3.7-thinking": "anthropic:claude-3-7-sonnet-thinking",
+            "gemini-pro": "google:gemini-2.5-pro-exp-03-25",
             "gemini-flash": "google:gemini-2.0-flash",
-            "gemini-pro": "google:gemini-2.0-pro-exp-02-05",
             "llama-3.3": "groq:llama-3.3-70b-versatile",
         }
         ################################################################

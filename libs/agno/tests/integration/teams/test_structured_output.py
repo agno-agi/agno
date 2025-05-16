@@ -1,90 +1,123 @@
-from typing import List
-
-import pytest
 from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.hackernews import HackerNewsTools
+from agno.team.team import Team
+from agno.tools.yfinance import YFinanceTools
 
 
-@pytest.mark.skip("Test is flaky with current team implementation")
-def test_structured_output():
-    class Article(BaseModel):
-        title: str
-        summary: str
-        reference_links: List[str]
+def test_route_team_multiple_response_models():
+    """Test route team with different response models for each agent."""
 
-    class HackerNewsArticle(BaseModel):
-        title: str
-        summary: str
+    class StockAnalysis(BaseModel):
+        symbol: str
+        company_name: str
+        analysis: str
 
-    hn_researcher = Agent(
-        name="HackerNews Researcher",
+    class CompanyAnalysis(BaseModel):
+        company_name: str
+        analysis: str
+
+    stock_searcher = Agent(
+        name="Stock Searcher",
         model=OpenAIChat("gpt-4o"),
-        role="Gets top stories from hackernews.",
-        instructions="Only return valid JSON",
-        tools=[HackerNewsTools()],
-        response_model=HackerNewsArticle,
-        structured_outputs=True,
+        response_model=StockAnalysis,
+        role="Searches for information on stocks and provides price analysis.",
+        tools=[
+            YFinanceTools(
+                stock_price=True,
+                analyst_recommendations=True,
+            )
+        ],
     )
 
-    hn_team = Agent(
-        name="Hackernews Team",
+    company_info_agent = Agent(
+        name="Company Info Searcher",
         model=OpenAIChat("gpt-4o"),
-        team=[hn_researcher],
-        instructions=[
-            "First, search hackernews for what the user is asking about.",
-            "Finally, provide a thoughtful and engaging summary.",
-            "Only return valid JSON",
+        role="Searches for general information about companies and recent news.",
+        response_model=CompanyAnalysis,
+        tools=[
+            YFinanceTools(
+                stock_price=False,
+                company_info=True,
+                company_news=True,
+            )
         ],
-        response_model=Article,
-        structured_outputs=True,
-        show_tool_calls=True,
+    )
+
+    team = Team(
+        name="Stock Research Team",
+        mode="route",
+        model=OpenAIChat("gpt-4o"),
+        members=[stock_searcher, company_info_agent],
         markdown=True,
     )
 
-    response = hn_team.run("Write an article about the top 2 stories on hackernews", stream=True)
+    # This should route to the stock_searcher
+    response = team.run("What is the current stock price of NVDA?")
 
-    assert isinstance(response.content, Article)
-    assert response.content.title is not None
-    assert response.content.summary is not None
+    assert response.content is not None
+    assert isinstance(response.content, StockAnalysis)
+    assert response.content.symbol is not None
+    assert response.content.company_name is not None
+    assert response.content.analysis is not None
+    assert len(response.member_responses) == 1
+    assert response.member_responses[0].agent_id == stock_searcher.agent_id
+
+    # This should route to the company_info_agent
+    response = team.run("What is in the news about NVDA?")
+
+    assert response.content is not None
+    assert isinstance(response.content, CompanyAnalysis)
+    assert response.content.company_name is not None
+    assert response.content.analysis is not None
+    assert len(response.member_responses) == 1
+    assert response.member_responses[0].agent_id == company_info_agent.agent_id
 
 
-def test_response_model():
-    class Article(BaseModel):
-        title: str
-        summary: str
-        reference_links: List[str]
+def test_route_team_mixed_structured_output():
+    """Test route team with mixed structured and unstructured outputs."""
 
-    class HackerNewsArticle(BaseModel):
-        title: str
-        summary: str
-        reference_links: List[str]
+    class StockInfo(BaseModel):
+        symbol: str
+        price: float
 
-    hn_researcher = Agent(
-        name="HackerNews Researcher",
+    stock_agent = Agent(
+        name="Stock Agent",
         model=OpenAIChat("gpt-4o"),
-        role="Gets top stories from hackernews.",
-        tools=[HackerNewsTools()],
-        response_model=HackerNewsArticle,
+        role="Get stock information",
+        response_model=StockInfo,
+        tools=[YFinanceTools(stock_price=True)],
     )
 
-    hn_team = Agent(
-        name="Hackernews Team",
+    news_agent = Agent(
+        name="News Agent",
         model=OpenAIChat("gpt-4o"),
-        team=[hn_researcher],
-        instructions=[
-            "First, search hackernews for what the user is asking about.",
-            "Finally, provide a thoughtful and engaging summary.",
-        ],
-        response_model=Article,
-        show_tool_calls=True,
-        markdown=True,
+        role="Get company news",
+        tools=[YFinanceTools(company_news=True)],
     )
 
-    response = hn_team.run("Write an article about the top 2 stories on hackernews", stream=True)
+    team = Team(
+        name="Financial Research Team",
+        mode="route",
+        model=OpenAIChat("gpt-4o"),
+        members=[stock_agent, news_agent],
+    )
 
-    assert isinstance(response.content, Article)
-    assert response.content.title is not None
-    assert response.content.summary is not None
+    # This should route to the stock_agent and return structured output
+    response = team.run("Get the current price of AAPL?")
+
+    assert response.content is not None
+    assert isinstance(response.content, StockInfo)
+    assert response.content.symbol == "AAPL"
+    assert len(response.member_responses) == 1
+    assert response.member_responses[0].agent_id == stock_agent.agent_id
+
+    # This should route to the news_agent and return unstructured output
+    response = team.run("Tell me the latest news about AAPL")
+
+    assert response.content is not None
+    assert isinstance(response.content, str)
+    assert len(response.content) > 0
+    assert len(response.member_responses) == 1
+    assert response.member_responses[0].agent_id == news_agent.agent_id

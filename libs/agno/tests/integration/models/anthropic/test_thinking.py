@@ -127,7 +127,7 @@ def test_thinking_with_tool_calls():
             max_tokens=2048,
             thinking={"type": "enabled", "budget_tokens": 1024},
         ),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
     )
@@ -147,7 +147,7 @@ def test_redacted_thinking_with_tool_calls():
             max_tokens=2048,
             thinking={"type": "enabled", "budget_tokens": 1024},
         ),
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(cache_results=True)],
         add_history_to_messages=True,
         show_tool_calls=True,
         markdown=True,

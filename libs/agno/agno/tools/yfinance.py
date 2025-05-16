@@ -1,7 +1,7 @@
 import json
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug
 
 try:
     import yfinance as yf
@@ -10,6 +10,21 @@ except ImportError:
 
 
 class YFinanceTools(Toolkit):
+    """
+    YFinanceTools is a toolkit for getting financial data from Yahoo Finance.
+    Args:
+        stock_price (bool): Whether to get the current stock price.
+        company_info (bool): Whether to get company information.
+        stock_fundamentals (bool): Whether to get stock fundamentals.
+        income_statements (bool): Whether to get income statements.
+        key_financial_ratios (bool): Whether to get key financial ratios.
+        analyst_recommendations (bool): Whether to get analyst recommendations.
+        company_news (bool): Whether to get company news.
+        technical_indicators (bool): Whether to get technical indicators.
+        historical_prices (bool): Whether to get historical prices.
+        enable_all (bool): Whether to enable all tools.
+    """
+
     def __init__(
         self,
         stock_price: bool = True,
@@ -22,8 +37,9 @@ class YFinanceTools(Toolkit):
         technical_indicators: bool = False,
         historical_prices: bool = False,
         enable_all: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="yfinance_tools")
+        super().__init__(name="yfinance_tools", **kwargs)
 
         if stock_price or enable_all:
             self.register(self.get_current_stock_price)
@@ -55,7 +71,7 @@ class YFinanceTools(Toolkit):
             str: The current stock price or error message.
         """
         try:
-            logger.debug(f"Fetching current price for {symbol}")
+            log_debug(f"Fetching current price for {symbol}")
             stock = yf.Ticker(symbol)
             # Use "regularMarketPrice" for regular market hours, or "currentPrice" for pre/post market
             current_price = stock.info.get("regularMarketPrice", stock.info.get("currentPrice"))
@@ -77,7 +93,7 @@ class YFinanceTools(Toolkit):
             if company_info_full is None:
                 return f"Could not fetch company info for {symbol}"
 
-            logger.debug(f"Fetching company info for {symbol}")
+            log_debug(f"Fetching company info for {symbol}")
 
             company_info_cleaned = {
                 "Name": company_info_full.get("shortName"),
@@ -129,7 +145,7 @@ class YFinanceTools(Toolkit):
           str: The current stock price or error message.
         """
         try:
-            logger.debug(f"Fetching historical prices for {symbol}")
+            log_debug(f"Fetching historical prices for {symbol}")
             stock = yf.Ticker(symbol)
             historical_price = stock.history(period=period, interval=interval)
             return historical_price.to_json(orient="index")
@@ -159,7 +175,7 @@ class YFinanceTools(Toolkit):
                     - '52_week_low': The 52-week low price of the stock.
         """
         try:
-            logger.debug(f"Fetching fundamentals for {symbol}")
+            log_debug(f"Fetching fundamentals for {symbol}")
             stock = yf.Ticker(symbol)
             info = stock.info
             fundamentals = {
@@ -190,7 +206,7 @@ class YFinanceTools(Toolkit):
             dict: JSON containing income statements or an empty dictionary.
         """
         try:
-            logger.debug(f"Fetching income statements for {symbol}")
+            log_debug(f"Fetching income statements for {symbol}")
             stock = yf.Ticker(symbol)
             financials = stock.financials
             return financials.to_json(orient="index")
@@ -207,7 +223,7 @@ class YFinanceTools(Toolkit):
             dict: JSON containing key financial ratios.
         """
         try:
-            logger.debug(f"Fetching key financial ratios for {symbol}")
+            log_debug(f"Fetching key financial ratios for {symbol}")
             stock = yf.Ticker(symbol)
             key_ratios = stock.info
             return json.dumps(key_ratios, indent=2)
@@ -224,7 +240,7 @@ class YFinanceTools(Toolkit):
             str: JSON containing analyst recommendations.
         """
         try:
-            logger.debug(f"Fetching analyst recommendations for {symbol}")
+            log_debug(f"Fetching analyst recommendations for {symbol}")
             stock = yf.Ticker(symbol)
             recommendations = stock.recommendations
             return recommendations.to_json(orient="index")
@@ -242,7 +258,7 @@ class YFinanceTools(Toolkit):
             str: JSON containing company news and press releases.
         """
         try:
-            logger.debug(f"Fetching company news for {symbol}")
+            log_debug(f"Fetching company news for {symbol}")
             news = yf.Ticker(symbol).news
             return json.dumps(news[:num_stories], indent=2)
         except Exception as e:
@@ -260,7 +276,7 @@ class YFinanceTools(Toolkit):
             str: JSON containing technical indicators.
         """
         try:
-            logger.debug(f"Fetching technical indicators for {symbol}")
+            log_debug(f"Fetching technical indicators for {symbol}")
             indicators = yf.Ticker(symbol).history(period=period)
             return indicators.to_json(orient="index")
         except Exception as e:

@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     import arxiv
@@ -17,8 +17,10 @@ except ImportError:
 
 
 class ArxivTools(Toolkit):
-    def __init__(self, search_arxiv: bool = True, read_arxiv_papers: bool = True, download_dir: Optional[Path] = None):
-        super().__init__(name="arxiv_tools")
+    def __init__(
+        self, search_arxiv: bool = True, read_arxiv_papers: bool = True, download_dir: Optional[Path] = None, **kwargs
+    ):
+        super().__init__(name="arxiv_tools", **kwargs)
 
         self.client: arxiv.Client = arxiv.Client()
         self.download_dir: Path = download_dir or Path(__file__).parent.joinpath("arxiv_pdfs")
@@ -39,7 +41,7 @@ class ArxivTools(Toolkit):
         """
 
         articles = []
-        logger.info(f"Searching arxiv for: {query}")
+        log_debug(f"Searching arxiv for: {query}")
         for result in self.client.results(
             search=arxiv.Search(
                 query=query,
@@ -83,7 +85,7 @@ class ArxivTools(Toolkit):
         download_dir.mkdir(parents=True, exist_ok=True)
 
         articles = []
-        logger.info(f"Searching arxiv for: {id_list}")
+        log_debug(f"Searching arxiv for: {id_list}")
         for result in self.client.results(search=arxiv.Search(id_list=id_list)):
             try:
                 article: Dict[str, Any] = {
@@ -100,9 +102,9 @@ class ArxivTools(Toolkit):
                     "comment": result.comment,
                 }
                 if result.pdf_url:
-                    logger.info(f"Downloading: {result.pdf_url}")
+                    log_debug(f"Downloading: {result.pdf_url}")
                     pdf_path = result.download_pdf(dirpath=str(download_dir))
-                    logger.info(f"To: {pdf_path}")
+                    log_debug(f"To: {pdf_path}")
                     pdf_reader = PdfReader(pdf_path)
                     article["content"] = []
                     for page_number, page in enumerate(pdf_reader.pages, start=1):

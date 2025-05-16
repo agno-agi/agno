@@ -4,12 +4,12 @@ from typing import List, Optional
 from agno.document import Document
 from agno.knowledge.wikipedia import WikipediaKnowledgeBase
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info
 
 
 class WikipediaTools(Toolkit):
-    def __init__(self, knowledge_base: Optional[WikipediaKnowledgeBase] = None):
-        super().__init__(name="wikipedia_tools")
+    def __init__(self, knowledge_base: Optional[WikipediaKnowledgeBase] = None, **kwargs):
+        super().__init__(name="wikipedia_tools", **kwargs)
         self.knowledge_base: Optional[WikipediaKnowledgeBase] = knowledge_base
 
         if self.knowledge_base is not None and isinstance(self.knowledge_base, WikipediaKnowledgeBase):
@@ -29,11 +29,11 @@ class WikipediaTools(Toolkit):
         if self.knowledge_base is None:
             return "Knowledge base not provided"
 
-        logger.debug(f"Adding to knowledge base: {topic}")
+        log_debug(f"Adding to knowledge base: {topic}")
         self.knowledge_base.topics.append(topic)
-        logger.debug("Loading knowledge base.")
+        log_debug("Loading knowledge base.")
         self.knowledge_base.load(recreate=False)
-        logger.debug(f"Searching knowledge base: {topic}")
+        log_debug(f"Searching knowledge base: {topic}")
         relevant_docs: List[Document] = self.knowledge_base.search(query=topic)
         return json.dumps([doc.to_dict() for doc in relevant_docs])
 
@@ -50,5 +50,5 @@ class WikipediaTools(Toolkit):
                 "The `wikipedia` package is not installed. Please install it via `pip install wikipedia`."
             )
 
-        logger.info(f"Searching wikipedia for: {query}")
+        log_info(f"Searching wikipedia for: {query}")
         return json.dumps(Document(name=query, content=wikipedia.summary(query)).to_dict())

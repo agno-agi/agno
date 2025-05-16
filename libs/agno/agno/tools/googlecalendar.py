@@ -56,7 +56,7 @@ def authenticated(func):
 
 
 class GoogleCalendarTools(Toolkit):
-    def __init__(self, credentials_path: Optional[str] = None, token_path: Optional[str] = None):
+    def __init__(self, credentials_path: Optional[str] = None, token_path: Optional[str] = None, **kwargs):
         """
         Google Calendar Tool.
 
@@ -64,7 +64,7 @@ class GoogleCalendarTools(Toolkit):
         :param token_path: Path of the file token.json which stores the user's access and refresh tokens, and is created automatically when the authorization flow completes for the first time.
 
         """
-        super().__init__(name="google_calendar_tools")
+        super().__init__(name="google_calendar_tools", **kwargs)
 
         if not credentials_path:
             logger.error(
@@ -137,6 +137,7 @@ class GoogleCalendarTools(Toolkit):
         location: Optional[str] = None,
         timezone: Optional[str] = None,
         attendees: List[str] = [],
+        send_updates: Optional[str] = "all",
     ) -> str:
         """
         Create a new event in the user's primary calendar.
@@ -148,6 +149,7 @@ class GoogleCalendarTools(Toolkit):
             start_datetime (Optional[str]) : start date and time of the event
             end_datetime (Optional[str]) : end date and time of the event
             attendees (Optional[List[str]]) : List of emails of the attendees
+            send_updates (Optional[str]): Whether to send updates to attendees. Options: 'all' (default), 'externalOnly', 'none'
         """
 
         attendees_list = [{"email": attendee} for attendee in attendees] if attendees else []
@@ -165,7 +167,9 @@ class GoogleCalendarTools(Toolkit):
                 "attendees": attendees_list,
             }
             if self.service:
-                event_result = self.service.events().insert(calendarId="primary", body=event).execute()
+                event_result = (
+                    self.service.events().insert(calendarId="primary", body=event, sendUpdates=send_updates).execute()
+                )
                 return json.dumps(event_result)
             else:
                 return json.dumps({"error": "authentication issue"})

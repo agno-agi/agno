@@ -3,7 +3,7 @@ from os import getenv
 from typing import Dict, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 try:
     import praw  # type: ignore
@@ -28,11 +28,12 @@ class RedditTools(Toolkit):
         create_post: bool = True,
         reply_to_post: bool = True,
         reply_to_comment: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="reddit")
+        super().__init__(name="reddit", **kwargs)
 
         if reddit_instance is not None:
-            logger.info("Using provided Reddit instance")
+            log_info("Using provided Reddit instance")
             self.reddit = reddit_instance
         else:
             # Get credentials from environment variables if not provided
@@ -47,7 +48,7 @@ class RedditTools(Toolkit):
             if all([self.client_id, self.client_secret]):
                 # Initialize with read-only access if no user credentials
                 if not all([self.username, self.password]):
-                    logger.info("Initializing Reddit client with read-only access")
+                    log_info("Initializing Reddit client with read-only access")
                     self.reddit = praw.Reddit(
                         client_id=self.client_id,
                         client_secret=self.client_secret,
@@ -55,7 +56,7 @@ class RedditTools(Toolkit):
                     )
                 # Initialize with user authentication if credentials provided
                 else:
-                    logger.info(f"Initializing Reddit client with user authentication for u/{self.username}")
+                    log_info(f"Initializing Reddit client with user authentication for u/{self.username}")
                     self.reddit = praw.Reddit(
                         client_id=self.client_id,
                         client_secret=self.client_secret,
@@ -111,7 +112,7 @@ class RedditTools(Toolkit):
             return "Please provide Reddit API credentials"
 
         try:
-            logger.info(f"Getting info for u/{username}")
+            log_info(f"Getting info for u/{username}")
 
             user = self.reddit.redditor(username)
             info: Dict[str, Union[str, int, bool, float]] = {
@@ -143,7 +144,7 @@ class RedditTools(Toolkit):
             return "Please provide Reddit API credentials"
 
         try:
-            logger.debug(f"Getting top posts from r/{subreddit}")
+            log_debug(f"Getting top posts from r/{subreddit}")
             posts = self.reddit.subreddit(subreddit).top(time_filter=time_filter, limit=limit)
             top_posts: List[Dict[str, Union[str, int, float]]] = [
                 {
@@ -176,7 +177,7 @@ class RedditTools(Toolkit):
             return "Please provide Reddit API credentials"
 
         try:
-            logger.info(f"Getting info for r/{subreddit_name}")
+            log_info(f"Getting info for r/{subreddit_name}")
 
             subreddit = self.reddit.subreddit(subreddit_name)
             flairs = [flair["text"] for flair in subreddit.flair.link_templates]
@@ -203,7 +204,7 @@ class RedditTools(Toolkit):
             return "Please provide Reddit API credentials"
 
         try:
-            logger.debug("Getting trending subreddits")
+            log_debug("Getting trending subreddits")
             popular_subreddits = self.reddit.subreddits.popular(limit=5)
             trending: List[str] = [subreddit.display_name for subreddit in popular_subreddits]
             return json.dumps({"trending_subreddits": trending})
@@ -222,7 +223,7 @@ class RedditTools(Toolkit):
             return "Please provide Reddit API credentials"
 
         try:
-            logger.debug(f"Getting stats for r/{subreddit}")
+            log_debug(f"Getting stats for r/{subreddit}")
             sub = self.reddit.subreddit(subreddit)
             stats: Dict[str, Union[str, int, bool, float]] = {
                 "display_name": sub.display_name,
@@ -264,7 +265,7 @@ class RedditTools(Toolkit):
             return "User authentication required for posting. Please provide username and password."
 
         try:
-            logger.info(f"Creating post in r/{subreddit}")
+            log_info(f"Creating post in r/{subreddit}")
 
             subreddit_obj = self.reddit.subreddit(subreddit)
 
@@ -285,7 +286,7 @@ class RedditTools(Toolkit):
                     url=content,
                     flair_id=flair,
                 )
-            logger.info(f"Post created: {submission.permalink}")
+            log_info(f"Post created: {submission.permalink}")
 
             post_info: Dict[str, Union[str, int, float]] = {
                 "id": submission.id,
@@ -325,14 +326,14 @@ class RedditTools(Toolkit):
             return "User authentication required for posting replies. Please provide username and password."
 
         try:
-            logger.debug(f"Creating reply to post {post_id}")
+            log_debug(f"Creating reply to post {post_id}")
 
             # Clean up the post_id if it's a full URL or permalink
             if "/" in post_id:
                 # Extract the actual ID from the URL/permalink
                 original_id = post_id
                 post_id = post_id.split("/")[-1]
-                logger.debug(f"Extracted post ID {post_id} from {original_id}")
+                log_debug(f"Extracted post ID {post_id} from {original_id}")
 
             # Verify post exists
             if not self._check_post_exists(post_id):
@@ -343,7 +344,7 @@ class RedditTools(Toolkit):
             # Get the submission object
             submission = self.reddit.submission(id=post_id)
 
-            logger.debug(
+            log_debug(
                 f"Post details: Title: {submission.title}, Author: {submission.author}, Subreddit: {submission.subreddit.display_name}"
             )
 
@@ -354,7 +355,7 @@ class RedditTools(Toolkit):
                 return error_msg
 
             # Create the reply
-            logger.debug(f"Attempting to post reply with content length: {len(content)}")
+            log_debug(f"Attempting to post reply with content length: {len(content)}")
             reply = submission.reply(body=content)
 
             # Prepare the response information
@@ -370,7 +371,7 @@ class RedditTools(Toolkit):
                 "subreddit": str(reply.subreddit),
             }
 
-            logger.debug(f"Reply created successfully: {reply.permalink}")
+            log_debug(f"Reply created successfully: {reply.permalink}")
             return json.dumps({"reply": reply_info})
 
         except praw.exceptions.RedditAPIException as api_error:
@@ -408,18 +409,18 @@ class RedditTools(Toolkit):
             return "User authentication required for posting replies. Please provide username and password."
 
         try:
-            logger.debug(f"Creating reply to comment {comment_id}")
+            log_debug(f"Creating reply to comment {comment_id}")
 
             # Clean up the comment_id if it's a full URL or permalink
             if "/" in comment_id:
                 original_id = comment_id
                 comment_id = comment_id.split("/")[-1]
-                logger.info(f"Extracted comment ID {comment_id} from {original_id}")
+                log_info(f"Extracted comment ID {comment_id} from {original_id}")
 
             # Get the comment object
             comment = self.reddit.comment(id=comment_id)
 
-            logger.debug(f"Comment details: Author: {comment.author}, Subreddit: {comment.subreddit.display_name}")
+            log_debug(f"Comment details: Author: {comment.author}, Subreddit: {comment.subreddit.display_name}")
 
             # If subreddit was provided, verify we're in the right place
             if subreddit and comment.subreddit.display_name.lower() != subreddit.lower():
@@ -428,7 +429,7 @@ class RedditTools(Toolkit):
                 return error_msg
 
             # Create the reply
-            logger.debug(f"Attempting to post reply with content length: {len(content)}")
+            log_debug(f"Attempting to post reply with content length: {len(content)}")
             reply = comment.reply(body=content)
 
             # Prepare the response information
@@ -444,7 +445,7 @@ class RedditTools(Toolkit):
                 "subreddit": str(reply.subreddit),
             }
 
-            logger.debug(f"Reply created successfully: {reply.permalink}")
+            log_debug(f"Reply created successfully: {reply.permalink}")
             return json.dumps({"reply": reply_info})
 
         except praw.exceptions.RedditAPIException as api_error:

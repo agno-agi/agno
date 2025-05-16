@@ -5,8 +5,9 @@ from uuid import UUID
 from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
+from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from pymongo import MongoClient
@@ -24,7 +25,7 @@ class MongoDbStorage(Storage):
         db_url: Optional[str] = None,
         db_name: str = "agno",
         client: Optional[MongoClient] = None,
-        mode: Optional[Literal["agent", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
     ):
         """
         This class provides agent storage using MongoDB.
@@ -59,6 +60,8 @@ class MongoDbStorage(Storage):
             self.collection.create_index("created_at")
             if self.mode == "agent":
                 self.collection.create_index("agent_id")
+            elif self.mode == "team":
+                self.collection.create_index("team_id")
             elif self.mode == "workflow":
                 self.collection.create_index("workflow_id")
         except PyMongoError as e:
@@ -84,6 +87,8 @@ class MongoDbStorage(Storage):
                 doc.pop("_id", None)
                 if self.mode == "agent":
                     return AgentSession.from_dict(doc)
+                elif self.mode == "team":
+                    return TeamSession.from_dict(doc)
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(doc)
             return None
@@ -106,6 +111,8 @@ class MongoDbStorage(Storage):
             if entity_id is not None:
                 if self.mode == "agent":
                     query["agent_id"] = entity_id
+                elif self.mode == "team":
+                    query["team_id"] = entity_id
                 elif self.mode == "workflow":
                     query["workflow_id"] = entity_id
 
@@ -131,6 +138,8 @@ class MongoDbStorage(Storage):
             if entity_id is not None:
                 if self.mode == "agent":
                     query["agent_id"] = entity_id
+                elif self.mode == "team":
+                    query["team_id"] = entity_id
                 elif self.mode == "workflow":
                     query["workflow_id"] = entity_id
 
@@ -143,6 +152,10 @@ class MongoDbStorage(Storage):
                     _agent_session = AgentSession.from_dict(doc)
                     if _agent_session is not None:
                         sessions.append(_agent_session)
+                elif self.mode == "team":
+                    _team_session = TeamSession.from_dict(doc)
+                    if _team_session is not None:
+                        sessions.append(_team_session)
                 elif self.mode == "workflow":
                     _workflow_session = WorkflowSession.from_dict(doc)
                     if _workflow_session is not None:
@@ -192,7 +205,7 @@ class MongoDbStorage(Storage):
             return None
 
         except PyMongoError as e:
-            logger.error(f"Error upserting session: {e}")
+            logger.warning(f"Error upserting session: {e}")
             return None
 
     def delete_session(self, session_id: Optional[str] = None) -> None:
@@ -209,9 +222,9 @@ class MongoDbStorage(Storage):
         try:
             result = self.collection.delete_one({"session_id": session_id})
             if result.deleted_count == 0:
-                logger.debug(f"No session found with session_id: {session_id}")
+                log_debug(f"No session found with session_id: {session_id}")
             else:
-                logger.debug(f"Successfully deleted session with session_id: {session_id}")
+                log_debug(f"Successfully deleted session with session_id: {session_id}")
         except PyMongoError as e:
             logger.error(f"Error deleting session: {e}")
 

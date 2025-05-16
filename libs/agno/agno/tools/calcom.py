@@ -23,6 +23,7 @@ class CalComTools(Toolkit):
         get_upcoming_bookings: bool = True,
         reschedule_booking: bool = True,
         cancel_booking: bool = True,
+        **kwargs,
     ):
         """Initialize the Cal.com toolkit.
 
@@ -31,7 +32,7 @@ class CalComTools(Toolkit):
             event_type_id: Default event type ID for bookings
             user_timezone: User's timezone in IANA format (e.g., 'Asia/Kolkata')
         """
-        super().__init__(name="calcom")
+        super().__init__(name="calcom", **kwargs)
 
         # Get credentials from environment if not provided
         self.api_key = api_key or getenv("CALCOM_API_KEY")

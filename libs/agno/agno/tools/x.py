@@ -3,7 +3,7 @@ import os
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 try:
     import tweepy
@@ -19,6 +19,7 @@ class XTools(Toolkit):
         consumer_secret: Optional[str] = None,
         access_token: Optional[str] = None,
         access_token_secret: Optional[str] = None,
+        **kwargs,
     ):
         """
         Initialize the XTools.
@@ -30,7 +31,7 @@ class XTools(Toolkit):
             access_token Optional[str]: The access token for Twitter API.
             access_token_secret Optional[str]: The access token secret for Twitter API.
         """
-        super().__init__(name="x")
+        super().__init__(name="x", **kwargs)
 
         self.bearer_token = bearer_token or os.getenv("X_BEARER_TOKEN")
         self.consumer_key = consumer_key or os.getenv("X_CONSUMER_KEY")
@@ -63,7 +64,7 @@ class XTools(Toolkit):
             A JSON-formatted string containing the response from X API (Twitter API) with the created post details,
             or an error message if the post creation fails.
         """
-        logger.debug(f"Attempting to create post with text: {text}")
+        log_debug(f"Attempting to create post with text: {text}")
         try:
             response = self.client.create_tweet(text=text)
             post_id = response.data["id"]
@@ -88,7 +89,7 @@ class XTools(Toolkit):
             A JSON-formatted string containing the response from Twitter API with the reply post details,
             or an error message if the reply fails.
         """
-        logger.debug(f"Attempting to reply to {post_id} with text {text}")
+        log_debug(f"Attempting to reply to {post_id} with text {text}")
         try:
             response = self.client.create_tweet(text=text, in_reply_to_tweet_id=post_id)
             reply_id = response.data["id"]
@@ -112,18 +113,18 @@ class XTools(Toolkit):
             A JSON-formatted string containing the response from Twitter API with the sent message details,
             or an error message if sending the DM fails.
         """
-        logger.debug(f"Attempting to send DM to user {recipient}")
+        log_debug(f"Attempting to send DM to user {recipient}")
         try:
             # Check if recipient is a user ID (numeric) or username
             if not recipient.isdigit():
                 # If it's not numeric, assume it's a username and get the user ID
                 user = self.client.get_user(username=recipient)
-                logger.debug(f"Attempting to send DM to user's id {user}")
+                log_debug(f"Attempting to send DM to user's id {user}")
                 recipient_id = user.data.id
             else:
                 recipient_id = recipient
 
-            logger.debug(f"Attempting to send DM to user's id {recipient_id}")
+            log_debug(f"Attempting to send DM to user's id {recipient_id}")
             response = self.client.create_direct_message(participant_id=recipient_id, text=text)
             result = {
                 "message": "Direct message sent successfully!",
@@ -155,7 +156,7 @@ class XTools(Toolkit):
             including id, name, username, description, and follower/following counts,
             or an error message if fetching the information fails.
         """
-        logger.debug("Fetching information about myself")
+        log_debug("Fetching information about myself")
         try:
             me = self.client.get_me(user_fields=["description", "public_metrics"])
             user_info = me.data.data
@@ -185,7 +186,7 @@ class XTools(Toolkit):
             including id, name, username, description, and follower/following counts,
             or an error message if fetching the information fails.
         """
-        logger.debug(f"Fetching information about user {username}")
+        log_debug(f"Fetching information about user {username}")
         try:
             user = self.client.get_user(username=username, user_fields=["description", "public_metrics"])
             user_info = user.data.data
@@ -215,7 +216,7 @@ class XTools(Toolkit):
             including tweet id, text, creation time, and author id,
             or an error message if fetching the timeline fails.
         """
-        logger.debug(f"Fetching home timeline, max results: {max_results}")
+        log_debug(f"Fetching home timeline, max results: {max_results}")
         try:
             tweets = self.client.get_home_timeline(
                 max_results=max_results, tweet_fields=["created_at", "public_metrics"]
@@ -230,7 +231,7 @@ class XTools(Toolkit):
                         "author_id": tweet.author_id,
                     }
                 )
-            logger.info(f"Successfully fetched {len(timeline)} tweets")
+            log_info(f"Successfully fetched {len(timeline)} tweets")
             result = {"home_timeline": timeline}
             return json.dumps(result, indent=2)
         except tweepy.TweepyException as e:

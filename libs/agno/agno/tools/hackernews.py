@@ -3,16 +3,19 @@ import json
 import httpx
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 
 class HackerNewsTools(Toolkit):
-    def __init__(
-        self,
-        get_top_stories: bool = True,
-        get_user_details: bool = True,
-    ):
-        super().__init__(name="hackers_news")
+    """
+    HackerNews is a tool for getting top stories from Hacker News.
+    Args:
+        get_top_stories (bool): Whether to get top stories from Hacker News.
+        get_user_details (bool): Whether to get user details from Hacker News.
+    """
+
+    def __init__(self, get_top_stories: bool = True, get_user_details: bool = True, **kwargs):
+        super().__init__(name="hackers_news", **kwargs)
 
         # Register functions in the toolkit
         if get_top_stories:
@@ -30,7 +33,7 @@ class HackerNewsTools(Toolkit):
             str: JSON string of top stories.
         """
 
-        logger.info(f"Getting top {num_stories} stories from Hacker News")
+        log_debug(f"Getting top {num_stories} stories from Hacker News")
         # Fetch top story IDs
         response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
         story_ids = response.json()
@@ -55,7 +58,7 @@ class HackerNewsTools(Toolkit):
         """
 
         try:
-            logger.info(f"Getting details for user: {username}")
+            log_debug(f"Getting details for user: {username}")
             user = httpx.get(f"https://hacker-news.firebaseio.com/v0/user/{username}.json").json()
             user_details = {
                 "id": user.get("user_id"),

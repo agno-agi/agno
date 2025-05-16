@@ -25,13 +25,12 @@ class MovieScript(BaseModel):
     )
 
 
-json_mode_agent = Agent(
+structured_output_agent = Agent(
     model=Cohere(id="command-a-03-2025"),
     description="You help people write movie scripts.",
     response_model=MovieScript,
-    # debug_mode=True,
 )
 
 # Get the response in a variable
-json_mode_response: RunResponse = json_mode_agent.run("New York")
-pprint(json_mode_response.content)
+response: RunResponse = structured_output_agent.run("New York")
+pprint(response.content)

@@ -273,7 +273,6 @@ class PersonalisedEmailGenerator(Workflow):
             Remember: Quality over quantity. Focus on insights that could lead to meaningful business conversations.\
         """),
         response_model=CompanyInfo,
-        structured_outputs=True,
     )
 
     email_creator: Agent = Agent(

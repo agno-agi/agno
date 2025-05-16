@@ -7,7 +7,7 @@ from typing import Optional
 import requests
 
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 
 class ZoomTools(Toolkit):
@@ -16,6 +16,7 @@ class ZoomTools(Toolkit):
         account_id: Optional[str] = None,
         client_id: Optional[str] = None,
         client_secret: Optional[str] = None,
+        **kwargs,
     ):
         """
         Initialize the ZoomTool.
@@ -26,7 +27,7 @@ class ZoomTools(Toolkit):
             client_secret (str): The client secret for authentication. If not provided, will use ZOOM_CLIENT_SECRET env var.
             name (str): The name of the tool. Defaults to "zoom_tool".
         """
-        super().__init__("zoom_tool")
+        super().__init__(name="zoom_tool", **kwargs)
 
         # Get credentials from env vars if not provided
         self.account_id = account_id or getenv("ZOOM_ACCOUNT_ID")
@@ -82,7 +83,7 @@ class ZoomTools(Toolkit):
             # Set expiry time slightly before actual expiry to ensure token validity
             self.__token_expiry = datetime.now() + timedelta(seconds=token_data["expires_in"] - 60)  # type: ignore
 
-            logger.debug("Successfully generated new Zoom access token")
+            log_debug("Successfully generated new Zoom access token")
             return self.__access_token  # type: ignore
 
         except requests.RequestException as e:
@@ -105,7 +106,7 @@ class ZoomTools(Toolkit):
             A JSON-formatted string containing the response from Zoom API with the scheduled meeting details,
             or an error message if the scheduling fails.
         """
-        logger.debug(f"Attempting to schedule meeting: {topic} in timezone: {timezone}")
+        log_debug(f"Attempting to schedule meeting: {topic} in timezone: {timezone}")
         token = self.get_access_token()
         if not token:
             logger.error("Unable to obtain access token.")
@@ -143,7 +144,7 @@ class ZoomTools(Toolkit):
                 "duration": meeting_info["duration"],
                 "join_url": meeting_info["join_url"],
             }
-            logger.info(f"Meeting scheduled successfully. ID: {meeting_info['id']}")
+            log_info(f"Meeting scheduled successfully. ID: {meeting_info['id']}")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
             logger.error(f"Error scheduling meeting: {e}")
@@ -160,7 +161,7 @@ class ZoomTools(Toolkit):
             A JSON-formatted string containing the upcoming meetings information,
             or an error message if the request fails.
         """
-        logger.debug(f"Fetching upcoming meetings for user: {user_id}")
+        log_debug(f"Fetching upcoming meetings for user: {user_id}")
         token = self.get_access_token()
         if not token:
             logger.error("Unable to obtain access token.")
@@ -176,7 +177,7 @@ class ZoomTools(Toolkit):
             meetings = response.json()
 
             result = {"message": "Upcoming meetings retrieved successfully", "meetings": meetings.get("meetings", [])}
-            logger.info(f"Retrieved {len(result['meetings'])} upcoming meetings")
+            log_info(f"Retrieved {len(result['meetings'])} upcoming meetings")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
             logger.error(f"Error fetching upcoming meetings: {e}")
@@ -199,7 +200,7 @@ class ZoomTools(Toolkit):
             A JSON-formatted string containing the meetings information,
             or an error message if the request fails.
         """
-        logger.debug(f"Fetching meetings for user: {user_id}")
+        log_debug(f"Fetching meetings for user: {user_id}")
         token = self.get_access_token()
         if not token:
             logger.error("Unable to obtain access token.")
@@ -222,7 +223,7 @@ class ZoomTools(Toolkit):
                 "total_records": meetings.get("total_records", 0),
                 "meetings": meetings.get("meetings", []),
             }
-            logger.info(f"Retrieved {len(result['meetings'])} meetings")
+            log_info(f"Retrieved {len(result['meetings'])} meetings")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
             logger.error(f"Error fetching meetings: {e}")
@@ -243,7 +244,7 @@ class ZoomTools(Toolkit):
             A JSON-formatted string containing the meeting recordings information,
             or an error message if the request fails.
         """
-        logger.debug(f"Fetching recordings for meeting: {meeting_id}")
+        log_debug(f"Fetching recordings for meeting: {meeting_id}")
         token = self.get_access_token()
         if not token:
             logger.error("Unable to obtain access token.")
@@ -280,7 +281,7 @@ class ZoomTools(Toolkit):
                 "recording_files": recordings.get("recording_files", []),
             }
 
-            logger.info(f"Retrieved {result['recording_count']} recording files")
+            log_info(f"Retrieved {result['recording_count']} recording files")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
             logger.error(f"Error fetching meeting recordings: {e}")
@@ -299,7 +300,7 @@ class ZoomTools(Toolkit):
             A JSON-formatted string containing the response status,
             or an error message if the deletion fails.
         """
-        logger.debug(f"Attempting to delete meeting: {meeting_id}")
+        log_debug(f"Attempting to delete meeting: {meeting_id}")
         token = self.get_access_token()
         if not token:
             logger.error("Unable to obtain access token.")
@@ -316,7 +317,7 @@ class ZoomTools(Toolkit):
             # Zoom returns 204 No Content for successful deletion
             if response.status_code == 204:
                 result = {"message": "Meeting deleted successfully!", "meeting_id": meeting_id}
-                logger.info(f"Meeting {meeting_id} deleted successfully")
+                log_info(f"Meeting {meeting_id} deleted successfully")
             else:
                 result = response.json()
 
@@ -336,7 +337,7 @@ class ZoomTools(Toolkit):
             A JSON-formatted string containing the meeting details,
             or an error message if the request fails.
         """
-        logger.debug(f"Fetching details for meeting: {meeting_id}")
+        log_debug(f"Fetching details for meeting: {meeting_id}")
         token = self.get_access_token()
         if not token:
             logger.error("Unable to obtain access token.")
@@ -363,7 +364,7 @@ class ZoomTools(Toolkit):
                 "settings": meeting_info.get("settings", {}),
             }
 
-            logger.info(f"Retrieved details for meeting ID: {meeting_id}")
+            log_info(f"Retrieved details for meeting ID: {meeting_id}")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
             logger.error(f"Error fetching meeting details: {e}")

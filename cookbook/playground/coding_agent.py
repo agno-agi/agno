@@ -19,7 +19,11 @@ coding_agent = Agent(
     add_history_to_messages=True,
     description="You are a coding agent",
     add_datetime_to_instructions=True,
-    storage=SqliteStorage(table_name="coding_agent", db_file=local_agent_storage_file),
+    storage=SqliteStorage(
+        table_name="coding_agent",
+        db_file=local_agent_storage_file,
+        auto_upgrade_schema=True,
+    ),
 )
 
 app = Playground(agents=[coding_agent]).get_app()

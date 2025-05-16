@@ -1,14 +1,15 @@
 import json
 import time
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.models.response import FileType
+from agno.team import Team
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 try:
     import requests
@@ -37,8 +38,9 @@ class ModelsLabTools(Toolkit):
         add_to_eta: int = 15,
         max_wait_time: int = 60,
         file_type: FileType = FileType.MP4,
+        **kwargs,
     ):
-        super().__init__(name="models_labs")
+        super().__init__(name="models_labs", **kwargs)
 
         file_type_str = file_type.value.upper()
         self.url = MODELS_LAB_URLS[file_type_str]
@@ -83,7 +85,9 @@ class ModelsLabTools(Toolkit):
 
         return base_payload
 
-    def _add_media_artifact(self, agent: Agent, media_id: str, media_url: str, eta: Optional[str] = None) -> None:
+    def _add_media_artifact(
+        self, agent: Union[Agent, Team], media_id: str, media_url: str, eta: Optional[str] = None
+    ) -> None:
         """Add appropriate media artifact based on file type."""
         if self.file_type == FileType.MP4:
             agent.add_video(VideoArtifact(id=str(media_id), url=media_url, eta=str(eta)))
@@ -95,7 +99,7 @@ class ModelsLabTools(Toolkit):
     def _wait_for_media(self, media_id: str, eta: int) -> bool:
         """Wait for media generation to complete."""
         time_to_wait = min(eta + self.add_to_eta, self.max_wait_time)
-        logger.info(f"Waiting for {time_to_wait} seconds for {self.file_type.value} to be ready")
+        log_info(f"Waiting for {time_to_wait} seconds for {self.file_type.value} to be ready")
 
         for seconds_waited in range(time_to_wait):
             try:
@@ -116,7 +120,7 @@ class ModelsLabTools(Toolkit):
 
         return False
 
-    def generate_media(self, agent: Agent, prompt: str) -> str:
+    def generate_media(self, agent: Union[Agent, Team], prompt: str) -> str:
         """Generate media (video, image, or audio) given a prompt."""
         if not self.api_key:
             return "Please set the MODELS_LAB_API_KEY"
@@ -125,7 +129,7 @@ class ModelsLabTools(Toolkit):
             payload = json.dumps(self._create_payload(prompt))
             headers = {"Content-Type": "application/json"}
 
-            logger.debug(f"Generating {self.file_type.value} for prompt: {prompt}")
+            log_debug(f"Generating {self.file_type.value} for prompt: {prompt}")
             response = requests.post(self.url, data=payload, headers=headers)
             response.raise_for_status()
 
@@ -150,7 +154,7 @@ class ModelsLabTools(Toolkit):
 
             if self.wait_for_completion and isinstance(eta, int):
                 if self._wait_for_media(media_id, eta):
-                    logger.info("Media generation completed successfully")
+                    log_info("Media generation completed successfully")
                 else:
                     logger.warning("Media generation timed out")
 

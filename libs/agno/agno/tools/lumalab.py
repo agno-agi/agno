@@ -6,7 +6,7 @@ from typing import Any, Dict, Literal, Optional, TypedDict
 from agno.agent import Agent
 from agno.media import VideoArtifact
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 try:
     from lumaai import LumaAI  # type: ignore
@@ -30,8 +30,9 @@ class LumaLabTools(Toolkit):
         wait_for_completion: bool = True,
         poll_interval: int = 3,
         max_wait_time: int = 300,  # 5 minutes
+        **kwargs,
     ):
-        super().__init__(name="luma_lab")
+        super().__init__(name="luma_lab", **kwargs)
 
         self.wait_for_completion = wait_for_completion
         self.poll_interval = poll_interval
@@ -105,7 +106,7 @@ class LumaLabTools(Toolkit):
                 elif generation.state == "failed":
                     return f"Generation failed: {generation.failure_reason}"
 
-                logger.info(f"Generation in progress... State: {generation.state}")
+                log_info(f"Generation in progress... State: {generation.state}")
                 time.sleep(self.poll_interval)
                 seconds_waited += self.poll_interval
 
@@ -157,7 +158,7 @@ class LumaLabTools(Toolkit):
                 elif generation.state == "failed":
                     return f"Generation failed: {generation.failure_reason}"
 
-                logger.info(f"Generation in progress... State: {generation.state}")
+                log_info(f"Generation in progress... State: {generation.state}")
                 time.sleep(self.poll_interval)
                 seconds_waited += self.poll_interval
 

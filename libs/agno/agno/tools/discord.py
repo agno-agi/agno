@@ -18,9 +18,10 @@ class DiscordTools(Toolkit):
         enable_history: bool = True,
         enable_channel_management: bool = True,
         enable_message_management: bool = True,
+        **kwargs,
     ):
         """Initialize Discord tools."""
-        super().__init__(name="discord")
+        super().__init__(name="discord", **kwargs)
 
         self.bot_token = bot_token or getenv("DISCORD_BOT_TOKEN")
         if not self.bot_token:

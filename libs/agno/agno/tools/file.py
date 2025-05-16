@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 
 class FileTools(Toolkit):
@@ -13,8 +13,9 @@ class FileTools(Toolkit):
         save_files: bool = True,
         read_files: bool = True,
         list_files: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="file_tools")
+        super().__init__(name="file_tools", **kwargs)
 
         self.base_dir: Path = base_dir or Path.cwd()
         if save_files:
@@ -34,13 +35,13 @@ class FileTools(Toolkit):
         """
         try:
             file_path = self.base_dir.joinpath(file_name)
-            logger.debug(f"Saving contents to {file_path}")
+            log_debug(f"Saving contents to {file_path}")
             if not file_path.parent.exists():
                 file_path.parent.mkdir(parents=True, exist_ok=True)
             if file_path.exists() and not overwrite:
                 return f"File {file_name} already exists"
             file_path.write_text(contents)
-            logger.info(f"Saved: {file_path}")
+            log_info(f"Saved: {file_path}")
             return str(file_name)
         except Exception as e:
             logger.error(f"Error saving to file: {e}")
@@ -53,7 +54,7 @@ class FileTools(Toolkit):
         :return: The contents of the file if successful, otherwise returns an error message.
         """
         try:
-            logger.info(f"Reading file: {file_name}")
+            log_info(f"Reading file: {file_name}")
             file_path = self.base_dir.joinpath(file_name)
             contents = file_path.read_text()
             return str(contents)
@@ -67,7 +68,7 @@ class FileTools(Toolkit):
         :return: The contents of the file if successful, otherwise returns an error message.
         """
         try:
-            logger.info(f"Reading files in : {self.base_dir}")
+            log_info(f"Reading files in : {self.base_dir}")
             return json.dumps([str(file_path) for file_path in self.base_dir.iterdir()], indent=4)
         except Exception as e:
             logger.error(f"Error reading files: {e}")
