@@ -4,19 +4,17 @@ from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.vectordb.lancedb import LanceDb
+from agno.vectordb.pgvector import PgVector
 
 # Download all sample CVs and get their paths
 downloaded_cv_paths = download_knowledge_filters_sample_data(
     num_files=5, file_extension=SampleDataFileExtension.PDF
 )
 
-# Initialize LanceDB
-# By default, it stores data in /tmp/lancedb
-vector_db = LanceDb(
-    table_name="recipes",
-    uri="tmp/lancedb",  # You can change this path to store data elsewhere
-)
+# Initialize PgVector
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
+vector_db = PgVector(table_name="recipes", db_url=db_url)
 
 # Step 1: Initialize knowledge base with documents and metadata
 # ------------------------------------------------------------------------------
