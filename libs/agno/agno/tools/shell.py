@@ -21,6 +21,7 @@ class ShellTools(Toolkit):
         Args:
             args (List[str]): The command to run as a list of strings.
             tail (int): The number of lines to return from the output.
+
         Returns:
             str: The output of the command.
         """
@@ -28,14 +29,16 @@ class ShellTools(Toolkit):
 
         try:
             log_info(f"Running shell command: {args}")
-            if self.base_dir:
-                args = ["cd", str(self.base_dir), ";"] + args
-            result = subprocess.run(args, capture_output=True, text=True)
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                cwd=str(self.base_dir) if self.base_dir else None,
+            )
             log_debug(f"Result: {result}")
             log_debug(f"Return code: {result.returncode}")
             if result.returncode != 0:
                 return f"Error: {result.stderr}"
-            # return only the last n lines of the output
             return "\n".join(result.stdout.split("\n")[-tail:])
         except Exception as e:
             logger.warning(f"Failed to run shell command: {e}")
