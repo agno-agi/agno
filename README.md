@@ -13,6 +13,11 @@
   <a href="https://github.com/agno-agi/agno/stargazers">🌟 Star Us</a>
 </div>
 
+<div align="center">
+  <img src="https://img.shields.io/pypi/v/agno" alt="PyPI - Version">
+  <img src="https://img.shields.io/pypi/l/agno" alt="PyPI - License">
+</div>
+
 ## Introduction
 
 [Agno](https://docs.agno.com) is a lightweight library for building Agents with memory, knowledge, tools and reasoning.
