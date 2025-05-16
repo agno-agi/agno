@@ -10,7 +10,7 @@ from agno.team.team import Team
 from agno.tools.whatsapp import WhatsAppTools
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.whatsapp import get_media, send_image_message, upload_media
-
+import base64
 from .security import validate_webhook_signature
 
 
@@ -137,7 +137,8 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                 _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
 
             if response.images:
-                media_id = upload_media(media_data=response.images[0].content, mime_type="image/png", filename="image.png")
+                image_bytes = base64.b64decode(response.images[0].content)
+                media_id = upload_media(media_data=image_bytes, mime_type="image/png", filename="image.png")
                 send_image_message(media_id=media_id, recipient=phone_number, text=response.content)
             else:
                 _send_whatsapp_message(phone_number, response.content)
