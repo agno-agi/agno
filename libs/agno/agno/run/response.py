@@ -157,7 +157,7 @@ class RunResponse:
 
         return _dict
 
-    def to_json(self) -> str:
+    def to_json(self, indent: int = 2, **kwargs) -> str:
         import json
 
         try:
@@ -166,7 +166,7 @@ class RunResponse:
             logger.error("Failed to convert response to json", exc_info=True)
             raise
 
-        return json.dumps(_dict, indent=2)
+        return json.dumps(_dict, indent=indent, **kwargs)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
