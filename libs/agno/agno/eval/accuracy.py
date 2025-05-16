@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from os import getenv
 from typing import TYPE_CHECKING, Callable, List, Optional, Union
 from uuid import uuid4
@@ -6,7 +6,8 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent
-from agno.eval.utils import store_result_in_file
+from agno.api.schemas.evals import EvalType
+from agno.eval.utils import log_eval_run, store_result_in_file
 from agno.exceptions import EvalError
 from agno.models.base import Model
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
@@ -162,6 +163,8 @@ class AccuracyEval:
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
+    # Log the results to the Agno platform
+    monitoring: bool = getenv("AGNO_MONITOR", "").lower() == "true"
 
     def get_evaluator_agent(self) -> Agent:
         """Return the evaluator agent. If not provided, build it based on the evaluator fields and default instructions."""
@@ -333,6 +336,17 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
         if self.print_summary or print_summary:
             self.result.print_summary(console)
 
+        # Log results to the Agno platform if requested
+        if self.monitoring:
+            log_eval_run(
+                run_id=self.eval_id,  # type: ignore
+                run_data=asdict(self.result),
+                eval_type=EvalType.ACCURACY,
+                agent_id=self.agent.agent_id if self.agent is not None else None,
+                name=self.name if self.name is not None else None,
+                evaluated_entity_name=self.agent.name if self.agent is not None else None,
+            )
+
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
         return self.result
 
@@ -379,6 +393,16 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
                     eval_id=self.eval_id,
                     result=self.result,
                 )
+        # Log results to the Agno platform if requested
+        if self.monitoring:
+            log_eval_run(
+                run_id=self.eval_id,  # type: ignore
+                run_data=asdict(self.result),
+                eval_type=EvalType.ACCURACY,
+                agent_id=self.agent.agent_id if self.agent is not None else None,
+                name=self.name if self.name is not None else None,
+                evaluated_entity_name=self.agent.name if self.agent is not None else None,
+            )
 
-        logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
+        logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result
