@@ -62,7 +62,6 @@ class WhatsAppTools(Toolkit):
             self.register(self.send_text_message_sync)
             self.register(self.send_template_message_sync)
 
-
     def _get_headers(self) -> Dict[str, str]:
         """Get headers for API requests."""
         return {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}

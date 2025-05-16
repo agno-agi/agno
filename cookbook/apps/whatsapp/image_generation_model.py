@@ -8,7 +8,7 @@ image_agentg = Agent(
         id="gemini-2.0-flash-exp-image-generation",
         response_modalities=["Text", "Image"],
     ),
-    debug_mode=True
+    debug_mode=True,
 )
 
 app = WhatsappAPI(

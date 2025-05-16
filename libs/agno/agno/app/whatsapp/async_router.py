@@ -1,3 +1,4 @@
+import base64
 from os import getenv
 from typing import Optional
 
@@ -12,7 +13,7 @@ from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.whatsapp import get_media_async, send_image_message_async, upload_media_async
 
 from .security import validate_webhook_signature
-import base64
+
 
 def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
     router = APIRouter()
@@ -137,8 +138,8 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
                 await _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
 
             if response.images:
-                if isinstance(response.images[0].content,bytes):
-                    image_bytes=response.images[0].content
+                if isinstance(response.images[0].content, bytes):
+                    image_bytes = response.images[0].content
                 else:
                     image_bytes = base64.b64decode(response.images[0].content)
                 media_id = await upload_media_async(media_data=image_bytes, mime_type="image/png", filename="image.png")
