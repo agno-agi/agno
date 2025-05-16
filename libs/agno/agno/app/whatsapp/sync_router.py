@@ -1,7 +1,6 @@
 from os import getenv
 from typing import Optional
 
-from agno.utils.whatsapp import get_media, send_image_message, upload_media
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
@@ -10,7 +9,7 @@ from agno.media import Audio, File, Image, Video
 from agno.team.team import Team
 from agno.tools.whatsapp import WhatsAppTools
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.media import save_base64_data
+from agno.utils.whatsapp import get_media, send_image_message, upload_media
 
 from .security import validate_webhook_signature
 
@@ -31,7 +30,7 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
         mode = request.query_params.get("hub.mode")
         token = request.query_params.get("hub.verify_token")
         challenge = request.query_params.get("hub.challenge")
-        
+
         verify_token = getenv("WHATSAPP_VERIFY_TOKEN")
         if not verify_token:
             raise HTTPException(status_code=500, detail="WHATSAPP_VERIFY_TOKEN is not set")
@@ -125,7 +124,7 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                     audio=[Audio(content=get_media(message_audio))] if message_audio else None,
                 )
             elif team:
-                response = team.run(
+                response = team.run(  # type: ignore
                     message_text,
                     user_id=phone_number,
                     files=[File(content=get_media(message_doc))] if message_doc else None,
@@ -136,11 +135,9 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
 
             if response.reasoning_content:
                 _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
-                
+
             if response.images:
-                from io import BytesIO
-                image_buffer = BytesIO(response.images[0].content)
-                media_id = upload_media(file_data=image_buffer, mime_type="image/png", filename="image.png")
+                media_id = upload_media(media_data=response.images[0].content, mime_type="image/png", filename="image.png")
                 send_image_message(media_id=media_id, recipient=phone_number, text=response.content)
 
             _send_whatsapp_message(phone_number, response.content)

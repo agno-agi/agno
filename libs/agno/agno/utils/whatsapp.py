@@ -1,12 +1,10 @@
-import json
+import os
 from typing import Optional
+
 import httpx
+import requests
 
 from agno.utils.log import log_debug, log_error
-
-import os
-
-import requests
 
 
 def get_access_token() -> str:
@@ -14,6 +12,7 @@ def get_access_token() -> str:
     if not access_token:
         raise ValueError("WHATSAPP_ACCESS_TOKEN is not set")
     return access_token
+
 
 def get_phone_number_id() -> str:
     phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
@@ -30,7 +29,7 @@ def get_media(media_id: str) -> dict:
         media_id (str): The ID of the media to retrieve.
     """
     url = f"https://graph.facebook.com/v22.0/{media_id}"
-    
+
     access_token = get_access_token()
 
     headers = {"Authorization": f"Bearer {access_token}"}
@@ -42,7 +41,7 @@ def get_media(media_id: str) -> dict:
         media_url = data.get("url")
     except requests.exceptions.RequestException as e:
         return {"error": str(e)}
-    
+
     try:
         response = requests.get(media_url, headers=headers)
         response.raise_for_status()  # Raise an HTTPError for bad responses (4xx and 5xx)
@@ -50,7 +49,7 @@ def get_media(media_id: str) -> dict:
         return data
     except requests.exceptions.RequestException as e:
         return {"error": str(e)}
-    
+
 
 async def get_media_async(media_id: str) -> dict:
     """
@@ -60,7 +59,7 @@ async def get_media_async(media_id: str) -> dict:
         media_id (str): The ID of the media to retrieve.
     """
     url = f"https://graph.facebook.com/v22.0/{media_id}"
-    
+
     access_token = get_access_token()
 
     headers = {"Authorization": f"Bearer {access_token}"}
@@ -73,7 +72,7 @@ async def get_media_async(media_id: str) -> dict:
         media_url = data.get("url")
     except httpx.HTTPStatusError as e:
         return {"error": str(e)}
-    
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(media_url, headers=headers)
@@ -82,32 +81,31 @@ async def get_media_async(media_id: str) -> dict:
         return data
     except httpx.HTTPStatusError as e:
         return {"error": str(e)}
-    
-def upload_media(file_data, mime_type, filename: str = "file"):
+
+
+def upload_media(media_data: bytes, mime_type: str, filename: str = "file"):
     """
     Sends a POST request to the Facebook Graph API to upload media for WhatsApp.
 
     Args:
-        file_data: Either a file-like object or bytes buffer containing the file data
+        media_data: Bytes buffer containing the file data
         mime_type (str): The MIME type of the file
         filename (str): The name to use for the file in the upload. Defaults to "file"
     """
     phone_number_id = get_phone_number_id()
-    
+
     url = f"https://graph.facebook.com/v22.0/{phone_number_id}/media"
-    
+
     access_token = get_access_token()
 
     headers = {"Authorization": f"Bearer {access_token}"}
-    
-    data = {
-        "messaging_product": "whatsapp"
-    }
+
+    data = {"messaging_product": "whatsapp"}
     try:
-        files = {
-            "file": (filename, file_data, mime_type)
-        }
-            
+        from io import BytesIO
+        file_data = BytesIO(media_data)
+        files = {"file": (filename, file_data, mime_type)}
+
         response = requests.post(url, headers=headers, data=data, files=files)
         response.raise_for_status()  # Raise an error for bad responses
         json_resp = response.json()
@@ -119,32 +117,31 @@ def upload_media(file_data, mime_type, filename: str = "file"):
         return {"error": str(e)}
     except Exception as e:
         return {"error": str(e)}
-    
-async def upload_media_async(file_data, mime_type, filename: str = "file"):
+
+
+async def upload_media_async(media_data: bytes, mime_type: str, filename: str = "file"):
     """
     Sends a POST request to the Facebook Graph API to upload media for WhatsApp.
 
     Args:
-        file_data: Either a file-like object or bytes buffer containing the file data
+        media_data: Bytes buffer containing the file data
         mime_type (str): The MIME type of the file
         filename (str): The name to use for the file in the upload. Defaults to "file"
     """
     phone_number_id = get_phone_number_id()
-    
+
     url = f"https://graph.facebook.com/v22.0/{phone_number_id}/media"
-    
+
     access_token = get_access_token()
 
     headers = {"Authorization": f"Bearer {access_token}"}
-    
-    data = {
-        "messaging_product": "whatsapp"
-    }
+
+    data = {"messaging_product": "whatsapp"}
     try:
-        files = {
-            "file": (filename, file_data, mime_type)
-        }
-            
+        from io import BytesIO
+        file_data = BytesIO(media_data)
+        files = {"file": (filename, file_data, mime_type)}
+
         async with httpx.AsyncClient() as client:
             response = await client.post(url, headers=headers, data=data, files=files)
             response.raise_for_status()  # Raise an error for bad responses
@@ -158,7 +155,12 @@ async def upload_media_async(file_data, mime_type, filename: str = "file"):
     except Exception as e:
         return {"error": str(e)}
 
-async def send_image_message_async(media_id: str, recipient: str, text: Optional[str] = None, ) -> str:
+
+async def send_image_message_async(
+    media_id: str,
+    recipient: str,
+    text: Optional[str] = None,
+) -> str:
     """Send an image message to a WhatsApp user (asynchronous version).
 
     Args:
@@ -171,9 +173,9 @@ async def send_image_message_async(media_id: str, recipient: str, text: Optional
     """
     log_debug(f"Sending WhatsApp image to {recipient}: {text}")
     phone_number_id = get_phone_number_id()
-    
+
     url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
-    
+
     access_token = get_access_token()
 
     headers = {"Authorization": f"Bearer {access_token}"}
@@ -187,11 +189,10 @@ async def send_image_message_async(media_id: str, recipient: str, text: Optional
     }
 
     try:
-        
         async with httpx.AsyncClient() as client:
             response = await client.post(url, headers=headers, json=data)
             response.raise_for_status()
-            
+
         message_id = response.json().get("messages", [{}])[0].get("id", "unknown")
         return f"Message sent successfully! Message ID: {message_id}"
     except httpx.HTTPStatusError as e:
@@ -201,10 +202,13 @@ async def send_image_message_async(media_id: str, recipient: str, text: Optional
     except Exception as e:
         log_error(f"Unexpected error sending WhatsApp image message: {str(e)}")
         raise
-    
-    
 
-def send_image_message(media_id: str, recipient: str, text: Optional[str] = None, ) -> str:
+
+def send_image_message(
+    media_id: str,
+    recipient: str,
+    text: Optional[str] = None,
+) -> str:
     """Send an image message to a WhatsApp user (synchronous version).
 
     Args:
@@ -217,9 +221,9 @@ def send_image_message(media_id: str, recipient: str, text: Optional[str] = None
     """
     log_debug(f"Sending WhatsApp image to {recipient}: {text}")
     phone_number_id = get_phone_number_id()
-    
+
     url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
-    
+
     access_token = get_access_token()
 
     headers = {"Authorization": f"Bearer {access_token}"}

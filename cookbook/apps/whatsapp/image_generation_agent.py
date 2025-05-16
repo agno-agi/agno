@@ -1,10 +1,8 @@
-
+from agno.agent import Agent
 from agno.app.whatsapp.app import WhatsappAPI
 from agno.app.whatsapp.serve import serve_whatsapp_app
-from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.openai import OpenAITools
-
 
 image_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),

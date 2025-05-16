@@ -1,7 +1,6 @@
+from os import getenv
 from typing import Optional
 
-from os import getenv
-from agno.utils.whatsapp import get_media_async, send_image_message_async, upload_media_async
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
@@ -10,6 +9,7 @@ from agno.media import Audio, File, Image, Video
 from agno.team.team import Team
 from agno.tools.whatsapp import WhatsAppTools
 from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.whatsapp import get_media_async, send_image_message_async, upload_media_async
 
 from .security import validate_webhook_signature
 
@@ -30,7 +30,7 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
         mode = request.query_params.get("hub.mode")
         token = request.query_params.get("hub.verify_token")
         challenge = request.query_params.get("hub.challenge")
-        
+
         verify_token = getenv("WHATSAPP_VERIFY_TOKEN")
         if not verify_token:
             raise HTTPException(status_code=500, detail="WHATSAPP_VERIFY_TOKEN is not set")
@@ -135,14 +135,11 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
 
             if response.reasoning_content:
                 await _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
-                
+
             if response.images:
-                from io import BytesIO
-                # Convert content to buffer
-                image_buffer = BytesIO(response.images[0].content)
-                media_id = await upload_media_async(file_data=image_buffer, mime_type="image/png", filename="image.png")
+                media_id = await upload_media_async(media_data=response.images[0].content, mime_type="image/png", filename="image.png")
                 await send_image_message_async(media_id=media_id, recipient=phone_number, text=response.content)
-                
+
             await _send_whatsapp_message(phone_number, response.content)
 
         except Exception as e:
