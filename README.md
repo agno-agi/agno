@@ -15,7 +15,6 @@
 
 <div align="center">
   <img src="https://img.shields.io/pypi/v/agno" alt="PyPI - Version">
-  <img src="https://img.shields.io/pypi/l/agno" alt="PyPI - License">
 </div>
 
 ## Introduction
