@@ -35,12 +35,13 @@ class MongoDb(VectorDb):
         embedder: Optional[Embedder] = None,
         distance_metric: str = Distance.cosine,
         overwrite: bool = False,
-        wait_until_index_ready: Optional[float] = None,
-        wait_after_insert: Optional[float] = None,
+        wait_until_index_ready: Optional[float] = 3,
+        wait_after_insert: Optional[float] = 3,
         max_pool_size: int = 100,
         retry_writes: bool = True,
         client: Optional[MongoClient] = None,
         search_index_name: Optional[str] = "vector_index_1",
+        cosmos_compatibility: Optional[bool] = False,
         **kwargs,
     ):
         """
@@ -59,6 +60,7 @@ class MongoDb(VectorDb):
             retry_writes (bool): Whether to retry write operations
             client (Optional[MongoClient]): An existing MongoClient instance.
             search_index_name (str): Name of the search index (default: "vector_index_1")
+            cosmos_compatibility (bool): Whether to use Azure Cosmos DB Mongovcore compatibility mode.
             **kwargs: Additional arguments for MongoClient.
         """
         if not collection_name:
@@ -68,6 +70,7 @@ class MongoDb(VectorDb):
         self.collection_name = collection_name
         self.database = database
         self.search_index_name = search_index_name
+        self.cosmos_compatibility = cosmos_compatibility
 
         if embedder is None:
             from agno.embedder.openai import OpenAIEmbedder
@@ -101,19 +104,53 @@ class MongoDb(VectorDb):
     def _get_client(self) -> MongoClient:
         """Create or retrieve the MongoDB client."""
         if self._client is None:
-            try:
-                log_debug("Creating MongoDB Client")
-                self._client = MongoClient(self.connection_string, **self.kwargs)
-                # Trigger a connection to verify the client
-                self._client.admin.command("ping")
-                log_info("Connected to MongoDB successfully.")
-                self._db = self._client[self.database]  # type: ignore
-            except errors.ConnectionFailure as e:
-                logger.error(f"Failed to connect to MongoDB: {e}")
-                raise ConnectionError(f"Failed to connect to MongoDB: {e}")
-            except Exception as e:
-                logger.error(f"An error occurred while connecting to MongoDB: {e}")
-                raise
+            if self.cosmos_compatibility:
+                try:
+                    log_debug("Creating MongoDB Client for Azure Cosmos DB")
+                    # Cosmos DB specific settings
+                    cosmos_kwargs = {
+                        "retryWrites": False,
+                        "ssl": True,
+                        "tlsAllowInvalidCertificates": True,
+                        "maxPoolSize": 100,
+                        "maxIdleTimeMS": 30000,
+                    }
+
+                    # Suppress UserWarning about CosmosDB
+                    import warnings
+
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings(
+                            "ignore", category=UserWarning, message=".*connected to a CosmosDB cluster.*"
+                        )
+                        self._client = MongoClient(self.connection_string, **cosmos_kwargs)  # type: ignore
+
+                        self._client.admin.command("ping")
+
+                    log_info("Connected to Azure Cosmos DB successfully.")
+                    self._db = self._client.get_database(self.database)  # type: ignore
+                    log_info(f"Using database: {self.database}")
+
+                except errors.ConnectionFailure as e:
+                    logger.error(f"Failed to connect to Azure Cosmos DB: {e}")
+                    raise ConnectionError(f"Failed to connect to Azure Cosmos DB: {e}")
+                except Exception as e:
+                    logger.error(f"An error occurred while connecting to Azure Cosmos DB: {e}")
+                    raise
+            else:
+                try:
+                    log_debug("Creating MongoDB Client")
+                    self._client = MongoClient(self.connection_string, **self.kwargs)
+                    # Trigger a connection to verify the client
+                    self._client.admin.command("ping")
+                    log_info("Connected to MongoDB successfully.")
+                    self._db = self._client[self.database]  # type: ignore
+                except errors.ConnectionFailure as e:
+                    logger.error(f"Failed to connect to MongoDB: {e}")
+                    raise ConnectionError(f"Failed to connect to MongoDB: {e}")
+                except Exception as e:
+                    logger.error(f"An error occurred while connecting to MongoDB: {e}")
+                    raise
         return self._client
 
     async def _get_async_client(self) -> AsyncMongoClient:
@@ -137,7 +174,6 @@ class MongoDb(VectorDb):
 
     def _get_or_create_collection(self) -> Collection:
         """Get or create the MongoDB collection, handling Atlas Search index creation."""
-
         self._collection = self._db[self.collection_name]  # type: ignore
 
         if not self.collection_exists():
@@ -151,8 +187,10 @@ class MongoDb(VectorDb):
             if not self._search_index_exists():
                 log_info(f"Search index '{self.collection_name}' does not exist. Creating it.")
                 self._create_search_index()
-                if self.wait_until_index_ready:
+                if self.wait_until_index_ready and not self.cosmos_compatibility:
                     self._wait_for_index_ready()
+            else:
+                log_info("Using existing vector search index.")
         return self._collection  # type: ignore
 
     def _get_collection(self) -> Collection:
@@ -161,6 +199,7 @@ class MongoDb(VectorDb):
             if self._client is None:
                 self._get_client()
             self._collection = self._db[self.collection_name]  # type: ignore
+            log_info(f"Using collection: {self.collection_name}")
         return self._collection
 
     async def _get_async_collection(self):
@@ -177,68 +216,98 @@ class MongoDb(VectorDb):
         max_retries = 3
         retry_delay = 5
 
-        for attempt in range(max_retries):
+        if self.cosmos_compatibility:
             try:
-                if overwrite and self._search_index_exists():
-                    log_info(f"Dropping existing search index '{index_name}'.")
-                    try:
-                        collection = self._get_collection()
-                        collection.drop_search_index(index_name)
-                        # Wait longer after index deletion
-                        time.sleep(retry_delay * 2)
-                    except errors.OperationFailure as e:
-                        if "Index already requested to be deleted" in str(e):
-                            log_info("Index is already being deleted, waiting...")
-                            time.sleep(retry_delay * 2)  # Wait longer for deletion to complete
-                        else:
-                            raise
+                collection = self._get_collection()
 
-                # Verify index is gone before creating new one
-                retries = 3
-                while retries > 0 and self._search_index_exists():
-                    log_info("Waiting for index deletion to complete...")
-                    time.sleep(retry_delay)
-                    retries -= 1
+                # Handle overwrite if requested
+                if overwrite and index_name in collection.index_information():
+                    log_info(f"Dropping existing index '{index_name}'")
+                    collection.drop_index(index_name)
 
-                log_info(f"Creating search index '{index_name}'.")
-
-                # Get embedding dimension from embedder
                 embedding_dim = getattr(self.embedder, "embedding_dim", 1536)
+                log_info(f"Creating vector search index '{index_name}'")
 
-                search_index_model = SearchIndexModel(
-                    definition={
-                        "fields": [
-                            {
-                                "type": "vector",
-                                "numDimensions": embedding_dim,
-                                "path": "embedding",
-                                "similarity": self.distance_metric,
-                            },
-                        ]
-                    },
+                # Create vector search index using Cosmos DB IVF format
+                collection.create_index(
+                    [("embedding", "cosmosSearch")],
                     name=index_name,
-                    type="vectorSearch",
+                    cosmosSearchOptions={
+                        "kind": "vector-ivf",
+                        "numLists": 1,
+                        "dimensions": embedding_dim,
+                        "similarity": self._get_cosmos_similarity_metric(),
+                    },
                 )
 
-                collection = self._get_collection()
-                collection.create_search_index(model=search_index_model)
+                log_info(f"Created vector search index '{index_name}' successfully")
 
-                if self.wait_until_index_ready:
-                    self._wait_for_index_ready()
-
-                log_info(f"Search index '{index_name}' created successfully.")
-                return
-
-            except errors.OperationFailure as e:
-                if "Duplicate Index" in str(e) and attempt < max_retries - 1:
-                    logger.warning(f"Index already exists, retrying... (attempt {attempt + 1})")
-                    time.sleep(retry_delay * (attempt + 1))
-                    continue
-                logger.error(f"Failed to create search index: {e}")
-                raise
             except Exception as e:
-                logger.error(f"Unexpected error creating search index: {e}")
+                logger.error(f"Error creating vector search index: {e}")
                 raise
+        else:
+            for attempt in range(max_retries):
+                try:
+                    if overwrite and self._search_index_exists():
+                        log_info(f"Dropping existing search index '{index_name}'.")
+                        try:
+                            collection = self._get_collection()
+                            collection.drop_search_index(index_name)
+                            # Wait longer after index deletion
+                            time.sleep(retry_delay * 2)
+                        except errors.OperationFailure as e:
+                            if "Index already requested to be deleted" in str(e):
+                                log_info("Index is already being deleted, waiting...")
+                                time.sleep(retry_delay * 2)  # Wait longer for deletion to complete
+                            else:
+                                raise
+
+                    # Verify index is gone before creating new one
+                    retries = 3
+                    while retries > 0 and self._search_index_exists():
+                        log_info("Waiting for index deletion to complete...")
+                        time.sleep(retry_delay)
+                        retries -= 1
+
+                    log_info(f"Creating search index '{index_name}'.")
+
+                    # Get embedding dimension from embedder
+                    embedding_dim = getattr(self.embedder, "embedding_dim", 1536)
+
+                    search_index_model = SearchIndexModel(
+                        definition={
+                            "fields": [
+                                {
+                                    "type": "vector",
+                                    "numDimensions": embedding_dim,
+                                    "path": "embedding",
+                                    "similarity": self.distance_metric,
+                                },
+                            ]
+                        },
+                        name=index_name,
+                        type="vectorSearch",
+                    )
+
+                    collection = self._get_collection()
+                    collection.create_search_index(model=search_index_model)
+
+                    if self.wait_until_index_ready:
+                        self._wait_for_index_ready()
+
+                    log_info(f"Search index '{index_name}' created successfully.")
+                    return
+
+                except errors.OperationFailure as e:
+                    if "Duplicate Index" in str(e) and attempt < max_retries - 1:
+                        logger.warning(f"Index already exists, retrying... (attempt {attempt + 1})")
+                        time.sleep(retry_delay * (attempt + 1))
+                        continue
+                    logger.error(f"Failed to create search index: {e}")
+                    raise
+                except Exception as e:
+                    logger.error(f"Unexpected error creating search index: {e}")
+                    raise
 
     async def _create_search_index_async(self) -> None:
         """Create the Atlas Search index asynchronously."""
@@ -282,14 +351,34 @@ class MongoDb(VectorDb):
     def _search_index_exists(self) -> bool:
         """Check if the search index exists."""
         index_name = self.search_index_name
-        try:
-            collection = self._get_collection()
-            indexes = list(collection.list_search_indexes())
-            exists = any(index["name"] == index_name for index in indexes)
-            return exists
-        except Exception as e:
-            logger.error(f"Error checking search index existence: {e}")
-            return False
+        if self.cosmos_compatibility:
+            index_name = self.search_index_name or "vector_index_1"
+            try:
+                collection = self._get_collection()
+                indexes = collection.index_information()
+
+                for idx_name, idx_info in indexes.items():
+                    if idx_name == index_name:
+                        key_info = idx_info.get("key", [])
+                        for key, value in key_info:
+                            if key == "embedding" and value == "cosmosSearch":
+                                log_debug(f"Found existing vector search index: {index_name}")
+                                return True
+
+                log_debug(f"Vector search index '{index_name}' not found")
+                return False
+            except Exception as e:
+                logger.error(f"Error checking search index existence: {e}")
+                return False
+        else:
+            try:
+                collection = self._get_collection()
+                indexes = list(collection.list_search_indexes())
+                exists = any(index["name"] == index_name for index in indexes)
+                return exists
+            except Exception as e:
+                logger.error(f"Error checking search index existence: {e}")
+                return False
 
     def _wait_for_index_ready(self) -> None:
         """Wait until the Atlas Search index is ready."""
@@ -436,61 +525,106 @@ class MongoDb(VectorDb):
             logger.error(f"Failed to generate embedding for query: {query}")
             return []
 
-        try:
-            collection = self._get_collection()
-            pipeline = [
-                {
-                    "$vectorSearch": {
-                        "index": self.search_index_name,
-                        "limit": limit,
-                        "numCandidates": min(limit * 4, 100),
-                        "queryVector": query_embedding,
-                        "path": "embedding",
+        if self.cosmos_compatibility:
+            # Azure Cosmos DB Mongo Vcore compatibility mode
+            try:
+                collection = self._get_collection()
+
+                # Construct the search pipeline
+                search_stage = {
+                    "$search": {
+                        "cosmosSearch": {"vector": query_embedding, "path": "embedding", "k": limit, "nProbes": 2},
+                        "returnStoredSource": True,
                     }
-                },
-                {"$set": {"score": {"$meta": "vectorSearchScore"}}},
-            ]
+                }
 
-            match_filters = {}
-            if min_score > 0:
-                match_filters["score"] = {"$gte": min_score}
+                pipeline = [
+                    search_stage,
+                    {
+                        "$project": {
+                            "similarityScore": {"$meta": "searchScore"},
+                            "_id": 1,
+                            "name": 1,
+                            "content": 1,
+                            "meta_data": 1,
+                        }
+                    },
+                ]
 
-            # Handle filters if provided
-            if filters:
-                # MongoDB uses dot notation for nested fields, so we need to prepend meta_data. if needed
-                mongo_filters = {}
-                for key, value in filters.items():
-                    # If the key doesn't already include a dot notation for meta_data
-                    if not key.startswith("meta_data.") and "." not in key:
-                        mongo_filters[f"meta_data.{key}"] = value
-                    else:
-                        mongo_filters[key] = value
+                results = list(collection.aggregate(pipeline))
+                docs = [
+                    Document(
+                        id=str(doc["_id"]),
+                        name=doc.get("name"),
+                        content=doc["content"],
+                        meta_data={**doc.get("meta_data", {}), "score": doc.get("similarityScore", 0.0)},
+                    )
+                    for doc in results
+                ]
 
-                match_filters.update(mongo_filters)
+                log_info(f"Search completed. Found {len(docs)} documents.")
+                return docs
 
-            if match_filters:
-                pipeline.append({"$match": match_filters})
+            except Exception as e:
+                logger.error(f"Error during vector search: {e}")
+                return []
+        else:
+            # MongoDB Atlas Search
+            try:
+                collection = self._get_collection()
+                pipeline = [
+                    {
+                        "$vectorSearch": {
+                            "index": self.search_index_name,
+                            "limit": limit,
+                            "numCandidates": min(limit * 4, 100),
+                            "queryVector": query_embedding,
+                            "path": "embedding",
+                        }
+                    },
+                    {"$set": {"score": {"$meta": "vectorSearchScore"}}},
+                ]
 
-            pipeline.append({"$project": {"embedding": 0}})
+                match_filters = {}
+                if min_score > 0:
+                    match_filters["score"] = {"$gte": min_score}
 
-            results = list(collection.aggregate(pipeline))  # type: ignore
+                # Handle filters if provided
+                if filters:
+                    # MongoDB uses dot notation for nested fields, so we need to prepend meta_data. if needed
+                    mongo_filters = {}
+                    for key, value in filters.items():
+                        # If the key doesn't already include a dot notation for meta_data
+                        if not key.startswith("meta_data.") and "." not in key:
+                            mongo_filters[f"meta_data.{key}"] = value
+                        else:
+                            mongo_filters[key] = value
 
-            docs = [
-                Document(
-                    id=str(doc["_id"]),
-                    name=doc.get("name"),
-                    content=doc["content"],
-                    meta_data={**doc.get("meta_data", {}), "score": doc.get("score", 0.0)},
-                )
-                for doc in results
-            ]
+                    match_filters.update(mongo_filters)
 
-            log_info(f"Search completed. Found {len(docs)} documents.")
-            return docs
+                if match_filters:
+                    pipeline.append({"$match": match_filters})
 
-        except Exception as e:
-            logger.error(f"Error during search: {e}")
-            raise
+                pipeline.append({"$project": {"embedding": 0}})
+
+                results = list(collection.aggregate(pipeline))  # type: ignore
+
+                docs = [
+                    Document(
+                        id=str(doc["_id"]),
+                        name=doc.get("name"),
+                        content=doc["content"],
+                        meta_data={**doc.get("meta_data", {}), "score": doc.get("score", 0.0)},
+                    )
+                    for doc in results
+                ]
+
+                log_info(f"Search completed. Found {len(docs)} documents.")
+                return docs
+
+            except Exception as e:
+                logger.error(f"Error during search: {e}")
+                raise
 
     def vector_search(self, query: str, limit: int = 5) -> List[Document]:
         """Perform a vector-based search."""
@@ -527,22 +661,40 @@ class MongoDb(VectorDb):
 
     def drop(self) -> None:
         """Drop the collection and clean up indexes."""
+        collection = self._get_collection()
+        index_name = self.search_index_name or "vector_index_1"
+
         if self.exists():
-            try:
-                collection = self._get_collection()
-                index_name = self.search_index_name or "vector_index_1"
-                if self._search_index_exists():
-                    collection.drop_search_index(index_name)
-                    time.sleep(2)
+            if self.cosmos_compatibility:
+                # Cosmos DB specific handling
+                try:
+                    # Drop the index if it exists
+                    if self._search_index_exists():
+                        log_info(f"Dropping index '{index_name}'")
+                        try:
+                            collection.drop_index(index_name)
+                        except Exception as e:
+                            logger.error(f"Error dropping index: {e}")
 
-                collection.drop()
-                log_info(f"Collection '{self.collection_name}' dropped successfully")
+                except Exception as e:
+                    logger.error(f"Error dropping collection: {e}")
+                    raise
+            else:
+                # MongoDB Atlas specific handling
+                try:
+                    if self._search_index_exists():
+                        collection.drop_search_index(index_name)
+                        time.sleep(2)
 
-                time.sleep(2)
+                except Exception as e:
+                    logger.error(f"Error dropping collection: {e}")
+                    raise
 
-            except Exception as e:
-                logger.error(f"Error dropping collection: {e}")
-                raise
+        # Drop the collection
+        collection.drop()
+        time.sleep(2)
+
+        log_info(f"Collection '{self.collection_name}' dropped successfully")
 
     def exists(self) -> bool:
         """Check if the MongoDB collection exists."""
@@ -761,3 +913,9 @@ class MongoDb(VectorDb):
         except Exception as e:
             logger.error(f"Error checking document name existence asynchronously: {e}")
             return False
+
+    def _get_cosmos_similarity_metric(self) -> str:
+        """Convert MongoDB distance metric to Cosmos DB format."""
+        # Cosmos DB supports: COS (cosine), L2 (Euclidean), IP (inner product)
+        metric_mapping = {"cosine": "COS", "euclidean": "L2", "dotProduct": "IP"}
+        return metric_mapping.get(self.distance_metric, "COS")

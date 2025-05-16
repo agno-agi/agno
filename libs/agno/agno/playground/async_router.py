@@ -72,6 +72,7 @@ async def chat_response_streamer(
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
+
         traceback.print_exc(limit=3)
         error_response = RunResponse(
             content=str(e),
