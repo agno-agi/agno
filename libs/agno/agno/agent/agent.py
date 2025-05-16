@@ -569,91 +569,33 @@ class Agent:
 
     def _run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
-        *,
-        stream: bool = False,
+        run_response: RunResponse,
+        run_messages: RunMessages,
         session_id: str,
         user_id: Optional[str] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        message: Optional[Union[str, List, Dict, Message]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        stream_intermediate_steps: bool = False,
-        run_response: RunResponse,
-        **kwargs: Any,
     ) -> Iterator[RunResponse]:
         """Run the Agent and yield the RunResponse.
 
         Steps:
-        1. Prepare the Agent for the run
-        2. Update the Model and resolve context
-        3. Read existing session from storage
-        4. Prepare run messages
-        5. Reason about the task if reasoning is enabled
-        6. Start the Run by yielding a RunStarted event
-        7. Generate a response from the Model (includes running function calls)
-        8. Update RunResponse
-        9. Update Agent Memory
-        10. Calculate session metrics
-        11. Save session to storage
+        1. Reason about the task if reasoning is enabled
+        2. Start the Run by yielding a RunStarted event
+        3. Generate a response from the Model (includes running function calls)
+        4. Update RunResponse
+        5. Update Agent Memory
+        6. Calculate session metrics
+        7. Save session to storage
         12. Save output to file if save_response_to_file is set
         """
-
-        # 1. Prepare the Agent for the run
         if isinstance(self.memory, AgentMemory):
             self.memory = cast(AgentMemory, self.memory)
         else:
             self.memory = cast(Memory, self.memory)
-        # 1.2 Set streaming and stream intermediate steps
-
-        self.stream = self.stream or (stream and self.is_streamable)
-        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
-        # 1.3 Create a run_id and RunResponse
-        self.run_id = str(uuid4())
-
-        log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
-
-        # 2.1 Prepare arguments for the model
-        self.set_default_model()
-        response_format = self._get_response_format()
         self.model = cast(Model, self.model)
 
-        self.determine_tools_for_model(
-            model=self.model,
-            session_id=session_id,
-            user_id=user_id,
-            async_mode=False,
-            knowledge_filters=knowledge_filters,
-        )
-        run_response.model = self.model.id if self.model is not None else None
-
-        # 2.2 Resolve context
-        if self.context is not None and self.resolve_context:
-            self.resolve_run_context()
-
-        # 3. Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
-
-        # 4. Prepare run messages
-        run_messages: RunMessages = self.get_run_messages(
-            message=message,
-            session_id=session_id,
-            user_id=user_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            messages=messages,
-            **kwargs,
-        )
-        if len(run_messages.messages) == 0:
-            log_error("No messages to be sent to the model.")
-
-        self.run_messages = run_messages
-
-        # 5. Reason about the task if reasoning is enabled
+        # Reason about the task if reasoning is enabled
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self.reason(run_messages=run_messages, session_id=session_id)
 
@@ -1024,16 +966,6 @@ class Agent:
         # 12. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=message, session_id=session_id)
 
-        # Set run_input
-        if message is not None:
-            if isinstance(message, str):
-                self.run_input = message
-            elif isinstance(message, Message):
-                self.run_input = message.to_dict()
-            else:
-                self.run_input = message
-        elif messages is not None:
-            self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
@@ -1051,7 +983,18 @@ class Agent:
         # Yield final response if not streaming so that run() can get the response
         if not self.stream:
             yield run_response
-
+    
+    def _run_stream(self, 
+        run_response: RunResponse,
+        run_messages: RunMessages,
+        session_id: str,
+        user_id: Optional[str] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        message: Optional[Union[str, List, Dict, Message]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        ) -> Iterator[RunResponse]:
+        pass
+    
     @overload
     def run(
         self,
@@ -1148,6 +1091,9 @@ class Agent:
         if stream is False:
             stream_intermediate_steps = False
 
+        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
+
         # Use the default user_id and session_id when necessary
         if user_id is None:
             user_id = self.user_id
@@ -1166,19 +1112,78 @@ class Agent:
 
         log_debug(f"Session ID: {session_id}", center=True)
 
+        # Read existing session from storage
+        self.read_from_storage(session_id=session_id, user_id=user_id)
+
+        # Read existing session from storage
+        if self.context is not None:
+            self.resolve_run_context()
+
+        if self.response_model is not None and self.parse_response and stream is True:
+            # Disable stream if response_model is set
+            stream = False
+            log_debug("Disabling stream as response_model is set")
+
         last_exception = None
         num_attempts = retries + 1
 
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
+        # Prepare arguments for the model
+        self.set_default_model()
+        response_format = self._get_response_format()
+        self.model = cast(Model, self.model)
+
+        self.determine_tools_for_model(
+            model=self.model,
+            session_id=session_id,
+            user_id=user_id,
+            async_mode=False,
+            knowledge_filters=knowledge_filters,
+        )
 
         for attempt in range(num_attempts):
             try:
+                # Create a run_id for this specific run
+                run_id = str(uuid4())
+
                 # Create a new run_response for this attempt
                 run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id)
 
+                run_response.model = self.model.id if self.model is not None else None
+
                 # for backward compatibility, set self.run_response
                 self.run_response = run_response
+                self.run_id = run_id
+
+                # Set run_input
+                if message is not None:
+                    if isinstance(message, str):
+                        self.run_input = message
+                    elif isinstance(message, Message):
+                        self.run_input = message.to_dict()
+                    else:
+                        self.run_input = message
+                elif messages is not None:
+                    self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
+
+                log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+
+                # Prepare run messages
+                run_messages: RunMessages = self.get_run_messages(
+                    message=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    messages=messages,
+                    **kwargs,
+                )
+                if len(run_messages.messages) == 0:
+                    log_error("No messages to be sent to the model.")
+
+                self.run_messages = run_messages
+
 
                 # If a response_model is set, return the response as a structured output
                 if self.response_model is not None and self.parse_response:
@@ -1188,19 +1193,13 @@ class Agent:
                         self.stream = False
                     rr: RunResponse = next(
                         self._run(
+                            run_response=run_response,
+                            run_messages=run_messages,
                             message=message,
-                            stream=False,
                             user_id=user_id,
                             session_id=session_id,
-                            audio=audio,
-                            images=images,
-                            videos=videos,
-                            files=files,
+                            response_format=response_format,
                             messages=messages,
-                            stream_intermediate_steps=stream_intermediate_steps,
-                            knowledge_filters=effective_filters,
-                            run_response=run_response,
-                            **kwargs,
                         )
                     )
 
@@ -1227,36 +1226,24 @@ class Agent:
                 else:
                     if stream and self.is_streamable:
                         resp = self._run(
+                            run_response=run_response,
+                            run_messages=run_messages,
                             message=message,
-                            stream=True,
                             user_id=user_id,
                             session_id=session_id,
-                            audio=audio,
-                            images=images,
-                            videos=videos,
-                            files=files,
+                            response_format=response_format,
                             messages=messages,
-                            stream_intermediate_steps=stream_intermediate_steps,
-                            knowledge_filters=effective_filters,
-                            run_response=run_response,
-                            **kwargs,
                         )
                         return resp
                     else:
                         resp = self._run(
+                            run_response=run_response,
+                            run_messages=run_messages,
                             message=message,
-                            stream=False,
                             user_id=user_id,
                             session_id=session_id,
-                            audio=audio,
-                            images=images,
-                            videos=videos,
-                            files=files,
+                            response_format=response_format,
                             messages=messages,
-                            stream_intermediate_steps=stream_intermediate_steps,
-                            knowledge_filters=effective_filters,
-                            run_response=run_response,
-                            **kwargs,
                         )
                         return next(resp)
             except ModelProviderError as e:
