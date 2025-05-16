@@ -4,9 +4,13 @@ from typing import Optional
 from agno.tools import Toolkit
 
 try:
-    from crawl4ai import AsyncWebCrawler, CacheMode
+    from crawl4ai import CacheMode, AsyncWebCrawler, CrawlerRunConfig
+    from crawl4ai.content_filter_strategy import PruningContentFilter
+    from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 except ImportError:
-    raise ImportError("`crawl4ai` not installed. Please install using `pip install crawl4ai`")
+    raise ImportError(
+        "`crawl4ai` not installed. Please install using `pip install crawl4ai`"
+    )
 
 
 class Crawl4aiTools(Toolkit):
@@ -36,7 +40,9 @@ class Crawl4aiTools(Toolkit):
         # Run the async crawler function synchronously
         return asyncio.run(self._async_web_crawler(url, max_length))
 
-    async def _async_web_crawler(self, url: str, max_length: Optional[int] = None) -> str:
+    async def _async_web_crawler(
+        self, url: str, max_length: Optional[int] = None
+    ) -> str:
         """
         Asynchronous method to crawl a website using AsyncWebCrawler.
 
@@ -46,18 +52,32 @@ class Crawl4aiTools(Toolkit):
         """
 
         async with AsyncWebCrawler(thread_safe=True) as crawler:
-            result = await crawler.arun(url=url, cache_mode=CacheMode.BYPASS)
+            config = CrawlerRunConfig(
+                page_timeout=230000,
+                wait_until="networkidle",
+                session_id="my_session",
+                cache_mode=CacheMode.BYPASS,
+                remove_overlay_elements=True,
+                excluded_tags=["nav", "footer", "aside", "header"],
+                markdown_generator=DefaultMarkdownGenerator(
+                    content_filter=PruningContentFilter(
+                        threshold=0.48, threshold_type="fixed", min_word_threshold=0
+                    ),
+                    options={"ignore_links": False},
+                ),
+            )
+            result = await crawler.arun(url=url, config=config)
 
             # Determine the length to use
             length = self.max_length or max_length
-            if not result.markdown:
+            if not result.markdown.raw_markdown:
                 return "No result"
 
             # Remove spaces and truncate if length is specified
             if length:
-                result = result.markdown[:length]
+                result = result.markdown.raw_markdown[:length]
                 result = result.replace(" ", "")
                 return result
 
-            result = result.markdown.replace(" ", "")
+            result = result.markdown.raw_markdown.replace(" ", "")
         return result
