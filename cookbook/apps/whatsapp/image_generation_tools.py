@@ -19,4 +19,4 @@ app = WhatsappAPI(
 ).get_app()
 
 if __name__ == "__main__":
-    serve_whatsapp_app("image_generation_agent:app", port=8000, reload=True)
+    serve_whatsapp_app("image_generation_tools:app", port=8000, reload=True)

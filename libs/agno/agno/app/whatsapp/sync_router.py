@@ -137,7 +137,10 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                 _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
 
             if response.images:
-                image_bytes = base64.b64decode(response.images[0].content)
+                if isinstance(response.images[0].content,bytes):
+                    image_bytes=response.images[0].content
+                else:
+                    image_bytes = base64.b64decode(response.images[0].content)
                 media_id = upload_media(media_data=image_bytes, mime_type="image/png", filename="image.png")
                 send_image_message(media_id=media_id, recipient=phone_number, text=response.content)
             else:
