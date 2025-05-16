@@ -139,8 +139,8 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
             if response.images:
                 media_id = await upload_media_async(media_data=response.images[0].content, mime_type="image/png", filename="image.png")
                 await send_image_message_async(media_id=media_id, recipient=phone_number, text=response.content)
-
-            await _send_whatsapp_message(phone_number, response.content)
+            else:
+                await _send_whatsapp_message(phone_number, response.content)
 
         except Exception as e:
             log_error(f"Error processing message: {str(e)}")

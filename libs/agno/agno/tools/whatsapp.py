@@ -62,23 +62,6 @@ class WhatsAppTools(Toolkit):
             self.register(self.send_text_message_sync)
             self.register(self.send_template_message_sync)
 
-        # Log configuration status
-        self._log_config_status()
-
-    def _log_config_status(self):
-        """Log the configuration status of the WhatsApp toolkit."""
-        config_status = {
-            "Core credentials": {
-                "access_token": bool(self.access_token),
-                "phone_number_id": bool(self.phone_number_id),
-            },
-            "Optional settings": {
-                "default_recipient": bool(self.default_recipient),
-                "api_version": self.version,
-                "async_mode": self.async_mode,
-            },
-        }
-        logger.debug(f"WhatsApp toolkit configuration status: {json.dumps(config_status, indent=2)}")
 
     def _get_headers(self) -> Dict[str, str]:
         """Get headers for API requests."""
@@ -101,15 +84,9 @@ class WhatsAppTools(Toolkit):
         headers = self._get_headers()
 
         logger.debug(f"Sending WhatsApp request to URL: {url}")
-        logger.debug(f"Request data: {json.dumps(data, indent=2)}")
-        logger.debug(f"Headers: {json.dumps(headers, indent=2)}")
 
         async with httpx.AsyncClient() as client:
             response = await client.post(url, headers=headers, json=data)
-
-            logger.debug(f"Response status code: {response.status_code}")
-            logger.debug(f"Response headers: {dict(response.headers)}")
-            logger.debug(f"Response body: {response.text}")
 
             response.raise_for_status()
             return response.json()
@@ -127,14 +104,7 @@ class WhatsAppTools(Toolkit):
         headers = self._get_headers()
 
         logger.debug(f"Sending WhatsApp request to URL: {url}")
-        logger.debug(f"Request data: {json.dumps(data, indent=2)}")
-        logger.debug(f"Headers: {json.dumps(headers, indent=2)}")
-
         response = httpx.post(url, headers=headers, json=data)
-
-        logger.debug(f"Response status code: {response.status_code}")
-        logger.debug(f"Response headers: {dict(response.headers)}")
-        logger.debug(f"Response body: {response.text}")
 
         response.raise_for_status()
         return response.json()
@@ -177,7 +147,6 @@ class WhatsAppTools(Toolkit):
         try:
             response = self._send_message_sync(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
-            logger.debug(f"Full API response: {json.dumps(response, indent=2)}")
             return f"Message sent successfully! Message ID: {message_id}"
         except httpx.HTTPStatusError as e:
             logger.error(f"Failed to send WhatsApp message: {e}")
@@ -269,7 +238,6 @@ class WhatsAppTools(Toolkit):
         try:
             response = await self._send_message_async(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
-            logger.debug(f"Full API response: {json.dumps(response, indent=2)}")
             return f"Message sent successfully! Message ID: {message_id}"
         except httpx.HTTPStatusError as e:
             logger.error(f"Failed to send WhatsApp message: {e}")
