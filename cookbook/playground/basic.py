@@ -36,11 +36,15 @@ basic_agent = Agent(
     markdown=True,
 )
 
-app = Playground(
+playground = Playground(
     agents=[
         basic_agent,
-    ]
-).get_app()
+    ],
+    name="Basic Agent",
+    description="A playground for basic agent",
+    app_id="basic-agent",
+)
+app = playground.get_app()
 
 if __name__ == "__main__":
-    serve_playground_app("basic:app", reload=True)
+    playground.serve(app="basic:app", reload=True)

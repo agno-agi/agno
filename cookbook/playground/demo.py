@@ -216,7 +216,7 @@ movie_writer = Agent(
     response_model=MovieScript,
 )
 
-app = Playground(
+playground = Playground(
     agents=[
         simple_agent,
         web_agent,
@@ -226,7 +226,11 @@ app = Playground(
         image_agent,
         movie_writer,
     ],
-).get_app()
+    app_id="demo-playground-app",
+    name="Demo Playground",
+    description="A playground for demo",
+)
+app = playground.get_app()
 
 if __name__ == "__main__":
-    serve_playground_app("demo:app", reload=True)
+    playground.serve(app="demo:app", reload=True)

@@ -32,7 +32,7 @@ from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.url import UrlKnowledge
 from agno.models.openai import OpenAIChat
-from agno.playground import Playground, serve_playground_app
+from agno.playground import Playground
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.dalle import DalleTools
 from agno.tools.eleven_labs import ElevenLabsTools
@@ -180,10 +180,15 @@ agno_support_voice = Agent(
 )
 
 # Create and configure the playground app
-app = Playground(agents=[agno_support, agno_support_voice]).get_app()
+playground = Playground(
+    agents=[agno_support, agno_support_voice],
+    app_id="agno-assist-playground-app",
+    name="Agno Assist Playground",
+)
+app = playground.get_app()
 
 if __name__ == "__main__":
     load_kb = False
     if load_kb:
         agent_knowledge.load(recreate=True)
-    serve_playground_app("agno_assist:app", reload=True)
+    playground.serve(app="agno_assist:app", reload=True)
