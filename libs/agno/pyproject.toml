@@ -121,6 +121,7 @@ weaviate = ["weaviate-client"]
 milvusdb = ["pymilvus"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
+surrealdb = ["surrealdb"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
