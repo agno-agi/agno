@@ -40,24 +40,24 @@ def sync_demo():
 
 async def async_demo():
     """Demonstrate asynchronous usage of SurrealVectorDb"""
+    knowledge_base = PDFUrlKnowledgeBase(
+        urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+        vector_db=surrealdb,
+        embedder=OpenAIEmbedder(),
+    )
 
-    # Example of async operations
-    await surrealdb.async_create()  # Create collection and index
+    # Load data synchronously
+    await knowledge_base.aload(recreate=True)
 
-    # You can perform async operations here
-    # For example, checking if documents exist
-    doc_exists = await surrealdb.async_exists()
-    print(f"Collection exists: {doc_exists}")
-
-    # Clean up
-    if doc_exists:
-        await surrealdb.async_drop()
+    # Create agent and query synchronously
+    agent = Agent(knowledge=knowledge_base, show_tool_calls=True, debug_mode=True)
+    await agent.aprint_response("What are the 3 categories of Thai SELECT is given to restaurants overseas?", markdown=True)
 
 if __name__ == "__main__":
     # Run synchronous demo
-    print("Running synchronous demo...")
-    sync_demo()
+    # print("Running synchronous demo...")
+    # sync_demo()
 
-    # # Run asynchronous demo
-    # print("\nRunning asynchronous demo...")
-    # asyncio.run(async_demo())
+    # Run asynchronous demo
+    print("\nRunning asynchronous demo...")
+    asyncio.run(async_demo())
