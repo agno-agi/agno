@@ -4,18 +4,17 @@ from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.vectordb.lancedb import LanceDb
+from agno.vectordb.milvus import Milvus
 
 # Download all sample CVs and get their paths
 downloaded_cv_paths = download_knowledge_filters_sample_data(
     num_files=5, file_extension=SampleDataFileExtension.PDF
 )
 
-# Initialize LanceDB
-# By default, it stores data in /tmp/lancedb
-vector_db = LanceDb(
-    table_name="recipes",
-    uri="tmp/lancedb",  # You can change this path to store data elsewhere
+# Initialize Milvus vector db
+vector_db = Milvus(
+    collection="recipes",
+    uri="tmp/milvus.db",
 )
 
 # Step 1: Initialize knowledge base with documents and metadata
