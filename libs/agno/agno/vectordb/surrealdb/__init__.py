@@ -1,3 +1,3 @@
-from agno.vectordb.surrealdb.client import SurrealVectorDb
+from libs.agno.agno.vectordb.surrealdb.surrealdb import SurrealVectorDb
 
 __all__ = ["SurrealVectorDb"]
