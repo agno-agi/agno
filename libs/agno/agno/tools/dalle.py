@@ -6,6 +6,7 @@ from agno.agent import Agent
 from agno.media import ImageArtifact
 from agno.team.team import Team
 from agno.tools import Toolkit
+from agno.tools.function import FunctionCallResult
 from agno.utils.log import log_debug, logger
 
 try:
@@ -58,17 +59,9 @@ class DalleTools(Toolkit):
         # - Add support for saving images
         # - Add support for editing images
 
-    def create_image(self, agent: Union[Agent, Team], prompt: str) -> str:
-        """Use this function to generate an image for a prompt.
-
-        Args:
-            prompt (str): A text description of the desired image.
-
-        Returns:
-            str: str: A message indicating if the image has been generated successfully or an error message.
-        """
+    def create_image(self, agent: Union[Agent, Team], prompt: str) -> FunctionCallResult:
         if not self.api_key:
-            return "Please set the OPENAI_API_KEY"
+            return FunctionCallResult(content="Please set the OPENAI_API_KEY")
 
         try:
             client = OpenAI(api_key=self.api_key)
@@ -83,18 +76,29 @@ class DalleTools(Toolkit):
             )
             log_debug("Image generated successfully")
 
+            generated_images = []
+
             # Update the run response with the image URLs
             response_str = ""
             if response.data:
                 for img in response.data:
                     if img.url:
-                        agent.add_image(
-                            ImageArtifact(
-                                id=str(uuid4()), url=img.url, original_prompt=prompt, revised_prompt=img.revised_prompt
-                            )
+                        image_artifact = ImageArtifact(
+                            id=str(uuid4()), url=img.url, original_prompt=prompt, revised_prompt=img.revised_prompt
                         )
+                        agent.add_image(image_artifact)
                         response_str += f"Image has been generated at the URL {img.url}\n"
-            return response_str or "No images were generated"
+                        generated_images.append(image_artifact)
+
+            # Create a more descriptive response that includes details about the image
+            content = (
+                f"I have generated an image based on the prompt: '{prompt}'. "
+                f"The image shows exactly what was requested - {prompt}. "
+                f"{response_str}"
+                f"You can reference this image in our conversation to describe its details."
+            )
+
+            return FunctionCallResult(content=content, images=generated_images if generated_images else None)
         except Exception as e:
             logger.error(f"Failed to generate image: {e}")
-            return f"Error: {e}"
+            return FunctionCallResult(content=f"Error: {e}", images=None)

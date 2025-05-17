@@ -1722,7 +1722,8 @@ class Agent:
             # Add AgentRun to memory
             self.memory.add_run(session_id=session_id, run=run_response)
 
-            await self._amake_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
+            # type: ignore
+            await self._amake_memories_and_summaries(run_messages, session_id, user_id, messages)
 
             if self.session_metrics is None:
                 self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
@@ -2677,7 +2678,8 @@ class Agent:
                             response=RunResponse(
                                 content=introduction,
                                 messages=[
-                                    Message(role=self.model.assistant_message_role, content=introduction)  # type: ignore
+                                    # type: ignore
+                                    Message(role=self.model.assistant_message_role, content=introduction)
                                 ],
                             )
                         )
@@ -2788,7 +2790,8 @@ class Agent:
                     and (not self.use_json_mode or self.structured_outputs is True)
                 )
             ):
-                sys_message_content += f"\n{get_json_output_prompt(self.response_model)}"  # type: ignore
+                # type: ignore
+                sys_message_content += f"\n{get_json_output_prompt(self.response_model)}"
 
             # type: ignore
             return Message(role=self.system_message_role, content=sys_message_content)
@@ -3022,7 +3025,8 @@ class Agent:
             (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
             and (not self.use_json_mode or self.structured_outputs is True)
         ):
-            system_message_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+            # type: ignore
+            system_message_content += f"{get_json_output_prompt(self.response_model)}"
 
         # Return the system message
         return (
@@ -4095,7 +4099,8 @@ class Agent:
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
-            reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
+            # type: ignore
+            reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
@@ -4305,7 +4310,8 @@ class Agent:
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
-            reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
+            # type: ignore
+            reasoning_agent: Optional[Agent] = self.reasoning_agent
             if reasoning_agent is None:
                 reasoning_agent = get_default_reasoning_agent(
                     reasoning_model=reasoning_model,
