@@ -15,7 +15,7 @@ class BaseSurrealVectorDb:
         DEFINE TABLE {collection} SCHEMAFUL;
         DEFINE FIELD content ON {collection} TYPE string;
         DEFINE FIELD embedding ON {collection} TYPE array<float>;
-        DEFINE FIELD metadata ON {collection} TYPE object;
+        DEFINE FIELD meta_data ON {collection} TYPE object;
         -- Using HNSW index with optimized parameters
         DEFINE INDEX vector_idx ON {collection}
         FIELDS embedding
@@ -34,7 +34,7 @@ class BaseSurrealVectorDb:
 
     NAME_EXISTS_QUERY: Final[str] = """
         SELECT * FROM {collection}
-        WHERE metadata.name = $name
+        WHERE meta_data.name = $name
         LIMIT 1
     """
 
@@ -48,11 +48,11 @@ class BaseSurrealVectorDb:
         INSERT INTO {collection}
         SET content = $content,
             embedding = $embedding,
-            metadata = $metadata
+            meta_data = $meta_data
         ON DUPLICATE KEY UPDATE
             content = $content,
             embedding = $embedding,
-            metadata = $metadata;
+            meta_data = $meta_data;
     """
 
     SEARCH_QUERY: Final[str] = """
@@ -60,7 +60,7 @@ class BaseSurrealVectorDb:
         SELECT
             content,
             embedding,
-            metadata,
+            meta_data,
             vector::distance::knn() as distance
         FROM {collection}
         WHERE embedding <|{limit},40|> $query_embedding
@@ -114,7 +114,7 @@ class BaseSurrealVectorDb:
             return ""
         conditions = []
         for key, value in filters.items():
-            conditions.append(f"metadata.{key} = ${key}")
+            conditions.append(f"meta_data.{key} = ${key}")
         return "AND " + " AND ".join(conditions)
 
 
@@ -178,10 +178,10 @@ class SurrealVectorDb(BaseSurrealVectorDb, VectorDb):
                 data = {
                     "content": doc.content,
                     "embedding": doc.embedding,
-                    "metadata": doc.metadata or {}
+                    "meta_data": doc.meta_data or {}
                 }
                 if filters:
-                    data["metadata"].update(filters)
+                    data["meta_data"].update(filters)
 
                 self.client.create(self.collection, data)
 
@@ -196,10 +196,10 @@ class SurrealVectorDb(BaseSurrealVectorDb, VectorDb):
                 data = {
                     "content": doc.content,
                     "embedding": doc.embedding,
-                    "metadata": doc.metadata or {}
+                    "meta_data": doc.meta_data or {}
                 }
                 if filters:
-                    data["metadata"].update(filters)
+                    data["meta_data"].update(filters)
 
                 self.client.query(
                     self.UPSERT_QUERY.format(collection=self.collection),
@@ -226,7 +226,7 @@ class SurrealVectorDb(BaseSurrealVectorDb, VectorDb):
                     doc = Document(
                         content=item["content"],
                         embedding=item["embedding"],
-                        metadata=item["metadata"]
+                        meta_data=item["meta_data"]
                     )
                     documents.append(doc)
 
@@ -301,10 +301,10 @@ class AsyncSurrealVectorDb(BaseSurrealVectorDb, VectorDb):
                 data = {
                     "content": doc.content,
                     "embedding": doc.embedding,
-                    "metadata": doc.metadata or {}
+                    "meta_data": doc.meta_data or {}
                 }
                 if filters:
-                    data["metadata"].update(filters)
+                    data["meta_data"].update(filters)
 
                 await self.client.create(self.collection, data)
 
@@ -315,10 +315,10 @@ class AsyncSurrealVectorDb(BaseSurrealVectorDb, VectorDb):
                 data = {
                     "content": doc.content,
                     "embedding": doc.embedding,
-                    "metadata": doc.metadata or {}
+                    "meta_data": doc.meta_data or {}
                 }
                 if filters:
-                    data["metadata"].update(filters)
+                    data["meta_data"].update(filters)
 
                 await self.client.query(
                     self.UPSERT_QUERY.format(collection=self.collection),
@@ -345,7 +345,7 @@ class AsyncSurrealVectorDb(BaseSurrealVectorDb, VectorDb):
                     doc = Document(
                         content=item["content"],
                         embedding=item["embedding"],
-                        metadata=item["metadata"]
+                        meta_data=item["meta_data"]
                     )
                     documents.append(doc)
 
