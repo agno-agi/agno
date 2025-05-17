@@ -138,18 +138,34 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
                 await _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
 
             if response.images:
-                if isinstance(response.images[0].content, bytes):
-                    image_bytes = response.images[0].content
+                image_content = response.images[0].content
+                image_bytes = None
+                if isinstance(image_content, bytes):
+                    try:
+                        decoded_string = image_content.decode("utf-8")
+
+                        image_bytes = base64.b64decode(decoded_string)
+                    except UnicodeDecodeError:
+                        image_bytes = image_content
+                elif isinstance(image_content, str):
+                    image_bytes = base64.b64decode(image_content)
                 else:
-                    image_bytes = base64.b64decode(response.images[0].content)
-                media_id = await upload_media_async(media_data=image_bytes, mime_type="image/png", filename="image.png")
-                await send_image_message_async(media_id=media_id, recipient=phone_number, text=response.content)
+                    log_error(f"Unexpected image content type: {type(image_content)} for user {phone_number}")
+
+                if image_bytes:
+                    media_id = await upload_media_async(
+                        media_data=image_bytes, mime_type="image/png", filename="image.png"
+                    )
+                    await send_image_message_async(media_id=media_id, recipient=phone_number, text=response.content)
+                else:
+                    log_warning(f"Could not process image content for user {phone_number}. Type: {type(image_content)}")
+                    await _send_whatsapp_message(phone_number, response.content)  # Send text part if image fails
             else:
                 await _send_whatsapp_message(phone_number, response.content)
 
         except Exception as e:
             log_error(f"Error processing message: {str(e)}")
-            # Optionally send an error message to the user
+
             try:
                 await _send_whatsapp_message(
                     phone_number, "Sorry, there was an error processing your message. Please try again later."
