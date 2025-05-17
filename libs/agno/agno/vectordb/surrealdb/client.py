@@ -9,7 +9,6 @@ from agno.vectordb.distance import Distance
 class BaseSurrealVectorDb:
     """Base class for SurrealDB Vector Database implementation"""
 
-    # TODO: Improve Vector index creation
     # SQL Query Constants
     CREATE_TABLE_QUERY: Final[str] = """
         DEFINE TABLE {collection} SCHEMAFUL;
@@ -20,10 +19,10 @@ class BaseSurrealVectorDb:
         DEFINE INDEX vector_idx ON {collection}
         FIELDS embedding
         HNSW
-        DIMENSION 1536
+        DIMENSION {dimension}
         DIST {distance}
-        EFC 150
-        M 12;
+        EFC {efc}
+        M {m};
     """
 
     DOC_EXISTS_QUERY: Final[str] = """
@@ -63,7 +62,7 @@ class BaseSurrealVectorDb:
             meta_data,
             vector::distance::knn() as distance
         FROM {collection}
-        WHERE embedding <|{limit},40|> $query_embedding
+        WHERE embedding <|{limit},{ef}|> $query_embedding
         {filter_condition}
         ORDER BY distance ASC
         LIMIT {limit}
@@ -82,6 +81,10 @@ class BaseSurrealVectorDb:
         password: str,
         collection: str = "documents",
         distance: Distance = Distance.cosine,
+        dimension: int = 1536,
+        efc: int = 150,
+        m: int = 12,
+        search_ef: int = 40,
     ):
         """Initialize SurrealDB connection
 
@@ -93,6 +96,10 @@ class BaseSurrealVectorDb:
             password: SurrealDB password
             collection: Collection name to store documents (default: documents)
             distance: Distance metric to use (default: cosine)
+            dimension: Vector dimension (default: 1536)
+            efc: HNSW construction time/accuracy trade-off (default: 150)
+            m: HNSW max number of connections per element (default: 12)
+            search_ef: HNSW search time/accuracy trade-off (default: 40)
         """
         self.url = url
         self.namespace = namespace
@@ -107,6 +114,12 @@ class BaseSurrealVectorDb:
         self.username = username
         self.password = password
         self.client = None
+
+        # HNSW index parameters
+        self.dimension = dimension
+        self.efc = efc
+        self.m = m
+        self.search_ef = search_ef
 
     def _build_filter_condition(self, filters: Optional[Dict[str, Any]] = None) -> str:
         """Build filter condition for queries"""
@@ -140,7 +153,10 @@ class SurrealVectorDb(BaseSurrealVectorDb, VectorDb):
             self.client.query(
                 self.CREATE_TABLE_QUERY.format(
                     collection=self.collection,
-                    distance=self.distance
+                    distance=self.distance,
+                    dimension=self.dimension,
+                    efc=self.efc,
+                    m=self.m
                 )
             )
 
@@ -215,7 +231,8 @@ class SurrealVectorDb(BaseSurrealVectorDb, VectorDb):
                 self.SEARCH_QUERY.format(
                     collection=self.collection,
                     limit=limit,
-                    filter_condition=filter_condition
+                    filter_condition=filter_condition,
+                    ef=self.search_ef
                 ),
                 {"embedding": query, **filters} if filters else {"embedding": query}
             )
@@ -272,7 +289,10 @@ class AsyncSurrealVectorDb(BaseSurrealVectorDb, VectorDb):
             await self.client.query(
                 self.CREATE_TABLE_QUERY.format(
                     collection=self.collection,
-                    distance=self.distance
+                    distance=self.distance,
+                    dimension=self.dimension,
+                    efc=self.efc,
+                    m=self.m
                 )
             )
 
@@ -334,7 +354,8 @@ class AsyncSurrealVectorDb(BaseSurrealVectorDb, VectorDb):
                 self.SEARCH_QUERY.format(
                     collection=self.collection,
                     limit=limit,
-                    filter_condition=filter_condition
+                    filter_condition=filter_condition,
+                    ef=self.search_ef
                 ),
                 {"embedding": query, **filters} if filters else {"embedding": query}
             )
