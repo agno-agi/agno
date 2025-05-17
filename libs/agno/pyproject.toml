@@ -43,6 +43,7 @@ dependencies = [
   "tomli",
   "typer",
   "typing-extensions",
+  "surrealdb",
 ]
 
 [project.optional-dependencies]
@@ -203,7 +204,8 @@ vectordbs = [
   "agno[weaviate]",
   "agno[milvusdb]",
   "agno[clickhouse]",
-  "agno[pinecone]"
+  "agno[pinecone]",
+  "agno[surrealdb]"
 ]
 
 # All knowledge
