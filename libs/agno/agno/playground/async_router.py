@@ -71,6 +71,8 @@ async def chat_response_streamer(
             run_response_chunk = cast(RunResponse, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
+        import traceback
+        traceback.print_exc(limit=3)
         error_response = RunResponse(
             content=str(e),
             event=RunEvent.run_error,
@@ -366,7 +368,7 @@ def get_async_playground_router(
             return JSONResponse(status_code=404, content="Agent does not have storage enabled.")
 
         agent_sessions: List[AgentSessionsResponse] = []
-        all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=user_id)  # type: ignore
+        all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=user_id, entity_id=agent_id)  # type: ignore
         for session in all_agent_sessions:
             title = get_session_title(session)
             agent_sessions.append(
@@ -444,7 +446,7 @@ def get_async_playground_router(
         if agent.storage is None:
             return JSONResponse(status_code=404, content="Agent does not have storage enabled.")
 
-        all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=user_id)  # type: ignore
+        all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=user_id, entity_id=agent_id)  # type: ignore
         for session in all_agent_sessions:
             if session.session_id == session_id:
                 agent.delete_session(session_id)
