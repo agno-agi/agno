@@ -1,3 +1,3 @@
-from agno.vectordb.surrealdb.client import SurrealVectorDb, AsyncSurrealVectorDb
+from agno.vectordb.surrealdb.client import AsyncSurrealVectorDb, SurrealVectorDb
 
 __all__ = ["SurrealVectorDb", "AsyncSurrealVectorDb"]

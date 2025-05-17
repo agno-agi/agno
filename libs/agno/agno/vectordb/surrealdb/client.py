@@ -1,6 +1,8 @@
-from typing import Any, Dict, List, Optional, Final
 from contextlib import asynccontextmanager, contextmanager
-from surrealdb import Surreal, AsyncSurreal
+from typing import Any, Dict, Final, List, Optional
+
+from surrealdb import AsyncSurreal, Surreal
+
 from agno.document import Document
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -106,11 +108,9 @@ class BaseSurrealVectorDb:
         self.database = database
         self.collection = collection
         # Convert Distance enum to SurrealDB distance type
-        self.distance = {
-            Distance.cosine: "COSINE",
-            Distance.l2: "EUCLIDEAN",
-            Distance.max_inner_product: "DOT"
-        }[distance]
+        self.distance = {Distance.cosine: "COSINE", Distance.l2: "EUCLIDEAN", Distance.max_inner_product: "DOT"}[
+            distance
+        ]
         self.username = username
         self.password = password
         self.client = None
@@ -152,11 +152,7 @@ class SurrealVectorDb(BaseSurrealVectorDb, VectorDb):
         with self.connect():
             self.client.query(
                 self.CREATE_TABLE_QUERY.format(
-                    collection=self.collection,
-                    distance=self.distance,
-                    dimension=self.dimension,
-                    efc=self.efc,
-                    m=self.m
+                    collection=self.collection, distance=self.distance, dimension=self.dimension, efc=self.efc, m=self.m
                 )
             )
 
@@ -164,38 +160,27 @@ class SurrealVectorDb(BaseSurrealVectorDb, VectorDb):
         """Check if a document exists by its content"""
         with self.connect():
             result = self.client.query(
-                self.DOC_EXISTS_QUERY.format(collection=self.collection),
-                {"content": document.content}
+                self.DOC_EXISTS_QUERY.format(collection=self.collection), {"content": document.content}
             )
             return bool(result and result[0])
 
     def name_exists(self, name: str) -> bool:
         """Check if a document exists by its name"""
         with self.connect():
-            result = self.client.query(
-                self.NAME_EXISTS_QUERY.format(collection=self.collection),
-                {"name": name}
-            )
+            result = self.client.query(self.NAME_EXISTS_QUERY.format(collection=self.collection), {"name": name})
             return bool(result and result[0])
 
     def id_exists(self, id: str) -> bool:
         """Check if a document exists by its ID"""
         with self.connect():
-            result = self.client.query(
-                self.ID_EXISTS_QUERY.format(collection=self.collection),
-                {"id": id}
-            )
+            result = self.client.query(self.ID_EXISTS_QUERY.format(collection=self.collection), {"id": id})
             return bool(result and result[0])
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the vector store"""
         with self.connect():
             for doc in documents:
-                data = {
-                    "content": doc.content,
-                    "embedding": doc.embedding,
-                    "meta_data": doc.meta_data or {}
-                }
+                data = {"content": doc.content, "embedding": doc.embedding, "meta_data": doc.meta_data or {}}
                 if filters:
                     data["meta_data"].update(filters)
 
@@ -209,18 +194,11 @@ class SurrealVectorDb(BaseSurrealVectorDb, VectorDb):
         """Upsert documents into the vector store"""
         with self.connect():
             for doc in documents:
-                data = {
-                    "content": doc.content,
-                    "embedding": doc.embedding,
-                    "meta_data": doc.meta_data or {}
-                }
+                data = {"content": doc.content, "embedding": doc.embedding, "meta_data": doc.meta_data or {}}
                 if filters:
                     data["meta_data"].update(filters)
 
-                self.client.query(
-                    self.UPSERT_QUERY.format(collection=self.collection),
-                    data
-                )
+                self.client.query(self.UPSERT_QUERY.format(collection=self.collection), data)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Search for similar documents"""
@@ -229,22 +207,15 @@ class SurrealVectorDb(BaseSurrealVectorDb, VectorDb):
 
             result = self.client.query(
                 self.SEARCH_QUERY.format(
-                    collection=self.collection,
-                    limit=limit,
-                    filter_condition=filter_condition,
-                    ef=self.search_ef
+                    collection=self.collection, limit=limit, filter_condition=filter_condition, ef=self.search_ef
                 ),
-                {"embedding": query, **filters} if filters else {"embedding": query}
+                {"embedding": query, **filters} if filters else {"embedding": query},
             )
 
             documents = []
             if result and result[0]:
                 for item in result[0]:
-                    doc = Document(
-                        content=item["content"],
-                        embedding=item["embedding"],
-                        meta_data=item["meta_data"]
-                    )
+                    doc = Document(content=item["content"], embedding=item["embedding"], meta_data=item["meta_data"])
                     documents.append(doc)
 
             return documents
@@ -288,11 +259,7 @@ class AsyncSurrealVectorDb(BaseSurrealVectorDb, VectorDb):
         async with self.connect():
             await self.client.query(
                 self.CREATE_TABLE_QUERY.format(
-                    collection=self.collection,
-                    distance=self.distance,
-                    dimension=self.dimension,
-                    efc=self.efc,
-                    m=self.m
+                    collection=self.collection, distance=self.distance, dimension=self.dimension, efc=self.efc, m=self.m
                 )
             )
 
@@ -300,29 +267,21 @@ class AsyncSurrealVectorDb(BaseSurrealVectorDb, VectorDb):
         """Check if a document exists by its content asynchronously"""
         async with self.connect():
             result = await self.client.query(
-                self.DOC_EXISTS_QUERY.format(collection=self.collection),
-                {"content": document.content}
+                self.DOC_EXISTS_QUERY.format(collection=self.collection), {"content": document.content}
             )
             return bool(result and result[0])
 
     async def async_name_exists(self, name: str) -> bool:
         """Check if a document exists by its name asynchronously"""
         async with self.connect():
-            result = await self.client.query(
-                self.NAME_EXISTS_QUERY.format(collection=self.collection),
-                {"name": name}
-            )
+            result = await self.client.query(self.NAME_EXISTS_QUERY.format(collection=self.collection), {"name": name})
             return bool(result and result[0])
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the vector store asynchronously"""
         async with self.connect():
             for doc in documents:
-                data = {
-                    "content": doc.content,
-                    "embedding": doc.embedding,
-                    "meta_data": doc.meta_data or {}
-                }
+                data = {"content": doc.content, "embedding": doc.embedding, "meta_data": doc.meta_data or {}}
                 if filters:
                     data["meta_data"].update(filters)
 
@@ -332,42 +291,30 @@ class AsyncSurrealVectorDb(BaseSurrealVectorDb, VectorDb):
         """Upsert documents into the vector store asynchronously"""
         async with self.connect():
             for doc in documents:
-                data = {
-                    "content": doc.content,
-                    "embedding": doc.embedding,
-                    "meta_data": doc.meta_data or {}
-                }
+                data = {"content": doc.content, "embedding": doc.embedding, "meta_data": doc.meta_data or {}}
                 if filters:
                     data["meta_data"].update(filters)
 
-                await self.client.query(
-                    self.UPSERT_QUERY.format(collection=self.collection),
-                    data
-                )
+                await self.client.query(self.UPSERT_QUERY.format(collection=self.collection), data)
 
-    async def async_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """Search for similar documents asynchronously"""
         async with self.connect():
             filter_condition = self._build_filter_condition(filters)
 
             result = await self.client.query(
                 self.SEARCH_QUERY.format(
-                    collection=self.collection,
-                    limit=limit,
-                    filter_condition=filter_condition,
-                    ef=self.search_ef
+                    collection=self.collection, limit=limit, filter_condition=filter_condition, ef=self.search_ef
                 ),
-                {"embedding": query, **filters} if filters else {"embedding": query}
+                {"embedding": query, **filters} if filters else {"embedding": query},
             )
 
             documents = []
             if result and result[0]:
                 for item in result[0]:
-                    doc = Document(
-                        content=item["content"],
-                        embedding=item["embedding"],
-                        meta_data=item["meta_data"]
-                    )
+                    doc = Document(content=item["content"], embedding=item["embedding"], meta_data=item["meta_data"])
                     documents.append(doc)
 
             return documents
