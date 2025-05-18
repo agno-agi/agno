@@ -54,7 +54,7 @@ class SlackAPI:
     def get_async_router(self) -> APIRouter:
         return get_async_router(agent=self.agent, team=self.team)
 
-    def get_app(self, use_async: bool = True, prefix: str = "/v1") -> FastAPI:
+    def get_app(self, use_async: bool = True, prefix: str = "/api") -> FastAPI:
         if not self.api_app:
             self.api_app = FastAPI(
                 title=self.settings.title,
