@@ -1,7 +1,7 @@
 from copy import deepcopy
 from dataclasses import dataclass
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.memory.v2.db.base import MemoryDb
 from agno.memory.v2.db.schema import MemoryRow
@@ -44,30 +44,25 @@ class MemoryManager:
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions
         self.additional_instructions = additional_instructions
+        self._tools_for_model: Optional[List[Dict[str, Any]]] = None
+        self._functions_for_model: Optional[Dict[str, Function]] = None
 
-    def add_tools_to_model(self, model: Model, tools: List[Callable]) -> None:
-        model = cast(Model, model)
-        model.reset_tools_and_functions()
-
-        _tools_for_model = []
-        _functions_for_model = {}
+    def determine_tools_for_model(self, tools: List[Callable]) -> None:
+        # Have to reset each time, because of different user IDs
+        self._tools_for_model = []
+        self._functions_for_model = {}
 
         for tool in tools:
             try:
                 function_name = tool.__name__
-                if function_name not in _functions_for_model:
+                if function_name not in self._functions_for_model:
                     func = Function.from_callable(tool, strict=True)  # type: ignore
                     func.strict = True
-                    _functions_for_model[func.name] = func
-                    _tools_for_model.append({"type": "function", "function": func.to_dict()})
+                    self._functions_for_model[func.name] = func
+                    self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                     log_debug(f"Added function {func.name}")
             except Exception as e:
                 log_warning(f"Could not add function {tool}: {e}")
-
-        # Set tools on the model
-        model.set_tools(tools=_tools_for_model)
-        # Set functions on the model
-        model.set_functions(functions=_functions_for_model)
 
     def get_system_message(
         self,
@@ -166,8 +161,7 @@ class MemoryManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.add_tools_to_model(
-            model_copy,
+        self.determine_tools_for_model(
             self._get_db_tools(
                 user_id, db, input_string, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
             ),
@@ -184,7 +178,9 @@ class MemoryManager:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = model_copy.response(messages=messages_for_model)
+        response = model_copy.response(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
@@ -214,8 +210,7 @@ class MemoryManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.add_tools_to_model(
-            model_copy,
+        self.determine_tools_for_model(
             self._get_db_tools(
                 user_id, db, input_string, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
             ),
@@ -232,7 +227,9 @@ class MemoryManager:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = await model_copy.aresponse(messages=messages_for_model)
+        response = await model_copy.aresponse(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
@@ -257,8 +254,7 @@ class MemoryManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.add_tools_to_model(
-            model_copy,
+        self.determine_tools_for_model(
             self._get_db_tools(
                 user_id, db, task, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
             ),
@@ -274,7 +270,9 @@ class MemoryManager:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = model_copy.response(messages=messages_for_model)
+        response = model_copy.response(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
@@ -299,8 +297,7 @@ class MemoryManager:
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
-        self.add_tools_to_model(
-            model_copy,
+        self.determine_tools_for_model(
             self._get_db_tools(
                 user_id, db, task, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
             ),
@@ -316,7 +313,9 @@ class MemoryManager:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = await model_copy.aresponse(messages=messages_for_model)
+        response = await model_copy.aresponse(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True

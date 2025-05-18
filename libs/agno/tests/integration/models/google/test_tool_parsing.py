@@ -16,12 +16,12 @@ def test_no_parameters_tool_parsing():
 
     tools = [{"type": "function", "function": Function.from_callable(get_the_weather_in_tokyo).to_dict()}]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
             Message(role="user", content="What is the weather in Tokyo?"),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
@@ -40,12 +40,12 @@ def test_basic_parameters_tool_parsing():
 
     tools = [{"type": "function", "function": Function.from_callable(get_weather).to_dict()}]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
             Message(role="user", content="What is the weather in Kyoto?"),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
@@ -65,12 +65,12 @@ def test_optional_parameters_tool_parsing():
 
     tools = [{"type": "function", "function": Function.from_callable(get_forecast).to_dict()}]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
             Message(role="user", content="What's the 5-day forecast for New York?"),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
@@ -93,12 +93,12 @@ def test_union_type_parameters_tool_parsing():
 
     tools = [{"type": "function", "function": Function.from_callable(generate_weather_string).to_dict()}]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
             Message(role="user", content="What's the weather like in Chicago at 75.5 degrees?"),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
@@ -119,12 +119,12 @@ def test_python312_union_syntax_tool_parsing():
 
     tools = [{"type": "function", "function": Function.from_callable(get_weather_data).to_dict()}]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
             Message(role="user", content="What's the weather like in Chicago at 75.5 degrees?"),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
@@ -148,12 +148,12 @@ def test_pydantic_model_parameters_tool_parsing():
 
     tools = [{"type": "function", "function": Function.from_callable(get_weather_for_city).to_dict()}]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
             Message(role="user", content="What is the weather in Paris, France?"),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
@@ -176,7 +176,6 @@ def test_complex_nested_parameters_tool_parsing():
 
     tools = [{"type": "function", "function": Function.from_callable(travel_recommendation).to_dict()}]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
@@ -184,7 +183,8 @@ def test_complex_nested_parameters_tool_parsing():
                 role="user",
                 content="I'm planning a trip to Barcelona. I like Spanish food and beach activities. My budget is between $1000 and $2000.",
             ),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
@@ -204,12 +204,12 @@ def test_multiple_functions_tool_parsing():
         {"type": "function", "function": Function.from_callable(get_time).to_dict()},
     ]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
             Message(role="user", content="What's the weather in London and what time is it there?"),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
@@ -228,14 +228,14 @@ def test_list_with_generics_tool_parsing():
 
     tools = [{"type": "function", "function": Function.from_callable(get_city_weather_forecast).to_dict()}]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
             Message(
                 role="user", content="What's the weather forecast for New York, London, and Tokyo for the next 5 days?"
             ),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
@@ -254,12 +254,12 @@ def test_tuple_with_fixed_types_tool_parsing():
 
     tools = [{"type": "function", "function": Function.from_callable(get_temperature_range).to_dict()}]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent."),
             Message(role="user", content="What's the temperature range in Miami for 2024-04-07?"),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
@@ -281,7 +281,6 @@ def test_sequence_with_optional_values_tool_parsing():
 
     tools = [{"type": "function", "function": Function.from_callable(get_historical_temperatures).to_dict()}]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
@@ -289,7 +288,8 @@ def test_sequence_with_optional_values_tool_parsing():
                 role="user",
                 content="What were the temperatures in Chicago on June 15-17, 2023? Include humidity information.",
             ),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
@@ -310,12 +310,12 @@ def test_optional_sequence_tool_parsing():
 
     tools = [{"type": "function", "function": Function.from_callable(get_weather_alerts).to_dict()}]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
             Message(role="user", content="Are there any high severity weather alerts in the Northeast region?"),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
@@ -341,7 +341,6 @@ def test_mixed_sequence_types_tool_parsing():
 
     tools = [{"type": "function", "function": Function.from_callable(get_trip_weather).to_dict()}]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are an agent"),
@@ -349,7 +348,8 @@ def test_mixed_sequence_types_tool_parsing():
                 role="user",
                 content="I'm planning a trip to Paris and Rome from July 10 to July 20, 2024. I might also visit Florence and Venice. What's the weather outlook?",
             ),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
@@ -402,7 +402,6 @@ def test_nested_pydantic_model_with_dict_tool_parsing():
 
     tools = [{"type": "function", "function": Function.from_callable(plan_vacation).to_dict()}]
     model = Gemini()
-    model.set_tools(tools)
     response = model.invoke(
         [
             Message(role="system", content="You are a travel agent assistant"),
@@ -410,7 +409,8 @@ def test_nested_pydantic_model_with_dict_tool_parsing():
                 role="user",
                 content="I want to plan a trip to Paris, France for me and my partner for 7 days. We'd like to stay at The Grand Hotel in a deluxe room. We enjoy French cuisine and wine tastings, and want to visit museums and take walking tours. Our budget is $5000.",
             ),
-        ]
+        ],
+        tools=tools,
     )
     assert response.function_calls is not None
     assert len(response.function_calls) > 0
