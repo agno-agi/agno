@@ -1,20 +1,17 @@
-from pathlib import Path
-
 from agno.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf import PDFKnowledgeBase
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.vectordb.lancedb import LanceDb, SearchType
+from agno.vectordb.lancedb import LanceDb
 
 # Download all sample CVs and get their paths
 downloaded_cv_paths = download_knowledge_filters_sample_data(
-    num_files=5, file_extension=SampleDataFileExtension.PDF)
+    num_files=5, file_extension=SampleDataFileExtension.PDF
+)
 
 # Initialize LanceDB
 # By default, it stores data in /tmp/lancedb
@@ -74,7 +71,6 @@ web_agent = Agent(
     role="Handle knowledge search",
     knowledge=knowledge_base,
     model=OpenAIChat(id="gpt-4o"),
-    instructions=["Always take into account filters"],
 )
 
 team_with_knowledge = Team(
@@ -90,4 +86,5 @@ team_with_knowledge = Team(
 knowledge_base.load(recreate=True)
 
 team_with_knowledge.print_response(
-    "Tell me about Jordan Mitchell's work and experience")
+    "Tell me about Jordan Mitchell's work and experience"
+)
