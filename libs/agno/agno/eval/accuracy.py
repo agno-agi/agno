@@ -163,8 +163,8 @@ class AccuracyEval:
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
-    # Log the results to the Agno platform
-    monitoring: bool = getenv("AGNO_MONITOR", "").lower() == "true"
+    # Log the results to the Agno platform. On by default.
+    monitoring: bool = getenv("AGNO_MONITOR", "true").lower() == "true"
 
     def get_evaluator_agent(self) -> Agent:
         """Return the evaluator agent. If not provided, build it based on the evaluator fields and default instructions."""

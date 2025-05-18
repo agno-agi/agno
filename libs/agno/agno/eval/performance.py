@@ -178,8 +178,8 @@ class PerformanceEval:
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
-    # Log the results to the Agno platform
-    monitoring: bool = getenv("AGNO_MONITOR", "").lower() == "true"
+    # Log the results to the Agno platform. On by default.
+    monitoring: bool = getenv("AGNO_MONITOR", "true").lower() == "true"
 
     def _measure_time(self) -> float:
         """Measure execution time for a single run."""
