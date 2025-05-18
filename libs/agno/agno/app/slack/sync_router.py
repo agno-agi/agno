@@ -9,10 +9,10 @@ from agno.media import Audio, File, Image, Video
 from agno.team.team import Team
 from agno.tools.slack import SlackTools
 
-router = APIRouter()
-SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")  # set this in your environment
-def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
 
+SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")  
+def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
+    router = APIRouter()
     def verify_slack_signature(body: bytes, timestamp: str, slack_signature: str) -> bool:
         if not SLACK_SIGNING_SECRET:
             raise HTTPException(status_code=500, detail="SLACK_SIGNING_SECRET is not set")
