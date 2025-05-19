@@ -2,7 +2,6 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.thinking import ThinkingTools
 
-# 1) Define a tiny Puzzle Master with your three headers
 puzzle_master = Agent(
     model=Gemini(id="gemini-2.0-flash"),
     tools=[ThinkingTools(add_instructions=True)],
@@ -13,7 +12,7 @@ puzzle_master = Agent(
     success_criteria="The puzzle has been solved correctly with all drinks uniquely assigned.",
 )
 
-# 2) Prompt for a mini logic puzzle
+
 prompt = """
 Create a small logic puzzle:
 Three friends—Alice, Bob, and Carol—each choose a different drink from tea, coffee, and milk.
