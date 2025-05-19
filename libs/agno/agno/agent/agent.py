@@ -984,6 +984,7 @@ class Agent:
         5. Save session to storage
         6. Save output to file if save_response_to_file is set
         """
+        self.model = cast(Model, self.model)
         # 1. Reason about the task if reasoning is enabled
         await self._ahandle_reasoning(run_messages=run_messages, session_id=session_id)
 
