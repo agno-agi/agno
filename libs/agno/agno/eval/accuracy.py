@@ -344,6 +344,9 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
                 eval_type=EvalType.ACCURACY,
                 agent_id=self.agent.agent_id if self.agent is not None else None,
                 agent_model_id=self.agent.model.id if self.agent is not None and self.agent.model is not None else None,
+                agent_model_provider=self.agent.model.provider
+                if self.agent is not None and self.agent.model is not None
+                else None,
                 name=self.name if self.name is not None else None,
                 evaluated_entity_name=self.agent.name if self.agent is not None else None,
             )
@@ -401,6 +404,10 @@ Your evaluation should be objective, thorough, and well-reasoned. Provide specif
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
                 agent_id=self.agent.agent_id if self.agent is not None else None,
+                agent_model_id=self.agent.model.id if self.agent is not None and self.agent.model is not None else None,
+                agent_model_provider=self.agent.model.provider
+                if self.agent is not None and self.agent.model is not None
+                else None,
                 name=self.name if self.name is not None else None,
                 evaluated_entity_name=self.agent.name if self.agent is not None else None,
             )

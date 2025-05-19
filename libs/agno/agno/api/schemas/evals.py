@@ -15,6 +15,7 @@ class EvalRunCreate(BaseModel):
 
     agent_id: Optional[str] = None
     agent_model_id: Optional[str] = None
+    agent_model_provider: Optional[str] = None
     team_id: Optional[str] = None
     name: Optional[str] = None
     evaluated_entity_name: Optional[str] = None
