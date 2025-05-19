@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message, MessageReferences
+from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import logger
 
@@ -19,12 +20,17 @@ class RunEvent(str, Enum):
     run_completed = "RunCompleted"
     run_error = "RunError"
     run_cancelled = "RunCancelled"
+
+    tool_calls_paused = "ToolCallsPaused"
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
+
     reasoning_started = "ReasoningStarted"
     reasoning_step = "ReasoningStep"
     reasoning_completed = "ReasoningCompleted"
+
     updating_memory = "UpdatingMemory"
+
     workflow_started = "WorkflowStarted"
     workflow_completed = "WorkflowCompleted"
 
@@ -91,7 +97,7 @@ class RunResponse:
     agent_id: Optional[str] = None
     session_id: Optional[str] = None
     workflow_id: Optional[str] = None
-    tools: Optional[List[Dict[str, Any]]] = None
+    tools: Optional[List[ToolExecution]] = None
     formatted_tool_calls: Optional[List[str]] = None
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
@@ -100,6 +106,11 @@ class RunResponse:
     citations: Optional[Citations] = None
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
+
+    @property
+    def is_paused(self):
+        if self.event == RunEvent.tool_calls_paused:
+            return True
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
