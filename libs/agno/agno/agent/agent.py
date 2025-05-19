@@ -209,7 +209,7 @@ class Agent:
     # Use these for few-shot learning or to provide additional context to the Model.
     # Note: these are not retained in memory, they are added directly to the messages sent to the model.
     add_messages: Optional[List[Union[Dict, Message]]] = None
-
+    success_criteria: Optional[str] = None
     # --- User message settings ---
     # Provide the user message as a string, list, dict, or function
     # Note: this will ignore the message sent to the run function
@@ -328,6 +328,7 @@ class Agent:
         create_default_system_message: bool = True,
         description: Optional[str] = None,
         goal: Optional[str] = None,
+        success_criteria: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
@@ -419,6 +420,7 @@ class Agent:
 
         self.description = description
         self.goal = goal
+        self.success_criteria = success_criteria
         self.instructions = instructions
         self.expected_output = expected_output
         self.additional_context = additional_context
@@ -782,7 +784,7 @@ class Agent:
                         event=RunEvent.tool_call_started,
                         session_id=session_id,
                         run_response=run_response,
-                        )
+                    )
 
                 # If the model response is a tool_call_completed, update the existing tool call in the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
@@ -2928,6 +2930,12 @@ class Agent:
             system_message_content += (
                 f"<transfer_instructions>\n{self.get_transfer_instructions().strip()}\n</transfer_instructions>\n\n"
             )
+        if self.success_criteria:
+            system_message_content += "Your task is successful when the following criteria is met:\n"
+            system_message_content += "<success_criteria>\n"
+            system_message_content += f"{self.success_criteria}\n"
+            system_message_content += "</success_criteria>\n"
+            system_message_content += "Stop running when the success_criteria is met.\n\n"
         # 3.3.10 Then add memories to the system prompt
         if self.memory:
             if isinstance(self.memory, AgentMemory) and self.memory.create_user_memories:
