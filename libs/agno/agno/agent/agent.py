@@ -588,11 +588,6 @@ class Agent:
         5. Save session to storage
         6. Save output to file if save_response_to_file is set
         """
-        if isinstance(self.memory, AgentMemory):
-            self.memory = cast(AgentMemory, self.memory)
-        else:
-            self.memory = cast(Memory, self.memory)
-        self.model = cast(Model, self.model)
 
         # 1. Reason about the task
         self._handle_reasoning(run_messages=run_messages, session_id=session_id)
@@ -602,6 +597,7 @@ class Agent:
         index_of_last_user_message = len(run_messages.messages)
 
         # 2. Generate a response from the Model (includes running function calls)
+        self.model = cast(Model, self.model)
         model_response: ModelResponse = self.model.response(
             messages=run_messages.messages,
             response_format=response_format,
@@ -664,11 +660,6 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponse]:
-        if isinstance(self.memory, AgentMemory):
-            self.memory = cast(AgentMemory, self.memory)
-        else:
-            self.memory = cast(Memory, self.memory)
-        self.model = cast(Model, self.model)
 
         # 1. Reason about the task if reasoning is enabled
         yield from self._handle_reasoning_stream(run_messages=run_messages, session_id=session_id)
@@ -993,13 +984,6 @@ class Agent:
         5. Save session to storage
         6. Save output to file if save_response_to_file is set
         """
-
-        if isinstance(self.memory, AgentMemory):
-            self.memory = cast(AgentMemory, self.memory)
-        else:
-            self.memory = cast(Memory, self.memory)
-        self.model = cast(Model, self.model)
-
         # 1. Reason about the task if reasoning is enabled
         await self._ahandle_reasoning(run_messages=run_messages, session_id=session_id)
 
@@ -1080,12 +1064,6 @@ class Agent:
         5. Save session to storage
         6. Save output to file if save_response_to_file is set
         """
-
-        if isinstance(self.memory, AgentMemory):
-            self.memory = cast(AgentMemory, self.memory)
-        else:
-            self.memory = cast(Memory, self.memory)
-        self.model = cast(Model, self.model)
 
         # 1. Reason about the task if reasoning is enabled
         async for item in self._ahandle_reasoning_stream(run_messages=run_messages, session_id=session_id):
@@ -1424,6 +1402,12 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         index_of_last_user_message: int = 0,
     ) -> None:
+
+        if isinstance(self.memory, AgentMemory):
+            self.memory = cast(AgentMemory, self.memory)
+        else:
+            self.memory = cast(Memory, self.memory)
+
         if isinstance(self.memory, AgentMemory):
             # Add the system message to the memory
             if run_messages.system_message is not None:
@@ -1509,6 +1493,12 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         index_of_last_user_message: int = 0,
     ) -> None:
+
+        if isinstance(self.memory, AgentMemory):
+            self.memory = cast(AgentMemory, self.memory)
+        else:
+            self.memory = cast(Memory, self.memory)
+
         if isinstance(self.memory, AgentMemory):
             # Add the system message to the memory
             if run_messages.system_message is not None:
@@ -1593,6 +1583,8 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponse]:
+        self.model = cast(Model, self.model)
+
         reasoning_started = False
         reasoning_time_taken = 0.0
         model_response = ModelResponse(content="")
@@ -1649,6 +1641,8 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
     ) -> AsyncIterator[RunResponse]:
+        self.model = cast(Model, self.model)
+
         reasoning_started = False
         reasoning_time_taken = 0.0
         model_response = ModelResponse(content="")

@@ -689,6 +689,9 @@ class Team:
             self.model = cast(Model, self.model)
             self.determine_tools_for_model(model=self.model, tools=_tools)
 
+            # Configure parameters for the model
+            response_format = self._get_response_format()
+
             # Run the team
             try:
                 self.run_response = TeamRunResponse(run_id=self.run_id, session_id=session_id, team_id=self.team_id)
@@ -726,6 +729,7 @@ class Team:
                         stream_intermediate_steps=stream_intermediate_steps,
                         session_id=session_id,
                         user_id=user_id,
+                        response_format=response_format
                     )
 
                     return resp
@@ -735,6 +739,7 @@ class Team:
                         run_messages=run_messages,
                         session_id=session_id,
                         user_id=user_id,
+                        response_format=response_format
                     )
 
                     return self.run_response
@@ -771,6 +776,7 @@ class Team:
         run_messages: RunMessages,
         session_id: str,
         user_id: Optional[str] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> None:
         """Run the Team and return the response.
 
@@ -784,23 +790,10 @@ class Team:
         7. Parse any structured outputs
         8. Log the team run
         """
-        if isinstance(self.memory, TeamMemory):
-            self.memory = cast(TeamMemory, self.memory)
-        else:
-            self.memory = cast(Memory, self.memory)
-        self.model = cast(Model, self.model)
 
-        # Configure parameters for the model
-        response_format = self._get_response_format()
 
         # 1. Reason about the task(s) if reasoning is enabled
-        if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self._reason(
-                run_response=run_response, run_messages=run_messages, session_id=session_id
-            )
-
-            # Consume the generator without yielding
-            deque(reasoning_generator, maxlen=0)
+        self._handle_reasoning(run_response=run_response, run_messages=run_messages, session_id=session_id)
 
         # Update agent state
         self.run_messages = run_messages
@@ -1553,14 +1546,7 @@ class Team:
         response_format = self._get_response_format()
 
         # 1. Reason about the task(s) if reasoning is enabled
-        if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self._areason(
-                run_response=run_response, run_messages=run_messages, session_id=session_id
-            )
-
-            # Consume the generator without yielding
-            async for _ in reasoning_generator:
-                pass
+        await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages, session_id=session_id)
 
         # Update agent state
         self.run_messages = run_messages
@@ -1755,16 +1741,8 @@ class Team:
         reasoning_time_taken = 0.0
 
         # 1. Reason about the task(s) if reasoning is enabled
-        if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self._areason(
-                run_response=run_response,
-                run_messages=run_messages,
-                session_id=session_id,
-                stream_intermediate_steps=True,
-            )
-
-            async for reasoning_response in reasoning_generator:
-                yield reasoning_response  # type: ignore
+        async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages, session_id=session_id):
+            yield item
 
         # Update agent state
         self.run_messages = run_messages
@@ -3816,6 +3794,31 @@ class Team:
     ###########################################################################
     # Helpers
     ###########################################################################
+
+    def _handle_reasoning(self, run_response: TeamRunResponse, run_messages: RunMessages, session_id: str) -> None:
+        if self.reasoning or self.reasoning_model is not None:
+            reasoning_generator = self._reason(run_response=run_response, run_messages=run_messages, session_id=session_id)
+
+            # Consume the generator without yielding
+            deque(reasoning_generator, maxlen=0)
+
+    def _handle_reasoning_stream(self, run_response: TeamRunResponse, run_messages: RunMessages, session_id: str) -> Iterator[RunResponse]:
+        if self.reasoning or self.reasoning_model is not None:
+            reasoning_generator = self._reason(run_response=run_response, run_messages=run_messages, session_id=session_id)
+            yield from reasoning_generator
+
+    async def _ahandle_reasoning(self,run_response: TeamRunResponse,  run_messages: RunMessages, session_id: str) -> None:
+        if self.reasoning or self.reasoning_model is not None:
+            reason_generator = self._areason(run_response=run_response, run_messages=run_messages, session_id=session_id)
+            # Consume the generator without yielding
+            async for _ in reason_generator:
+                pass
+
+    async def _ahandle_reasoning_stream(self, run_response: TeamRunResponse, run_messages: RunMessages, session_id: str) -> AsyncIterator[RunResponse]:
+        if self.reasoning or self.reasoning_model is not None:
+            reason_generator = self._areason(run_response=run_response, run_messages=run_messages, session_id=session_id)
+            async for item in reason_generator:
+                yield item
 
     def _calculate_session_metrics(self, messages: List[Message]) -> SessionMetrics:
         session_metrics = SessionMetrics()
