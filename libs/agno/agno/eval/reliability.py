@@ -119,6 +119,9 @@ class ReliabilityEval:
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
                 agent_id=self.agent_response.agent_id if self.agent_response is not None else None,
+                agent_model_id=self.agent_response.model
+                if self.agent_response is not None and self.agent_response.model is not None
+                else None,
                 name=self.name if self.name is not None else None,
             )
 
