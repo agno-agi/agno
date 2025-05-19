@@ -19,7 +19,6 @@ from typing import (
     Union,
     cast,
     overload,
-    Tuple,
 )
 from uuid import uuid4
 
@@ -660,7 +659,6 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponse]:
-
         # 1. Reason about the task if reasoning is enabled
         yield from self._handle_reasoning_stream(run_messages=run_messages, session_id=session_id)
 
@@ -1052,7 +1050,7 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         message: Optional[Union[str, List, Dict, Message]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: Optional[bool] = None,
+        stream_intermediate_steps: bool = False,
     ) -> AsyncIterator[RunResponse]:
         """Run the Agent and yield the RunResponse.
 
@@ -1402,7 +1400,6 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         index_of_last_user_message: int = 0,
     ) -> None:
-
         if isinstance(self.memory, AgentMemory):
             self.memory = cast(AgentMemory, self.memory)
         else:
@@ -1493,7 +1490,6 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         index_of_last_user_message: int = 0,
     ) -> None:
-
         if isinstance(self.memory, AgentMemory):
             self.memory = cast(AgentMemory, self.memory)
         else:
@@ -1585,8 +1581,10 @@ class Agent:
     ) -> Iterator[RunResponse]:
         self.model = cast(Model, self.model)
 
-        reasoning_started = False
-        reasoning_time_taken = 0.0
+        reasoning_state = {
+            "reasoning_started": False,
+            "reasoning_time_taken": 0.0,
+        }
         model_response = ModelResponse(content="")
 
         for model_response_chunk in self.model.response_stream(
@@ -1597,24 +1595,23 @@ class Agent:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
         ):
-            reasoning_started, reasoning_time_taken = self._handle_model_response_chunk(
+            yield from self._handle_model_response_chunk(
                 run_response=run_response,
                 session_id=session_id,
                 model_response=model_response,
                 model_response_chunk=model_response_chunk,
                 stream_intermediate_steps=stream_intermediate_steps,
-                reasoning_started=reasoning_started,
-                reasoning_time_taken=reasoning_time_taken,
+                reasoning_state=reasoning_state,
             )
 
         # Determine reasoning completed
-        if stream_intermediate_steps and reasoning_started:
+        if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
             if run_response and run_response.extra_data and hasattr(run_response.extra_data, "reasoning_steps"):
                 all_reasoning_steps = cast(List[ReasoningStep], run_response.extra_data.reasoning_steps)
 
             if all_reasoning_steps:
-                self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
+                self._add_reasoning_metrics_to_extra_data(reasoning_state["reasoning_time_taken"])
                 yield self.create_run_response(
                     content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__class__.__name__,
@@ -1643,8 +1640,10 @@ class Agent:
     ) -> AsyncIterator[RunResponse]:
         self.model = cast(Model, self.model)
 
-        reasoning_started = False
-        reasoning_time_taken = 0.0
+        reasoning_state = {
+            "reasoning_started": False,
+            "reasoning_time_taken": 0.0,
+        }
         model_response = ModelResponse(content="")
 
         model_response_stream = self.model.aresponse_stream(
@@ -1657,23 +1656,23 @@ class Agent:
         )  # type: ignore
 
         async for model_response_chunk in model_response_stream:  # type: ignore
-            reasoning_started, reasoning_time_taken = self._handle_model_response_chunk(
+            for chunk in self._handle_model_response_chunk(
                 run_response=run_response,
                 session_id=session_id,
                 model_response=model_response,
                 model_response_chunk=model_response_chunk,
                 stream_intermediate_steps=stream_intermediate_steps,
-                reasoning_started=reasoning_started,
-                reasoning_time_taken=reasoning_time_taken,
-            )
+                reasoning_state=reasoning_state,
+            ):
+                yield chunk
 
-        if stream_intermediate_steps and reasoning_started:
+        if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
             if run_response and run_response.extra_data and hasattr(run_response.extra_data, "reasoning_steps"):
                 all_reasoning_steps = cast(List[ReasoningStep], run_response.extra_data.reasoning_steps)
 
             if all_reasoning_steps:
-                self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
+                self._add_reasoning_metrics_to_extra_data(reasoning_state["reasoning_time_taken"])
                 yield self.create_run_response(
                     content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__class__.__name__,
@@ -1698,10 +1697,9 @@ class Agent:
         session_id: str,
         model_response: ModelResponse,
         model_response_chunk: ModelResponse,
+        reasoning_state: Dict[str, Any],
         stream_intermediate_steps: bool = False,
-        reasoning_started: bool = False,
-        reasoning_time_taken: float = 0.0,
-    ) -> Tuple[bool, float]:
+    ) -> Iterator[RunResponse]:
         # If the model response is an assistant_response, yield a RunResponse
         if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
             # Process content and thinking
@@ -1833,16 +1831,18 @@ class Agent:
 
                         metrics = tool_call.get("metrics")
                         if metrics is not None and metrics.time is not None:
-                            reasoning_time_taken = reasoning_time_taken + float(metrics.time)
+                            reasoning_state["reasoning_time_taken"] = reasoning_state["reasoning_time_taken"] + float(
+                                metrics.time
+                            )
 
             if stream_intermediate_steps:
                 if reasoning_step is not None:
-                    if not reasoning_started:
+                    if not reasoning_state["reasoning_started"]:
                         yield self.create_run_response(
                             content="Reasoning started",
                             event=RunEvent.reasoning_started,
                         )
-                        reasoning_started = True
+                        reasoning_state["reasoning_started"] = True
 
                     yield self.create_run_response(
                         content=reasoning_step,
@@ -1859,7 +1859,6 @@ class Agent:
                 session_id=session_id,
                 run_response=run_response,
             )
-        return reasoning_started, reasoning_time_taken
 
     def create_run_response(
         self,
