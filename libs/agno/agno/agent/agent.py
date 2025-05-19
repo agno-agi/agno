@@ -616,6 +616,7 @@ class Agent:
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
+<<<<<<< HEAD
         # We should break out of the run function
         if any(tc.confirmation_required for tc in self.run_response.tools):
             # Save session to storage
@@ -632,6 +633,8 @@ class Agent:
             run_response.event = RunEvent.tool_calls_paused
             return run_response
 
+=======
+>>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
         # 3. Update Agent Memory
         self._update_memory(
             run_response=run_response,
@@ -690,7 +693,11 @@ class Agent:
         # We track this, so we can add messages after this index to the RunResponse and Memory
         index_of_last_user_message = len(run_messages.messages)
 
+<<<<<<< HEAD
         # 1. Start the Run by yielding a RunStarted event
+=======
+        # 6. Start the Run by yielding a RunStarted event
+>>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
         if stream_intermediate_steps:
             yield self.create_run_response("Run started", session_id=session_id, event=RunEvent.run_started)
 
@@ -1006,6 +1013,7 @@ class Agent:
         5. Save session to storage
         6. Save output to file if save_response_to_file is set
         """
+        self.model = cast(Model, self.model)
         # 1. Reason about the task if reasoning is enabled
         await self._ahandle_reasoning(run_messages=run_messages, session_id=session_id)
 
@@ -1025,6 +1033,7 @@ class Agent:
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
+<<<<<<< HEAD
         # We should break out of the run function
         if any(tc.confirmation_required for tc in self.run_response.tools):
             # Save session to storage
@@ -1041,6 +1050,8 @@ class Agent:
             run_response.event = RunEvent.tool_calls_paused
             return run_response
 
+=======
+>>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
         # 3. Update Agent Memory
         await self._aupdate_memory(
             run_response=run_response,
@@ -1368,6 +1379,7 @@ class Agent:
         else:
             raise Exception(f"Failed after {num_attempts} attempts.")
 
+<<<<<<< HEAD
     @overload
     def continue_run(
         self,
@@ -1696,6 +1708,12 @@ class Agent:
         # Format tool calls if they exist
         if model_response.tool_calls:
             run_response.formatted_tool_calls = format_tool_calls(model_response.tool_executions)
+=======
+    def _update_run_response(self, model_response: ModelResponse, run_response: RunResponse, run_messages: RunMessages):
+        # Format tool calls if they exist
+        if model_response.tool_calls:
+            run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
+>>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
 
         # Handle structured outputs
         if self.response_model is not None and model_response.parsed is not None:
@@ -1722,6 +1740,7 @@ class Agent:
         if model_response.citations is not None:
             run_response.citations = model_response.citations
 
+<<<<<<< HEAD
         # Update the run_response tools with the model response tool_executions
         if model_response.tool_executions is not None:
             if run_response.tools is None:
@@ -1731,6 +1750,17 @@ class Agent:
 
             # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
             for tool_call in model_response.tool_executions:
+=======
+        # Update the run_response tools with the model response tools
+        if model_response.tool_calls is not None:
+            if run_response.tools is None:
+                run_response.tools = model_response.tool_calls
+            else:
+                run_response.tools.extend(model_response.tool_calls)
+
+            # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
+            for tool_call in model_response.tool_calls:
+>>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
                 tool_name = tool_call.get("tool_name", "")
                 if tool_name.lower() in ["think", "analyze"]:
                     tool_args = tool_call.get("tool_args", {})
@@ -1940,7 +1970,10 @@ class Agent:
         run_response: RunResponse,
         run_messages: RunMessages,
         session_id: str,
+<<<<<<< HEAD
         user_id: Optional[str] = None,
+=======
+>>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponse]:
@@ -2139,6 +2172,7 @@ class Agent:
 
                 yield run_response
 
+<<<<<<< HEAD
         # Handle tool interruption events
         elif model_response_chunk.event in [
             ModelResponseEvent.tool_call_confirmation_required.value,
@@ -2154,10 +2188,13 @@ class Agent:
 
                 # Format tool calls whenever new ones are added during streaming
                 run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
+=======
+>>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
         # If the model response is a tool_call_started, add the tool call to the run_response
         elif (
             model_response_chunk.event == ModelResponseEvent.tool_call_started.value
         ):  # Add tool calls to the run_response
+<<<<<<< HEAD
             tool_executions_list = model_response_chunk.tool_executions
             if tool_executions_list is not None:
                 # Add tool calls to the agent.run_response
@@ -2165,6 +2202,15 @@ class Agent:
                     run_response.tools = tool_executions_list
                 else:
                     run_response.tools.extend(tool_executions_list)
+=======
+            new_tool_calls_list = model_response_chunk.tool_calls
+            if new_tool_calls_list is not None:
+                # Add tool calls to the agent.run_response
+                if run_response.tools is None:
+                    run_response.tools = new_tool_calls_list
+                else:
+                    run_response.tools.extend(new_tool_calls_list)
+>>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
 
                 # Format tool calls whenever new ones are added during streaming
                 run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
@@ -2182,8 +2228,13 @@ class Agent:
         elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
             reasoning_step: Optional[ReasoningStep] = None
 
+<<<<<<< HEAD
             tool_executions_list = model_response_chunk.tool_executions
             if tool_executions_list is not None:
+=======
+            new_tool_calls_list = model_response_chunk.tool_calls
+            if new_tool_calls_list is not None:
+>>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
                 # Update the existing tool call in the run_response
                 if run_response.tools:
                     # Create a mapping of tool_call_id to index
@@ -2193,16 +2244,27 @@ class Agent:
                         if tc.get("tool_call_id") is not None
                     }
                     # Process tool calls
+<<<<<<< HEAD
                     for tool_call_dict in tool_executions_list:
+=======
+                    for tool_call_dict in new_tool_calls_list:
+>>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
                         tool_call_id = tool_call_dict.get("tool_call_id")
                         index = tool_call_index_map.get(tool_call_id)
                         if index is not None:
                             run_response.tools[index] = tool_call_dict
                 else:
+<<<<<<< HEAD
                     run_response.tools = tool_executions_list
 
                 # Only iterate through new tool calls
                 for tool_call in tool_executions_list:
+=======
+                    run_response.tools = new_tool_calls_list
+
+                # Only iterate through new tool calls
+                for tool_call in new_tool_calls_list:
+>>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
                     tool_name = tool_call.get("tool_name", "")
                     if tool_name.lower() in ["think", "analyze"]:
                         tool_args = tool_call.get("tool_args", {})
