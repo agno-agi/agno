@@ -8,16 +8,16 @@ from agno.agent.agent import Agent
 from agno.media import Audio, File, Image, Video
 from agno.team.team import Team
 from agno.tools.slack import SlackTools
-
-
-SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")  
+from agno.utils.log import log_error, log_info, log_warning
+try:
+    SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")
+except:
+    log_error("Slack signin secret missing")
 def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
     router = APIRouter()
     def verify_slack_signature(body: bytes, timestamp: str, slack_signature: str) -> bool:
         if not SLACK_SIGNING_SECRET:
             raise HTTPException(status_code=500, detail="SLACK_SIGNING_SECRET is not set")
-
-        # Ensure the request timestamp is recent (e.g., to prevent replay attacks)
         if abs(time.time() - int(timestamp)) > 60 * 5:
             return False
 
@@ -55,14 +55,17 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
 
         return {"status": "ok"}
 
-    async def process_slack_event(event: dict):
+    def process_slack_event(event: dict):
         # Implement your event processing logic here
         # For example, handle messages, reactions, etc.
         print("Processing event:", event)
         if event.get("type")=="message":
-            message_text=event.get("text")
-            channel_id=event.get("channel")
+            if event.get("bot_id"):
+                pass
+            else:
+                message_text=event.get("text")
+                channel_id=event.get("channel")
         if agent:
-            response = await agent.arun(message_text)
+            response = agent.arun(message_text)
         SlackTools().send_message(channel=channel_id,text=response.content)
     return router
