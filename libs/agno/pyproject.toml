@@ -48,6 +48,15 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
 
+# Models integration test dependencies
+integration-tests = [
+    "exa_py",
+    "duckduckgo-search",
+    "yfinance",
+    "sqlalchemy",
+    "Pillow",
+]
+
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
 weave = ["weave"]

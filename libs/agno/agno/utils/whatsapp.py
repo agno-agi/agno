@@ -100,10 +100,10 @@ def upload_media(media_data: bytes, mime_type: str, filename: str = "file"):
 
     headers = {"Authorization": f"Bearer {access_token}"}
 
-    data = {"messaging_product": "whatsapp",
-            "type": mime_type}
+    data = {"messaging_product": "whatsapp", "type": mime_type}
     try:
         from io import BytesIO
+
         file_data = BytesIO(media_data)
         files = {"file": (filename, file_data, mime_type)}
 
@@ -137,10 +137,10 @@ async def upload_media_async(media_data: bytes, mime_type: str, filename: str = 
 
     headers = {"Authorization": f"Bearer {access_token}"}
 
-    data = {"messaging_product": "whatsapp",
-            "type": mime_type}
+    data = {"messaging_product": "whatsapp", "type": mime_type}
     try:
         from io import BytesIO
+
         file_data = BytesIO(media_data)
         files = {"file": (filename, file_data, mime_type)}
 
@@ -193,11 +193,12 @@ async def send_image_message_async(
     try:
         async with httpx.AsyncClient() as client:
             import json
+
             log_debug(f"Request data: {json.dumps(data, indent=2)}")
             response = await client.post(url, headers=headers, json=data)
             response.raise_for_status()
             log_debug(f"Response: {response.text}")
-            
+
     except httpx.HTTPStatusError as e:
         log_error(f"Failed to send WhatsApp image message: {e}")
         log_error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
@@ -241,6 +242,7 @@ def send_image_message(
 
     try:
         import json
+
         log_debug(f"Request data: {json.dumps(data, indent=2)}")
         response = requests.post(url, headers=headers, json=data)
         response.raise_for_status()

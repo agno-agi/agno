@@ -1,3 +1,4 @@
+import base64
 from os import getenv
 from typing import Optional
 
@@ -10,7 +11,7 @@ from agno.team.team import Team
 from agno.tools.whatsapp import WhatsAppTools
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.whatsapp import get_media, send_image_message, upload_media
-import base64
+
 from .security import validate_webhook_signature
 
 
@@ -137,12 +138,26 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                 _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
 
             if response.images:
-                if isinstance(response.images[0].content,bytes):
-                    image_bytes=response.images[0].content
+                image_content = response.images[0].content
+                image_bytes = None
+                if isinstance(image_content, bytes):
+                    try:
+                        decoded_string = image_content.decode("utf-8")
+
+                        image_bytes = base64.b64decode(decoded_string)
+                    except UnicodeDecodeError:
+                        image_bytes = image_content
+                elif isinstance(image_content, str):
+                    image_bytes = base64.b64decode(image_content)
                 else:
-                    image_bytes = base64.b64decode(response.images[0].content)
-                media_id = upload_media(media_data=image_bytes, mime_type="image/png", filename="image.png")
-                send_image_message(media_id=media_id, recipient=phone_number, text=response.content)
+                    log_error(f"Unexpected image content type: {type(image_content)} for user {phone_number}")
+
+                if image_bytes:
+                    media_id = upload_media(media_data=image_bytes, mime_type="image/png", filename="image.png")
+                    send_image_message(media_id=media_id, recipient=phone_number, text=response.content)
+                else:
+                    log_warning(f"Could not process image content for user {phone_number}. Type: {type(image_content)}")
+                    _send_whatsapp_message(phone_number, response.content)
             else:
                 _send_whatsapp_message(phone_number, response.content)
 

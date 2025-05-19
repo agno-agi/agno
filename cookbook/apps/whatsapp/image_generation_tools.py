@@ -10,7 +10,7 @@ image_agent = Agent(
     markdown=True,
     show_tool_calls=True,
     debug_mode=True,
-    add_history_to_messages=True
+    add_history_to_messages=True,
 )
 
 
