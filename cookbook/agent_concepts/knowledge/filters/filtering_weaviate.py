@@ -4,24 +4,25 @@ from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.vectordb.lancedb import LanceDb
+from agno.vectordb.search import SearchType
+from agno.vectordb.weaviate import Distance, VectorIndex, Weaviate
 
 # Download all sample CVs and get their paths
 downloaded_cv_paths = download_knowledge_filters_sample_data(
     num_files=5, file_extension=SampleDataFileExtension.PDF
 )
 
-# Initialize LanceDB
-# By default, it stores data in /tmp/lancedb
-vector_db = LanceDb(
-    table_name="recipes",
-    uri="tmp/lancedb",  # You can change this path to store data elsewhere
-)
-
 # Step 1: Initialize knowledge base with documents and metadata
 # ------------------------------------------------------------------------------
 # When initializing the knowledge base, we can attach metadata that will be used for filtering
 # This metadata can include user IDs, document types, dates, or any other attributes
+
+vector_db = Weaviate(
+    collection="recipes",
+    vector_index=VectorIndex.HNSW,
+    distance=Distance.COSINE,
+    local=False,  # Set to False if using Weaviate Cloud and True if using local instance
+)
 
 knowledge_base = PDFKnowledgeBase(
     path=[

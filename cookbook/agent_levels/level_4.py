@@ -1,33 +1,10 @@
-from textwrap import dedent
-
 from agno.agent import Agent
-from agno.knowledge.url import UrlKnowledge
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.knowledge import KnowledgeTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
-from agno.vectordb.lancedb import LanceDb, SearchType
-
-agno_docs = UrlKnowledge(
-    urls=["https://www.paulgraham.com/read.html"],
-    # Use LanceDB as the vector database and store embeddings in the `agno_docs` table
-    vector_db=LanceDb(
-        uri="tmp/lancedb",
-        table_name="agno_docs",
-        search_type=SearchType.hybrid,
-    ),
-)
-
-knowledge_tools = KnowledgeTools(
-    knowledge=agno_docs,
-    think=True,
-    search=True,
-    analyze=True,
-    add_few_shot=True,
-)
 
 web_agent = Agent(
     name="Web Search Agent",
@@ -45,18 +22,25 @@ finance_agent = Agent(
     tools=[
         YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
     ],
+    instructions=[
+        "You are a financial data specialist. Provide concise and accurate data.",
+        "Use tables to display stock prices, fundamentals (P/E, Market Cap), and recommendations.",
+        "Clearly state the company name and ticker symbol.",
+        "Briefly summarize recent company-specific news if available.",
+        "Focus on delivering the requested financial data points clearly.",
+    ],
     add_datetime_to_instructions=True,
 )
 
 team_leader = Team(
-    name="Reasoning Finance Team",
+    name="Reasoning Finance Team Leader",
     mode="coordinate",
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-3-7-sonnet-latest"),
     members=[
         web_agent,
         finance_agent,
     ],
-    tools=[knowledge_tools],
+    tools=[ReasoningTools(add_instructions=True)],
     instructions=[
         "Only output the final answer, no other text.",
         "Use tables to display data",
@@ -69,16 +53,18 @@ team_leader = Team(
 )
 
 
-def run_team(task: str):
-    # Comment out after first run
-    agno_docs.load(recreate=True)
+if __name__ == "__main__":
     team_leader.print_response(
-        task,
+        """\
+        Analyze the impact of recent US tariffs on market performance across these key sectors:
+        - Steel & Aluminum: (X, NUE, AA)
+        - Technology Hardware: (AAPL, DELL, HPQ)
+
+        For each sector:
+        1. Compare stock performance before and after tariff implementation
+        2. Identify supply chain disruptions and cost impact percentages
+        3. Analyze companies' strategic responses (reshoring, price adjustments, supplier diversification)""",
         stream=True,
         stream_intermediate_steps=True,
         show_full_reasoning=True,
     )
-
-
-if __name__ == "__main__":
-    run_team("What does Paul Graham talk about the need to read in this essay?")
