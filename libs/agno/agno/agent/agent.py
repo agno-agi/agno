@@ -328,6 +328,7 @@ class Agent:
         create_default_system_message: bool = True,
         description: Optional[str] = None,
         goal: Optional[str] = None,
+        success_criteria: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
@@ -359,7 +360,6 @@ class Agent:
         debug_mode: bool = False,
         monitoring: bool = False,
         telemetry: bool = True,
-        success_criteria: Optional[str] = None,
     ):
         self.model = model
         self.name = name
@@ -420,6 +420,7 @@ class Agent:
 
         self.description = description
         self.goal = goal
+        self.success_criteria = success_criteria
         self.instructions = instructions
         self.expected_output = expected_output
         self.additional_context = additional_context
@@ -459,7 +460,7 @@ class Agent:
         self.debug_mode = debug_mode
         self.monitoring = monitoring
         self.telemetry = telemetry
-        self.success_criteria = success_criteria
+
         # --- Params not to be set by user ---
         self.session_metrics: Optional[SessionMetrics] = None
 
@@ -2934,7 +2935,7 @@ class Agent:
             system_message_content += "<success_criteria>\n"
             system_message_content += f"{self.success_criteria}\n"
             system_message_content += "</success_criteria>\n"
-            system_message_content += "Stop the agent run when the success_criteria is met.\n\n"
+            system_message_content += "Stop running when the success_criteria is met.\n\n"
         # 3.3.10 Then add memories to the system prompt
         if self.memory:
             if isinstance(self.memory, AgentMemory) and self.memory.create_user_memories:
