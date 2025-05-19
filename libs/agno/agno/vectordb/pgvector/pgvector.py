@@ -315,6 +315,11 @@ class PgVector(VectorDb):
                                 cleaned_content = self._clean_content(doc.content)
                                 content_hash = md5(cleaned_content.encode()).hexdigest()
                                 _id = doc.id or content_hash
+
+                                meta_data = doc.meta_data or {}
+                                if filters:
+                                    meta_data.update(filters)
+
                                 record = {
                                     "id": _id,
                                     "name": doc.name,
@@ -486,9 +491,9 @@ class PgVector(VectorDb):
             # Build the base statement
             stmt = select(*columns)
 
-            # # Apply filters if provided
-            # if filters is not None:
-            #     stmt = stmt.where(self.table.c.filters.contains(filters))
+            # Apply filters if provided
+            if filters is not None:
+                stmt = stmt.where(self.table.c.meta_data.contains(filters))
 
             # Order the results based on the distance metric
             if self.distance == Distance.l2:
@@ -540,6 +545,7 @@ class PgVector(VectorDb):
             if self.reranker:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
 
+            log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
             logger.error(f"Error during vector search: {e}")
@@ -595,9 +601,9 @@ class PgVector(VectorDb):
             text_rank = func.ts_rank_cd(ts_vector, ts_query)
 
             # Apply filters if provided
-            # if filters is not None:
-            #     # Use the contains() method for JSONB columns to check if the filters column contains the specified filters
-            #     stmt = stmt.where(self.table.c.filters.contains(filters))
+            if filters is not None:
+                # Use the contains() method for JSONB columns to check if the filters column contains the specified filters
+                stmt = stmt.where(self.table.c.meta_data.contains(filters))
 
             # Order by the relevance rank
             stmt = stmt.order_by(text_rank.desc())
@@ -633,6 +639,7 @@ class PgVector(VectorDb):
                     )
                 )
 
+            log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
             logger.error(f"Error during keyword search: {e}")
@@ -715,9 +722,9 @@ class PgVector(VectorDb):
             # Add the full-text search condition
             # stmt = stmt.where(ts_vector.op("@@")(ts_query))
 
-            # # Apply filters if provided
-            # if filters is not None:
-            #     stmt = stmt.where(self.table.c.filters.contains(filters))
+            # Apply filters if provided
+            if filters is not None:
+                stmt = stmt.where(self.table.c.meta_data.contains(filters))
 
             # Order the results by the hybrid score in descending order
             stmt = stmt.order_by(desc("hybrid_score"))
@@ -756,6 +763,7 @@ class PgVector(VectorDb):
                     )
                 )
 
+            log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
             logger.error(f"Error during hybrid search: {e}")
