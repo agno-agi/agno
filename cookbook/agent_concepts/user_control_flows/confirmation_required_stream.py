@@ -17,10 +17,10 @@ Run `pip install openai httpx rich agno` to install dependencies.
 
 import json
 
-from agno.run.response import RunEvent
 import httpx
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.response import RunEvent
 from agno.tools import tool
 from agno.utils import pprint
 
@@ -58,9 +58,7 @@ agent = Agent(
     markdown=True,
 )
 
-for run_response in agent.run(
-    "Fetch the top 2 hackernews stories", stream=True
-):
+for run_response in agent.run("Fetch the top 2 hackernews stories", stream=True):
     if run_response.event == RunEvent.tool_calls_paused.value:
         for tool in run_response.tools:
             print("Tool name: ", tool.tool_name)

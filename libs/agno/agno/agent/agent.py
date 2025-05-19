@@ -32,7 +32,7 @@ from agno.memory.agent import AgentMemory, AgentRun
 from agno.memory.v2.memory import Memory, SessionSummary
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageReferences
-from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
+from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
@@ -1519,9 +1519,6 @@ class Agent:
                 session_id=session_id,
             )
 
-            run_response_events = []
-
-
             try:
                 if stream and self.is_streamable:
                     resp = self._continue_run_stream(
@@ -1670,9 +1667,7 @@ class Agent:
                         function_call_results=function_call_results,
                         additional_messages=run_messages.messages,
                     ):
-                        if (
-                            call_result.event == ModelResponseEvent.tool_call_started.value
-                        ):
+                        if call_result.event == ModelResponseEvent.tool_call_started.value:
                             yield self.create_run_response(
                                 content=call_result.content,
                                 event=RunEvent.tool_call_started,
@@ -3683,7 +3678,6 @@ class Agent:
                         run_messages.extra_messages.append(Message.model_validate(_m))
                     except Exception as e:
                         log_warning(f"Failed to validate message: {e}")
-
 
         return run_messages
 

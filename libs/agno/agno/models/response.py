@@ -16,7 +16,6 @@ class ModelResponseEvent(str, Enum):
     assistant_response = "AssistantResponse"
 
 
-
 @dataclass
 class ToolExecution:
     """Execution of a tool"""
@@ -35,6 +34,7 @@ class ToolExecution:
 
     confirmation_required: Optional[bool] = None
     confirmed: Optional[bool] = None
+
 
 @dataclass
 class ModelResponse:

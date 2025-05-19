@@ -132,9 +132,7 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
                 "audio_tokens" in response_usage.completion_tokens_details
                 and response_usage.completion_tokens_details["audio_tokens"] is not None
             ):
-                assistant_message.metrics.output_audio_tokens = response_usage.completion_tokens_details[
-                    "audio_tokens"
-                ]
+                assistant_message.metrics.output_audio_tokens = response_usage.completion_tokens_details["audio_tokens"]
             if (
                 "reasoning_tokens" in response_usage.completion_tokens_details
                 and response_usage.completion_tokens_details["reasoning_tokens"] is not None
@@ -143,23 +141,19 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
                     "reasoning_tokens"
                 ]
         elif hasattr(response_usage.completion_tokens_details, "model_dump"):
-            assistant_message.metrics.completion_tokens_details = (
-                response_usage.completion_tokens_details.model_dump(exclude_none=True)
+            assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details.model_dump(
+                exclude_none=True
             )
             if (
                 hasattr(response_usage.completion_tokens_details, "audio_tokens")
                 and response_usage.completion_tokens_details.audio_tokens is not None
             ):
-                assistant_message.metrics.output_audio_tokens = (
-                    response_usage.completion_tokens_details.audio_tokens
-                )
+                assistant_message.metrics.output_audio_tokens = response_usage.completion_tokens_details.audio_tokens
             if (
                 hasattr(response_usage.completion_tokens_details, "reasoning_tokens")
                 and response_usage.completion_tokens_details.reasoning_tokens is not None
             ):
-                assistant_message.metrics.reasoning_tokens = (
-                    response_usage.completion_tokens_details.reasoning_tokens
-                )
+                assistant_message.metrics.reasoning_tokens = response_usage.completion_tokens_details.reasoning_tokens
 
     assistant_message.metrics.audio_tokens = (
         assistant_message.metrics.input_audio_tokens + assistant_message.metrics.output_audio_tokens
@@ -340,8 +334,11 @@ class Model(ABC):
                     tool_call_limit=tool_call_limit,
                 ):
                     if (
-                        function_call_response.event in [ModelResponseEvent.tool_call_completed.value,
-                                                         ModelResponseEvent.tool_call_confirmation_required.value]
+                        function_call_response.event
+                        in [
+                            ModelResponseEvent.tool_call_completed.value,
+                            ModelResponseEvent.tool_call_confirmation_required.value,
+                        ]
                         and function_call_response.tool_executions is not None
                     ):
                         model_response.tool_executions.extend(function_call_response.tool_executions)
@@ -423,8 +420,11 @@ class Model(ABC):
                     tool_call_limit=tool_call_limit,
                 ):
                     if (
-                        function_call_response.event in [ModelResponseEvent.tool_call_completed.value,
-                                                            ModelResponseEvent.tool_call_confirmation_required.value]
+                        function_call_response.event
+                        in [
+                            ModelResponseEvent.tool_call_completed.value,
+                            ModelResponseEvent.tool_call_confirmation_required.value,
+                        ]
                         and function_call_response.tool_executions is not None
                     ):
                         model_response.tool_executions.extend(function_call_response.tool_executions)
@@ -981,12 +981,15 @@ class Model(ABC):
         """
         return tool_calls_data
 
-    def get_function_call_to_run_from_tool_execution(self, tool_execution: ToolExecution, functions: Optional[Dict[str, Function]] = None, ) -> FunctionCall:
-
+    def get_function_call_to_run_from_tool_execution(
+        self,
+        tool_execution: ToolExecution,
+        functions: Optional[Dict[str, Function]] = None,
+    ) -> FunctionCall:
         return get_function_call_for_tool_execution(
-                            tool_execution=tool_execution,
-                            functions=functions,
-                        )
+            tool_execution=tool_execution,
+            functions=functions,
+        )
 
     def get_function_calls_to_run(
         self,
@@ -1040,7 +1043,6 @@ class Model(ABC):
         function_call_results: List[Message],
         additional_messages: Optional[List[Message]] = None,
     ) -> Iterator[ModelResponse]:
-
         # Start function call
         function_call_timer = Timer()
         function_call_timer.start()
@@ -1102,15 +1104,17 @@ class Model(ABC):
                     result=function_call_result.content,
                     stop_after_tool_call=function_call_result.stop_after_tool_call,
                     metrics=function_call_result.metrics,
-                    )
-                ],
+                )
+            ],
         )
 
         # Add function call to function call results
         function_call_results.append(function_call_result)
 
     def run_function_calls(
-        self, function_calls: List[FunctionCall], function_call_results: List[Message],
+        self,
+        function_calls: List[FunctionCall],
+        function_call_results: List[Message],
         tool_call_limit: Optional[int] = None,
     ) -> Iterator[ModelResponse]:
         if self._function_call_stack is None:
@@ -1136,9 +1140,9 @@ class Model(ABC):
                 # We don't execute the function call here, we wait for the user to confirm
                 continue
 
-            yield from self.run_function_call(function_call=fc,
-                                              function_call_results=function_call_results,
-                                              additional_messages=additional_messages)
+            yield from self.run_function_call(
+                function_call=fc, function_call_results=function_call_results, additional_messages=additional_messages
+            )
 
             # Add function call result to function call results
             self._function_call_stack.append(fc)
@@ -1229,7 +1233,9 @@ class Model(ABC):
 
         # Create and run all function calls in parallel (skip ones that need confirmation)
         function_calls_to_run = [fc for fc in function_calls if not fc.function.requires_confirmation]
-        results = await asyncio.gather(*(self._arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True)
+        results = await asyncio.gather(
+            *(self._arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
+        )
 
         # Process results
         for result in results:

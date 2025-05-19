@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, TypeVar, get_type_hints, Literal
+from typing import Any, Callable, Dict, List, Literal, Optional, TypeVar, get_type_hints
 
 from docstring_parser import parse
 from pydantic import BaseModel, Field, validate_call
@@ -697,7 +697,6 @@ class FunctionCall(BaseModel):
             if cached_result is not None:
                 log_debug(f"Cache hit for: {self.get_call_str()}")
                 self.result = cached_result
-                function_call_success = True
                 return FunctionExecutionResult(status="success")
 
         # Execute function

@@ -17,10 +17,10 @@ Run `pip install openai httpx rich agno` to install dependencies.
 
 import json
 
-from agno.run.response import RunEvent, RunResponse
 import httpx
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.response import RunEvent, RunResponse
 from agno.tools import tool
 
 
