@@ -58,14 +58,20 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
     def process_slack_event(event: dict):
         # Implement your event processing logic here
         # For example, handle messages, reactions, etc.
-        print("Processing event:", event)
+        log_info("Processing event:", event)
         if event.get("type")=="message":
             if event.get("bot_id"):
                 pass
             else:
                 message_text=event.get("text")
                 channel_id=event.get("channel")
-        if agent:
-            response = agent.arun(message_text)
+                user=None
+                if event.get("channel_type")=="im": 
+                    user=event.get("user")
+                if agent:
+                    response =agent.arun(message_text,user_id=user if user else None)
+                elif team:
+                    response =team.arun(message_text,user_id=user if user else None)
+        
         SlackTools().send_message(channel=channel_id,text=response.content)
     return router
