@@ -21,7 +21,9 @@ class RunEvent(str, Enum):
     run_error = "RunError"
     run_cancelled = "RunCancelled"
 
-    tool_calls_paused = "ToolCallsPaused"
+    run_paused = "RunPaused"
+    run_continued = "RunContinued"
+
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
 
@@ -109,7 +111,7 @@ class RunResponse:
 
     @property
     def is_paused(self):
-        if self.event == RunEvent.tool_calls_paused:
+        if self.event == RunEvent.run_paused:
             return True
 
     def to_dict(self) -> Dict[str, Any]:

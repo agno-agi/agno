@@ -34,7 +34,7 @@ from agno.memory.team import TeamMemory, TeamRun
 from agno.memory.v2.memory import Memory, SessionSummary
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageReferences
-from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
@@ -1758,13 +1758,13 @@ class Team:
                 if run_response.tools:
                     # Create a mapping of tool_call_id to index
                     tool_call_index_map = {
-                        tc["tool_call_id"]: i
+                        tc.tool_call_id: i
                         for i, tc in enumerate(run_response.tools)
-                        if tc.get("tool_call_id") is not None
+                        if tc.tool_call_id is not None
                     }
                     # Process tool calls
                     for tool_call_dict in new_tool_calls_list:
-                        tool_call_id = tool_call_dict.get("tool_call_id")
+                        tool_call_id = tool_call_dict.tool_call_id
                         index = tool_call_index_map.get(tool_call_id)
                         if index is not None:
                             run_response.tools[index] = tool_call_dict
@@ -1773,15 +1773,15 @@ class Team:
 
                 # Only iterate through new tool calls
                 for tool_call in new_tool_calls_list:
-                    tool_name = tool_call.get("tool_name", "")
+                    tool_name = tool_call.tool_name
                     if tool_name.lower() in ["think", "analyze"]:
-                        tool_args = tool_call.get("tool_args", {})
+                        tool_args = tool_call.tool_args
 
                         reasoning_step = self.update_reasoning_content_from_tool_call(
                             run_response, tool_name, tool_args
                         )
 
-                        metrics = tool_call.get("metrics")
+                        metrics = tool_call.metrics
                         if metrics is not None:
                             reasoning_state["reasoning_time_taken"] = reasoning_state["reasoning_time_taken"] + float(
                                 metrics.time
@@ -2362,7 +2362,10 @@ class Team:
 
                             for tool in member_response.tools:
                                 # Generate a unique ID for this tool call
-                                tool_id = tool.get("tool_call_id", str(hash(str(tool))))
+                                if tool.tool_call_id:
+                                    tool_id = tool.tool_call_id
+                                else:
+                                    tool_id = str(hash(str(tool)))
                                 if tool_id not in processed_tool_calls:
                                     processed_tool_calls.add(tool_id)
                                     member_tool_calls[member_id].append(tool)
@@ -3113,7 +3116,7 @@ class Team:
 
         # Track tool calls by member and team
         member_tool_calls = {}  # type: ignore
-        team_tool_calls = []
+        team_tool_calls: List[ToolExecution] = []
 
         # Track processed tool calls to avoid duplicates
         processed_tool_calls = set()
@@ -4961,7 +4964,7 @@ class Team:
                             member_agent_run_response_chunk.tools is not None
                             and len(member_agent_run_response_chunk.tools) > 0
                         ):
-                            yield ",".join([tool.get("content", "") for tool in member_agent_run_response_chunk.tools])
+                            yield ",".join([tool.result for tool in member_agent_run_response_chunk.tools])
                 else:
                     member_agent_run_response = member_agent.run(
                         member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
@@ -4977,7 +4980,7 @@ class Team:
                         if len(member_agent_run_response.content.strip()) > 0:
                             yield f"Agent {member_agent.name}: {member_agent_run_response.content}"
                         elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                            yield f"Agent {member_agent.name}: {','.join([tool.get('content', '') for tool in member_agent_run_response.tools])}"
+                            yield f"Agent {member_agent.name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"
                     elif issubclass(type(member_agent_run_response.content), BaseModel):
                         try:
                             yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
@@ -5265,7 +5268,11 @@ class Team:
                         member_agent_run_response_chunk.tools is not None
                         and len(member_agent_run_response_chunk.tools) > 0
                     ):
-                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response_chunk.tools])
+                        tool_str = ""
+                        for tool in member_agent_run_response_chunk.tools:
+                            if tool.result:
+                                tool_str += f"{tool.result},"
+                        yield tool_str.rstrip(",")
             else:
                 member_agent_run_response = member_agent.run(
                     member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
@@ -5283,7 +5290,11 @@ class Team:
 
                     # If the content is empty but we have tool calls
                     elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response.tools])
+                        tool_str = ""
+                        for tool in member_agent_run_response.tools:
+                            if tool.result:
+                                tool_str += f"{tool.result},"
+                        yield tool_str.rstrip(",")
 
                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                     try:
@@ -5599,7 +5610,12 @@ class Team:
 
                     # If the content is empty but we have tool calls
                     elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response.tools])
+                        tool_str = ""
+                        for tool in member_agent_run_response.tools:
+                            if tool.result:
+                                tool_str += f"{tool.result},"
+                        yield tool_str.rstrip(",")
+
                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                     try:
                         yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore

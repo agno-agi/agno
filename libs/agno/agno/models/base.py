@@ -342,13 +342,13 @@ class Model(ABC):
                         and function_call_response.tool_executions is not None
                     ):
                         model_response.tool_executions.extend(function_call_response.tool_executions)
+                    
                     elif function_call_response.event not in [
                         ModelResponseEvent.tool_call_started.value,
                         ModelResponseEvent.tool_call_completed.value,
                     ]:
                         if function_call_response.content:
-                            for tool_execution in function_call_response.tool_executions:
-                                model_response.content += tool_execution.result
+                            model_response.content += function_call_response.content  # type: ignore
 
                 # Format and add results to messages
                 self.format_function_call_results(
@@ -1106,6 +1106,7 @@ class Model(ABC):
                     metrics=function_call_result.metrics,
                 )
             ],
+            event=ModelResponseEvent.tool_call_completed.value,
         )
 
         # Add function call to function call results

@@ -616,25 +616,22 @@ class Agent:
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
-<<<<<<< HEAD
         # We should break out of the run function
-        if any(tc.confirmation_required for tc in self.run_response.tools):
+        if any(tc.confirmation_required for tc in run_response.tools):
             # Save session to storage
             self.write_to_storage(user_id=user_id, session_id=session_id)
             # Log Agent Run
             self._log_agent_run(user_id=user_id, session_id=session_id)
 
-            log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
+            log_debug(f"Agent Run Paused: {self.run_response.run_id}", center=True, symbol="*")
 
             # Save output to file if save_response_to_file is set
             self.save_run_response_to_file(message=message, session_id=session_id)
 
             # We return and await confirmation/completion for the tools that require it
-            run_response.event = RunEvent.tool_calls_paused
+            run_response.event = RunEvent.run_paused
             return run_response
 
-=======
->>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
         # 3. Update Agent Memory
         self._update_memory(
             run_response=run_response,
@@ -693,22 +690,39 @@ class Agent:
         # We track this, so we can add messages after this index to the RunResponse and Memory
         index_of_last_user_message = len(run_messages.messages)
 
-<<<<<<< HEAD
         # 1. Start the Run by yielding a RunStarted event
-=======
-        # 6. Start the Run by yielding a RunStarted event
->>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
         if stream_intermediate_steps:
             yield self.create_run_response("Run started", session_id=session_id, event=RunEvent.run_started)
 
         # 2. Process model response
-        yield from self._handle_model_response_stream(
+        for event in self._handle_model_response_stream(
             run_response=run_response,
             run_messages=run_messages,
             session_id=session_id,
             response_format=response_format,
             stream_intermediate_steps=stream_intermediate_steps,
-        )
+        ):
+            yield event
+
+        # We should break out of the run function
+        if any(tc.confirmation_required for tc in run_response.tools):
+            # Save session to storage
+            self.write_to_storage(user_id=user_id, session_id=session_id)
+            # Log Agent Run
+            self._log_agent_run(user_id=user_id, session_id=session_id)
+
+            log_debug(f"Agent Run Paused: {self.run_response.run_id}", center=True, symbol="*")
+
+            # Save output to file if save_response_to_file is set
+            self.save_run_response_to_file(message=message, session_id=session_id)
+
+            # We return and await confirmation/completion for the tools that require it
+            yield self.create_run_response(
+                event=RunEvent.run_paused,
+                session_id=session_id,
+                run_response=run_response,
+            )
+            return
 
         # 3. Update Agent Memory
         self._update_memory(
@@ -828,8 +842,7 @@ class Agent:
             self.knowledge.initialize_valid_filters()  # type: ignore
 
         # If no retries are set, use the agent's default retries
-        if retries is None:
-            retries = self.retries
+        retries = retries if retries is not None else self.retries
 
         # Use stream override value when necessary
         if stream is None:
@@ -848,8 +861,7 @@ class Agent:
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Use the default user_id and session_id when necessary
-        if user_id is None:
-            user_id = self.user_id
+        user_id = user_id if user_id is not None else self.user_id
 
         if session_id is None or session_id == "":
             if not (self.session_id is None or self.session_id == ""):
@@ -1033,9 +1045,8 @@ class Agent:
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
-<<<<<<< HEAD
         # We should break out of the run function
-        if any(tc.confirmation_required for tc in self.run_response.tools):
+        if any(tc.confirmation_required for tc in run_response.tools):
             # Save session to storage
             self.write_to_storage(user_id=user_id, session_id=session_id)
             # Log Agent Run
@@ -1047,11 +1058,9 @@ class Agent:
             self.save_run_response_to_file(message=message, session_id=session_id)
 
             # We return and await confirmation/completion for the tools that require it
-            run_response.event = RunEvent.tool_calls_paused
+            run_response.event = RunEvent.run_paused
             return run_response
 
-=======
->>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
         # 3. Update Agent Memory
         await self._aupdate_memory(
             run_response=run_response,
@@ -1135,6 +1144,26 @@ class Agent:
             stream_intermediate_steps=stream_intermediate_steps,
         ):
             yield event
+
+        # We should break out of the run function
+        if any(tc.confirmation_required for tc in run_response.tools):
+            # Save session to storage
+            self.write_to_storage(user_id=user_id, session_id=session_id)
+            # Log Agent Run
+            self._log_agent_run(user_id=user_id, session_id=session_id)
+
+            log_debug(f"Agent Run Paused: {self.run_response.run_id}", center=True, symbol="*")
+
+            # Save output to file if save_response_to_file is set
+            self.save_run_response_to_file(message=message, session_id=session_id)
+
+            # We return and await confirmation/completion for the tools that require it
+            yield self.create_run_response(
+                event=RunEvent.run_paused,
+                session_id=session_id,
+                run_response=run_response,
+            )
+            return
 
         # 3. Update Agent Memory
         await self._aupdate_memory(
@@ -1379,7 +1408,6 @@ class Agent:
         else:
             raise Exception(f"Failed after {num_attempts} attempts.")
 
-<<<<<<< HEAD
     @overload
     def continue_run(
         self,
@@ -1427,8 +1455,7 @@ class Agent:
             self.knowledge.initialize_valid_filters()  # type: ignore
 
         # If no retries are set, use the agent's default retries
-        if retries is None:
-            retries = self.retries
+        retries = retries if retries is not None else self.retries
 
         # Use stream override value when necessary
         if stream is None:
@@ -1447,8 +1474,7 @@ class Agent:
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Use the default user_id and session_id when necessary
-        if user_id is None:
-            user_id = self.user_id
+        user_id = user_id if user_id is not None else self.user_id
 
         if session_id is None or session_id == "":
             if not (self.session_id is None or self.session_id == ""):
@@ -1533,7 +1559,7 @@ class Agent:
 
             try:
                 if stream and self.is_streamable:
-                    resp = self._continue_run_stream(
+                    response_iterator = self._continue_run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
                         message=user_message,
@@ -1544,44 +1570,18 @@ class Agent:
                         stream_intermediate_steps=stream_intermediate_steps,
                     )
 
-                    return resp
+                    return response_iterator
                 else:
-                    run_response = self._continue_run(
-                        message=user_message,
+                    response = self._continue_run(
+                        run_response=run_response,
                         run_messages=run_messages,
+                        message=user_message,
                         user_id=user_id,
                         session_id=session_id,
+                        response_format=response_format,
                         messages=messages,
                     )
-
-                    # If the run response is a tool calls paused event, return the run response
-                    if run_response.event == RunEvent.tool_calls_paused:
-                        return run_response
-
-                    if self.response_model is not None:
-                        # Do a final check confirming the content is in the response_model format
-                        if isinstance(run_response.content, self.response_model):
-                            return run_response
-
-                        # Otherwise convert the response to the structured format
-                        if isinstance(run_response.content, str):
-                            try:
-                                structured_output = parse_response_model_str(run_response.content, self.response_model)
-
-                                # Update RunResponse
-                                if structured_output is not None:
-                                    run_response.content = structured_output
-                                    run_response.content_type = self.response_model.__name__
-                                    if self.run_response is not None:
-                                        self.run_response.content = structured_output
-                                        self.run_response.content_type = self.response_model.__name__
-                                else:
-                                    log_warning("Failed to convert response to response_model")
-                            except Exception as e:
-                                log_warning(f"Failed to convert response to output model: {e}")
-                        else:
-                            log_warning("Something went wrong. Run response content is not a string")
-                    return run_response
+                    return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -1626,13 +1626,193 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
     ) -> RunResponse:
         self.model = cast(Model, self.model)
+
+        # 1. Handle the updated tools
+        self._handle_tool_call_updates(run_response=run_response, run_messages=run_messages)
+
+        # Get the index of the last "user" message in messages_for_run
+        # We track this so we can add messages after this index to the RunResponse and Memory
+        index_of_last_user_message = len(run_messages.messages)
+
+        # 2. Generate a response from the Model (includes running function calls)
+        self.model = cast(Model, self.model)
+        model_response: ModelResponse = self.model.response(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        )
+
+        self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
+
+        # We should break out of the run function
+        if any(tc.confirmation_required for tc in run_response.tools):
+            # Save session to storage
+            self.write_to_storage(user_id=user_id, session_id=session_id)
+            # Log Agent Run
+            self._log_agent_run(user_id=user_id, session_id=session_id)
+
+            log_debug(f"Agent Run Paused: {self.run_response.run_id}", center=True, symbol="*")
+
+            # Save output to file if save_response_to_file is set
+            self.save_run_response_to_file(message=message, session_id=session_id)
+
+            # We return and await confirmation/completion for the tools that require it
+            run_response.event = RunEvent.run_paused
+            return run_response
+
+        # 3. Update Agent Memory
+        self._update_memory(
+            run_response=run_response,
+            run_messages=run_messages,
+            session_id=session_id,
+            user_id=user_id,
+            messages=messages,
+            index_of_last_user_message=index_of_last_user_message,
+        )
+
+        # 5. Save session to storage
+        self.write_to_storage(user_id=user_id, session_id=session_id)
+
+        # 6. Save output to file if save_response_to_file is set
+        self.save_run_response_to_file(message=message, session_id=session_id)
+
+        # Log Agent Run
+        self._log_agent_run(user_id=user_id, session_id=session_id)
+
+        # Otherwise convert the response to the structured format
+        if self.response_model is not None and not isinstance(run_response.content, self.response_model):
+            if isinstance(run_response.content, str) and self.parse_response:
+                try:
+                    structured_output = parse_response_model_str(run_response.content, self.response_model)
+
+                    # Update RunResponse
+                    if structured_output is not None:
+                        run_response.content = structured_output
+                        run_response.content_type = self.response_model.__name__
+                    else:
+                        log_warning("Failed to convert response to response_model")
+                except Exception as e:
+                    log_warning(f"Failed to convert response to output model: {e}")
+            else:
+                log_warning("Something went wrong. Run response content is not a string")
+
+        log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+
+        return run_response
+
+    def _continue_run_stream(
+        self,
+        run_response: RunResponse,
+        run_messages: RunMessages,
+        session_id: str,
+        user_id: Optional[str] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        message: Optional[Union[str, List, Dict, Message]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        stream_intermediate_steps: bool = False,
+    ) -> Iterator[RunResponse]:
+        """
+        Continue a previous agent run
+
+        Steps:
+        1. Handle tool calls as updated by the user
+        2. Generate a response from the Model
+        3. Update Agent Memory
+        4. Calculate session metrics
+        5. Save session to storage
+        6. Save output to file if save_response_to_file is set
+        """
+        # 1. Handle the updated tools
+        yield from self._handle_tool_call_updates_stream(run_response=run_response, run_messages=run_messages, session_id=session_id)
+
+        # Get the index of the last "user" message in messages_for_run
+        # We track this, so we can add messages after this index to the RunResponse and Memory
+        index_of_last_user_message = len(run_messages.messages)
+
+        # Start the Run by yielding a RunContinued event
+        if stream_intermediate_steps:
+            yield self.create_run_response("Run continued", session_id=session_id, event=RunEvent.run_continued)
+
+        # 2. Process model response
+        for event in self._handle_model_response_stream(
+            run_response=run_response,
+            run_messages=run_messages,
+            session_id=session_id,
+            response_format=response_format,
+            stream_intermediate_steps=stream_intermediate_steps,
+        ):
+            yield event
+
+        # We should break out of the run function
+        if any(tc.confirmation_required for tc in run_response.tools):
+            # Save session to storage
+            self.write_to_storage(user_id=user_id, session_id=session_id)
+            # Log Agent Run
+            self._log_agent_run(user_id=user_id, session_id=session_id)
+
+            log_debug(f"Agent Run Paused: {self.run_response.run_id}", center=True, symbol="*")
+
+            # Save output to file if save_response_to_file is set
+            self.save_run_response_to_file(message=message, session_id=session_id)
+
+            # We return and await confirmation/completion for the tools that require it
+            yield self.create_run_response(
+                event=RunEvent.run_paused,
+                session_id=session_id,
+                run_response=run_response,
+            )
+            return
+
+        # 3. Update Agent Memory
+        self._update_memory(
+            run_response=run_response,
+            run_messages=run_messages,
+            session_id=session_id,
+            user_id=user_id,
+            messages=messages,
+            index_of_last_user_message=index_of_last_user_message,
+        )
+
+        # Yield UpdatingMemory event
+        if stream_intermediate_steps:
+            yield self.create_run_response(
+                content="Memory updated",
+                session_id=session_id,
+                event=RunEvent.updating_memory,
+            )
+
+        # 5. Save session to storage
+        self.write_to_storage(user_id=user_id, session_id=session_id)
+
+        # 6. Save output to file if save_response_to_file is set
+        self.save_run_response_to_file(message=message, session_id=session_id)
+
+        # Log Agent Run
+        self._log_agent_run(user_id=user_id, session_id=session_id)
+
+        log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+
+        if stream_intermediate_steps:
+            yield self.create_run_response(
+                content=run_response.content,
+                reasoning_content=run_response.reasoning_content,
+                session_id=session_id,
+                event=RunEvent.run_completed,
+                run_response=run_response,
+            )
+
+    def _handle_tool_call_updates(self, run_response: RunResponse, run_messages: RunMessages):
+        self.model = cast(Model, self.model)
         for _t in run_response.tools:
             # Case 1: Handle confirmed tools and execute them
             if _t.confirmation_required is not None and _t.confirmation_required is True:
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                     # Execute the tool
-                    function_call = self.model.get_function_call_to_run_from_tool_execution(_t)
+                    function_call = self.model.get_function_call_to_run_from_tool_execution(_t, self._functions_for_model)
                     function_call_results: List[Message] = []
 
                     for call_result in self.model.run_function_call(
@@ -1651,19 +1831,9 @@ class Agent:
                 else:
                     log_debug(f"Tool {_t.tool_name} requires confirmation")
                     continue
-        # TODO: Handle the rest
 
-    def _continue_run_stream(
-        self,
-        run_response: RunResponse,
-        run_messages: RunMessages,
-        session_id: str,
-        user_id: Optional[str] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        message: Optional[Union[str, List, Dict, Message]] = None,
-        messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
-    ) -> Iterator[RunResponse]:
+
+    def _handle_tool_call_updates_stream(self, run_response: RunResponse, run_messages: RunMessages, session_id: str) -> Iterator[RunResponse]:
         self.model = cast(Model, self.model)
         for _t in run_response.tools:
             # Case 1: Handle confirmed tools and execute them
@@ -1671,7 +1841,7 @@ class Agent:
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                     # Execute the tool
-                    function_call = self.model.get_function_call_to_run_from_tool_execution(_t)
+                    function_call = self.model.get_function_call_to_run_from_tool_execution(_t, self._functions_for_model)
                     function_call_results: List[Message] = []
 
                     for call_result in self.model.run_function_call(
@@ -1702,18 +1872,11 @@ class Agent:
                 else:
                     log_debug(f"Tool {_t.tool_name} requires confirmation")
                     continue
-        # TODO: Handle the rest
 
     def _update_run_response(self, model_response: ModelResponse, run_response: RunResponse, run_messages: RunMessages):
         # Format tool calls if they exist
         if model_response.tool_calls:
             run_response.formatted_tool_calls = format_tool_calls(model_response.tool_executions)
-=======
-    def _update_run_response(self, model_response: ModelResponse, run_response: RunResponse, run_messages: RunMessages):
-        # Format tool calls if they exist
-        if model_response.tool_calls:
-            run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
->>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
 
         # Handle structured outputs
         if self.response_model is not None and model_response.parsed is not None:
@@ -1740,7 +1903,6 @@ class Agent:
         if model_response.citations is not None:
             run_response.citations = model_response.citations
 
-<<<<<<< HEAD
         # Update the run_response tools with the model response tool_executions
         if model_response.tool_executions is not None:
             if run_response.tools is None:
@@ -1750,20 +1912,9 @@ class Agent:
 
             # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
             for tool_call in model_response.tool_executions:
-=======
-        # Update the run_response tools with the model response tools
-        if model_response.tool_calls is not None:
-            if run_response.tools is None:
-                run_response.tools = model_response.tool_calls
-            else:
-                run_response.tools.extend(model_response.tool_calls)
-
-            # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
-            for tool_call in model_response.tool_calls:
->>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
-                tool_name = tool_call.get("tool_name", "")
+                tool_name = tool_call.tool_name
                 if tool_name.lower() in ["think", "analyze"]:
-                    tool_args = tool_call.get("tool_args", {})
+                    tool_args = tool_call.tool_args
                     self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
         # Update the run_response audio with the model response audio
@@ -1970,10 +2121,7 @@ class Agent:
         run_response: RunResponse,
         run_messages: RunMessages,
         session_id: str,
-<<<<<<< HEAD
         user_id: Optional[str] = None,
-=======
->>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponse]:
@@ -2015,6 +2163,8 @@ class Agent:
                     content_type=ReasoningSteps.__class__.__name__,
                     event=RunEvent.reasoning_completed,
                 )
+
+
 
         # Update RunResponse
         # Build a list of messages that should be added to the RunResponse
@@ -2172,7 +2322,6 @@ class Agent:
 
                 yield run_response
 
-<<<<<<< HEAD
         # Handle tool interruption events
         elif model_response_chunk.event in [
             ModelResponseEvent.tool_call_confirmation_required.value,
@@ -2188,13 +2337,10 @@ class Agent:
 
                 # Format tool calls whenever new ones are added during streaming
                 run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
-=======
->>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
         # If the model response is a tool_call_started, add the tool call to the run_response
         elif (
             model_response_chunk.event == ModelResponseEvent.tool_call_started.value
         ):  # Add tool calls to the run_response
-<<<<<<< HEAD
             tool_executions_list = model_response_chunk.tool_executions
             if tool_executions_list is not None:
                 # Add tool calls to the agent.run_response
@@ -2202,15 +2348,6 @@ class Agent:
                     run_response.tools = tool_executions_list
                 else:
                     run_response.tools.extend(tool_executions_list)
-=======
-            new_tool_calls_list = model_response_chunk.tool_calls
-            if new_tool_calls_list is not None:
-                # Add tool calls to the agent.run_response
-                if run_response.tools is None:
-                    run_response.tools = new_tool_calls_list
-                else:
-                    run_response.tools.extend(new_tool_calls_list)
->>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
 
                 # Format tool calls whenever new ones are added during streaming
                 run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
@@ -2228,50 +2365,32 @@ class Agent:
         elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
             reasoning_step: Optional[ReasoningStep] = None
 
-<<<<<<< HEAD
             tool_executions_list = model_response_chunk.tool_executions
             if tool_executions_list is not None:
-=======
-            new_tool_calls_list = model_response_chunk.tool_calls
-            if new_tool_calls_list is not None:
->>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
                 # Update the existing tool call in the run_response
                 if run_response.tools:
                     # Create a mapping of tool_call_id to index
                     tool_call_index_map = {
-                        tc["tool_call_id"]: i
-                        for i, tc in enumerate(run_response.tools)
-                        if tc.get("tool_call_id") is not None
+                        tc.tool_call_id: i for i, tc in enumerate(run_response.tools) if tc.tool_call_id is not None
                     }
                     # Process tool calls
-<<<<<<< HEAD
                     for tool_call_dict in tool_executions_list:
-=======
-                    for tool_call_dict in new_tool_calls_list:
->>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
-                        tool_call_id = tool_call_dict.get("tool_call_id")
+                        tool_call_id = tool_call_dict.tool_call_id
                         index = tool_call_index_map.get(tool_call_id)
                         if index is not None:
                             run_response.tools[index] = tool_call_dict
                 else:
-<<<<<<< HEAD
                     run_response.tools = tool_executions_list
 
                 # Only iterate through new tool calls
                 for tool_call in tool_executions_list:
-=======
-                    run_response.tools = new_tool_calls_list
-
-                # Only iterate through new tool calls
-                for tool_call in new_tool_calls_list:
->>>>>>> 03bbfdc86c363d9aaa0c2c5f70f4419cba02aa06
-                    tool_name = tool_call.get("tool_name", "")
+                    tool_name = tool_call.tool_name
                     if tool_name.lower() in ["think", "analyze"]:
-                        tool_args = tool_call.get("tool_args", {})
+                        tool_args = tool_call.tool_args
 
                         reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
-                        metrics = tool_call.get("metrics")
+                        metrics = tool_call.metrics
                         if metrics is not None and metrics.time is not None:
                             reasoning_state["reasoning_time_taken"] = reasoning_state["reasoning_time_taken"] + float(
                                 metrics.time
@@ -4590,11 +4709,12 @@ class Agent:
                 log_warning("Reasoning error. Reasoning agent is None, continuing regular session...")
                 return
             # Ensure the reasoning agent response model is ReasoningSteps
-            if reasoning_agent.response_model is not None and not isinstance(reasoning_agent.response_model, type):
-                if not issubclass(reasoning_agent.response_model, ReasoningSteps):
-                    log_warning(
-                        "Reasoning agent response model should be `ReasoningSteps`, continuing regular session..."
-                    )
+            if (
+                reasoning_agent.response_model is not None
+                and not isinstance(reasoning_agent.response_model, type)
+                and not issubclass(reasoning_agent.response_model, ReasoningSteps)
+            ):
+                log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
                 return
             # Ensure the reasoning model and agent do not show tool calls
             reasoning_agent.show_tool_calls = False
@@ -4800,12 +4920,14 @@ class Agent:
                 log_warning("Reasoning error. Reasoning agent is None, continuing regular session...")
                 return
             # Ensure the reasoning agent response model is ReasoningSteps
-            if reasoning_agent.response_model is not None and not isinstance(reasoning_agent.response_model, type):
-                if not issubclass(reasoning_agent.response_model, ReasoningSteps):
-                    log_warning(
-                        "Reasoning agent response model should be `ReasoningSteps`, continuing regular session..."
-                    )
+            if (
+                reasoning_agent.response_model is not None
+                and not isinstance(reasoning_agent.response_model, type)
+                and not issubclass(reasoning_agent.response_model, ReasoningSteps)
+            ):
+                log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
                 return
+
             # Ensure the reasoning model and agent do not show tool calls
             reasoning_agent.show_tool_calls = False
 

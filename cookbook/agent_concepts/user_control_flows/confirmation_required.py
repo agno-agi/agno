@@ -2,8 +2,7 @@
 
 This example shows how to implement human-in-the-loop functionality in your Agno tools.
 It shows how to:
-- Add pre-hooks to tools for user confirmation
-- Handle user input during tool execution
+- Handle user confirmation during tool execution
 - Gracefully cancel operations based on user choice
 
 Some practical applications:
@@ -20,7 +19,6 @@ import json
 import httpx
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunEvent, RunResponse
 from agno.tools import tool
 
 
@@ -55,7 +53,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_top_hackernews_stories],
     markdown=True,
-    debug_mode=True,
 )
 
 agent.run("Fetch the top 2 hackernews stories")
