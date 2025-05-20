@@ -1,13 +1,45 @@
 """
-This example shows how to use the Couchbase vector database.
+Couchbase Vector DB Example
+==========================
 
-First install couchbase-sdk: `pip install couchbase`
+Setup Couchbase Cluster (Local via Docker):
+-------------------------------------------
+1. Run Couchbase Community Edition locally:
 
-For a local docker setup, you can use the following command to start the couchbase server:
+   docker run -d --name couchbase-server \
+     -p 8091-8096:8091-8096 \
+     -p 11210:11210 \
+     -e COUCHBASE_ADMINISTRATOR_USERNAME=Administrator \
+     -e COUCHBASE_ADMINISTRATOR_PASSWORD=password \
+     couchbase:community
 
-```bash
-./cookbook/scripts/run_couchbase.sh
+2. Access the Couchbase UI at: http://localhost:8091
+   (Login with the username and password above)
 
+3. Create a bucket named 'recipe_bucket', a scope 'recipe_scope', and a collection 'recipes'.
+
+Managed Couchbase (Capella):
+----------------------------
+- For a managed cluster, use Couchbase Capella: https://cloud.couchbase.com/
+- Follow Capella's UI to create a database, bucket, scope, and collection as above.
+
+Environment Variables (export before running):
+----------------------------------------------
+Create a shell script (e.g., set_couchbase_env.sh):
+
+    export COUCHBASE_USER="Administrator"
+    export COUCHBASE_PASSWORD="password"
+    export COUCHBASE_CONNECTION_STRING="couchbase://localhost"
+    export OPENAI_API_KEY="<your-openai-api-key>"
+
+# For Capella, set COUCHBASE_CONNECTION_STRING to the Capella connection string.
+
+Install couchbase-sdk:
+----------------------
+    pip install couchbase
+"""
+
+import asyncio
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
@@ -127,10 +159,14 @@ knowledge_base = PDFUrlKnowledgeBase(
     ),
 )
 
-# Load the knowledge base
-knowledge_base.load(recreate=True)
-
-time.sleep(20) # wait for the vector index to be sync with kv
 # Create and use the agent
 agent = Agent(knowledge=knowledge_base, show_tool_calls=True)
-agent.print_response("How to make Thai curry?", markdown=True)
+
+async def run_agent():
+    await knowledge_base.aload(recreate=True)
+    time.sleep(5) # wait for the vector index to be sync with kv
+    await agent.aprint_response("How to make Thai curry?", markdown=True)
+
+if __name__ == "__main__":
+    # Comment out after the first run
+    asyncio.run(run_agent())
