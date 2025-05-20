@@ -16,7 +16,9 @@ Setup Couchbase Cluster (Local via Docker):
 2. Access the Couchbase UI at: http://localhost:8091
    (Login with the username and password above)
 
-3. Create a bucket named 'recipe_bucket', a scope 'recipe_scope', and a collection 'recipes'.
+3. Create a new cluster. You can select "Finish with defaults".
+
+4. Create a bucket named 'recipe_bucket', a scope 'recipe_scope', and a collection 'recipes'.
 
 Managed Couchbase (Capella):
 ----------------------------
@@ -148,7 +150,7 @@ knowledge_base = PDFUrlKnowledgeBase(
     urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
     vector_db=CouchbaseSearch(
         bucket_name="recipe_bucket",
-        scope_name="recipe_scope", 
+        scope_name="recipe_scope",
         collection_name="recipes",
         couchbase_connection_string=connection_string,
         cluster_options=cluster_options,
