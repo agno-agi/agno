@@ -414,3 +414,51 @@ async def test_async_cluster_level_index(
         ):  # ensure db was initialized enough to have _async_collection
             if await db.async_exists():
                 await db.async_drop()
+
+
+# Helper mock classes for testing __async_get_doc_from_kv
+class MockAsyncSearchRow:
+    def __init__(self, id_val, score_val=0.0):
+        self.id = id_val
+        self.score = score_val
+
+class MockAsyncSearchIndex:
+    def __init__(self, rows_data):
+        # rows_data is a list of tuples (id_val, score_val)
+        self.rows_data = rows_data
+
+    async def rows(self):
+        for id_val, score_val in self.rows_data:
+            yield MockAsyncSearchRow(id_val, score_val)
+
+
+@pytest.mark.asyncio
+async def test_async_get_doc_from_kv_not_found(couchbase_db: CouchbaseSearch):
+    """Test _CouchbaseSearch__async_get_doc_from_kv returns an empty list
+       when the ID from search results is not found in the KV store."""
+    non_existent_id = "this_id_should_not_exist_in_kv_integration_test"
+
+    # Create a mock AsyncSearchIndex that simulates a search result
+    # containing the non-existent ID.
+    mock_search_response = MockAsyncSearchIndex(rows_data=[(non_existent_id, 1.0)])
+
+    # Patch the logger to capture warning messages
+    from unittest.mock import patch
+
+    with patch("agno.vectordb.couchbase.couchbase.logger") as mock_logger:
+        # We directly call the private method as requested by the original test goal,
+        # using its mangled name.
+        retrieved_documents = await couchbase_db._CouchbaseSearch__async_get_doc_from_kv(mock_search_response)
+
+        # The method should attempt to fetch this ID from KV, fail (as it's non-existent),
+        # log a warning (internally), and thus return an empty list of documents.
+        assert isinstance(retrieved_documents, list)
+        assert len(retrieved_documents) == 0
+
+        # Assert that a warning was logged about the missing document
+        found_warning = False
+        for call in mock_logger.warning.call_args_list:
+            if non_existent_id in str(call) and "not found or error fetching from KV store" in str(call):
+                found_warning = True
+                break
+        assert found_warning, "Expected warning about missing document not found in logger output"

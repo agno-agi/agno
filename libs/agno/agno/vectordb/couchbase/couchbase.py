@@ -64,7 +64,7 @@ class CouchbaseSearch(VectorDb):
         embedder: Embedder = OpenAIEmbedder(),
         overwrite: bool = False,
         is_global_level_index: bool = False,
-        wait_until_index_ready: Optional[float] = None,
+        wait_until_index_ready: float = 0,
         batch_limit: int = 500,
         **kwargs,
     ):
@@ -80,7 +80,7 @@ class CouchbaseSearch(VectorDb):
             search_index (Union[str, SearchIndex], optional): Search index configuration, either as index name or SearchIndex definition.
             embedder (Embedder): Embedder instance for generating embeddings. Defaults to OpenAIEmbedder.
             overwrite (bool): Whether to overwrite existing collection. Defaults to False.
-            wait_until_index_ready (float, optional): Time in seconds to wait until the index is ready. Defaults to None.
+            wait_until_index_ready (float, optional): Time in seconds to wait until the index is ready. Defaults to 0.
             batch_limit (int, optional): Maximum number of documents to process in a single batch (applies to both sync and async operations). Defaults to 500.
             **kwargs: Additional arguments for Couchbase connection.
         """
@@ -1041,7 +1041,7 @@ class CouchbaseSearch(VectorDb):
                 doc_id = batch_doc_ids[batch_idx]
                 # score = search_hits_map[doc_id]  # Retrieve the original score
 
-                if isinstance(get_result, Exception):
+                if isinstance(get_result, BaseException) or isinstance(get_result, Exception) or get_result is None:
                     logger.warning(f"[async] Document {doc_id} not found or error fetching from KV store: {get_result}")
                     continue
 
