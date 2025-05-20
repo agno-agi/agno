@@ -21,7 +21,7 @@ agent = Agent(
         You MUST use the `Mem0Tools` which has gives you access to a bunch of tools to help you manage memories. The user's identifier is: {current_user_id}
         """
     ),
-    debug_mode=True,
+    show_tool_calls=True,
 )
 
 # User Alice, Session A1
