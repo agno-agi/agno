@@ -381,6 +381,7 @@ module = [
   "yfinance.*",
   "youtube_transcript_api.*",
   "couchbase.*",
+  "acouchbase.*",
   "zep_cloud.*"
 ]
 ignore_missing_imports = true
