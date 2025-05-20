@@ -150,7 +150,6 @@ def test_json_response_mode():
     assert response.content.plot is not None
 
 
-
 def test_history():
     agent = Agent(
         model=Claude(id="anthropic.claude-3-sonnet-20240229-v1:0"),

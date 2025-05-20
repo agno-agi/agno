@@ -164,7 +164,6 @@ def test_json_response_mode():
     assert response.content.plot is not None
 
 
-
 def test_history():
     agent = Agent(
         model=Fireworks(id="accounts/fireworks/models/llama-v3p1-8b-instruct"),

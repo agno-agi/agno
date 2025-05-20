@@ -166,7 +166,6 @@ def test_json_response_mode():
     assert response.content.plot is not None
 
 
-
 def test_history():
     agent = Agent(
         model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),

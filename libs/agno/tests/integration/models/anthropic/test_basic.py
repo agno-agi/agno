@@ -141,7 +141,6 @@ def test_json_response_mode():
     assert response.content.plot is not None
 
 
-
 def test_history():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),

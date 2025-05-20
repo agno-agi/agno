@@ -144,7 +144,6 @@ def test_json_response_mode():
     assert response.content.plot is not None
 
 
-
 def test_history():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),

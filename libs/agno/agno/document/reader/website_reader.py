@@ -84,7 +84,7 @@ class WebsiteReader(Reader):
             """
             if tag.name in ["article", "main"]:
                 return True
-            if any(cls in ["content", "main-content", "post-content"] for cls in tag.get("class", [])):
+            if any(cls in ["content", "main-content", "post-content"] for cls in tag.get("class", [])):  # type: ignore
                 return True
             return False
 

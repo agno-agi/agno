@@ -164,7 +164,6 @@ def test_json_response_mode():
     assert response.content.plot is not None
 
 
-
 def test_history():
     agent = Agent(
         model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),

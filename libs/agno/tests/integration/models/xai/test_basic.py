@@ -143,7 +143,6 @@ def test_json_response_mode():
     assert response.content.plot is not None
 
 
-
 def test_history():
     agent = Agent(
         model=xAI(id="grok-3-mini-fast"),

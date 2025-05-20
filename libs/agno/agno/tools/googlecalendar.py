@@ -171,7 +171,7 @@ class GoogleCalendarTools(Toolkit):
             }
             if add_google_meet_link:
                 event["conferenceData"] = {
-                    "createRequest": {"requestId": str(uuid.uuid4()), "conferenceSolutionKey": {"type": "hangoutsMeet"}}
+                    "createRequest": {"requestId": str(uuid.uuid4()), "conferenceSolutionKey": {"type": "hangoutsMeet"}}  # type: ignore
                 }
             if self.service:
                 event_result = (

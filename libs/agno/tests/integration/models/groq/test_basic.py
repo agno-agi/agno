@@ -149,7 +149,6 @@ def test_json_response_mode():
     assert response.content.plot is not None
 
 
-
 def test_history():
     agent = Agent(
         model=Groq(id="llama3-70b-8192"),
