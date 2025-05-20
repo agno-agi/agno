@@ -1,4 +1,12 @@
-# install couchbase-sdk - `pip install couchbase`
+"""
+This example shows how to use the Couchbase vector database.
+
+First install couchbase-sdk: `pip install couchbase`
+
+For a local docker setup, you can use the following command to start the couchbase server:
+
+```bash
+./cookbook/scripts/run_couchbase.sh
 
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
